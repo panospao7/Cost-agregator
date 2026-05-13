@@ -123,7 +123,8 @@ class GoldenScenarioSmokeTest {
                 com.yourname.expensetracker.domain.core.money.ConversionFailure(
                     originalAmount = MoneyAmount(100.0, CurrencyCode.USD),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE
+                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 )
             )
         )
@@ -190,7 +191,8 @@ class GoldenScenarioSmokeTest {
                 com.yourname.expensetracker.domain.core.money.ConversionFailure(
                     originalAmount = MoneyAmount(50.0, CurrencyCode.USD),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE
+                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 )
             )
         )

@@ -97,7 +97,7 @@ class LocationResolverTest {
             merchantCleaner     = merchantCleaner,
             canonicalizer       = canonicalizer,
             greeklishNormalizer = greeklishNormalizer,
-            timeProvider = mockk(),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(),
         )
     }

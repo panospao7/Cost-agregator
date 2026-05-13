@@ -89,7 +89,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.EMPTY)
+        val ocrResult = ocrService.processImage(Uri.parse(""))
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorizeWithContext(
             merchant = parsed.merchantName ?: "",
@@ -114,7 +114,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
 
         // Act
         val parsed = runCatching {
-            val ocrResult = ocrService.processImage(Uri.EMPTY)
+            val ocrResult = ocrService.processImage(Uri.parse(""))
             receiptParser.parse(ocrResult.fullText)
         }.getOrNull()
 
@@ -132,7 +132,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.EMPTY)
+        val ocrResult = ocrService.processImage(Uri.parse(""))
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
 
@@ -155,7 +155,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         coEvery { merchantCategoryRepository.getAll() } returns emptyList()
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.EMPTY)
+        val ocrResult = ocrService.processImage(Uri.parse(""))
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
         val finalCategoryName = categorization.categoryName ?: "Uncategorized"

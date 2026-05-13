@@ -63,7 +63,7 @@ class BudgetMonitorStressTest {
             },
             periodStart = periodStart,
             periodEnd = periodEnd,
-            effectiveLimit = 0.0,
+            effectiveLimit = budget.amount,
         )
 
     // ============================================================================

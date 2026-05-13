@@ -257,7 +257,7 @@ class GroupGoldenScenarioTest {
     }
 
     private suspend fun seedMember(groupId: Long, name: String, isCurrentUser: Boolean = false): Long {
-        val member = GroupMember(groupId = groupId, name = name, isCurrentUser = isCurrentUser)
+        val member = GroupMember(groupId = groupId, name = name, isCurrentUser = isCurrentUser, currentUserGroupKey = if (isCurrentUser) groupId else null)
         return memberDao.insert(member)
     }
 }

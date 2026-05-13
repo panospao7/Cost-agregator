@@ -82,7 +82,7 @@ class ValidateBankStatementTransactionsUseCaseTest {
         assertEquals("Expected 1 transaction", 1, result.size)
         assertEquals("Coffee Shop", result[0].merchant)
         assertEquals(4.50, result[0].amount, 0.001)
-        assertEquals("AI_VALIDATED", result[0].source)
+        assertEquals("AI_CORRECTED", result[0].source)
     }
 
     @Test
@@ -159,7 +159,7 @@ class ValidateBankStatementTransactionsUseCaseTest {
 
         assertEquals(1, result.size)
         assertEquals("Coffee", result[0].merchant)
-        assertEquals("AI_VALIDATED", result[0].source)
+        assertEquals("AI_CORRECTED", result[0].source)
         assertTrue("Confidence should be > 0.9", result[0].confidence > 0.9f)
     }
 

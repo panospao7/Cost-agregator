@@ -92,6 +92,7 @@ class RecommendationRepositoryTest {
         val timestamp = timeProvider.now()
 
         coEvery { dao.expireOld(userId, timestamp, any()) } returns Unit
+        coEvery { dao.expireAllActiveByUser(any(), any()) } returns 1
 
         repository.expireAll(userId, timestamp)
 

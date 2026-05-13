@@ -107,7 +107,9 @@ class TransactionTargetedUpdateSideEffectsTest {
                 amount = 100.0,
                 period = BudgetPeriod.MONTHLY,
                 startDate = timeProvider.now(),
-                currency = "EUR"
+                currency = "EUR",
+                activeCategoryKey = foodCategoryId,
+                createdAt = timeProvider.now()
             )
         )
 

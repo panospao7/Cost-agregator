@@ -14,8 +14,10 @@ import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -36,7 +38,15 @@ class ExecuteFinancialQueryUseCaseTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
-        useCase = ExecuteFinancialQueryUseCase(expenseRepository, categoryRepository, currencyConverter = mockk(), currencySettingsRepository = mockk())
+        useCase = ExecuteFinancialQueryUseCase(expenseRepository, categoryRepository, currencyConverter = mockk<CurrencyConverter>(relaxed = true).also {
+            coEvery { it.convertMultiple(any(), any()) } returns MultiConversionAggregate(
+                total = 0.0, targetCurrency = "EUR", failedConversions = emptyList()
+            )
+            coEvery { it.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } returns ConversionResult(
+                originalAmount = 0.0, originalCurrency = "EUR", convertedAmount = 0.0,
+                targetCurrency = "EUR", rateUsed = 1.0, timestamp = 0L
+            )
+        }, currencySettingsRepository = mockk())
     }
 
     @Test

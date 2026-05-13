@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.backup.DatabaseStats
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -26,7 +27,9 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     private val context = mockk<Context>(relaxed = true)
     private val databaseBackupRepository = mockk<DatabaseBackupRepository>(relaxed = true)
-    private val restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+    private val restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
+        every { it.isWritesAllowed() } returns true
+    }
 
     @Before
     override fun setup() {

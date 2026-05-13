@@ -146,6 +146,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
+        coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns null
 
         // Act
         val result = calculator.calculateHealthScore()

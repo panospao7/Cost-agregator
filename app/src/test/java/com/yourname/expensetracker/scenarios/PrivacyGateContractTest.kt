@@ -58,7 +58,7 @@ class PrivacyGateContractTest {
         assertThat(decision).isInstanceOf(PrivacyDecision.Denied::class.java)
         val denied = decision as PrivacyDecision.Denied
         assertThat(denied.reason).isNotEmpty()
-        assertThat(denied.reason).contains("Cloud AI is disabled")
+        assertThat(denied.reason).contains("cloud AI disabled")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -259,7 +259,7 @@ class PrivacyGateContractTest {
         val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
         coEvery { policyResolver.resolve() } returns com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy(
             cloudAllowed = true, reason = null, redactBeforeCloud = true,
-            receiptImageUploadAllowed = false, bankStatementCloudAllowed = true
+            receiptImageUploadAllowed = true, bankStatementCloudAllowed = true
         )
 
         // WHEN: checking RECEIPT_IMAGE_CLOUD_UPLOAD

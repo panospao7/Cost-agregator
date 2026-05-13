@@ -131,7 +131,7 @@ internal fun buildPipeline(
         transactionLifecycleCoordinator = transactionLifecycleCoordinator
     )
 
-    val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository, currencyConverter = mockk(), analyticsCurrencyNormalizer = mockk(), multiCurrencyRepository = mockk())
+    val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository, currencyConverter = currencyConverter, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, multiCurrencyRepository = mockk(relaxed = true))
     val spendingPersonalityClassifier = mockk<SpendingPersonalityClassifier>(relaxed = true)
 
     val insightsEngine = InsightsEngine(

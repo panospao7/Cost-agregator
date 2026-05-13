@@ -96,7 +96,7 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
             cashFlowCalculator = mockk(),
         )
 
-        currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider = mockk())
+        currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider = mockk(relaxed = true))
     }
 
     @Test

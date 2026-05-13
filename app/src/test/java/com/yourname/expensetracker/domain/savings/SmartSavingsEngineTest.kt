@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
 import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
+import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -107,6 +108,13 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             val start = firstArg<Long>()
             if (start < now - (60L * 24 * 60 * 60 * 1000)) historicalExpenses else monthExpenses
         }
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            if (start < now - (60L * 24 * 60 * 60 * 1000))
+                historicalExpenses.map { it.toExpenseSnapshot() }
+            else
+                monthExpenses.map { it.toExpenseSnapshot() }
+        }
 
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult(400.0)
 
@@ -151,6 +159,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             Category(id = 2L, name = "Entertainment", icon = "🎬", color = "#FF0000")
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns mixedExpenses
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns mixedExpenses.map { it.toExpenseSnapshot() }
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult(400.0)
 
         val result = engine.calculateSafeToSaveAmount(
@@ -167,6 +176,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
     fun `no budgets and no spending history return zero safe amount`() = runTest {
         io.mockk.every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
         val result = engine.calculateSafeToSaveAmount(
@@ -189,6 +199,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             )
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns veryHigh
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns veryHigh.map { it.toExpenseSnapshot() }
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult(5000.0)
 
         val result = engine.calculateSafeToSaveAmount(
@@ -205,6 +216,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             listOf(budgetStatus(remaining = 300.0))
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         coEvery { categoryRepository.getAll() } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
@@ -227,6 +239,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             listOf(budgetStatus(remaining = 2000.0))
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         coEvery { categoryRepository.getAll() } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
@@ -252,6 +265,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             )
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         coEvery { categoryRepository.getAll() } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 

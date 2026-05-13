@@ -21,7 +21,7 @@ class ReceiptTransactionMatcherTest {
         expenseRepository = expenseRepository,
         merchantNormalizer = merchantNormalizer,
         stringDistance = StringDistanceUtils,
-        timeProvider = mockk(),
+        timeProvider = mockk(relaxed = true),
         receiptLinkService = mockk(),
     )
 

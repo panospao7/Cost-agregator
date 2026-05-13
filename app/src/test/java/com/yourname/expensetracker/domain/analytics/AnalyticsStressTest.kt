@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
@@ -65,6 +66,13 @@ class AnalyticsStressTest {
         }
 
         coEvery { expenseDao.getExpensesBetween(start, end) } returns expenses
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } answers {
+            val s = firstArg<Long>()
+            val e = secondArg<Long>()
+            val filtered = expenses.filter { it.date in s..e }
+            listOf(CurrencyTotal("EUR", filtered.sumOf { it.amount }, filtered.size))
+        }
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns emptyList()
 
         val repository = ExpenseRepository(
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),

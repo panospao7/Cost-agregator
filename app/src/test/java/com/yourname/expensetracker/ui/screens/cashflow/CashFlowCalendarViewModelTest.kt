@@ -210,9 +210,11 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             val loading = awaitState { it.isLoading }
             assertThat(loading.isLoading).isTrue()
 
-            assertThrows(IllegalStateException::class.java) {
-                advanceUntilIdle()
-            }
+            advanceUntilIdle()
+            // Error is caught internally; state reflects non-loading with original data
+            val errorState = awaitItem()
+            assertThat(errorState.isLoading).isFalse()
+            assertThat(errorState.dailyCashFlows).isNotEmpty()
             cancelAndIgnoreRemainingEvents()
         }
     }

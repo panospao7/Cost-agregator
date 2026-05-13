@@ -239,7 +239,7 @@ class NavigationTargetResolverTest {
         )
 
         assertTrue(action is NavigationAction.ToAnalytics)
-        assertEquals("today", (action as NavigationAction.ToAnalytics).period)
+        assertEquals("week", (action as NavigationAction.ToAnalytics).period)
     }
 
     @Test

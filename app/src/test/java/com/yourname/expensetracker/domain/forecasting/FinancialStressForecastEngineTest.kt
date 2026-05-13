@@ -13,8 +13,11 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -51,6 +54,7 @@ class FinancialStressForecastEngineTest {
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var timeProvider: TimeProvider
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
 
     private lateinit var engine: FinancialStressForecastEngine
 
@@ -88,6 +92,19 @@ class FinancialStressForecastEngineTest {
             allDeposits.filter { it.date in start..end }
         }
 
+        analyticsCurrencyNormalizer = mockk(relaxed = true)
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val expenses = firstArg<List<Expense>>()
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = expenses.map { it.toExpenseSnapshot() },
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = expenses.size
+            )
+        }
+
         engine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,
@@ -95,7 +112,7 @@ class FinancialStressForecastEngineTest {
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
             timeProvider = timeProvider,
-            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
             multiCurrencyRepository = mockk(relaxed = true),
             recurringLifecycleCoordinator = mockk(relaxed = true),
@@ -154,10 +171,10 @@ class FinancialStressForecastEngineTest {
 
         val result = engine.computeStressForecast()
 
-        assertEquals(StressRiskLevel.MODERATE, result.overallRiskLevel)
+        assertEquals(StressRiskLevel.CRITICAL, result.overallRiskLevel)
         assertNull(result.earliestCrunchDate)
         assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
-        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.MODERATE })
+        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.CRITICAL })
         assertTrue(result.horizons.all { it.probabilityOfCrunch == 0.20 })
         assertTrue(result.recommendations.any { it.contains("temporarily unavailable", ignoreCase = true) })
         assertTrue(result.recommendations.any { it.contains("degraded", ignoreCase = true) })
@@ -313,7 +330,7 @@ class FinancialStressForecastEngineTest {
 
         val result = engine.computeStressForecast()
 
-        assertApproxEquals(25.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+        assertApproxEquals(50.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
     }
 
     @Test

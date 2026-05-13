@@ -140,7 +140,7 @@ class DatabaseIntegrityTest {
                 createdAt = now
             )
         )
-        assertEquals("Duplicate dedupeKey insert should return 0 (IGNORE)", 0L, duplicateInsertId)
+        assertEquals("Duplicate dedupeKey insert should return -1 (IGNORE)", -1L, duplicateInsertId)
 
         // AND: still only 2 expenses after the ignored insert
         val afterDuplicate = db.expenseDao().getAllUncapped()

@@ -59,7 +59,7 @@ class MerchantNormalizerTest {
         coEvery { repository.getAliasByNormalizedKey(any()) } returns null
         coEvery { repository.getCanonicalBySearchKey("markethouse") } returns first
         coEvery { repository.getCanonicalBySearchKey("markethome") } returns best
-        coEvery { repository.getTopMerchants(any()) } returns listOf(first, best)
+        coEvery { repository.getTopMerchants(any<Int>()) } returns listOf(first, best)
 
         val result = normalizer.normalize("Market Hom", autoCreate = false)
 

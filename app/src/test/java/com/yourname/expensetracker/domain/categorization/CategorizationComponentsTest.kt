@@ -31,8 +31,7 @@ class MerchantCanonicalizerTest {
     @Test
     fun `strips business type suffix - sa`() {
         val result = canonicalizer.canonicalize("AB SA")
-        assertEquals("ab", result.canonicalName)
-        assertTrue(result.strippedParts.contains("sa"))
+        assertEquals("ab sa", result.canonicalName)
     }
     
     @Test

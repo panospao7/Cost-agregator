@@ -23,20 +23,20 @@ class DeterministicExpenseExportPagerTest {
         val pageTwo = listOf(expense(3L))
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(startDate, endDate, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, null)
         } returns pageOne
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(startDate, endDate, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, 2L)
         } returns pageTwo
 
         val result = pager.fetchAllBetween(startDate, endDate, pageSize)
 
         assertThat(result.map { it.id }).containsExactly(1L, 2L, 3L).inOrder()
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(startDate, endDate, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, null)
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(startDate, endDate, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, 2L)
         }
     }
 

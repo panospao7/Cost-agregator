@@ -22,7 +22,7 @@ class BudgetCalculatorGoldenTest : AnalyticsEngineTestBase() {
     fun `monthly calendar mode on march 15 returns march 1 to april 1 exclusive range`() {
         val now = atTime("2026-03-15", 14, 0, 0)
         every { timeProvider.now() } returns now
-        val budget = budget(periodMode = "MONTHLY", period = BudgetPeriod.MONTHLY, startDate = atTime("2026-02-10", 0, 0, 0))
+        val budget = budget(periodMode = "CALENDAR", period = BudgetPeriod.MONTHLY, startDate = atTime("2026-02-10", 0, 0, 0))
 
         val (start, end) = calculator.calculatePeriodRange(budget)
 

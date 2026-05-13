@@ -91,7 +91,7 @@ class ExpenseRepositoryTest {
         repository.updateExpenseCategory(expense, newCategoryId)
         
         // Assert: now delegated to TransactionLifecycleCoordinator
-        coVerify { transactionLifecycleCoordinator.updateCategory(expenseId, newCategoryId, "USER_EDIT") }
+        coVerify { transactionLifecycleCoordinator.updateCategory(eq(expenseId), eq(newCategoryId), any(), eq("USER_EDIT")) }
         coVerify { merchantCategoryRepository.learnPattern("Test Merchant", newCategoryId) }
     }
 
@@ -115,7 +115,7 @@ class ExpenseRepositoryTest {
         repository.updateExpenseMerchant(expense, newMerchant)
 
         // Assert: now delegated to TransactionLifecycleCoordinator
-        coVerify { transactionLifecycleCoordinator.updateMerchant(expenseId, newMerchant, "USER_EDIT") }
+        coVerify { transactionLifecycleCoordinator.updateMerchant(eq(expenseId), eq(newMerchant), any(), eq("USER_EDIT")) }
         coVerify { merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant) }
         coVerify { merchantCategoryRepository.learnPattern(newMerchant, 1L) }
     }

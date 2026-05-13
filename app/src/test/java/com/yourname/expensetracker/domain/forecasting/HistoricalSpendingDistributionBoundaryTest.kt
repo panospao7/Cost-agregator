@@ -3,8 +3,11 @@ package com.yourname.expensetracker.domain.forecasting
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -31,6 +34,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
 
     // ========================================================================
     // Helpers
@@ -55,6 +59,15 @@ class HistoricalSpendingDistributionBoundaryTest {
     fun setUp() {
         expenseRepository = mockk(relaxed = true)
         timeProvider = FakeTimeProvider(toEpochMs(2026, 4, 15, 12, 0)) // Wednesday
+        analyticsCurrencyNormalizer = mockk(relaxed = true)
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val expenses = firstArg<List<Expense>>()
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR", normalizedExpenses = emptyList(),
+                includedExpenses = expenses.map { it.toExpenseSnapshot() },
+                warnings = emptyList(), latestRateTimestamp = null, totalInputCount = expenses.size
+            )
+        }
     }
 
     // ========================================================================
@@ -222,7 +235,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = mockk(relaxed = true), currencySettingsRepository = mockk(relaxed = true))
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, currencySettingsRepository = mockk(relaxed = true))
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)
@@ -254,7 +267,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true), analyticsCurrencyNormalizer = mockk(relaxed = true))
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true), analyticsCurrencyNormalizer = analyticsCurrencyNormalizer)
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)
@@ -295,7 +308,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = mockk(relaxed = true), currencySettingsRepository = mockk(relaxed = true))
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, currencySettingsRepository = mockk(relaxed = true))
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)

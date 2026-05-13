@@ -254,7 +254,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             Unit
         }
 
-        coEvery { savingsGoalRepository.addToGoalAmount(any(), any()) } coAnswers {
+        coEvery { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) } coAnswers {
             val goalId = invocation.args[0] as Long
             val delta = invocation.args[1] as Double
             val exists = goalsFlow.value.any { it.id == goalId }
