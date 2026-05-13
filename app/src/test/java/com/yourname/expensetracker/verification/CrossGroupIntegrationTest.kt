@@ -139,7 +139,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             dayOfWeekAnalyzer = DayOfWeekAnalyzer()
         )
 
-        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(), mockk(), Dispatchers.Unconfined)
+        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(), Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()
         val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter())
         advancedEngine = AdvancedAnalyticsEngine(
@@ -249,7 +249,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = mockk(relaxed = true),
             timeProvider = timeProvider,
-            multiCurrencyRepository = mockk(),
+            multiCurrencyRepository = mockk(relaxed = true),
             healthCalculator = FinancialHealthCalculator(timeProvider, localAnalyticsCurrencyNormalizer, localCurrencySettingsRepository),
             healthScoreV2 = healthScoreV2,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
@@ -498,10 +498,10 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             },
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined,
-            analyticsCurrencyNormalizer = mockk(),
-            expenseRepository = mockk(),
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            expenseRepository = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
             writeBarrier = mockk(relaxed = true)
         )
 

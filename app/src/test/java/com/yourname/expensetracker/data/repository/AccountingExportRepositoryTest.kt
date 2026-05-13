@@ -83,14 +83,15 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     // ── Helpers for production-path tests ──────────────────────────────────
 
     /**
-     * Creates a mocked [Context] whose [Context.getCacheDir] returns a real
-     * temporary directory so that [AccountingExportRepository.exportExpenses]
+     * Creates a mocked [Context] whose [Context.cacheDir] and [Context.filesDir]
+     * return a real temporary directory so that [AccountingExportRepository.exportExpenses]
      * can write the export file.  [FileProvider.getUriForFile] is statically
      * mocked to return a dummy [Uri].
      */
     private fun fakeContext(): Context {
         val ctx: Context = mockk(relaxed = true)
         every { ctx.cacheDir } returns tempCacheDir
+        every { ctx.filesDir } returns tempCacheDir
         every { ctx.packageName } returns "com.yourname.expensetracker.test"
 
         mockkStatic(FileProvider::class)

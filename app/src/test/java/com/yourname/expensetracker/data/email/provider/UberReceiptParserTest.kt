@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.data.email.provider
+﻿package com.yourname.expensetracker.data.email.provider
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -23,7 +23,7 @@ class UberReceiptParserTest {
                 Uber trip receipt
                 Total ${'$'}23.45
                 Your driver: Alex
-                9:15 PM · March 07
+                9:15 PM Â· March 07
                 Trip ID: ride-123
             """.trimIndent(),
             receivedAt = receivedAt
@@ -39,7 +39,7 @@ class UberReceiptParserTest {
         val receipt = parser.parse(
             emailBody = """
                 Uber trip receipt
-                Total €12,34
+                Total â‚¬12,34
                 Trip date: 15 mars 2026
                 Trip ID: ride-456
             """.trimIndent(),
@@ -57,7 +57,7 @@ class UberReceiptParserTest {
             emailBody = """
                 Uber Eats receipt
                 Restaurant: Burger Place
-                Order Total 18,90 €
+                Order Total 18,90 â‚¬
                 Order date: 15 mars 2026
                 Order ID: eats-789
             """.trimIndent(),
@@ -77,7 +77,7 @@ class UberReceiptParserTest {
             emailBody = """
                 Uber trip receipt
                 Total ${'$'}11.00
-                9:15 PM · March 07
+                9:15 PM Â· March 07
                 Trip ID: ride-anchored
             """.trimIndent(),
             receivedAt = receivedAt
@@ -94,7 +94,7 @@ class UberReceiptParserTest {
             emailBody = """
                 Uber trip receipt
                 Total ${'$'}19.50
-                7:40 PM · December 31
+                7:40 PM Â· December 31
                 Trip ID: ride-new-year
             """.trimIndent(),
             receivedAt = receivedAt
@@ -123,7 +123,7 @@ class UberReceiptParserTest {
 
     private fun expectedLocalDateMillis(value: String): Long {
         return LocalDate.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
-            .atStartOfDay(ZoneId.systemDefault())
+            .atStartOfDay(TimeZone.getTimeZone("UTC").toZoneId())
             .toInstant()
             .toEpochMilli()
     }
@@ -140,3 +140,4 @@ class UberReceiptParserTest {
         }.timeInMillis
     }
 }
+

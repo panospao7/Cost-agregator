@@ -704,10 +704,14 @@ class ReceiptParser @Inject constructor(
         // Determine whether to try DD/MM or MM/DD first based on the device locale.
         // Countries using DD/MM (most of world): Greece, UK, Australia, etc.
         // Countries using MM/DD: US, Philippines, etc.
+        // NOTE: Use 'uuuu' (proleptic year) instead of 'yyyy' (year-of-era) because
+        //       ResolverStyle.STRICT + 'yyyy' produces YEAR_OF_ERA without ERA, which
+        //       cannot be converted to YEAR by LocalDate.from(). Using 'uuuu' avoids
+        //       this issue entirely and is unambiguous for positive years.
         val locale = Locale.getDefault()
         val isMonthFirst = locale.country == "US" || locale.country == "PH"
-        val firstFormat = if (isMonthFirst) "MM/dd/yyyy" else "dd/MM/yyyy"
-        val secondFormat = if (isMonthFirst) "dd/MM/yyyy" else "MM/dd/yyyy"
+        val firstFormat = if (isMonthFirst) "MM/dd/uuuu" else "dd/MM/uuuu"
+        val secondFormat = if (isMonthFirst) "dd/MM/uuuu" else "MM/dd/uuuu"
 
         val firstFormatter = DateTimeFormatter.ofPattern(firstFormat, Locale.US)
             .withResolverStyle(ResolverStyle.STRICT)

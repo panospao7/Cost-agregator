@@ -10,10 +10,10 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import dagger.Lazy
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
+import io.mockk.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -29,12 +29,40 @@ class SharedExpenseBudgetOffsetEngineTest {
 
     @Before
     fun setup() {
+        val localCurrencyConverter = mockk<CurrencyConverter>(relaxed = true)
+        coEvery { localCurrencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>()) } answers {
+            val amount = firstArg<Double>()
+            val from = secondArg<String>()
+            val to = thirdArg<String>()
+            val at = arg<Long>(3)
+            com.yourname.expensetracker.domain.currency.ConversionResult(
+                originalAmount = amount,
+                originalCurrency = from,
+                convertedAmount = amount,
+                targetCurrency = to,
+                rateUsed = 1.0,
+                timestamp = at
+            )
+        }
+        coEvery { localCurrencyConverter.convert(any<Double>(), any<String>(), any<String>()) } answers {
+            val amount = firstArg<Double>()
+            val from = secondArg<String>()
+            val to = thirdArg<String>()
+            com.yourname.expensetracker.domain.currency.ConversionResult(
+                originalAmount = amount,
+                originalCurrency = from,
+                convertedAmount = amount,
+                targetCurrency = to,
+                rateUsed = 1.0,
+                timestamp = 0L
+            )
+        }
         engine = SharedExpenseBudgetOffsetEngine(
             groupsRepository = object : Lazy<GroupsRepository> { override fun get() = groupsRepository },
             expenseRepository = expenseRepository,
             ioDispatcher = Dispatchers.Unconfined,
             currencySettingsRepository = mockk(),
-            currencyConverter = mockk(relaxed = true),
+            currencyConverter = localCurrencyConverter,
         )
     }
 

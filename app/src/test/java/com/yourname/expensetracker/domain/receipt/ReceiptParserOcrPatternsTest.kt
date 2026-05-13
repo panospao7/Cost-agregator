@@ -18,15 +18,20 @@ import java.util.Calendar
  * 3. Check output for pass/fail results on each section
  */
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.every
 import io.mockk.mockk
 
 class ReceiptParserOcrPatternsTest {
 
     private lateinit var parser: ReceiptParser
+    private lateinit var timeProvider: TimeProvider
 
     @Before
     fun setup() {
-        parser = ReceiptParser(MerchantRulesRepository(), timeProvider = mockk())
+        timeProvider = mockk()
+        every { timeProvider.now() } returns 1776297600000L // May 2026
+        parser = ReceiptParser(MerchantRulesRepository(), timeProvider = timeProvider)
     }
 
     // ============================================

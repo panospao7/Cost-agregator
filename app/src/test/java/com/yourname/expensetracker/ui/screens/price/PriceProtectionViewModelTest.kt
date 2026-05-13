@@ -4,6 +4,7 @@ import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
+import android.content.Context
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,7 +37,7 @@ class PriceProtectionViewModelTest {
         
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
-        viewModel = PriceProtectionViewModel(priceTracker, currencySettingsRepository = currencyRepo, context = mockk())
+        viewModel = PriceProtectionViewModel(priceTracker, currencySettingsRepository = currencyRepo, context = mockk<Context>(relaxed = true))
     }
 
     @After
@@ -87,10 +88,14 @@ class PriceProtectionViewModelTest {
 
     @Test
     fun `loadData monitors price drops`() = runTest {
-        viewModel.loadData()
-        advanceUntilIdle()
-        
-        verify { priceTracker.monitorPriceDrops() }
+        // Subscribe to priceDrops first so the stateIn upstream is active
+        viewModel.priceDrops.test {
+            viewModel.loadData()
+            advanceUntilIdle()
+            
+            coVerify { priceTracker.monitorPriceDrops() }
+            cancelAndConsumeRemainingEvents()
+        }
     }
 
     @Test
@@ -98,12 +103,17 @@ class PriceProtectionViewModelTest {
         val mockDrops = createMockPriceDrops()
         every { priceTracker.monitorPriceDrops() } returns flowOf(mockDrops)
         
-        viewModel.refreshPriceDrops()
-        advanceUntilIdle()
-        
         viewModel.priceDrops.test {
+            // Skip initial empty emission
+            val initial = awaitItem()
+            assertThat(initial).isEmpty()
+            
+            viewModel.refreshPriceDrops()
+            advanceUntilIdle()
+            
             val drops = awaitItem()
             assertThat(drops).hasSize(2)
+            cancelAndConsumeRemainingEvents()
         }
     }
 
@@ -127,13 +137,20 @@ class PriceProtectionViewModelTest {
             emptyList()
         }
         
-        viewModel.loadData()
-        
         viewModel.isLoading.test {
-            assertThat(awaitItem()).isTrue()
+            // Skip initial false
+            val initial = awaitItem()
+            assertThat(initial).isFalse()
+            
+            viewModel.loadData()
+            
+            val loading = awaitItem()
+            assertThat(loading).isTrue()
             
             advanceTimeBy(100)
-            assertThat(awaitItem()).isFalse()
+            val done = awaitItem()
+            assertThat(done).isFalse()
+            cancelAndConsumeRemainingEvents()
         }
     }
 
@@ -158,18 +175,23 @@ class PriceProtectionViewModelTest {
     @Test
     fun `price drops contain savings information`() = runTest {
         val drops = listOf(
-            createPriceDropAlert("Laptop", 100.0, 10.0, 10.0)
+            createPriceDropAlert("Laptop", dropAmount = 10.0, savings = 10.0, percent = 10.0)
         )
         every { priceTracker.monitorPriceDrops() } returns flowOf(drops)
         
-        viewModel.refreshPriceDrops()
-        advanceUntilIdle()
-        
         viewModel.priceDrops.test {
+            // Skip initial empty emission
+            val initial = awaitItem()
+            assertThat(initial).isEmpty()
+            
+            viewModel.refreshPriceDrops()
+            advanceUntilIdle()
+            
             val result = awaitItem()
             assertThat(result).hasSize(1)
             assertThat(result[0].priceDrop).isEqualTo(10.0)
             assertThat(result[0].priceDropPercent).isEqualTo(10.0)
+            cancelAndConsumeRemainingEvents()
         }
     }
 

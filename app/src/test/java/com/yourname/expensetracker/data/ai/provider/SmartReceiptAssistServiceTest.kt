@@ -12,6 +12,8 @@ import com.yourname.expensetracker.domain.ai.model.SuggestedValue
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -30,6 +32,8 @@ class SmartReceiptAssistServiceTest {
         val aiCapabilityRouter = mockk<AiCapabilityRouter>()
         val aiSettingsRepository = mockk<AiSettingsRepository>()
         val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         val settings = AiSettings(
             aiEnabled = true,
@@ -67,7 +71,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
 
         val input = ReceiptAssistInput(
@@ -100,6 +104,8 @@ class SmartReceiptAssistServiceTest {
         val aiCapabilityRouter = mockk<AiCapabilityRouter>()
         val aiSettingsRepository = mockk<AiSettingsRepository>()
         val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
@@ -128,7 +134,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
 
         val result = service.suggest(defaultInput())
@@ -146,6 +152,8 @@ class SmartReceiptAssistServiceTest {
         val aiCapabilityRouter = mockk<AiCapabilityRouter>()
         val aiSettingsRepository = mockk<AiSettingsRepository>()
         val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
@@ -167,7 +175,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
 
         val result = service.suggest(defaultInput())
@@ -186,6 +194,8 @@ class SmartReceiptAssistServiceTest {
         val aiCapabilityRouter = mockk<AiCapabilityRouter>()
         val aiSettingsRepository = mockk<AiSettingsRepository>()
         val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
@@ -210,7 +220,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
 
         val result = service.suggest(defaultInput())
@@ -229,6 +239,8 @@ class SmartReceiptAssistServiceTest {
         val aiCapabilityRouter = mockk<AiCapabilityRouter>()
         val aiSettingsRepository = mockk<AiSettingsRepository>()
         val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
@@ -258,7 +270,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter,
             aiSettingsRepository,
             aiPolicy,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
 
         val result = service.suggest(defaultInput())
@@ -280,6 +292,8 @@ class SmartReceiptAssistServiceTest {
         val aiCapabilityRouter = mockk<AiCapabilityRouter>()
         val aiSettingsRepository = mockk<AiSettingsRepository>()
         val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
@@ -298,7 +312,7 @@ class SmartReceiptAssistServiceTest {
             AiServiceResult.Failure(AiServiceError.ParseError("bad parse")),
             AiServiceResult.Failure(AiServiceError.ParseError("bad parse"))
         )
-        coEvery { cloudReceiptAssistService.suggest(any()) } returns successfulSuggestionResult()
+        coEvery { noOpReceiptAssistService.suggest(any()) } returns successfulSuggestionResult()
 
         val service = SmartReceiptAssistService(
             cloudReceiptAssistService,
@@ -307,7 +321,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter,
             aiSettingsRepository,
             aiPolicy,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
 
         val result = service.suggest(defaultInput())
@@ -315,10 +329,11 @@ class SmartReceiptAssistServiceTest {
         assertTrue(result is AiServiceResult.Success)
         val suggestion = (result as AiServiceResult.Success).value
         assertEquals("ON_DEVICE_VISION", suggestion.attemptDetails[0].method)
-        assertEquals("CLOUD_VISION", suggestion.attemptDetails[1].method)
-        assertTrue(suggestion.usedImageInput)
-        coVerify(atLeast = 1) { onDeviceReceiptAssistService.suggest(any()) }
-        coVerify(atLeast = 1) { cloudReceiptAssistService.suggest(any()) }
+        assertEquals("ON_DEVICE_TEXT", suggestion.attemptDetails[1].method)
+        assertFalse(suggestion.usedImageInput)
+        coVerify(exactly = 2) { onDeviceReceiptAssistService.suggest(any()) }
+        coVerify(exactly = 0) { cloudReceiptAssistService.suggest(any()) }
+        coVerify(exactly = 1) { noOpReceiptAssistService.suggest(any()) }
     }
 
     @Test
@@ -329,6 +344,8 @@ class SmartReceiptAssistServiceTest {
         val aiCapabilityRouter = mockk<AiCapabilityRouter>()
         val aiSettingsRepository = mockk<AiSettingsRepository>()
         val aiPolicy = mockk<AiPolicy>()
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
@@ -354,7 +371,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter,
             aiSettingsRepository,
             aiPolicy,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
 
         val result = service.suggest(defaultInput())
