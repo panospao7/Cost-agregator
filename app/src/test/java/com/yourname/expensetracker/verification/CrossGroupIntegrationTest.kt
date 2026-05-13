@@ -141,7 +141,13 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             dayOfWeekAnalyzer = DayOfWeekAnalyzer()
         )
 
-        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(), Dispatchers.Unconfined)
+        val mcRepository = com.yourname.expensetracker.data.repository.MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = testCurrencyConverter(),
+            timeProvider = timeProvider,
+            currencySettingsRepository = TestCurrencySettingsRepository()
+        )
+        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, mcRepository, mockk(relaxed = true), Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()
         val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter())
         advancedEngine = AdvancedAnalyticsEngine(
