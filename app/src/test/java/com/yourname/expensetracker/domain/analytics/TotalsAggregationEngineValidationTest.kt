@@ -2,24 +2,26 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
-import com.yourname.expensetracker.data.database.dao.DailyTotal
-import com.yourname.expensetracker.data.database.dao.MonthlyTotal
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MonthMoneyAggregate
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.data.repository.PeriodMoneyAggregate
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodType
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -45,6 +47,7 @@ class TotalsAggregationEngineValidationTest {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var timeProvider: TimeProvider
     private lateinit var multiCurrencyRepo: MultiCurrencyRepository
+    private lateinit var categoryRepository: CategoryRepository
 
     // Helper to create timestamps for specific dates
     private fun createDate(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long {
@@ -79,6 +82,10 @@ class TotalsAggregationEngineValidationTest {
         expenseRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         multiCurrencyRepo = mockk()
+        categoryRepository = mockk(relaxed = true)
+
+        // Must emit at least one value for reactiveFlow / reactiveCategoryBreakdownFlow to work
+        every { expenseRepository.getTotalSpent() } returns flowOf(null)
 
         coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
         coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns emptyList()
@@ -86,8 +93,9 @@ class TotalsAggregationEngineValidationTest {
         coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns emptyList()
         coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns emptyList()
         coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns emptyList()
+        coEvery { categoryRepository.getAll() } returns emptyList()
 
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider, multiCurrencyRepo, mockk(relaxed = true), Dispatchers.Unconfined)
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, multiCurrencyRepo, categoryRepository, Dispatchers.Unconfined)
     }
 
     // ========== SCENARIO 1: Known Data Verification ==========
@@ -98,33 +106,14 @@ class TotalsAggregationEngineValidationTest {
         val referenceDate = createDate(2024, 4, 15, 12, 0)
         every { timeProvider.now() } returns referenceDate
         
-        // Mock monthly totals for current year
-        val monthlyTotals = listOf(
-            MonthlyTotal(
-                monthKey = "2024-01",
-                startDate = createDate(2024, 1, 1),
-                endDate = createDate(2024, 2, 1),
-                total = 1500.0,
-                txCount = 15
-            ),
-            MonthlyTotal(
-                monthKey = "2024-02",
-                startDate = createDate(2024, 2, 1),
-                endDate = createDate(2024, 3, 1),
-                total = 2000.0,
-                txCount = 20
-            ),
-            MonthlyTotal(
-                monthKey = "2024-03",
-                startDate = createDate(2024, 3, 1),
-                endDate = createDate(2024, 4, 1),
-                total = 1800.0,
-                txCount = 18
-            )
+        // Mock monthly totals for current year via MultiCurrencyRepository
+        val monthlyAggregates = listOf(
+            MonthMoneyAggregate("2024-01", MoneyAggregate.singleCurrency(1500.0, CurrencyCode("EUR"), 15)),
+            MonthMoneyAggregate("2024-02", MoneyAggregate.singleCurrency(2000.0, CurrencyCode("EUR"), 20)),
+            MonthMoneyAggregate("2024-03", MoneyAggregate.singleCurrency(1800.0, CurrencyCode("EUR"), 18))
         )
         
-        coEvery { expenseRepository.getMonthlyTotalsForPeriod(any(), any()) } returns monthlyTotals
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 5300.0
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns monthlyAggregates
         
         // When: Get monthly totals for 2024
         val result = engine.getMonthlyTotals(2024).first()
@@ -146,32 +135,18 @@ class TotalsAggregationEngineValidationTest {
         val referenceDate = createDate(2024, 4, 15, 12, 0)
         every { timeProvider.now() } returns referenceDate
         
-        // Mock daily totals for a week
-        val dailyTotals = listOf(
-            DailyTotal(
-                dayEpoch = createDate(2024, 4, 15),
-                startDate = createDate(2024, 4, 15),
-                endDate = createDate(2024, 4, 16),
-                total = 100.0,
-                txCount = 2
-            ),
-            DailyTotal(
-                dayEpoch = createDate(2024, 4, 16),
-                startDate = createDate(2024, 4, 16),
-                endDate = createDate(2024, 4, 17),
-                total = 150.0,
-                txCount = 3
-            ),
-            DailyTotal(
-                dayEpoch = createDate(2024, 4, 17),
-                startDate = createDate(2024, 4, 17),
-                endDate = createDate(2024, 4, 18),
-                total = 200.0,
-                txCount = 4
-            )
+        // Mock daily totals for a full week via MultiCurrencyRepository
+        val dailyAggregates = listOf(
+            PeriodMoneyAggregate("2024-04-15", MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), 2)),
+            PeriodMoneyAggregate("2024-04-16", MoneyAggregate.singleCurrency(150.0, CurrencyCode("EUR"), 3)),
+            PeriodMoneyAggregate("2024-04-17", MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR"), 4)),
+            PeriodMoneyAggregate("2024-04-18", MoneyAggregate.singleCurrency(0.0, CurrencyCode("EUR"), 0)),
+            PeriodMoneyAggregate("2024-04-19", MoneyAggregate.singleCurrency(0.0, CurrencyCode("EUR"), 0)),
+            PeriodMoneyAggregate("2024-04-20", MoneyAggregate.singleCurrency(0.0, CurrencyCode("EUR"), 0)),
+            PeriodMoneyAggregate("2024-04-21", MoneyAggregate.singleCurrency(0.0, CurrencyCode("EUR"), 0))
         )
         
-        coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns dailyTotals
+        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns dailyAggregates
         
         // When: Get daily totals for a week
         val startMs = createDate(2024, 4, 15)
@@ -194,20 +169,13 @@ class TotalsAggregationEngineValidationTest {
     @Test
     fun `transaction at midnight is included in correct day`() = runTest {
         // Given: Transaction at exactly midnight
-        val transactionDate = createDate(2024, 4, 15, 0, 0)
         
         // Mock daily totals that include this transaction
-        val dailyTotals = listOf(
-            DailyTotal(
-                dayEpoch = createDate(2024, 4, 15),
-                startDate = createDate(2024, 4, 15),
-                endDate = createDate(2024, 4, 16),
-                total = 100.0,
-                txCount = 1
-            )
+        val dailyAggregates = listOf(
+            PeriodMoneyAggregate("2024-04-15", MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), 1))
         )
         
-        coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns dailyTotals
+        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns dailyAggregates
         
         // When: Get daily totals for the day containing midnight
         val startMs = createDate(2024, 4, 15)
@@ -228,17 +196,11 @@ class TotalsAggregationEngineValidationTest {
         val transactionDate = cal.timeInMillis
         
         // Mock daily totals that include this transaction
-        val dailyTotals = listOf(
-            DailyTotal(
-                dayEpoch = createDate(2024, 4, 15),
-                startDate = createDate(2024, 4, 15),
-                endDate = createDate(2024, 4, 16),
-                total = 100.0,
-                txCount = 1
-            )
+        val dailyAggregates = listOf(
+            PeriodMoneyAggregate("2024-04-15", MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), 1))
         )
         
-        coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns dailyTotals
+        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns dailyAggregates
         
         // When: Get daily totals for the day containing 23:59:59
         val startMs = createDate(2024, 4, 15)
@@ -255,8 +217,7 @@ class TotalsAggregationEngineValidationTest {
     @Test
     fun `empty period returns zero totals`() = runTest {
         // Given: No transactions in period
-        coEvery { expenseRepository.getMonthlyTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns emptyList()
         
         // When: Get monthly totals
         val result = engine.getMonthlyTotals(2024).first()
@@ -269,7 +230,7 @@ class TotalsAggregationEngineValidationTest {
     @Test
     fun `category breakdown handles zero grand total`() = runTest {
         // Given: No transactions (grand total = 0)
-        coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns emptyMap()
         
         // When: Get category breakdown
         val startMs = createDate(2024, 4, 1)
@@ -288,13 +249,15 @@ class TotalsAggregationEngineValidationTest {
         val referenceDate = createDate(2024, 4, 15, 12, 0)
         every { timeProvider.now() } returns referenceDate
         
-        // Mock average daily spend
-        coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 150.0
+        // Mock total spend for the last 30 days via MultiCurrencyRepository.
+        // average = total / daysCount, so total = 150.0 * 30 = 4500.0
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } returns
+            MoneyAggregate.singleCurrency(4500.0, CurrencyCode("EUR"), 30)
         
         // When: Calculate average for DAY period type
         val average = engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
         
-        // Then: Should return mocked average
+        // Then: Should return computed average (4500 / 30 = 150)
         assertEquals(150.0, average, 0.01)
     }
 
@@ -304,32 +267,14 @@ class TotalsAggregationEngineValidationTest {
         val referenceDate = createDate(2024, 4, 15, 12, 0)
         every { timeProvider.now() } returns referenceDate
         
-        // Mock monthly totals for last 12 months
-        val monthlyTotals = listOf(
-            MonthlyTotal(
-                monthKey = "2023-05",
-                startDate = createDate(2023, 5, 1),
-                endDate = createDate(2023, 6, 1),
-                total = 1000.0,
-                txCount = 10
-            ),
-            MonthlyTotal(
-                monthKey = "2023-06",
-                startDate = createDate(2023, 6, 1),
-                endDate = createDate(2023, 7, 1),
-                total = 1200.0,
-                txCount = 12
-            ),
-            MonthlyTotal(
-                monthKey = "2023-07",
-                startDate = createDate(2023, 7, 1),
-                endDate = createDate(2023, 8, 1),
-                total = 1100.0,
-                txCount = 11
-            )
+        // Mock monthly totals for last 12 months via MultiCurrencyRepository
+        val monthlyAggregates = listOf(
+            MonthMoneyAggregate("2023-05", MoneyAggregate.singleCurrency(1000.0, CurrencyCode("EUR"), 10)),
+            MonthMoneyAggregate("2023-06", MoneyAggregate.singleCurrency(1200.0, CurrencyCode("EUR"), 12)),
+            MonthMoneyAggregate("2023-07", MoneyAggregate.singleCurrency(1100.0, CurrencyCode("EUR"), 11))
         )
         
-        coEvery { expenseRepository.getMonthlyTotalsForPeriod(any(), any()) } returns monthlyTotals
+        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns monthlyAggregates
         
         // When: Calculate average for MONTH period type
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
@@ -345,31 +290,13 @@ class TotalsAggregationEngineValidationTest {
         every { timeProvider.now() } returns referenceDate
         
         // Mock monthly totals for last 12 months, with current month
-        val monthlyTotals = listOf(
-            MonthlyTotal(
-                monthKey = "2023-05",
-                startDate = createDate(2023, 5, 1),
-                endDate = createDate(2023, 6, 1),
-                total = 1000.0,
-                txCount = 10
-            ),
-            MonthlyTotal(
-                monthKey = "2023-06",
-                startDate = createDate(2023, 6, 1),
-                endDate = createDate(2023, 7, 1),
-                total = 1200.0,
-                txCount = 12
-            ),
-            MonthlyTotal(
-                monthKey = "2024-04",
-                startDate = createDate(2024, 4, 1),
-                endDate = createDate(2024, 5, 1),
-                total = 800.0, // Current month (partial)
-                txCount = 8
-            )
+        val monthlyAggregates = listOf(
+            MonthMoneyAggregate("2023-05", MoneyAggregate.singleCurrency(1000.0, CurrencyCode("EUR"), 10)),
+            MonthMoneyAggregate("2023-06", MoneyAggregate.singleCurrency(1200.0, CurrencyCode("EUR"), 12)),
+            MonthMoneyAggregate("2024-04", MoneyAggregate.singleCurrency(800.0, CurrencyCode("EUR"), 8)) // Current month (partial)
         )
         
-        coEvery { expenseRepository.getMonthlyTotalsForPeriod(any(), any()) } returns monthlyTotals
+        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns monthlyAggregates
         
         // When: Calculate average for MONTH period type, excluding current month
         val average = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
@@ -382,35 +309,21 @@ class TotalsAggregationEngineValidationTest {
 
     @Test
     fun `category breakdown percentages sum to 100`() = runTest {
-        // Given: Category breakdown results
-        val categoryResults = listOf(
-            CategoryTotalResult(
-                id = 1,
-                name = "Food",
-                icon = "food",
-                color = "#FF0000",
-                total = 500.0,
-                txCount = 5
-            ),
-            CategoryTotalResult(
-                id = 2,
-                name = "Transport",
-                icon = "transport",
-                color = "#00FF00",
-                total = 300.0,
-                txCount = 3
-            ),
-            CategoryTotalResult(
-                id = 3,
-                name = "Entertainment",
-                icon = "entertainment",
-                color = "#0000FF",
-                total = 200.0,
-                txCount = 2
-            )
+        // Given: Category breakdown results via MultiCurrencyRepository
+        val categoryAggregates = mapOf<Long?, MoneyAggregate>(
+            1L to MoneyAggregate.singleCurrency(500.0, CurrencyCode("EUR"), 5),
+            2L to MoneyAggregate.singleCurrency(300.0, CurrencyCode("EUR"), 3),
+            3L to MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR"), 2)
         )
         
-        coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
+        val categories = listOf(
+            Category(id = 1, name = "Food", icon = "food", color = "#FF0000"),
+            Category(id = 2, name = "Transport", icon = "vehicle", color = "#00FF00"),
+            Category(id = 3, name = "Entertainment", icon = "entertain", color = "#0000FF")
+        )
+        
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns categoryAggregates
+        coEvery { categoryRepository.getAll() } returns categories
         
         // When: Get category breakdown
         val startMs = createDate(2024, 4, 1)
@@ -422,26 +335,30 @@ class TotalsAggregationEngineValidationTest {
         assertEquals(100.0, totalPercentage, 0.01)
         
         // Verify individual percentages
-        assertEquals(50.0, result[0].percentageOfTotal, 0.01) // 500/1000 = 50%
-        assertEquals(30.0, result[1].percentageOfTotal, 0.01) // 300/1000 = 30%
-        assertEquals(20.0, result[2].percentageOfTotal, 0.01) // 200/1000 = 20%
+        val foodResult = result.find { it.category.name == "Food" }
+        val transportResult = result.find { it.category.name == "Transport" }
+        val entertainmentResult = result.find { it.category.name == "Entertainment" }
+        assertNotNull(foodResult)
+        assertNotNull(transportResult)
+        assertNotNull(entertainmentResult)
+        assertEquals(50.0, foodResult!!.percentageOfTotal, 0.01) // 500/1000 = 50%
+        assertEquals(30.0, transportResult!!.percentageOfTotal, 0.01) // 300/1000 = 30%
+        assertEquals(20.0, entertainmentResult!!.percentageOfTotal, 0.01) // 200/1000 = 20%
     }
 
     @Test
     fun `category breakdown with single category has 100 percent`() = runTest {
         // Given: Only one category
-        val categoryResults = listOf(
-            CategoryTotalResult(
-                id = 1,
-                name = "Food",
-                icon = "food",
-                color = "#FF0000",
-                total = 1000.0,
-                txCount = 10
-            )
+        val categoryAggregates = mapOf<Long?, MoneyAggregate>(
+            1L to MoneyAggregate.singleCurrency(1000.0, CurrencyCode("EUR"), 10)
         )
         
-        coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
+        val categories = listOf(
+            Category(id = 1, name = "Food", icon = "food", color = "#FF0000")
+        )
+        
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns categoryAggregates
+        coEvery { categoryRepository.getAll() } returns categories
         
         // When: Get category breakdown
         val startMs = createDate(2024, 4, 1)
@@ -455,12 +372,19 @@ class TotalsAggregationEngineValidationTest {
 
     @Test
     fun `category_percentage_rounding_sum_invariant`() = runTest {
-        val categoryResults = listOf(
-            CategoryTotalResult(id = 1, name = "A", icon = "a", color = "#111111", total = 33.33, txCount = 1),
-            CategoryTotalResult(id = 2, name = "B", icon = "b", color = "#222222", total = 33.33, txCount = 1),
-            CategoryTotalResult(id = 3, name = "C", icon = "c", color = "#333333", total = 33.33, txCount = 1)
+        val categoryAggregates = mapOf<Long?, MoneyAggregate>(
+            1L to MoneyAggregate.singleCurrency(33.33, CurrencyCode("EUR"), 1),
+            2L to MoneyAggregate.singleCurrency(33.33, CurrencyCode("EUR"), 1),
+            3L to MoneyAggregate.singleCurrency(33.33, CurrencyCode("EUR"), 1)
         )
-        coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
+        val categories = listOf(
+            Category(id = 1, name = "A", icon = "a", color = "#111111"),
+            Category(id = 2, name = "B", icon = "b", color = "#222222"),
+            Category(id = 3, name = "C", icon = "c", color = "#333333")
+        )
+        // These icons are all 1 char, well within the 10-char limit
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns categoryAggregates
+        coEvery { categoryRepository.getAll() } returns categories
 
         val result = engine.getCategoryBreakdown(createDate(2024, 4, 1), createDate(2024, 5, 1), "April 2024").first()
         val roundedPercentSum = result.sumOf { kotlin.math.round(it.percentageOfTotal * 100) / 100.0 }
@@ -518,28 +442,17 @@ class TotalsAggregationEngineValidationTest {
         val referenceDate = createDate(2024, 4, 15, 12, 0)
         every { timeProvider.now() } returns referenceDate
         
-        // Mock yearly totals (some with zero)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } answers {
+        // Mock yearly totals via MultiCurrencyRepository (amount + tx count)
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
             when (year) {
-                2021 -> 5000.0
-                2022 -> 6000.0
-                2023 -> 7000.0
-                2024 -> 3000.0 // Current year (partial)
-                else -> 0.0
-            }
-        }
-        
-        coEvery { expenseRepository.getTransactionCountForPeriod(any(), any()) } answers {
-            val startMs = firstArg<Long>()
-            val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
-            when (year) {
-                2021 -> 50
-                2022 -> 60
-                2023 -> 70
-                2024 -> 30
-                else -> 0
+                2020 -> MoneyAggregate.empty(CurrencyCode("EUR"))
+                2021 -> MoneyAggregate.singleCurrency(5000.0, CurrencyCode("EUR"), 50)
+                2022 -> MoneyAggregate.singleCurrency(6000.0, CurrencyCode("EUR"), 60)
+                2023 -> MoneyAggregate.singleCurrency(7000.0, CurrencyCode("EUR"), 70)
+                2024 -> MoneyAggregate.singleCurrency(3000.0, CurrencyCode("EUR"), 30) // Current year (partial)
+                else -> MoneyAggregate.empty(CurrencyCode("EUR"))
             }
         }
         
@@ -569,27 +482,16 @@ class TotalsAggregationEngineValidationTest {
         val referenceDate = createDate(2024, 4, 15, 12, 0)
         every { timeProvider.now() } returns referenceDate
 
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
             when (year) {
-                2021 -> 5000.0
-                2022 -> 6000.0
-                2023 -> 7000.0
-                2024 -> 1500.0 // Partial current year — must NOT be in average
-                else -> 0.0
-            }
-        }
-
-        coEvery { expenseRepository.getTransactionCountForPeriod(any(), any()) } answers {
-            val startMs = firstArg<Long>()
-            val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
-            when (year) {
-                2021 -> 50
-                2022 -> 60
-                2023 -> 70
-                2024 -> 15
-                else -> 0
+                2020 -> MoneyAggregate.empty(CurrencyCode("EUR"))
+                2021 -> MoneyAggregate.singleCurrency(5000.0, CurrencyCode("EUR"), 50)
+                2022 -> MoneyAggregate.singleCurrency(6000.0, CurrencyCode("EUR"), 60)
+                2023 -> MoneyAggregate.singleCurrency(7000.0, CurrencyCode("EUR"), 70)
+                2024 -> MoneyAggregate.singleCurrency(1500.0, CurrencyCode("EUR"), 15) // Partial current year — must NOT be in average
+                else -> MoneyAggregate.empty(CurrencyCode("EUR"))
             }
         }
 
@@ -621,28 +523,19 @@ class TotalsAggregationEngineValidationTest {
     @Test
     fun `yearly totals transaction counts reflect purchase-only repository contract`() = runTest {
         // Validates that getYearlyTotals surfaces the purchase-only transaction
-        // count returned by getTransactionCountForPeriod (backed by SPENDING_TYPE_SQL).
-        // The engine must not add its own filtering or counting logic on top.
+        // count returned by the MultiCurrencyRepository contract.
         val referenceDate = createDate(2024, 4, 15, 12, 0)
         every { timeProvider.now() } returns referenceDate
 
         // Simulate repository returning purchase-only totals and counts
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
             when (year) {
-                2023 -> 8500.0   // purchase-only sum
-                2024 -> 2100.0   // purchase-only sum (partial year)
-                else -> 0.0
-            }
-        }
-        coEvery { expenseRepository.getTransactionCountForPeriod(any(), any()) } answers {
-            val startMs = firstArg<Long>()
-            val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
-            when (year) {
-                2023 -> 95   // purchase-only count
-                2024 -> 22   // purchase-only count (partial year)
-                else -> 0
+                2020 -> MoneyAggregate.empty(CurrencyCode("EUR"))
+                2023 -> MoneyAggregate.singleCurrency(8500.0, CurrencyCode("EUR"), 95)   // purchase-only sum and count
+                2024 -> MoneyAggregate.singleCurrency(2100.0, CurrencyCode("EUR"), 22)   // purchase-only sum and count (partial year)
+                else -> MoneyAggregate.empty(CurrencyCode("EUR"))
             }
         }
 
@@ -657,7 +550,7 @@ class TotalsAggregationEngineValidationTest {
         assertEquals(8500.0, y2023!!.totalAmount, 0.01)
         assertEquals(2100.0, y2024!!.totalAmount, 0.01)
 
-        // Counts are purchase-only (from getTransactionCountForPeriod → SPENDING_TYPE_SQL)
+        // Counts come from MoneyAggregate.totalTransactionCount
         assertEquals(95, y2023.transactionCount)
         assertEquals(22, y2024.transactionCount)
 

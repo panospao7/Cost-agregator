@@ -4,6 +4,8 @@ import android.util.Log
 import com.yourname.expensetracker.domain.categorization.CanonicalResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -32,6 +34,7 @@ class LocationResolverStressTest {
     private lateinit var greeklishNormalizer: GreeklishNormalizer
     private lateinit var timeProvider: TimeProvider
     private lateinit var locationResolver: LocationResolver
+    private lateinit var privacyGate: com.yourname.expensetracker.domain.privacy.PrivacyGate
 
     @Before
     fun setup() {
@@ -49,6 +52,12 @@ class LocationResolverStressTest {
         canonicalizer = mockk(relaxed = true)
         greeklishNormalizer = mockk(relaxed = true)
         timeProvider = mockk()
+        privacyGate = mockk()
+
+        // All privacy checks allowed by default
+        coEvery { privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION, any()) } returns PrivacyDecision.Allowed
+        coEvery { privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING, any()) } returns PrivacyDecision.Allowed
+        coEvery { privacyGate.check(PrivacyCapability.OVERPASS_API, any()) } returns PrivacyDecision.Allowed
 
         every { merchantCleaner.clean(any()) } answers { firstArg() }
         every { canonicalizer.canonicalize(any()) } answers { CanonicalResult(firstArg(), emptyList(), 0.0) }
@@ -81,7 +90,7 @@ class LocationResolverStressTest {
             canonicalizer = canonicalizer,
             greeklishNormalizer = greeklishNormalizer,
             timeProvider = timeProvider,
-            privacyGate = mockk(),
+            privacyGate = privacyGate,
         )
     }
 

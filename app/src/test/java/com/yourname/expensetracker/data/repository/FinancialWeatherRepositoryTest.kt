@@ -409,7 +409,7 @@ class FinancialWeatherRepositoryTest {
                 )
             )
         )
-        every { mergedRecurringPatternsProvider.getConfirmedPatterns(any()) } returns listOf(
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns listOf(
             RecurringPattern(
                 id = 9,
                 merchantName = "Confirmed Rent",
@@ -431,8 +431,8 @@ class FinancialWeatherRepositoryTest {
         repository.getFinancialWeather().first()
 
         assertEquals(listOf("Confirmed Rent"), capturedInput.captured.recurringPatterns.map { it.merchantName })
-        verify(exactly = 1) { mergedRecurringPatternsProvider.getConfirmedPatterns(any()) }
-        coVerify(exactly = 0) { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) }
+        coVerify(exactly = 1) { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) }
+        coVerify(exactly = 0) { mergedRecurringPatternsProvider.getConfirmedPatterns(any()) }
     }
 
     @Test

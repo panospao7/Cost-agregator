@@ -135,6 +135,8 @@ class NotificationProcessingPipelineReliabilityTest {
         }
         coEvery { classifier.initialize() } returns Unit
         every { timeProvider.now() } returns 1_700_000_000_000L
+        coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers { merchantLookupResult(firstArg()) }
+        coEvery { locationProvider.getLastKnownLocation() } returns null
     }
 
     @Test
@@ -181,7 +183,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         } returns true
 
@@ -194,7 +196,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         }
         coVerify(exactly = 0) { rawDao.insertOrIgnore(any()) }
@@ -204,7 +206,10 @@ class NotificationProcessingPipelineReliabilityTest {
 
     @Test
     fun `process inserts raw notification when exact duplicate does not exist`() = runBlocking {
-        val notification = testNotification("com.test.unique")
+        val notification = testNotification("com.test.unique").copy(
+            title = "Hello",
+            text = "world"
+        )
 
         coEvery {
             parserRegistry.parseWithAiFallback(
@@ -221,7 +226,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 42L
@@ -235,7 +240,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
             rawDao.insertOrIgnore(notification)
         }
@@ -380,7 +385,6 @@ class NotificationProcessingPipelineReliabilityTest {
             adjustedConfidence = 0.95f,
             reason = "high confidence"
         )
-        coEvery { merchantNormalizer.normalize("Shop", any(), any()) } returns merchantLookupResult("Shop")
         coEvery {
             hybridClassifier.classify(
                 merchantName = "Shop",
@@ -402,7 +406,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery {
@@ -494,7 +498,7 @@ class NotificationProcessingPipelineReliabilityTest {
             adjustedConfidence = 0.95f,
             reason = "high confidence"
         )
-        coEvery { merchantNormalizer.normalize(merchant, any(), any()) } returns merchantLookupResult(merchant)
+        // normalize is already stubbed in setup() — no need for per-test override
         coEvery {
             hybridClassifier.classify(
                 merchantName = merchant,
@@ -515,7 +519,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification1.timestamp,
                 title = notification1.title,
                 text = notification1.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery {
@@ -524,7 +528,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification2.timestamp,
                 title = notification2.title,
                 text = notification2.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification1) } returns 1L
@@ -604,7 +608,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 50L
@@ -665,7 +669,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 51L
@@ -726,7 +730,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 55L
@@ -798,7 +802,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = "",
+                bigText = null,
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 56L

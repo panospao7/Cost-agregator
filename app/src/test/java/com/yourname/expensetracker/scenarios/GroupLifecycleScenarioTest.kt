@@ -2,6 +2,7 @@ package com.yourname.expensetracker.scenarios
 
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -70,6 +71,7 @@ class GroupLifecycleScenarioTest {
     private lateinit var lifecycle: GroupLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+    private val balanceCalculator = mockk<com.yourname.expensetracker.domain.groups.GroupBalanceCalculator>(relaxed = true)
 
     @Before
     fun setup() {
@@ -100,10 +102,19 @@ class GroupLifecycleScenarioTest {
             mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
         )
 
+        // Stub balanceCalculator to return a settled balance for removeMember tests
+        coEvery { balanceCalculator.calculateMemberBalance(any(), any()) } returns
+            com.yourname.expensetracker.domain.groups.GroupBalanceCalculator.GroupMemberBalance(
+                groupId = 0L, memberId = 0L, currency = "EUR",
+                paidTotal = 0.0, owedShareTotal = 0.0,
+                settlementsPaid = 0.0, settlementsReceived = 0.0,
+                netBalance = 0.0
+            )
+
         lifecycle = GroupLifecycleCoordinator(
             groupTxCoordinator, groupDao, database.groupExpenseDao(), memberDao, settlementDao,
             database.groupLifecycleEventDao(),
-            mockk(relaxed = true), // balanceCalculator
+            balanceCalculator,
             timeProvider, currencySettingsRepository,
             mockk<DatabaseWriteBarrier>(relaxed = true), database,
             mockk<dagger.Lazy<BudgetMonitor>>(relaxed = true),
@@ -385,6 +396,10 @@ class GroupLifecycleScenarioTest {
         val groupId = seedGroup("ToDelete", "EUR")
         seedMember(groupId, "Alice", isCurrentUser = true)
 
+        // G04: Group must be archived before hard-delete (enforced by production code)
+        val archiveResult = lifecycle.archiveGroup(groupId)
+        assertThat(archiveResult).isTrue()
+
         val result = lifecycle.deleteGroupPermanently(groupId, confirmPermanentDelete = true)
 
         assertThat(result).isTrue()
@@ -516,7 +531,12 @@ class GroupLifecycleScenarioTest {
     }
 
     private suspend fun seedMember(groupId: Long, name: String, isCurrentUser: Boolean = false): Long {
-        val member = GroupMember(groupId = groupId, name = name, isCurrentUser = isCurrentUser)
+        val member = GroupMember(
+            groupId = groupId,
+            name = name,
+            isCurrentUser = isCurrentUser,
+            currentUserGroupKey = if (isCurrentUser) groupId else null
+        )
         return memberDao.insert(member)
     }
 }

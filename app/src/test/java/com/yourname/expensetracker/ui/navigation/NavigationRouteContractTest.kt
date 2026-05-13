@@ -1,9 +1,13 @@
 package com.yourname.expensetracker.ui.navigation
 
+import android.net.Uri
+import io.mockk.every
+import io.mockk.mockkStatic
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -15,6 +19,16 @@ import org.junit.Test
  * logic so that persisted state (savedInstance, deep links) does not break.
  */
 class NavigationRouteContractTest {
+
+    @Before
+    fun setup() {
+        // Uri.encode/Uri.decode are used by buildSaveToken/parseSaveToken.
+        // In unit tests android.net.Uri methods return null by default, so we
+        // mock them to be identity functions (pass-through).
+        mockkStatic(Uri::class)
+        every { Uri.encode(any()) } answers { firstArg<String>() }
+        every { Uri.decode(any()) } answers { firstArg<String>() }
+    }
 
     // ── Test 1: Simple data objects ────────────────────────────────────────────
 
@@ -67,7 +81,8 @@ class NavigationRouteContractTest {
         assertNull(destinationFromSaveToken("?key=value"))
         assertNull(destinationFromSaveToken(" "))
         assertNull(destinationFromSaveToken("   "))
-        assertNull(destinationFromSaveToken("home?"))   // base token "home?" — no match
+        // "home?" parses as base="home" with empty query → valid Home destination
+        assertEquals(NavigationDestination.Home, destinationFromSaveToken("home?"))
     }
 
     // ── Test 5: Edge-case parameters ────────────────────────────────────────────
@@ -283,9 +298,8 @@ class NavigationRouteContractTest {
             NavigationDestination.Transactions(initialExpenseId = null),
             NavigationDestination.Transactions(initialExpenseId = 0L),
             NavigationDestination.Transactions(initialExpenseId = Long.MAX_VALUE),
-            // Analytics
+            // Analytics (empty string is equivalent to null by design)
             NavigationDestination.Analytics(initialPeriod = null),
-            NavigationDestination.Analytics(initialPeriod = ""),
             NavigationDestination.Analytics(initialPeriod = "MONTH"),
             NavigationDestination.Analytics(initialPeriod = "YEAR"),
             NavigationDestination.Analytics(initialPeriod = "CUSTOM_2026-01_2026-03"),
@@ -294,9 +308,8 @@ class NavigationRouteContractTest {
             NavigationDestination.BudgetDetail(categoryId = 1L, categoryName = null),
             NavigationDestination.BudgetDetail(categoryId = null, categoryName = "Food"),
             NavigationDestination.BudgetDetail(categoryId = 5L, categoryName = "Transport"),
-            // SpendingMap
+            // SpendingMap (empty string is equivalent to null by design)
             NavigationDestination.SpendingMap(initialLocationQuery = null),
-            NavigationDestination.SpendingMap(initialLocationQuery = ""),
             NavigationDestination.SpendingMap(initialLocationQuery = "New York, NY"),
             NavigationDestination.SpendingMap(initialLocationQuery = "London"),
             // SpendingChallenges

@@ -57,6 +57,18 @@ class ReviewQueueRepositoryTest {
         }
 
         every { timeProvider.now() } returns 1700000000000L
+        coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers {
+            val name = firstArg<String>()
+            com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult(
+                canonical = com.yourname.expensetracker.data.database.entity.MerchantCanonical(
+                    normalizedName = name,
+                    searchKey = name.lowercase()
+                ),
+                alias = null,
+                confidence = 1.0f,
+                matchType = com.yourname.expensetracker.domain.intelligence.ml.MatchType.EXACT_MATCH
+            )
+        }
         
         repository = ReviewQueueRepository(
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
@@ -481,15 +493,33 @@ class ReviewQueueRepositoryTest {
             notificationText = "Deposit $amount $currency"
         )
 
+        coEvery { merchantNormalizer.normalize("Acme", any(), any()) } answers {
+            com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult(
+                canonical = com.yourname.expensetracker.data.database.entity.MerchantCanonical(
+                    normalizedName = "Acme",
+                    searchKey = "acme"
+                ),
+                alias = null,
+                confidence = 1.0f,
+                matchType = com.yourname.expensetracker.domain.intelligence.ml.MatchType.EXACT_MATCH
+            )
+        }
         coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
         coEvery {
             pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
         } returns 1
         // Policy says not a duplicate (incompatible type with existing PURCHASE)
-        val dedupeKeySlot = slot<String?>()
+        val dedupeKeySlot = slot<String>()
         coEvery {
             expenseDao.isDuplicateCurrencyAware(
-                any(), any(), any(), any(), any(), any(), any()
+                amount = any(),
+                merchant = any(),
+                date = any(),
+                currency = any(),
+                transactionType = any(),
+                windowMs = any(),
+                merchantKey = any(),
+                dedupeKey = capture(dedupeKeySlot)
             )
         } returns false
 

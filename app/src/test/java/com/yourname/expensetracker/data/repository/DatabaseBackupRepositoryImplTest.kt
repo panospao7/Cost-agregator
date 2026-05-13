@@ -85,8 +85,8 @@ class DatabaseBackupRepositoryImplTest {
 
         // Privacy gate defaults — allow everything by default
         coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
-        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings()
-        every { privacySettingsRepository.observeSettings() } returns kotlinx.coroutines.flow.flowOf(PrivacySettings())
+        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(encryptedBackupEnabled = false)
+        every { privacySettingsRepository.observeSettings() } returns kotlinx.coroutines.flow.flowOf(PrivacySettings(encryptedBackupEnabled = false))
 
         repository = createRepository(
             stagedVerifier = { _, _, _, _, summary -> summary },

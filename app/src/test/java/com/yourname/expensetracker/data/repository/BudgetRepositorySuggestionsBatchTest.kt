@@ -2,8 +2,8 @@ package com.yourname.expensetracker.data.repository
 
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.BudgetDao
+import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.CategoryDao
-import com.yourname.expensetracker.data.database.dao.CategorySpentTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -85,9 +85,9 @@ class BudgetRepositorySuggestionsBatchTest {
     fun `getSuggestions batches category totals in single grouped query`() = runTest {
         val now = utcMs(2026, Calendar.MARCH, 15)
         val categories = listOf(
-            Category(id = 1L, name = "Food", icon = "🍔", color = "#f00", isDefault = false),
-            Category(id = 2L, name = "Transport", icon = "🚌", color = "#0f0", isDefault = false),
-            Category(id = 3L, name = "Games", icon = "🎮", color = "#00f", isDefault = false)
+            Category(id = 1L, name = "Food", icon = "🍔", color = "#FF0000", isDefault = false),
+            Category(id = 2L, name = "Transport", icon = "🚌", color = "#00FF00", isDefault = false),
+            Category(id = 3L, name = "Games", icon = "🎮", color = "#0000FF", isDefault = false)
         )
 
         every { timeProvider.now() } returns now
@@ -95,14 +95,13 @@ class BudgetRepositorySuggestionsBatchTest {
         coEvery { budgetDao.getActiveBudgets() } returns listOf(activeBudget(categoryId = 2L))
         coEvery { expenseDao.getOldestExpenseDate() } returns utcMs(2025, Calendar.DECEMBER, 1)
         coEvery {
-            expenseDao.getCategorySpentTotalsInPeriod(
-                categoryIds = listOf(1L, 3L),
-                startMs = any(),
-                endMs = any()
+            expenseDao.getCategoryTotalsBetweenByCurrency(
+                startDate = any(),
+                endDate = any()
             )
         } returns listOf(
-            CategorySpentTotal(categoryId = 1L, total = 300.0),
-            CategorySpentTotal(categoryId = 3L, total = 30.0)
+            CategoryCurrencyTotal(categoryId = 1L, currency = "EUR", total = 300.0, txCount = 1),
+            CategoryCurrencyTotal(categoryId = 3L, currency = "EUR", total = 30.0, txCount = 1)
         )
 
         val suggestions = repository.getSuggestions()
@@ -111,7 +110,8 @@ class BudgetRepositorySuggestionsBatchTest {
         assertThat(suggestions.single().categoryId).isEqualTo(1L)
         assertThat(suggestions.single().categoryName).isEqualTo("Food")
 
-        coVerify(exactly = 1) { expenseDao.getCategorySpentTotalsInPeriod(listOf(1L, 3L), any(), any()) }
+        coVerify(exactly = 1) { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.getCategorySpentTotalsInPeriod(any(), any(), any()) }
         coVerify(exactly = 0) { expenseDao.getCategorySpentInPeriod(any(), any(), any()) }
     }
 

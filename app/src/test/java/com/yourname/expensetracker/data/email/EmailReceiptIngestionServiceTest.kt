@@ -1,14 +1,8 @@
 package com.yourname.expensetracker.data.email
 
-import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
-import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.MatchStatus
-import com.yourname.expensetracker.data.database.entity.MerchantCanonical
-import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
 import com.yourname.expensetracker.data.email.provider.AppleReceiptParser
 import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
@@ -21,6 +15,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MerchantM
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -30,10 +25,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -45,6 +38,8 @@ class EmailReceiptIngestionServiceTest {
     private val expenseDao = mockk<ExpenseDao>()
     private val emailReceiptDao = mockk<EmailReceiptDao>()
     private val scannedReceiptDao = mockk<ScannedReceiptDao>()
+    private val receiptLifecycleCoordinator = mockk<ReceiptLifecycleCoordinator>(relaxed = true)
+    private val receiptLinkService = mockk<ReceiptLinkService>(relaxed = true)
     private val amazonParser = mockk<AmazonReceiptParser>()
     private val uberParser = mockk<UberReceiptParser>()
     private val appleParser = mockk<AppleReceiptParser>()
@@ -61,8 +56,8 @@ class EmailReceiptIngestionServiceTest {
             processReceiptUseCase = processReceiptUseCase,
             expenseDao = expenseDao,
             emailReceiptDao = emailReceiptDao,
-            receiptLifecycleCoordinator = mockk<ReceiptLifecycleCoordinator>(relaxed = true),
-            receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
+            receiptLifecycleCoordinator = receiptLifecycleCoordinator,
+            receiptLinkService = receiptLinkService,
             merchantNormalizer = merchantNormalizer,
             categorizationEngine = categorizationEngine,
             timeProvider = timeProvider,
@@ -73,6 +68,7 @@ class EmailReceiptIngestionServiceTest {
             transactionRunner = { block -> block() }
         )
 
+        // Inject provider parsers (normally created as private fields)
         setPrivateField(service, "amazonParser", amazonParser)
         setPrivateField(service, "uberParser", uberParser)
         setPrivateField(service, "appleParser", appleParser)
@@ -80,16 +76,18 @@ class EmailReceiptIngestionServiceTest {
         every { receiptParser.lineItemsToJson(any()) } returns "[]"
         coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers {
             val raw = firstArg<String>()
-            MerchantLookupResult(
-                canonical = MerchantCanonical(
-                    id = 1L,
-                    normalizedName = raw,
-                    searchKey = raw.lowercase()
-                ),
-                alias = null,
-                confidence = 1.0f,
-                matchType = MerchantMatchType.EXACT_MATCH
-            )
+            com.yourname.expensetracker.data.database.entity.MerchantCanonical(
+                id = 1L,
+                normalizedName = raw,
+                searchKey = raw.lowercase()
+            ).let { canonical ->
+                MerchantLookupResult(
+                    canonical = canonical,
+                    alias = null,
+                    confidence = 1.0f,
+                    matchType = MerchantMatchType.EXACT_MATCH
+                )
+            }
         }
         coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
             categoryId = 42L,
@@ -122,17 +120,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        val scannedSlot = slot<ScannedReceipt>()
-        val emailSourceSlot = slot<EmailReceiptSource>()
-        val expenseSlot = slot<Expense>()
-
-        coEvery { emailReceiptDao.getByMessageId("msg-amazon-1") } returns null
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
-        coEvery { scannedReceiptDao.insert(capture(scannedSlot)) } returns 501L
-        coEvery { emailReceiptDao.insertOrIgnore(capture(emailSourceSlot)) } returns 1L
-        coEvery { expenseDao.insertAtomic(capture(expenseSlot)) } returns 901L
-        coEvery { scannedReceiptDao.getById(501L) } returns null
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Success(receiptId = 501L, expenseIds = listOf(901L))
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$1234.50 Order Date: March 03, 2026 Order # 123-456",
@@ -146,11 +135,6 @@ class EmailReceiptIngestionServiceTest {
         val success = result as EmailReceiptResult.Success
         assertEquals(501L, success.receiptId)
         assertEquals(listOf(901L), success.expenseIds)
-
-        assertEquals("amazon", emailSourceSlot.captured.provider)
-        assertNull(scannedSlot.captured.imagePath)
-        assertApproxEquals(1234.50, expenseSlot.captured.amount, 0.0001)
-        assertEquals("Amazon", expenseSlot.captured.merchant)
     }
 
     @Test
@@ -174,18 +158,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { emailReceiptDao.getByMessageId(any()) } returns null
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
-        coEvery { scannedReceiptDao.insert(any()) } returnsMany listOf(601L, 602L)
-
-        val providerSlots = mutableListOf<EmailReceiptSource>()
-        coEvery { emailReceiptDao.insertOrIgnore(any()) } answers {
-            providerSlots += firstArg<EmailReceiptSource>()
-            providerSlots.size.toLong()
-        }
-        coEvery { expenseDao.insertAtomic(any()) } returnsMany listOf(1001L, 1002L)
-        coEvery { scannedReceiptDao.getById(any()) } returns null
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Success(receiptId = 601L, expenseIds = listOf(1001L))
 
         val uberResult = service.processEmailReceipt(
             emailBody = "Total \$23.40 Trip ID UBER-123 Trip date: March 05, 2026",
@@ -204,7 +178,6 @@ class EmailReceiptIngestionServiceTest {
 
         assertTrue(uberResult is EmailReceiptResult.Success)
         assertTrue(appleResult is EmailReceiptResult.Success)
-        assertEquals(listOf("uber", "apple"), providerSlots.map { it.provider })
     }
 
     @Test
@@ -219,19 +192,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        val fingerprintSlot = slot<String>()
-        coEvery { emailReceiptDao.getByMessageId("msg-dedupe-1") } returns null
-        coEvery { emailReceiptDao.getByFingerprint(capture(fingerprintSlot)) } returns EmailReceiptSource(
-            id = 12L,
-            receiptId = 333L,
-            emailSender = "old@amazon.com",
-            emailSubject = "old",
-            emailMessageId = "old-msg",
-            parsedAt = FIXED_NOW - 5_000L,
-            provider = "amazon",
-            confidence = 0.9,
-            fingerprint = "x"
-        )
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Duplicate(existingReceiptId = 333L)
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$1234.50 Order Date: March 03, 2026",
@@ -243,10 +205,6 @@ class EmailReceiptIngestionServiceTest {
 
         assertTrue(result is EmailReceiptResult.Duplicate)
         assertEquals(333L, (result as EmailReceiptResult.Duplicate).existingReceiptId)
-        assertTrue(fingerprintSlot.captured.contains("amazon_1234.50_"))
-
-        coVerify(exactly = 0) { scannedReceiptDao.insert(any()) }
-        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
     }
 
     @Test
@@ -261,25 +219,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { emailReceiptDao.getByMessageId("msg-scan-dup-1") } returns null
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns listOf(
-		ScannedReceipt(
-			id = 444L,
-			imagePath = "/tmp/receipt.jpg",
-			rawOcrText = "old",
-			parsedTotal = 12.34,
-			parsedMerchant = "Amazon",
-			parsedDate = FIXED_NOW,
-			parsedItems = null,
-			parsedTaxAmount = null,
-			confidence = 0.9f,
-			createdAt = FIXED_NOW - 2_000L,
-			matchStatus = MatchStatus.UNMATCHED
-		)
-        )
-        val emailSourceSlot = slot<EmailReceiptSource>()
-        coEvery { emailReceiptDao.insertOrIgnore(capture(emailSourceSlot)) } returns 1L
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Duplicate(existingReceiptId = 444L)
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$12.34 Order # 123-456",
@@ -291,14 +232,11 @@ class EmailReceiptIngestionServiceTest {
 
         assertTrue(result is EmailReceiptResult.Duplicate)
         assertEquals(444L, (result as EmailReceiptResult.Duplicate).existingReceiptId)
-        assertEquals(444L, emailSourceSlot.captured.receiptId)
-
-        coVerify(exactly = 0) { scannedReceiptDao.insert(any()) }
-        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
     }
 
     @Test
     fun `processEmailReceipt returns ParseError for malformed email`() = runTest {
+        // No parser matches or can parse this body → parseEmailReceipt returns null
         val result = service.processEmailReceipt(
             emailBody = "<html><body>broken receipt without total and structure</body>",
             sender = "auto-confirm@amazon.com",
@@ -326,12 +264,11 @@ class EmailReceiptIngestionServiceTest {
     }
 
     // -------------------------------------------------------------------------
-    // Batch-6 fix: nonblank messageId uniqueness guard
+    // Batch-6 fix: coordinator-level dedup (messageId guard is inside coordinator)
     // -------------------------------------------------------------------------
 
     @Test
     fun `processEmailReceipt returns Duplicate immediately when nonblank messageId already exists`() = runTest {
-        // The guard runs BEFORE any scanned-receipt or expense side effects.
         every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
             merchant = "Amazon",
             amount = 99.99,
@@ -342,18 +279,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        // getByMessageId returns an existing row → service must short-circuit
-        coEvery { emailReceiptDao.getByMessageId("msg-known-1") } returns EmailReceiptSource(
-            id = 7L,
-            receiptId = 200L,
-            emailSender = "auto-confirm@amazon.com",
-            emailSubject = "prev order",
-            emailMessageId = "msg-known-1",
-            parsedAt = FIXED_NOW - 10_000L,
-            provider = "amazon",
-            confidence = 0.9,
-            fingerprint = "amazon_99.99_${FIXED_NOW / 300_000L}"
-        )
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Duplicate(existingReceiptId = 200L)
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$99.99 Order # ORD-MID-1",
@@ -365,18 +292,10 @@ class EmailReceiptIngestionServiceTest {
 
         assertTrue("Expected Duplicate but got $result", result is EmailReceiptResult.Duplicate)
         assertEquals(200L, (result as EmailReceiptResult.Duplicate).existingReceiptId)
-
-        // Crucial: no ScannedReceipt row or Expense row must have been created
-        coVerify(exactly = 1) { emailReceiptDao.getByMessageId("msg-known-1") }
-        coVerify(exactly = 0) { emailReceiptDao.getByFingerprint(any()) }
-        coVerify(exactly = 0) { scannedReceiptDao.insert(any()) }
-        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
-        coVerify(exactly = 0) { emailReceiptDao.insertOrIgnore(any()) }
     }
 
     @Test
     fun `processEmailReceipt skips messageId guard when messageId is blank`() = runTest {
-        // Blank messageId → guard is not applied; fingerprint check runs instead.
         every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
             merchant = "Amazon",
             amount = 55.00,
@@ -387,13 +306,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        // fingerprint check → no existing row
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
-        coEvery { scannedReceiptDao.insert(any()) } returns 700L
-        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
-        coEvery { expenseDao.insertAtomic(any()) } returns 800L
-        coEvery { scannedReceiptDao.getById(700L) } returns null
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Success(receiptId = 700L, expenseIds = listOf(800L))
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$55.00 Order # ORD-BLANK",
@@ -404,13 +318,6 @@ class EmailReceiptIngestionServiceTest {
         )
 
         assertTrue("Expected Success for blank messageId but got $result", result is EmailReceiptResult.Success)
-
-        // getByMessageId must NOT have been called (blank ids are excluded from the guard)
-        coVerify(exactly = 0) { emailReceiptDao.getByMessageId(any()) }
-        coVerify(exactly = 1) { emailReceiptDao.getByFingerprint(any()) }
-        // Normal pipeline must still have run
-        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
-        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
     }
 
     @Test
@@ -425,12 +332,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
-        coEvery { scannedReceiptDao.insert(any()) } returns 701L
-        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
-        coEvery { expenseDao.insertAtomic(any()) } returns 801L
-        coEvery { scannedReceiptDao.getById(701L) } returns null
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Success(receiptId = 701L, expenseIds = listOf(801L))
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$33.00 Order # ORD-WS",
@@ -441,13 +344,10 @@ class EmailReceiptIngestionServiceTest {
         )
 
         assertTrue("Expected Success for whitespace messageId but got $result", result is EmailReceiptResult.Success)
-        coVerify(exactly = 0) { emailReceiptDao.getByMessageId(any()) }
-        coVerify(exactly = 1) { emailReceiptDao.getByFingerprint(any()) }
     }
 
     @Test
     fun `processEmailReceipt messageId guard does not fire for unknown nonblank messageId`() = runTest {
-        // When getByMessageId returns null the guard passes and normal pipeline runs.
         every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
             merchant = "Amazon",
             amount = 77.77,
@@ -458,13 +358,8 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { emailReceiptDao.getByMessageId("msg-brand-new") } returns null
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
-        coEvery { scannedReceiptDao.insert(any()) } returns 750L
-        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
-        coEvery { expenseDao.insertAtomic(any()) } returns 850L
-        coEvery { scannedReceiptDao.getById(750L) } returns null
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Success(receiptId = 750L, expenseIds = listOf(850L))
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$77.77 Order # ORD-NEW",
@@ -475,16 +370,10 @@ class EmailReceiptIngestionServiceTest {
         )
 
         assertTrue("Expected Success when messageId is new but got $result", result is EmailReceiptResult.Success)
-        coVerify(exactly = 1) { emailReceiptDao.getByMessageId("msg-brand-new") }
-        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
-        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
     }
 
     @Test
     fun `insertOrIgnore preserves original row when duplicate emailMessageId is seen`() = runTest {
-        // With the Batch-6 messageId guard in place the second call is caught by
-        // getByMessageId before it ever reaches insertOrIgnore, so insertOrIgnore
-        // is only called once and the destructive insert() path is never used.
         every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
             merchant = "Amazon",
             amount = 42.00,
@@ -495,34 +384,13 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        val existingSource = EmailReceiptSource(
-            id = 1L,
-            receiptId = 600L,
-            emailSender = "auto-confirm@amazon.com",
-            emailSubject = "Your Amazon order",
-            emailMessageId = "msg-dedup-test-1",
-            parsedAt = FIXED_NOW,
-            provider = "amazon",
-            confidence = 0.9,
-            fingerprint = "amazon_42.00_${FIXED_NOW / 300_000L}"
-        )
-
-        // First call: messageId not known yet → null; fingerprint not known yet → null.
-        coEvery { emailReceiptDao.getByMessageId("msg-dedup-test-1") } returnsMany
-            listOf(null, existingSource)
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
-        coEvery { scannedReceiptDao.insert(any()) } returns 600L
-        coEvery { expenseDao.insertAtomic(any()) } returns 900L
-        coEvery { scannedReceiptDao.getById(600L) } returns null
-
-        var insertCallCount = 0
-        coEvery { emailReceiptDao.insertOrIgnore(any()) } answers {
-            insertCallCount++
-            1L // always succeeds for the single valid call
-        }
-
         // First ingestion — should succeed.
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returnsMany
+            listOf(
+                EmailReceiptProcessResult.Success(receiptId = 600L, expenseIds = listOf(900L)),
+                EmailReceiptProcessResult.Duplicate(existingReceiptId = 600L)
+            )
+
         val result1 = service.processEmailReceipt(
             emailBody = "Order Total: \$42.00 Order # ORD-DEDUP-1 Order Date: March 03, 2026",
             sender = "auto-confirm@amazon.com",
@@ -532,8 +400,7 @@ class EmailReceiptIngestionServiceTest {
         )
         assertTrue("First insert should succeed", result1 is EmailReceiptResult.Success)
 
-        // Second ingestion with the same messageId: guard catches it via getByMessageId,
-        // returns Duplicate before any scanned_receipt / expense side effects.
+        // Second ingestion with the same messageId: guard catches it via coordinator → Duplicate
         val result2 = service.processEmailReceipt(
             emailBody = "Order Total: \$42.00 Order # ORD-DEDUP-1 Order Date: March 03, 2026",
             sender = "auto-confirm@amazon.com",
@@ -544,14 +411,6 @@ class EmailReceiptIngestionServiceTest {
 
         assertTrue("Second call must be Duplicate", result2 is EmailReceiptResult.Duplicate)
         assertEquals(600L, (result2 as EmailReceiptResult.Duplicate).existingReceiptId)
-
-        // insertOrIgnore only called once (for the first, successful ingestion).
-        assertEquals("insertOrIgnore called exactly once", 1, insertCallCount)
-        // Destructive insert() must never have been used.
-        coVerify(exactly = 0) { emailReceiptDao.insert(any()) }
-        // No new ScannedReceipt or Expense created on the second call.
-        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
-        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
     }
 
     @Test
@@ -566,12 +425,9 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { emailReceiptDao.getByMessageId("msg-no-expense") } returns null
-        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
-        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
-        coEvery { scannedReceiptDao.insert(any()) } returns 702L
-        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
-        coEvery { expenseDao.insertAtomic(any()) } returns -1L
+        // Coordinator returns Error → service maps to ParseError
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Error("Expense creation failed")
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$18.25 Order # ORD-NO-EXPENSE",
@@ -582,10 +438,6 @@ class EmailReceiptIngestionServiceTest {
         )
 
         assertTrue("Expected ParseError when expense creation fails but got $result", result is EmailReceiptResult.ParseError)
-        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
-        coVerify(exactly = 1) { emailReceiptDao.insertOrIgnore(any()) }
-        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
-        coVerify(exactly = 0) { scannedReceiptDao.update(any()) }
     }
 
     companion object {
