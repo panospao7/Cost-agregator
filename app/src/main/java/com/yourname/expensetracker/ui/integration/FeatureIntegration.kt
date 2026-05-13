@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.integration
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -87,7 +88,9 @@ object FeatureIntegration {
             leadingContent = { 
                 Icon(Icons.Default.TrendingUp, null, tint = MaterialTheme.colorScheme.tertiary) 
             },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable { onInvestmentPortfolio() },
             colors = ListItemDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainer
             )
@@ -99,7 +102,9 @@ object FeatureIntegration {
             leadingContent = { 
                 Icon(Icons.Default.AccountBalance, null, tint = MaterialTheme.colorScheme.primary) 
             },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable { onBankConnections() },
             colors = ListItemDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainer
             )
@@ -111,7 +116,9 @@ object FeatureIntegration {
             leadingContent = { 
                 Icon(Icons.Default.Notifications, null, tint = MaterialTheme.colorScheme.error) 
             },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable { onBillReminders() },
             colors = ListItemDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainer
             )
@@ -123,7 +130,9 @@ object FeatureIntegration {
             leadingContent = { 
                 Icon(Icons.Default.LocalFireDepartment, null, tint = MaterialTheme.colorScheme.tertiary) 
             },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable { onSpendingChallenges() },
             colors = ListItemDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainer
             )
@@ -150,14 +159,18 @@ object FeatureIntegration {
             headlineContent = { Text(stringResource(R.string.menu_bill_reminders)) },
             supportingContent = { Text(stringResource(R.string.desc_track_recurring)) },
             leadingContent = { Icon(Icons.Default.Notifications, null) },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable { onBillReminders() }
         )
         
         ListItem(
             headlineContent = { Text(stringResource(R.string.menu_spending_challenges)) },
             supportingContent = { Text(stringResource(R.string.desc_complete_challenges)) },
             leadingContent = { Icon(Icons.Default.LocalFireDepartment, null) },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable { onSpendingChallenges() }
         )
     }
 
