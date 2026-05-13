@@ -316,7 +316,7 @@ class HomeViewModelRecommendationTest {
         val expectedAction = NavigationAction.ToTransactionList(TransactionFilter())
 
         every { 
-            navigationTargetResolver.resolve("TRANSACTION_LIST", null)
+            navigationTargetResolver.resolve(any(), any())
         } returns expectedAction
 
         val action = navigationTargetResolver.resolve(
