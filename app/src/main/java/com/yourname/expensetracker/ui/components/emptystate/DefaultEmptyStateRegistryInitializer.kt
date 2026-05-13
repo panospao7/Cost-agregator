@@ -25,6 +25,10 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             registerChallengesActions()
             registerCarbonActions()
             registerLifestyleActions()
+            registerTransactionsActions()
+            registerReceiptsActions()
+            registerAnalyticsActions()
+            registerBudgetActions()
         }
     }
 
@@ -195,6 +199,78 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     icon = Icons.Default.ReceiptLong,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
                     priority = 5
+                )
+            )
+        )
+    }
+
+    private fun ContextualActionRegistry.registerTransactionsActions() {
+        registerActions(
+            EmptyStateScreenKeys.TRANSACTIONS,
+            listOf(
+                EmptyStateAction(
+                    id = "add_expense",
+                    title = "Add Expense",
+                    description = "Add your first expense",
+                    icon = Icons.Default.Add,
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
+                    priority = 10
+                ),
+                EmptyStateAction(
+                    id = "scan_receipt",
+                    title = "Scan Receipt",
+                    description = "Scan a receipt to add expense",
+                    icon = Icons.Default.CameraAlt,
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.ScanReceipt),
+                    priority = 8
+                )
+            )
+        )
+    }
+
+    private fun ContextualActionRegistry.registerReceiptsActions() {
+        registerActions(
+            EmptyStateScreenKeys.RECEIPTS,
+            listOf(
+                EmptyStateAction(
+                    id = "scan_receipt",
+                    title = "Scan Receipt",
+                    description = "Scan your first receipt",
+                    icon = Icons.Default.CameraAlt,
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.ScanReceipt),
+                    priority = 10
+                )
+            )
+        )
+    }
+
+    private fun ContextualActionRegistry.registerAnalyticsActions() {
+        registerActions(
+            EmptyStateScreenKeys.ANALYTICS,
+            listOf(
+                EmptyStateAction(
+                    id = "add_expense",
+                    title = "Add Expenses",
+                    description = "Add expenses to see analytics",
+                    icon = Icons.Default.Add,
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
+                    priority = 10
+                )
+            )
+        )
+    }
+
+    private fun ContextualActionRegistry.registerBudgetActions() {
+        registerActions(
+            EmptyStateScreenKeys.BUDGET,
+            listOf(
+                EmptyStateAction(
+                    id = "create_budget",
+                    title = "Create Budget",
+                    description = "Set up your first budget",
+                    icon = Icons.Default.Add,
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.Budget),
+                    priority = 10
                 )
             )
         )
