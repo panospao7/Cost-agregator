@@ -18,7 +18,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -81,7 +81,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `generate generic csv keeps only preview and file path`() = runTest(testDispatcher) {
+    fun `generate generic csv keeps only preview and file path`() = runTest(UnconfinedTestDispatcher()) {
         val expenses = listOf(createExpense(merchant = "Coffee"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
@@ -91,7 +91,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
         every { exportDataRepository.createExportFile(any(), any()) } returns out
 
         viewModel.generateExport()
-        advanceUntilIdle()
+        testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.uiState.value
         assertTrue(state.exportSuccess)
@@ -101,7 +101,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `generate generic csv neutralizes spreadsheet formula fields in preview`() = runTest(testDispatcher) {
+    fun `generate generic csv neutralizes spreadsheet formula fields in preview`() = runTest(UnconfinedTestDispatcher()) {
         val expenses = listOf(createExpense(merchant = "=SUM(A1:A2)"))
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns expenses
@@ -111,7 +111,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
         every { exportDataRepository.createExportFile(any(), any()) } returns out
 
         viewModel.generateExport()
-        advanceUntilIdle()
+        testDispatcher.scheduler.advanceUntilIdle()
 
         val preview = viewModel.uiState.value.exportPreview.orEmpty()
         // The neutralized merchant should appear in the CSV output
@@ -127,7 +127,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `generate json export emits stable schema and escaped strings`() = runTest(testDispatcher) {
+    fun `generate json export emits stable schema and escaped strings`() = runTest(UnconfinedTestDispatcher()) {
         val expenses = listOf(
             createExpense(
                 merchant = "Cafe \"Central\"",
@@ -144,7 +144,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
 
         viewModel.selectFormat("json")
         viewModel.generateExport()
-        advanceUntilIdle()
+        testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.uiState.value
         val preview = state.exportPreview.orEmpty()
@@ -158,7 +158,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `generate xero export surfaces mixed currency policy failure`() = runTest(testDispatcher) {
+    fun `generate xero export surfaces mixed currency policy failure`() = runTest(UnconfinedTestDispatcher()) {
         coEvery {
             exportDataRepository.getExpensesBetween(any(), any())
         } returns listOf(
@@ -171,7 +171,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
 
         viewModel.selectFormat("xero")
         viewModel.generateExport()
-        advanceUntilIdle()
+        testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.uiState.value
         assertTrue(!state.exportSuccess)
@@ -180,7 +180,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `generate quickbooks export surfaces non purchase policy failure`() = runTest(testDispatcher) {
+    fun `generate quickbooks export surfaces non purchase policy failure`() = runTest(UnconfinedTestDispatcher()) {
         coEvery {
             exportDataRepository.getExpensesBetween(any(), any())
         } returns listOf(
@@ -192,7 +192,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
 
         viewModel.selectFormat("quickbooks")
         viewModel.generateExport()
-        advanceUntilIdle()
+        testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.uiState.value
         assertTrue(!state.exportSuccess)
@@ -201,7 +201,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `generate freshbooks export succeeds for empty dataset`() = runTest(testDispatcher) {
+    fun `generate freshbooks export succeeds for empty dataset`() = runTest(UnconfinedTestDispatcher()) {
         val out = createTempFile(prefix = "export_empty_freshbooks_", suffix = ".csv")
         every { exportDataRepository.createExportFile(any(), any()) } returns out
         coEvery { exportDataRepository.getExpensesBetween(any(), any()) } returns emptyList()
@@ -209,7 +209,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
 
         viewModel.selectFormat("freshbooks")
         viewModel.generateExport()
-        advanceUntilIdle()
+        testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.uiState.value
         assertTrue(state.exportSuccess)
@@ -220,12 +220,12 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `generate export reports repository file creation failure`() = runTest(testDispatcher) {
+    fun `generate export reports repository file creation failure`() = runTest(UnconfinedTestDispatcher()) {
         val failure = IllegalStateException("cache dir unavailable")
         every { exportDataRepository.createExportFile(any(), any()) } throws failure
 
         viewModel.generateExport()
-        advanceUntilIdle()
+        testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.uiState.value
         assertTrue(!state.exportSuccess)

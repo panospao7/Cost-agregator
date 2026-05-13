@@ -121,15 +121,17 @@ class UberReceiptParserTest {
         assertNotEquals("EUR", receipt.currency)
     }
 
+    /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */
     private fun expectedLocalDateMillis(value: String): Long {
         return LocalDate.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
-            .atStartOfDay(TimeZone.getTimeZone("UTC").toZoneId())
+            .atStartOfDay(ZoneId.systemDefault())
             .toInstant()
             .toEpochMilli()
     }
 
+    /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */
     private fun utcMillis(year: Int, month: Int, dayOfMonth: Int): Long {
-        return Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        return java.util.Calendar.getInstance().apply {
             set(Calendar.YEAR, year)
             set(Calendar.MONTH, month)
             set(Calendar.DAY_OF_MONTH, dayOfMonth)

@@ -50,7 +50,7 @@ class RecurringIncomeTrackerTest : AnalyticsEngineTestBase() {
             expense(d1, 500.0, TransactionType.WITHDRAWAL)   // must NOT count as spending
         )
 
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns transactions
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns transactions
 
         val ratio = tracker.getIncomeExpenseRatio()
 
@@ -78,7 +78,7 @@ class RecurringIncomeTrackerTest : AnalyticsEngineTestBase() {
             expense(d1, 50.0, TransactionType.UNKNOWN)
         )
 
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns transactions
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns transactions
 
         val ratio = tracker.getIncomeExpenseRatio()
 
@@ -100,7 +100,7 @@ class RecurringIncomeTrackerTest : AnalyticsEngineTestBase() {
             expense(d1, 2000.0, TransactionType.DEPOSIT)
         )
 
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns transactions
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns transactions
 
         val ratio = tracker.getIncomeExpenseRatio()
 
@@ -127,7 +127,7 @@ class RecurringIncomeTrackerTest : AnalyticsEngineTestBase() {
         )
 
         coEvery {
-            expenseDao.getExpensesByTypeBetween(any(), any(), eq("DEPOSIT"))
+            expenseDao.getExpensesByTypeBetweenUncapped(any(), any(), eq("DEPOSIT"))
         } returns deposits
 
         val result = tracker.detectRecurringIncome()

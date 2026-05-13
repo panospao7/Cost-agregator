@@ -13,7 +13,7 @@ class GuardSeededViolationTest {
         try {
             tempFile.writeText("val total = expenses.sumOf { it.amount }")
             // Verify the guard script exists and would detect this pattern
-            val guardScript = File("scripts/guards/check_raw_money_aggregates.kts")
+            val guardScript = File("../scripts/guards/check_raw_money_aggregates.kts")
             assertTrue("Guard script must exist", guardScript.exists())
             assertTrue("Guard script must be readable", guardScript.canRead())
 
@@ -38,7 +38,7 @@ class GuardSeededViolationTest {
         val tempFile = File.createTempFile("test_time", ".kt")
         try {
             tempFile.writeText("val now = System.currentTimeMillis()")
-            val guardScript = File("scripts/guards/check_direct_time_calls.kts")
+            val guardScript = File("../scripts/guards/check_direct_time_calls.kts")
             assertTrue("Time guard script must exist", guardScript.exists())
             assertTrue("Time guard script must be readable", guardScript.canRead())
 
@@ -61,7 +61,7 @@ class GuardSeededViolationTest {
                 val a = expenses.sumOf { it.amount }
                 val b = expenses.sumOf { it.effectiveAmount }
             """.trimIndent())
-            val guardScript = File("scripts/guards/check_raw_money_aggregates.kts")
+            val guardScript = File("../scripts/guards/check_raw_money_aggregates.kts")
             assertTrue("Guard script must exist", guardScript.exists())
             assertTrue("Guard script must be readable", guardScript.canRead())
 
@@ -81,7 +81,7 @@ class GuardSeededViolationTest {
 
     @Test
     fun `all guard scripts exist and are syntactically valid kotlin scripts`() {
-        val guardDir = File("scripts/guards")
+        val guardDir = File("../scripts/guards")
         assertTrue("Guard scripts directory must exist", guardDir.exists())
 
         val scripts = guardDir.listFiles { f -> f.extension == "kts" }

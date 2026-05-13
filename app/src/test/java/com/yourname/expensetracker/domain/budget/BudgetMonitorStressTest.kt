@@ -251,7 +251,7 @@ class BudgetMonitorStressTest {
             notifyAtCritical = 0.9f
         )
 
-        every { budgetRepository.getBudgetStatuses() } returnsMany listOf(
+        coEvery { budgetRepository.getBudgetStatuses() } returnsMany listOf(
             flow {
                 delay(1_000L)
                 emit(listOf(status(budget, 0.6f, 0L, Long.MAX_VALUE)))
@@ -267,7 +267,7 @@ class BudgetMonitorStressTest {
 
         advanceUntilIdle()
 
-        verify(exactly = 2) { budgetRepository.getBudgetStatuses() }
+        coVerify(exactly = 2) { budgetRepository.getBudgetStatuses() }
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
         coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
@@ -296,7 +296,7 @@ class BudgetMonitorStressTest {
         monitor.checkBudgets()
         advanceUntilIdle()
 
-        verify(exactly = 0) { budgetRepository.getBudgetStatuses() }
+        coVerify(exactly = 0) { budgetRepository.getBudgetStatuses() }
     }
 
     // ============================================================================

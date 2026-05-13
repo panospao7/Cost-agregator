@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.service
 
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
@@ -126,7 +127,7 @@ class NavigationTargetResolverTest {
         val resultFilter = (action as NavigationAction.ToTransactionList).filter
         assertEquals(123L, resultFilter.categoryId)
         assertEquals("Test Merchant", resultFilter.merchantName)
-        assertEquals(DomainTransactionType.PURCHASE, resultFilter.transactionType)
+        assertEquals(TransactionType.PURCHASE, resultFilter.transactionType)
     }
 
     @Test

@@ -12,10 +12,12 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -38,6 +40,7 @@ class TransactionLifecycleCoordinatorTest {
     private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
     private lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
     private lateinit var writeBarrier: DatabaseWriteBarrier
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var coordinator: TransactionLifecycleCoordinator
 
     private val now = 1_712_000_000_000L // 2024-04-01ish
@@ -53,8 +56,10 @@ class TransactionLifecycleCoordinatorTest {
         recurringLifecycleCoordinator = mockk(relaxed = true)
         restoreMaintenanceMode = mockk(relaxed = true)
         writeBarrier = mockk(relaxed = true)
+        currencySettingsRepository = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         // Allow writes (not in restore mode)
         every { restoreMaintenanceMode.isWritesAllowed() } returns true
         // Simulate successful insert - returns an ID
@@ -72,7 +77,7 @@ class TransactionLifecycleCoordinatorTest {
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
-            currencySettingsRepository = mockk(relaxed = true)
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 

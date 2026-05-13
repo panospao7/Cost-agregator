@@ -33,6 +33,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -75,9 +79,11 @@ class GroupTransactionCoordinatorTest {
     private lateinit var coordinator: GroupTransactionCoordinator
     private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
+    private val testDispatcher: TestDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
+        Dispatchers.setMain(testDispatcher)
         database = AppDatabase.inMemoryBuilder(
             ApplicationProvider.getApplicationContext()
         ).build()
@@ -100,7 +106,7 @@ class GroupTransactionCoordinatorTest {
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
             transactionEventDao, transactionLifecycleCoordinator,
-            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
         )
     }
 
@@ -108,6 +114,7 @@ class GroupTransactionCoordinatorTest {
     @Throws(IOException::class)
     fun tearDown() {
         database.close()
+        Dispatchers.resetMain()
     }
 
     @Test
@@ -181,7 +188,7 @@ class GroupTransactionCoordinatorTest {
         val mockCoordinator = GroupTransactionCoordinator(
             database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao,
             database.transactionEventDao(), transactionLifecycleCoordinator,
-            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
         )
 
         // Act - Should throw exception

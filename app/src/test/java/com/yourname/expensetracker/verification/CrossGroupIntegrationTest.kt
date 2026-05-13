@@ -753,6 +753,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         }
         // A.9: ExpenseRepository.getAllExpenses() now delegates to getAllFlowUncapped()
         every { expenseDao.getAllFlowUncapped() } answers { flowOf(expenses) }
+        every { expenseDao.getAllFlow() } answers { flowOf(expenses) }
 
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } answers {
             purchasesMine(firstArg(), secondArg()).sumOf { it.effectiveAmount }

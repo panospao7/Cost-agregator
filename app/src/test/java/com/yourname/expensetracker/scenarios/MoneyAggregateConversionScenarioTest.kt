@@ -217,12 +217,14 @@ class MoneyAggregateConversionScenarioTest {
                 ConversionFailure(
                     originalAmount = MoneyAmount(50.0, CurrencyCode.USD),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = FailureReason.MISSING_RATE
+                    reason = FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 ),
                 ConversionFailure(
                     originalAmount = MoneyAmount(75.0, CurrencyCode.GBP),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = FailureReason.MISSING_RATE
+                    reason = FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 )
             )
         )
@@ -246,8 +248,8 @@ class MoneyAggregateConversionScenarioTest {
         // AND: warning message is present
         assertNotNull("Warning message should be present", aggregate.warningMessage)
         assertTrue(
-            "Warning message should mention missing exchange rates",
-            aggregate.warningMessage!!.contains("missing exchange rates")
+            "Warning message should indicate transactions could not be converted",
+            aggregate.warningMessage!!.contains("could not be converted")
         )
 
         val currencies = aggregate.sourceBuckets.map { it.currency.code }.toSet()
@@ -323,12 +325,14 @@ class MoneyAggregateConversionScenarioTest {
                 ConversionFailure(
                     originalAmount = MoneyAmount(9.99, CurrencyCode.USD),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = FailureReason.MISSING_RATE
+                    reason = FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 ),
                 ConversionFailure(
                     originalAmount = MoneyAmount(7.99, CurrencyCode.GBP),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = FailureReason.MISSING_RATE
+                    reason = FailureReason.MISSING_RATE,
+                    transactionCount = 1
                 )
             )
         )
@@ -416,7 +420,8 @@ class MoneyAggregateConversionScenarioTest {
                 ConversionFailure(
                     originalAmount = MoneyAmount(usdTotal, CurrencyCode.USD),
                     targetCurrency = CurrencyCode.EUR,
-                    reason = FailureReason.MISSING_RATE
+                    reason = FailureReason.MISSING_RATE,
+                    transactionCount = 2
                 )
             )
         )
@@ -479,12 +484,14 @@ class MoneyAggregateConversionScenarioTest {
             ConversionFailure(
                 originalAmount = MoneyAmount(50.0, CurrencyCode.USD),
                 targetCurrency = CurrencyCode.EUR,
-                reason = FailureReason.MISSING_RATE
+                reason = FailureReason.MISSING_RATE,
+                transactionCount = 1
             ),
             ConversionFailure(
                 originalAmount = MoneyAmount(25.0, CurrencyCode.GBP),
                 targetCurrency = CurrencyCode.EUR,
-                reason = FailureReason.RATE_STALE
+                reason = FailureReason.RATE_STALE,
+                transactionCount = 1
             )
         )
 

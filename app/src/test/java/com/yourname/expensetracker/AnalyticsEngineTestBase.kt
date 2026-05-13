@@ -213,6 +213,12 @@ abstract class AnalyticsEngineTestBase {
         io.mockk.coEvery { expenseDao.getAllCategoryTotalsBetweenByCurrency(any(), any()) } returns emptyList()
         io.mockk.coEvery { expenseDao.getMonthlyTotalsBetweenByCurrency(any(), any()) } returns emptyList()
         io.mockk.coEvery { expenseDao.getMerchantTotalsBetweenByCurrency(any(), any()) } returns emptyList()
+
+        // Uncapped and flow variants needed by A.9 engine refactors
+        io.mockk.coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns emptyList()
+        io.mockk.every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(emptyList())
+        io.mockk.every { expenseDao.getAllFlow(any()) } returns flowOf(emptyList())
+        io.mockk.every { expenseDao.getAllFlowUncapped() } returns flowOf(emptyList())
     }
 
     /**

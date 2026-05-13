@@ -4,6 +4,10 @@ import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.TestDispatcher
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
@@ -64,9 +68,11 @@ class GroupGoldenScenarioTest {
     private lateinit var lifecycle: GroupLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+    private val testDispatcher: TestDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
+        Dispatchers.setMain(testDispatcher)
         database = AppDatabase.inMemoryBuilder(
             ApplicationProvider.getApplicationContext()
         ).build()
@@ -91,7 +97,7 @@ class GroupGoldenScenarioTest {
         groupTxCoordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, database.groupExpenseDao(), expenseDao,
             transactionEventDao, txLifecycle,
-            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
         )
 
         lifecycle = GroupLifecycleCoordinator(
@@ -102,13 +108,14 @@ class GroupGoldenScenarioTest {
             mockk<DatabaseWriteBarrier>(relaxed = true), database,
             mockk<dagger.Lazy<BudgetMonitor>>(relaxed = true),
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
-            Dispatchers.IO
+            Dispatchers.Unconfined
         )
     }
 
     @After
     fun tearDown() {
         database.close()
+        Dispatchers.resetMain()
     }
 
     // ── groupSettlementPersistsAndAffectsBalance ────────────────────────────

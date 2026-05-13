@@ -67,6 +67,9 @@ class BudgetRolloverTest {
     // Fixed "now" = 2026-04-10 00:00 UTC (matches today's date in env)
     private val NOW = makeUtcMs(2026, 4, 10)
 
+    /** One day in millis */
+    private val DAY_MS = 24L * 60L * 60L * 1000L
+
     @Suppress("DEPRECATION_ERROR")
     @Before
     fun setup() {
@@ -80,7 +83,13 @@ class BudgetRolloverTest {
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
+        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns emptyList()
+        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(emptyList())
+        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns emptyList()
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
 
         coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
             val amounts = firstArg<List<Pair<Double, String>>>()
@@ -480,9 +489,12 @@ class BudgetRolloverTest {
             categoryId = categoryId,
             amount = amount,
             period = period,
+            periodMode = "ROLLING",
             startDate = startDate,
             isActive = isActive,
             rollover = rollover,
+            currency = "EUR",
+            createdAt = NOW,
             notifyAtWarning = 0.75f,
             notifyAtCritical = 0.90f
         )

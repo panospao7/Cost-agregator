@@ -8,9 +8,11 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.FinancialForecast
 import com.yourname.expensetracker.domain.model.ForecastComponents
 import com.yourname.expensetracker.domain.model.ForecastHorizon
@@ -21,10 +23,7 @@ import com.yourname.expensetracker.domain.model.RiskLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.slot
+import io.mockk.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -61,10 +60,29 @@ class CalculateFinancialForecastUseCaseTest {
         synthesisEngine = mockk()
         timeBoundaryTicker = mockk()
         timeProvider = mockk()
+
+        val mockAnalyticsCurrencyNormalizer = mockk<com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer>(relaxed = true)
+        val mockCurrencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true)
+
+        every { mockCurrencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery {
+            mockAnalyticsCurrencyNormalizer.normalizeSnapshots(any(), any())
+        } coAnswers {
+            val snapshots = firstArg<List<ExpenseSnapshot>>()
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = snapshots,
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = snapshots.size
+            )
+        }
+
         forecastInputAssembler = ForecastInputAssembler(
             timeProvider = timeProvider,
-            analyticsCurrencyNormalizer = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
+            analyticsCurrencyNormalizer = mockAnalyticsCurrencyNormalizer,
+            currencySettingsRepository = mockCurrencySettingsRepository,
             currencyConverter = mockk(relaxed = true),
             recurringLifecycleCoordinator = mockk(relaxed = true),
             recurringOccurrenceDao = mockk(relaxed = true)

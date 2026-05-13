@@ -75,7 +75,7 @@ class InsightsEngineDeepTest {
     @Test
     fun `spending pace canonical formula and status are correct`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 16)
-        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 1600.0,
             daysElapsed = 16,
             daysInMonth = 30,

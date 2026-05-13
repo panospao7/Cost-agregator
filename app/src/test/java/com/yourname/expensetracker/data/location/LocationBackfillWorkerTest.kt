@@ -108,7 +108,7 @@ class LocationBackfillWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { expenseRepository.conditionallySetLocation(any(), any(), any(), any(), any(), any()) }
     }
 
     @Test

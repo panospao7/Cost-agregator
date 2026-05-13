@@ -1,11 +1,11 @@
 package com.yourname.expensetracker.domain.usecase.savings
 
 import com.yourname.expensetracker.assertApproxEquals
-import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.repository.PromptStateRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
+import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -87,7 +87,7 @@ class LifestyleSavingsPromptUseCaseTest {
                 currentIncome = 1200.0
             )
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val result = useCase.evaluateAndPrompt()
 
@@ -110,7 +110,7 @@ class LifestyleSavingsPromptUseCaseTest {
                 currentIncome = 1100.0
             )
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val result = useCase.evaluateAndPrompt()
 
@@ -128,7 +128,7 @@ class LifestyleSavingsPromptUseCaseTest {
         coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } returns report(
             lifestyleInflationRate = 0.049
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val result = useCase.evaluateAndPrompt()
 
@@ -145,7 +145,7 @@ class LifestyleSavingsPromptUseCaseTest {
                 monthData("2026-01", income = 1000.0, savingsRate = 10.0)
             )
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val result = useCase.evaluateAndPrompt()
 
@@ -161,7 +161,7 @@ class LifestyleSavingsPromptUseCaseTest {
             lifestyleCreepDetected = false,
             incomeElasticity = 1.1
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val result = useCase.evaluateAndPrompt()
 
@@ -180,7 +180,7 @@ class LifestyleSavingsPromptUseCaseTest {
             spendingGrowthRate = 0.12,
             monthlyData = sixMonthData()
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val result = useCase.evaluateAndPrompt()
 
@@ -204,7 +204,7 @@ class LifestyleSavingsPromptUseCaseTest {
             spendingGrowthRate = 0.35,
             lifestyleCreepDetected = true
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
             listOf(
                 SavingsGoal(
                     id = 1L,

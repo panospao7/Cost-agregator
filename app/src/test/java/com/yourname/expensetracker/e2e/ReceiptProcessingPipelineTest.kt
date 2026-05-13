@@ -45,7 +45,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
 
-        receiptParser = ReceiptParser(MerchantRulesRepository(), timeProvider = mockk())
+        receiptParser = ReceiptParser(MerchantRulesRepository(), timeProvider = mockk(relaxed = true))
 
         merchantNormalizationRepository = mockk(relaxed = true)
         coEvery { merchantNormalizationRepository.getAliasByNormalizedKey(any()) } returns null

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.location.LocatedExpense
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
+import com.yourname.expensetracker.domain.location.LocatedMoneyExpense
 import com.yourname.expensetracker.domain.location.SpendingHeatmapEngine
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -68,9 +69,9 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
-            timeProvider = mockk(),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
         )
     }
@@ -118,8 +119,8 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             makeExpense(6L, TransactionType.PURCHASE, 40.0)
         )
 
-        val captured = slot<List<LocatedExpense>>()
-        every { heatmapEngine.compute(capture(captured)) } returns emptyList()
+        val captured = slot<List<LocatedMoneyExpense>>()
+        every { heatmapEngine.computeNormalized(capture(captured)) } returns emptyList()
         every { expenseRepository.getLocatedExpenses() } returns flowOf(mixedExpenses)
         every { expenseRepository.getUnlocatedExpensesFlow(any()) } returns flowOf(emptyList())
 
@@ -133,9 +134,9 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
-            timeProvider = mockk(),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
         )
 
@@ -174,9 +175,9 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
-            timeProvider = mockk(),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
         )
 
@@ -217,9 +218,9 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             realEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
-            timeProvider = mockk(),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
         )
 
@@ -257,9 +258,9 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             realEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
-            timeProvider = mockk(),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
         )
 
@@ -387,17 +388,17 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             makeExpense(6L, TransactionType.PURCHASE, 40.0)
         )
 
-        val captured = slot<List<LocatedExpense>>()
-        every { heatmapEngine.compute(capture(captured)) } returns emptyList()
+        val captured = slot<List<LocatedMoneyExpense>>()
+        every { heatmapEngine.computeNormalized(capture(captured)) } returns emptyList()
         every { expenseRepository.getLocatedExpenses() } returns flowOf(mixedExpenses)
 
         val vm = SpendingMapViewModel(
             expenseRepository, categoryRepository, locationResolver,
             locationProvider, merchantLocationRepository,
             heatmapEngine, insightsEngine, geocodingService,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
-            timeProvider = mockk(),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
         )
 
@@ -425,9 +426,9 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             expenseRepository, categoryRepository, locationResolver,
             locationProvider, merchantLocationRepository,
             heatmapEngine, insightsEngine, geocodingService,
-            currencySettingsRepository = mockk(),
-            currencyConverter = mockk(),
-            timeProvider = mockk(),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true),
+            timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
             )
 

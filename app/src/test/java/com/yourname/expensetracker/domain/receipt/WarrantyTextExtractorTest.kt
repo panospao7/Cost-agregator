@@ -41,7 +41,7 @@ class WarrantyTextExtractorTest {
         assertEquals("+1-800-123-4567", result.supportPhone)
         assertEquals("support@techstore.com", result.supportEmail)
         assertEquals(30, result.returnWindowDays)
-        assertApproxEquals(100.0, result.confidence, 0.01)
+        assertApproxEquals(1.0, result.confidence, 0.01)
 
         val purchaseCal = Calendar.getInstance().apply { timeInMillis = result.purchaseDate!! }
         val endCal = Calendar.getInstance().apply { timeInMillis = result.warrantyEndDate!! }
@@ -66,7 +66,7 @@ class WarrantyTextExtractorTest {
         assertEquals(12, result.warrantyDurationMonths)
         assertEquals(14, result.returnWindowDays)
         assertNull(result.warrantyType)
-        assertTrue(result.confidence >= 80.0)
+        assertTrue(result.confidence >= 0.80)
     }
 
     @Test
@@ -89,7 +89,7 @@ class WarrantyTextExtractorTest {
         assertNull(result.supportPhone)
         assertNull(result.supportEmail)
         assertNull(result.returnWindowDays)
-        assertApproxEquals(15.0, result.confidence, 0.01)
+        assertApproxEquals(0.15, result.confidence, 0.01)
     }
 
     // -------------------------------------------------------------------------

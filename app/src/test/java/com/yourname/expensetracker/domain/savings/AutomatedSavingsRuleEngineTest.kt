@@ -13,11 +13,13 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -51,6 +53,7 @@ class AutomatedSavingsRuleEngineTest {
         stateFile = Files.createTempFile("automated-savings-rule-engine", ".preferences_pb").toFile()
 
         coEvery { categoryRepository.getAll() } returns emptyList()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
 
         recreateEngine()
     }
@@ -121,19 +124,19 @@ class AutomatedSavingsRuleEngineTest {
         val now = timeProvider.now()
         val (expectedWeekStart, expectedWeekEnd) = TimePeriodUtils.getWeekRange(now)
 
-        coEvery { expenseRepository.getExpensesBetween(expectedWeekStart, expectedWeekEnd) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(expectedWeekStart, expectedWeekEnd) } returns emptyList()
 
         val executions = engine.evaluateRules(deposit(amount = 50.0), listOf(weeklyNoSpendRule()))
 
         assertEquals(1, executions.size)
-        coVerify(exactly = 1) { expenseRepository.getExpensesBetween(expectedWeekStart, expectedWeekEnd) }
+        coVerify(exactly = 1) { expenseRepository.getExpenseSnapshotsBetween(expectedWeekStart, expectedWeekEnd) }
     }
 
     @Test
     fun `weekly no spend rule is idempotent within the same week`() = runTest {
         val now = timeProvider.now()
         val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
-        coEvery { expenseRepository.getExpensesBetween(weekStart, weekEnd) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(weekStart, weekEnd) } returns emptyList()
 
         val firstExecutions = engine.evaluateRules(deposit(amount = 50.0), listOf(weeklyNoSpendRule()))
         val secondExecutions = engine.evaluateRules(deposit(amount = 50.0), listOf(weeklyNoSpendRule()))
@@ -189,7 +192,7 @@ class AutomatedSavingsRuleEngineTest {
             maximumPerMonth = 10.0,
             isActive = true
         )
-        coEvery { expenseRepository.getExpensesBetween(weekStart, weekEnd) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(weekStart, weekEnd) } returns emptyList()
 
         val capConsumingExecutions = engine.evaluateRules(deposit(amount = 10.0), listOf(incomeRule, weeklyRule))
 
@@ -202,7 +205,7 @@ class AutomatedSavingsRuleEngineTest {
         val mayNow = timeProvider.now()
         val (mayWeekStart, mayWeekEnd) = TimePeriodUtils.getWeekRange(mayNow)
         assertEquals(weekStart, mayWeekStart)
-        coEvery { expenseRepository.getExpensesBetween(mayWeekStart, mayWeekEnd) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(mayWeekStart, mayWeekEnd) } returns emptyList()
 
         val mayWeeklyOnlyExecutions = engine.evaluateRules(deposit(amount = 10.0), listOf(weeklyRule))
 

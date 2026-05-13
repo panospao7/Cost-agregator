@@ -189,7 +189,7 @@ class PrivacyGateContractTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `cloud ai gate logs every check decision`() = runTest {
+    fun `cloud ai gate does not log on its own`() = runTest {
         // GIVEN: a CloudAiPrivacyGate with a mocked audit logger
         val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
@@ -202,8 +202,9 @@ class PrivacyGateContractTest {
         // WHEN: checking the gate (capability is disabled by default)
         gate.check(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST)
 
-        // THEN: the audit logger was called exactly once
-        coVerify(exactly = 1) {
+        // THEN: the audit logger was NOT called
+        // (logging is handled by CompositePrivacyGate, not individual gates)
+        coVerify(exactly = 0) {
             auditLogger.logDecision(
                 PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
                 any<PrivacyDecision>(),

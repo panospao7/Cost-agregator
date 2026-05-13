@@ -103,6 +103,8 @@ class PriceProtectionTrackerTest {
             parsedItems = """[{"name":"Laptop","price":999.0,"category":"electronics"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
+            currency = "EUR",
+            documentType = "RETAIL_RECEIPT",
             createdAt = System.currentTimeMillis() - (35 * 24 * 60 * 60 * 1000)
         )
         coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(oldReceipt)
@@ -291,6 +293,8 @@ class PriceProtectionTrackerTest {
             parsedItems = """[{"name":"Laptop","price":$total,"category":"electronics"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
+            currency = "EUR",
+            documentType = "RETAIL_RECEIPT",
             createdAt = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000)
         )
     }
@@ -306,6 +310,8 @@ class PriceProtectionTrackerTest {
             parsedItems = """[{"name":"$name","price":$price,"category":"$category"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
+            currency = "EUR",
+            documentType = "RETAIL_RECEIPT",
             createdAt = System.currentTimeMillis()
         )
     }
@@ -321,6 +327,8 @@ class PriceProtectionTrackerTest {
             parsedItems = null,
             parsedTaxAmount = null,
             confidence = 0.9f,
+            currency = "EUR",
+            documentType = "RETAIL_RECEIPT",
             createdAt = System.currentTimeMillis()
         )
     }

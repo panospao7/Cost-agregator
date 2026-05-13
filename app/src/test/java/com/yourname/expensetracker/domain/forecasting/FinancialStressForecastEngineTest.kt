@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
@@ -49,6 +50,7 @@ class FinancialStressForecastEngineTest {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var timeProvider: TimeProvider
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
 
     private lateinit var engine: FinancialStressForecastEngine
 
@@ -66,10 +68,13 @@ class FinancialStressForecastEngineTest {
         expenseRepository = mockk()
         budgetRepository = mockk()
         timeProvider = mockk()
+        currencySettingsRepository = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
             val start = firstArg<Long>()
@@ -91,7 +96,7 @@ class FinancialStressForecastEngineTest {
             budgetRepository = budgetRepository,
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = currencySettingsRepository,
             multiCurrencyRepository = mockk(relaxed = true),
             recurringLifecycleCoordinator = mockk(relaxed = true),
             recurringOccurrenceDao = mockk(relaxed = true),
