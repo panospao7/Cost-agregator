@@ -1,7 +1,7 @@
 # ExpenseTracker UI Component Library
 
-**Generated:** May 7, 2026  
-**Total Components:** 58 across 7 categories + root level  
+**Generated:** May 12, 2026 (updated from May 7)  
+**Total Components:** 59 across 8 categories + root level  
 **Framework:** Jetpack Compose with Material 3
 
 ---
@@ -15,8 +15,9 @@
 5. [Dialog/Sheet Components](#5-dialogsheet-components)
 6. [Navigation Components](#6-navigation-components)
 7. [Feature & Support Components](#7-feature--support-components)
-8. [Utility & Form Components](#8-utility--form-components)
-9. [Component Usage Heatmap](#9-component-usage-heatmap)
+8. [Privacy & Security Components](#8-privacy--security-components)
+9. [Utility & Form Components](#9-utility--form-components)
+10. [Component Usage Heatmap](#10-component-usage-heatmap)
 
 ---
 
@@ -141,19 +142,26 @@
 
 ---
 
-## 8. Utility & Form Components
+## 8. Privacy & Security Components
 
-*Non-composable helpers and UI utilities*
+*Components for privacy-denied states and security messaging*
 
-| File | Type | Purpose |
-|------|------|---------|
-| `ui/util/ColorExtensions.kt` | Extension functions | Color manipulation utilities |
-| `ui/util/HapticFeedback.kt` | Feedback utility | Haptic feedback (light/standard/heavy) |
-| `ui/util/ModifierExtensions.kt` | Extension functions | Common Compose modifier builders |
-| `ui/util/ClipboardAmountParser.kt` | Utility | Parse monetary amounts from clipboard |
-| `ui/mappers/DashboardWidgetUiMapper.kt` | Mapper | Domain models → UI models |
-| `ui/mappers/MonteCarloBudgetImpactUiMapper.kt` | Mapper | Budget impact forecast → UI models |
-| `ui/mappers/TransactionFilterUiMapper.kt` | Mapper | Filter domain → UI state |
+| Component | File | Purpose | Consumers | Reusability |
+|-----------|------|---------|-----------|-------------|
+| **PrivacyBlockedCard** | `PrivacyBlockedCard.kt` | Displays lock icon + "Feature disabled" title + reason string for privacy-blocked capabilities | PrivacySettingsScreen, BackupRestoreScreen | Cross-cutting (privacy UI) |
+
+---
+
+## 9. Utility & Form Components
+
+*Reusable utilities and form helpers*
+
+| Component | File | Purpose | Consumers | Reusability |
+|-----------|------|---------|-----------|-------------|
+| **ColorExtensions** | `util/ColorExtensions.kt` | Color transformations/extensions | Multiple screens | Cross-cutting |
+| **HapticFeedback** | `util/HapticFeedback.kt` | Haptic feedback utilities | Multiple screens | Cross-cutting |
+| **ModifierExtensions** | `util/ModifierExtensions.kt` | Reusable Compose modifiers | Multiple screens | Cross-cutting |
+| **ClipboardAmountParser** | `util/ClipboardAmountParser.kt` | Clipboard amount parsing | AddExpenseSheet | Screen-specific |
 
 ---
 

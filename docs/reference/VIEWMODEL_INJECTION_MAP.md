@@ -1,7 +1,7 @@
 # ExpenseTracker ViewModel Injection Reference
 
-**Generated:** May 7, 2026  
-**Total ViewModels:** 39 (38 screen ViewModels + MainViewModel)  
+**Generated:** May 12, 2026 (updated from May 7)  
+**Total ViewModels:** 38 (37 screen ViewModels + MainViewModel)  
 **Architecture:** Hilt @HiltViewModel with constructor injection
 
 ---

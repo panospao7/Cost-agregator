@@ -1,6 +1,6 @@
 # ExpenseTracker Frontend UI/UX - Quick Reference Index
 
-**Scout Analysis Complete** | Generated: May 7, 2026
+**Scout Analysis Complete** | Generated: May 12, 2026 (updated from May 7)
 
 ---
 
@@ -131,7 +131,7 @@ ui/screens/budget/                     ← Budget management & forecasting
 ui/screens/analytics/                  ← Analytics & advanced analytics
 ui/screens/map/                        ← Geo-visualization
 
-ui/components/                          ← 51 reusable components
+ui/components/                          ← 52 reusable components (incl. PrivacyBlockedCard)
 ui/theme/Theme.kt                       ← Color scheme (Midnight Navy)
 ui/theme/Dimens.kt                      ← Spacing & sizing constants
 ```
@@ -228,7 +228,8 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - PeriodBlock / PeriodGridView
 - PeriodNavigationBar
 - TransferDirectionBadge
-- PulseDot (status indicator)
+- PulseDot
+- PrivacyBlockedCard                  ← Displays privacy-denied states with lock icon (status indicator)
 - BentoCard
 
 **Total**: 58 component files
@@ -355,7 +356,7 @@ Scaffold(
 | Screen Packages | 35 |
 | Screen Files | 81 |
 | Component Files | 58 |
-| ViewModels | 39 (incl. MainViewModel) |
+| ViewModels | 38 (incl. MainViewModel) |
 | Dialog/Sheet Variants | 20+ |
 | Feature Destinations | 23 |
 | Management Screens | 4 |

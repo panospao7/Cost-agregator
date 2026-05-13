@@ -1,8 +1,8 @@
 # ExpenseTracker Frontend UI/UX Comprehensive Mapping
 
-**Refreshed**: May 7, 2026  
+**Refreshed**: May 12, 2026 (updated from May 7)  
 **Scope**: Current frontend inventory including screens, components, navigation, integration, and theming
-**Total Files**: 154 UI source files (39 ViewModels, 58 components)
+**Total Files**: 154 UI source files (38 ViewModels, 59 components incl. PrivacyBlockedCard)
 
 ---
 
@@ -832,6 +832,7 @@ All features accessible from:
 |-----------|------|---------|
 | **TransferDirectionBadge** | `TransferDirectionBadge.kt` | Income/expense direction indicator |
 | **PulseDot** | `PulseDot.kt` | Animated status indicator |
+| **PrivacyBlockedCard** | `PrivacyBlockedCard.kt` | Reusable card displaying privacy-denied states with lock icon and reason; consumed by PrivacySettingsScreen, BackupRestoreScreen |
 | **BentoCard** | `BentoCard.kt` | Grid card layout component |
 | **RetroBudgetBlockPartyCard** | `RetroBudgetBlockPartyCard.kt` | Alternative budget card UI |
 | **RetroTopCategoriesCard** | `RetroTopCategoriesCard.kt` | Alternative top categories card |
