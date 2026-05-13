@@ -1,0 +1,17 @@
+{
+  "resultNotNull": true,
+  "p10": 837.7662439156646,
+  "p25": 903.4617014137024,
+  "p50": 1003.5984947780892,
+  "p75": 1112.7464550921177,
+  "p90": 1224.2245626712088,
+  "spentToDate": 500,
+  "knownUpcoming": 100,
+  "budgetAmount": 1500,
+  "probabilityUnderBudget": 0.994,
+  "confidenceLevel": "HIGH",
+  "confidenceScore": 0.79,
+  "displayCurrency": "EUR",
+  "percentilesOrdered": true,
+  "allAboveBaseline": true
+}

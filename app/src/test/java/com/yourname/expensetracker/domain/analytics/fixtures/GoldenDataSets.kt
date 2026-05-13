@@ -5,7 +5,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import java.time.LocalDate
-import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 /**
@@ -20,7 +20,7 @@ object GoldenDataSets {
 
     // Reference date: April 1, 2026 (used as "Now" for tests)
     val APRIL_1_2026: Long = LocalDate.of(2026, 4, 1)
-        .atStartOfDay(ZoneId.systemDefault())
+        .atStartOfDay(ZoneOffset.UTC)
         .toInstant()
         .toEpochMilli()
 
@@ -253,7 +253,7 @@ object GoldenDataSets {
         mySharePercentage: Int? = null
     ): Expense {
         val epochMillis = LocalDate.parse(date, dateFormatter)
-            .atStartOfDay(ZoneId.systemDefault())
+            .atStartOfDay(ZoneOffset.UTC)
             .toInstant()
             .toEpochMilli()
 
@@ -265,7 +265,7 @@ object GoldenDataSets {
             date = epochMillis,
             categoryId = categoryId,
             paymentMethod = PaymentMethod.CARD,
-            createdAt = System.currentTimeMillis(),
+            createdAt = APRIL_1_2026,
             isNotMine = isNotMine,
             isSharedExpense = isSharedExpense,
             myShareAmount = myShareAmount,
@@ -295,7 +295,7 @@ object GoldenDataSets {
         mySharePercentage: Int? = null
     ): Expense {
         val epochMillis = LocalDate.parse(date, dateFormatter)
-            .atStartOfDay(ZoneId.systemDefault())
+            .atStartOfDay(ZoneOffset.UTC)
             .toInstant()
             .toEpochMilli()
 
@@ -304,14 +304,14 @@ object GoldenDataSets {
         }
 
         return Expense(
-            id = System.currentTimeMillis(), // Generate unique ID
+            id = epochMillis, // Deterministic unique ID based on date
             amount = amount,
             merchant = merchant,
             transactionType = type,
             date = epochMillis,
             categoryId = categoryId,
             paymentMethod = PaymentMethod.CARD,
-            createdAt = System.currentTimeMillis(),
+            createdAt = APRIL_1_2026,
             isNotMine = isNotMine,
             isSharedExpense = isSharedExpense,
             myShareAmount = myShareAmount,

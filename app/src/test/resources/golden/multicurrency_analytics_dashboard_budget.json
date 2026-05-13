@@ -1,0 +1,52 @@
+{
+  "homeCurrency": "EUR",
+  "displayTotal": 191,
+  "isPartial": true,
+  "totalTransactionCount": 4,
+  "sourceBuckets": [
+    {
+      "currency": "EUR",
+      "amount": 100,
+      "transactionCount": 1
+    },
+    {
+      "currency": "USD",
+      "amount": 50,
+      "transactionCount": 1
+    },
+    {
+      "currency": "GBP",
+      "amount": 40,
+      "transactionCount": 1
+    },
+    {
+      "currency": "CHF",
+      "amount": 20,
+      "transactionCount": 1
+    }
+  ],
+  "conversionFailures": [
+    {
+      "currency": "CHF",
+      "amount": 20,
+      "reason": "MISSING_RATE"
+    }
+  ],
+  "categoryTotals": {
+    "1": {
+      "displayAmount": 100,
+      "isPartial": true,
+      "transactionCount": 2
+    },
+    "3": {
+      "displayAmount": 45,
+      "isPartial": false,
+      "transactionCount": 1
+    },
+    "2": {
+      "displayAmount": 46,
+      "isPartial": false,
+      "transactionCount": 1
+    }
+  }
+}

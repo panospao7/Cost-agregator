@@ -1,0 +1,20 @@
+{
+  "allWorkersBlocked": true,
+  "blockedWorkerCount": 7,
+  "totalWorkers": 7,
+  "idempotent": true,
+  "bothChecksBlocked": true,
+  "allWorkersAllowedAfterRestore": true,
+  "exceptionIncludesOperationName": true,
+  "dbMutationsDuringRestore": 0,
+  "expenseCountPreserved": true,
+  "workerNames": [
+    "receipt_matching_worker",
+    "bill_reminder_worker",
+    "daily_briefing_worker",
+    "warranty_expiration_worker",
+    "location_backfill_worker",
+    "data_retention_worker",
+    "merchant_key_backfill_worker"
+  ]
+}

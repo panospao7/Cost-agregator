@@ -1,0 +1,19 @@
+{
+  "dashboardTotal": 12.99,
+  "dashboardCurrency": "EUR",
+  "dashboardTransactionCount": 1,
+  "isPartial": false,
+  "doubleCounted": false,
+  "claimSucceeded": true,
+  "mayOccurrenceStatus": "PAID",
+  "mayOccurrenceLinkedExpenseId": 1,
+  "plannedExpenseStatus": "FULFILLED",
+  "occurrenceStatuses": {
+    "occurrence_0": "PAID",
+    "occurrence_1": "PLANNED",
+    "occurrence_2": "PLANNED"
+  },
+  "totalOccurrences": 3,
+  "paidOccurrences": 1,
+  "plannedOccurrences": 2
+}

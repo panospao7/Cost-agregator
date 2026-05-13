@@ -162,6 +162,18 @@ class InvestmentGoldenScenarioTest {
         assertThat(aggregate.sourceBuckets).hasSize(2)
         val bucketCurrencies = aggregate.sourceBuckets.map { it.currency.code }
         assertThat(bucketCurrencies).containsExactly("EUR", "USD")
+
+        // Exact bucket amounts
+        val eurBucket = aggregate.sourceBuckets.first { it.currency.code == "EUR" }
+        val usdBucket = aggregate.sourceBuckets.first { it.currency.code == "USD" }
+        assertThat(eurBucket.amount).isWithin(0.01).of(950.0)  // 5 × 190
+        assertThat(usdBucket.amount).isWithin(0.01).of(780.0)  // 3 × 260
+
+        // Display total in EUR: all amounts × 0.92 (mocked converter)
+        // Converter receives [(950, EUR), (780, USD)] and returns sum * 0.92
+        // = (950 + 780) * 0.92 = 1591.6
+        assertThat(aggregate.displayAmount).isWithin(1.0).of(1591.6)
+
         assertThat(dataQuality.isPartial).isFalse()
     }
 

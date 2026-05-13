@@ -48,7 +48,7 @@ private val Result<*, *>.isFailure: Boolean
     get() = this is Result.Error
 
 /**
- * Golden scenario tests for GroupLifecycleCoordinator.
+ * Contract tests for GroupLifecycleCoordinator.
  *
  * Covers:
  * - groupSettlementPersistsAndAffectsBalance — settlement persistence
@@ -58,7 +58,7 @@ private val Result<*, *>.isFailure: Boolean
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [Config.OLDEST_SDK])
-class GroupGoldenScenarioTest {
+class GroupLifecycleContractTest {
 
     private lateinit var database: AppDatabase
     private lateinit var groupDao: ExpenseGroupDao

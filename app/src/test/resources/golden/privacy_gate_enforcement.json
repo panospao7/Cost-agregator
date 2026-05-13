@@ -1,0 +1,31 @@
+{
+  "geocodingDecision": "Denied",
+  "geocodingBlocks": true,
+  "locationBackfillDecision": "Denied",
+  "locationBackfillBlocks": true,
+  "gpsDecision": "Denied",
+  "gpsBlocks": true,
+  "geocodingAllowedAfterEnable": "Allowed",
+  "geocodingAllowedBlocks": false,
+  "auditEventsRecorded": 4,
+  "auditDecisions": [
+    {
+      "capability": "EXTERNAL_GEOCODING",
+      "decision": "DENIED"
+    },
+    {
+      "capability": "BACKGROUND_LOCATION_BACKFILL",
+      "decision": "DENIED"
+    },
+    {
+      "capability": "DEVICE_GPS_LOCATION",
+      "decision": "DENIED"
+    },
+    {
+      "capability": "EXTERNAL_GEOCODING",
+      "decision": "ALLOWED"
+    }
+  ],
+  "allDeniedBlockExecution": true,
+  "allowedDoesNotBlock": true
+}

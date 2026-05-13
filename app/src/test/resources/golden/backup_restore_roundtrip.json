@@ -1,0 +1,23 @@
+{
+  "totalBefore": 220,
+  "totalAfter": 220,
+  "totalsMatch": true,
+  "transactionCount": 3,
+  "normalModeAllowsWrites": true,
+  "blockedModes": [
+    "BACKUP_EXPORTING",
+    "RESTORE_PREPARING",
+    "RESTORE_STAGING",
+    "RESTORE_SWAPPING",
+    "RESTORE_VERIFYING",
+    "RESTORE_ROLLING_BACK",
+    "RESTORE_COMPLETE_RESTART_REQUIRED"
+  ],
+  "allNonNormalModesBlocked": true,
+  "categoryTotalsPreserved": {
+    "1": 100,
+    "2": 75,
+    "3": 45
+  },
+  "exchangeRatePreserved": true
+}

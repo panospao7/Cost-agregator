@@ -1,0 +1,14 @@
+{
+  "dashboardTotal": 80,
+  "dashboardTransactionCount": 2,
+  "budgetFoodSpent": 80,
+  "budgetFoodLimit": 200,
+  "budgetFoodPercentage": 0.4,
+  "budgetFoodOverBudget": false,
+  "dashboardEqualsBudget": true,
+  "sharedExpenseUsesMyShare": true,
+  "isNotMineExcluded": true,
+  "reimbursementExcluded": true,
+  "grossWouldBe": 140,
+  "effectiveIs": 80
+}

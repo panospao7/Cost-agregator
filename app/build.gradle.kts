@@ -62,6 +62,8 @@ android {
         unitTests.all {
             it.maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).takeIf { forks -> forks > 0 } ?: 1
 
+            it.systemProperty("updateGoldens", project.findProperty("updateGoldens") ?: "false")
+
             it.testLogging {
                 events("passed", "skipped", "failed", "standardOut", "standardError")
                 showExceptions = true

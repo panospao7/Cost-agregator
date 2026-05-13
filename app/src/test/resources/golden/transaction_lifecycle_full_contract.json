@@ -1,0 +1,16 @@
+{
+  "createSucceeded": true,
+  "duplicateRejected": true,
+  "totalAfterCreate": 50,
+  "totalAfterDuplicate": 50,
+  "totalAfterUpdate": 75,
+  "totalAfterDelete": 0,
+  "duplicateDidNotChangeDashboard": true,
+  "eventsSurviveExpenseDeletion": true,
+  "eventSequence": [
+    "CREATED",
+    "CREATE_DUPLICATE_SKIPPED",
+    "UPDATED",
+    "DELETED"
+  ]
+}

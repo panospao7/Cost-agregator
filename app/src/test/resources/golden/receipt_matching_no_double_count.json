@@ -1,0 +1,14 @@
+{
+  "analyticsTotal": 89.99,
+  "transactionCount": 1,
+  "countedOnce": true,
+  "linkCreated": true,
+  "duplicateLinkRejected": true,
+  "totalLinks": 1,
+  "receiptMatchStatus": "AUTO_MATCHED",
+  "receiptLinkedExpenseId": 1,
+  "receiptEvents": [
+    "RECEIPT_LINKED_TO_EXPENSE"
+  ],
+  "newExpensesCreated": 0
+}

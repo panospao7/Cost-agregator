@@ -1,0 +1,28 @@
+{
+  "displayTotal": 145,
+  "isPartial": true,
+  "totalTransactionCount": 3,
+  "sourceBuckets": [
+    {
+      "currency": "EUR",
+      "amount": 100
+    },
+    {
+      "currency": "GBP",
+      "amount": 40
+    },
+    {
+      "currency": "USD",
+      "amount": 50
+    }
+  ],
+  "conversionFailures": [
+    {
+      "currency": "GBP",
+      "amount": 40,
+      "reason": "RATE_STALE"
+    }
+  ],
+  "gbpFailureReason": "RATE_STALE",
+  "usdConvertedSuccessfully": true
+}

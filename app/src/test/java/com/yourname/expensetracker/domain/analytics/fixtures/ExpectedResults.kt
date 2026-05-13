@@ -177,22 +177,22 @@ object ExpectedResults {
     // Month Period Definitions
     // ============================================================================
     object MonthPeriods {
-        // March 2026
+        // March 2026 (UTC)
         const val MARCH_2026_YEAR = 2026
         const val MARCH_2026_MONTH = 2  // 0-indexed: March = 2
-        const val MARCH_2026_START_MS = 1767224400000L  // March 1, 2026 00:00:00
-        const val MARCH_2026_END_MS = 1769816399000L   // March 31, 2026 23:59:59
+        const val MARCH_2026_START_MS = 1772323200000L  // March 1, 2026 00:00:00 UTC
+        const val MARCH_2026_END_MS = 1775001599000L   // March 31, 2026 23:59:59 UTC
 
-        // February 2026
+        // February 2026 (UTC)
         const val FEBRUARY_2026_YEAR = 2026
         const val FEBRUARY_2026_MONTH = 1  // 0-indexed: February = 1
-        const val FEBRUARY_2026_START_MS = 1764805200000L  // Feb 1, 2026 00:00:00
-        const val FEBRUARY_2026_END_MS = 1767224399000L    // Feb 28, 2026 23:59:59
+        const val FEBRUARY_2026_START_MS = 1769904000000L  // Feb 1, 2026 00:00:00 UTC
+        const val FEBRUARY_2026_END_MS = 1772323199000L    // Feb 28, 2026 23:59:59 UTC
 
-        // April 2026 (reference "now")
+        // April 2026 (reference "now") (UTC)
         const val APRIL_2026_YEAR = 2026
         const val APRIL_2026_MONTH = 3  // 0-indexed: April = 3
-        const val APRIL_2026_START_MS = 1769816400000L  // April 1, 2026 00:00:00
+        const val APRIL_2026_START_MS = 1775001600000L  // April 1, 2026 00:00:00 UTC
     }
 
     // ============================================================================

@@ -1,0 +1,32 @@
+{
+  "dashboardTotal": 220,
+  "categoryTotalsSum": 220,
+  "budgetActualTotal": 220,
+  "isPartial": false,
+  "dashboardEqualsCategorySum": true,
+  "dashboardEqualsBudgetActual": true,
+  "budgetItems": [
+    {
+      "categoryId": 1,
+      "budgetLimit": 200,
+      "actualSpent": 125,
+      "percentageUsed": 0.625,
+      "isOverBudget": false
+    },
+    {
+      "categoryId": 2,
+      "budgetLimit": 100,
+      "actualSpent": 35,
+      "percentageUsed": 0.35,
+      "isOverBudget": false
+    },
+    {
+      "categoryId": 3,
+      "budgetLimit": 150,
+      "actualSpent": 60,
+      "percentageUsed": 0.4,
+      "isOverBudget": false
+    }
+  ],
+  "transactionCount": 4
+}
