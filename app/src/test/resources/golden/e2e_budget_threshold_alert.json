@@ -1,0 +1,16 @@
+{
+  "budgetLimit": 200,
+  "periodStart": 1774990800000,
+  "periodEnd": 1777582800000,
+  "stage1_spent": 140,
+  "stage1_percent": 0.7,
+  "stage1_severity": "ON_TRACK",
+  "stage2_spent": 180,
+  "stage2_percent": 0.9,
+  "stage2_severity": "CRITICAL",
+  "stage3_spent": 210,
+  "stage3_percent": 1.05,
+  "stage3_severity": "EXCEEDED",
+  "depositExcluded": true,
+  "transactionCount": 4
+}

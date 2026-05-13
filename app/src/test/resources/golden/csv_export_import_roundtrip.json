@@ -23,7 +23,7 @@
     {
       "original": "=HYPERLINK(\"http:\/\/evil.com\")",
       "sanitized": "\"'=HYPERLINK(\"\"http:\/\/evil.com\"\")\"",
-      "neutralized": false
+      "neutralized": true
     }
   ],
   "safeCellsUnchanged": true,
@@ -66,7 +66,7 @@
       "preserved": true
     }
   ],
-  "allDangerousNeutralized": false,
+  "allDangerousNeutralized": true,
   "allSafeUnchanged": true,
   "allAmountsPreserved": true
 }

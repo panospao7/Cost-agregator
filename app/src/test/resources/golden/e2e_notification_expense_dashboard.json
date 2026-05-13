@@ -1,0 +1,15 @@
+{
+  "nbgParsed": true,
+  "nbgAmount": 45.5,
+  "nbgCurrency": "EUR",
+  "nbgMerchant": "ΣΚΛΑΒΕΝΙΤΗΣ",
+  "revolutParsed": true,
+  "revolutAmount": 30,
+  "revolutCurrency": "EUR",
+  "revolutMerchant": "Amazon",
+  "expenseCreated": true,
+  "duplicateRejected": true,
+  "dashboardTotal": 75.5,
+  "dashboardTransactionCount": 2,
+  "dashboardIsPartial": false
+}

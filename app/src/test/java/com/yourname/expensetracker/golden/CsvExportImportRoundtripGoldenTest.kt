@@ -64,10 +64,13 @@ class CsvExportImportRoundtripGoldenTest : GoldenTestBase() {
         val actual = JSONObject().apply {
             put("dangerousCells", JSONArray().apply {
                 dangerousCells.zip(sanitizedDangerous).forEach { (original, sanitized) ->
+                    val decoded = if (sanitized.startsWith("\"") && sanitized.endsWith("\"")) {
+                        sanitized.substring(1, sanitized.length - 1).replace("\"\"", "\"")
+                    } else sanitized
                     put(JSONObject().apply {
                         put("original", original)
                         put("sanitized", sanitized)
-                        put("neutralized", sanitized.trimStart().startsWith("'"))
+                        put("neutralized", decoded.trimStart().startsWith("'"))
                     })
                 }
             })
@@ -94,7 +97,13 @@ class CsvExportImportRoundtripGoldenTest : GoldenTestBase() {
                 }
             })
 
-            put("allDangerousNeutralized", sanitizedDangerous.all { it.trimStart().startsWith("'") })
+            put("allDangerousNeutralized", sanitizedDangerous.all { sanitized ->
+                // Decode RFC-4180 quoting: if wrapped in quotes, strip outer quotes and unescape ""
+                val decoded = if (sanitized.startsWith("\"") && sanitized.endsWith("\"")) {
+                    sanitized.substring(1, sanitized.length - 1).replace("\"\"", "\"")
+                } else sanitized
+                decoded.trimStart().startsWith("'")
+            })
             put("allSafeUnchanged", safeCells == sanitizedSafe)
             put("allAmountsPreserved", amounts.zip(parsedBack).all { (o, p) -> p != null && Math.abs(o - p) < 0.001 })
         }

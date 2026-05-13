@@ -30,7 +30,11 @@ class GoldenScenarioVerifier(
 
     companion object {
         private val UPDATE_MODE: Boolean by lazy {
-            System.getProperty("updateGoldens")?.toBoolean() == true
+            val enabled = System.getProperty("updateGoldens")?.toBoolean() == true
+            if (enabled && System.getenv("CI") == "true") {
+                error("Golden update mode is forbidden in CI. Remove -PupdateGoldens=true.")
+            }
+            enabled
         }
 
         private fun goldenResourceDir(): File? {

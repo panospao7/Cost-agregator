@@ -1,0 +1,11 @@
+{
+  "matchType": "AutoMatch",
+  "matchScore": 0.9958333333333333,
+  "matchedCorrectExpense": true,
+  "linkSucceeded": true,
+  "linkCount": 1,
+  "receiptMatchStatus": "MANUALLY_MATCHED",
+  "totalBefore": 89.99,
+  "totalAfter": 89.99,
+  "noDoubleCount": true
+}
