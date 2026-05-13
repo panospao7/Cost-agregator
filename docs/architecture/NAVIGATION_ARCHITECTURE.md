@@ -62,6 +62,8 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 | `NavigationControllerBehaviorTest` | Back stack, tab switching, feature navigation, edge cases |
 | `FeatureConfigNavigationContractTest` | Route inventory integrity, serialization, no duplicates |
 | `NavigationRouteContractTest` | Token round-trip for all destinations |
+| `DeepLinkParserTest` | Deep link parsing, security classification, parameter preservation |
+| `DestinationPersistencePolicyTest` | Degraded/ephemeral/full persistence documented |
 
 ## Invariants
 
@@ -70,3 +72,25 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 3. Main tabs are never in `FeatureConfig.allFeatures`.
 4. Tab switch always clears the back stack.
 5. `navigateBack()` from Home always returns `false`.
+6. Deep links to sensitive routes require user confirmation before navigation.
+7. Debug destination is gated by `BuildConfig.DEBUG` at render time.
+8. Unused FAB components are deleted (SmartFAB is canonical).
+
+## Deep Link Security
+
+Scheme: `expensetracker://`
+
+| Host | Decision | Reason |
+|------|----------|--------|
+| `home`, `dashboard` | Allow | No sensitive data |
+| `activity` (no ID) | Allow | Just opens list |
+| `activity?expenseId=X` | RequireConfirmation | Exposes specific transaction |
+| `review` | RequireConfirmation | Shows pending financial data |
+| `add` | RequireConfirmation | Can create financial records |
+| `analytics` | Allow | Aggregate data only |
+| `map` | Allow | Aggregate data only |
+| `plan` | Allow | Budget overview |
+| Unknown | Reject | Safety default |
+
+Implementation: `DeepLinkParser.kt` returns `DeepLinkDecision` (Allow/RequireConfirmation/Reject).
+MainActivity should check the decision and show confirmation dialog for `RequireConfirmation` routes.

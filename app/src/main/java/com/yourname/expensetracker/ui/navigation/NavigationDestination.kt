@@ -100,6 +100,9 @@ sealed class NavigationDestination {
     // Settings / Management Screens (previously orphaned)
     data object AiSettings : NavigationDestination()
     data object CategoryManagement : NavigationDestination()
+
+    // Debug (gated by BuildConfig.DEBUG at render time)
+    data object Debug : NavigationDestination()
     
     companion object {
         /**

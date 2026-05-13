@@ -162,6 +162,7 @@ internal fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.BudgetForecasting -> "budget_forecasting"
     is NavigationDestination.AiSettings -> "ai_settings"
     is NavigationDestination.CategoryManagement -> "category_management"
+    is NavigationDestination.Debug -> "debug"
 }
 
 internal fun destinationFromSaveToken(token: String): NavigationDestination? {
@@ -235,6 +236,7 @@ internal fun destinationFromSaveToken(token: String): NavigationDestination? {
         baseToken == "budget_forecasting" -> NavigationDestination.BudgetForecasting()
         baseToken == "ai_settings" -> NavigationDestination.AiSettings
         baseToken == "category_management" -> NavigationDestination.CategoryManagement
+        baseToken == "debug" -> NavigationDestination.Debug
         else -> null
     }
 }

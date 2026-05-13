@@ -821,6 +821,16 @@ fun MainScreen(
                         onNavigateBack = { navigation.navigateBack() }
                     )
                 }
+
+                is NavigationDestination.Debug -> {
+                    if (com.yourname.expensetracker.BuildConfig.DEBUG) {
+                        com.yourname.expensetracker.ui.screens.debug.DebugScreen(
+                            onDismiss = { navigation.navigateBack() }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateBack() }
+                    }
+                }
                 
                 // Main tabs handled by AnimatedContent above
                 is NavigationDestination.Home,
