@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.map
+﻿package com.yourname.expensetracker.ui.screens.map
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -111,6 +111,25 @@ fun SpendingMapScreen(
         val msg = state.snackbarMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
         viewModel.onSnackbarDismissed()
+    }
+
+    // S10-004: GPS privacy blocked — persistent snackbar with dismiss
+    LaunchedEffect(state.gpsPrivacyBlocked) {
+        if (state.gpsPrivacyBlocked) {
+            snackbarHostState.showSnackbar(
+                "Device GPS is disabled in Privacy settings.",
+                actionLabel = "Dismiss",
+                duration = SnackbarDuration.Long
+            )
+            viewModel.dismissGpsPrivacyBlocked()
+        }
+    }
+
+    // S10-022: Correction save error — show inline via snackbar (sheet stays open)
+    LaunchedEffect(state.correctionSaveError) {
+        val err = state.correctionSaveError ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(err, duration = SnackbarDuration.Long)
+        viewModel.dismissCorrectionError()
     }
 
     // ── Permission dialog ─────────────────────────────────────────────────────
@@ -345,15 +364,14 @@ fun SpendingMapScreen(
                     onMarkerClick = { viewModel.onMarkerSelected(it) }
                 )
 
-                // Re-centre on device location button
-                if (state.locationPermissionGranted &&
-                    state.deviceLatitude != null && state.deviceLongitude != null) {
+                // S10-003: Show My Location button whenever permission is granted
+                // (first tap fetches GPS; subsequent taps re-center)
+                if (state.locationPermissionGranted) {
                     val centerLocationCd = stringResource(R.string.map_center_my_location_cd)
                     FloatingActionButton(
                         onClick = {
-                            // W27: Fetch device location on explicit user request
                             viewModel.onCenterOnMeRequested()
-                            centreOnDeviceRequest = true
+                            if (state.deviceLatitude != null) centreOnDeviceRequest = true
                         },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -391,7 +409,7 @@ fun SpendingMapScreen(
                 onReResolve = { viewModel.onResolveLocationForMarker(marker) },
                 onCorrectPin = { viewModel.onOpenCorrectionSheet(marker) },
                 onDismiss = { viewModel.onMarkerSelected(null) },
-                homeCurrency = state.homeCurrency
+                homeCurrency = state.homeCurrency ?: ""
             )
                 }
             }
@@ -454,7 +472,7 @@ fun SpendingMapScreen(
                         )
                     }
                     items(state.placeInsights.take(10)) { insight ->
-                        PlaceInsightCard(insight, homeCurrency = state.homeCurrency)
+                        PlaceInsightCard(insight, homeCurrency = state.homeCurrency ?: "")
                     }
                 }
             }

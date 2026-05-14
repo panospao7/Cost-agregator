@@ -112,7 +112,8 @@ fun LocationSearchPicker(
                 delay(1100)
                 isSearching = true
                 searchError = null
-                Log.d("LocationSearch", "==> Starting search for: $query (google=$withGoogle)")
+                // S10-008: No raw query/address logging — location data is sensitive
+                Log.d("LocationSearch", "==> Starting search (google=$withGoogle)")
                 try {
                     val searchResults = withContext(Dispatchers.IO) {
                         geocodingService.searchMultiple(query, biasLat, biasLon, useGoogle = withGoogle)
@@ -126,16 +127,12 @@ fun LocationSearchPicker(
                     }
                     Log.d("LocationSearch", "<== Got ${resolvedResults.size} results")
                     results = resolvedResults
-                    // Auto-expand the map when results arrive so the user can see them
                     if (resolvedResults.isNotEmpty()) showMap = true
                     if (resolvedResults.isEmpty() && searchError == null) {
                         searchError = "No results found"
-                        Log.d("LocationSearch", "    No results found for: $query")
-                    } else {
-                        Log.d("LocationSearch", "    First result: ${resolvedResults.firstOrNull()?.displayAddress}")
+                        // S10-008: No raw query logging
                     }
                 } catch (e: CancellationException) {
-                    Log.d("LocationSearch", "    Search cancelled (debounce)")
                     throw e
                 } catch (e: Exception) {
                     Log.e("LocationSearch", "<== Search FAILED: ${e.message}", e)

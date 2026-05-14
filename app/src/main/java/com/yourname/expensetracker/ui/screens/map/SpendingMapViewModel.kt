@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.map
+﻿package com.yourname.expensetracker.ui.screens.map
 
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -94,17 +94,18 @@ data class SpendingMapState(
  val dateRangeEndMs: Long? = null,
  val availableCategories: List<MapCategoryFilterOption> = emptyList(),
   val highlightedMerchantQuery: String? = null,
-   /**
-    * Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init.
-    *
-    * ## Acceptable hardcoded "EUR"
-    * This initial value is immediately replaced by the repository flow in the
-    * ViewModel's `init` block. It only serves as a non-null default before the
-    * async home-currency load completes. See [CURR-6] in MASTER-ISSUE-REGISTRY.
-    */
-   val homeCurrency: String = "EUR",
+   /** S10-002: null until home currency loads — never defaults to "EUR" */
+   val homeCurrency: String? = null,
   val referenceNowMillis: Long = 0L,
-  val mapConversionWarnings: Int = 0
+  /** S10-006: Heatmap/insight conversion failures (spending-only, excluded from totals) */
+  val mapConversionWarnings: Int = 0,
+  /** S10-006: Marker conversion failures (all transaction types, shown in original currency) */
+  val markerConversionWarnings: Int = 0,
+  /** S10-004: true when GPS is blocked by privacy settings */
+  val gpsPrivacyBlocked: Boolean = false,
+  /** S10-011: true while a correction/pin save is in progress */
+  val isSavingCorrection: Boolean = false,
+  val correctionSaveError: String? = null
 ) {
   /** Universal contract: typed loadable state for map markers. */
   val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<MapExpenseMarker>>
@@ -128,6 +129,7 @@ class SpendingMapViewModel @Inject constructor(
     private val merchantLocationRepository: MerchantLocationRepository,
     private val heatmapEngine: SpendingHeatmapEngine,
  private val insightsEngine: LocationInsightsEngine,
+ /** S10-001 TODO: Move to private + LocationSearchCoordinator; screen should not access service directly */
  val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
   private val currencySettingsRepository: CurrencySettingsRepository,
   private val currencyConverter: CurrencyConverter,
@@ -141,6 +143,9 @@ class SpendingMapViewModel @Inject constructor(
     // Cached device location — refreshed once per permission grant, not on
     // every loadMapData() call (fixes bug #11).
     private var cachedDeviceLoc: Pair<Double, Double>? = null
+
+    /** S10-005: Cancel prior recompute job when filters change */
+    private var recomputeJob: kotlinx.coroutines.Job? = null
 
     init {
         // Bug #27 fix: use collect instead of first() so the map auto-updates
@@ -162,7 +167,12 @@ class SpendingMapViewModel @Inject constructor(
  }
  viewModelScope.launch(Dispatchers.IO) {
  currencySettingsRepository.homeCurrency().collect { hc ->
- _state.update { it.copy(homeCurrency = hc) }
+     _state.update { it.copy(homeCurrency = hc) }
+     // S10-002: Recompute when currency changes so markers/heatmap/insights use correct basis
+     recomputeJob?.cancel()
+     recomputeJob = viewModelScope.launch(Dispatchers.IO) {
+         recomputeMapData(expenseRepository.getLocatedExpenses().first())
+     }
  }
  }
  }
@@ -306,46 +316,68 @@ class SpendingMapViewModel @Inject constructor(
         displayAddress: String?,
         forMarker: MapExpenseMarker
     ) {
+        // S10-011: Idempotency guard
+        if (_state.value.isSavingCorrection) return
         viewModelScope.launch(Dispatchers.IO) {
-            // B15 fix: use the corrected location as the area center, not the
-            // device's current GPS. If the user is at home correcting a remote
-            // transaction, the device location would produce the wrong area key
-            // and the correction wouldn't match future transactions near the store.
-            val correctionId = merchantLocationRepository.saveCorrection(
-                MerchantLocationCorrection(
-                    normalizedMerchantName = merchantLocationRepository.normalizeKey(merchantName),
-                    correctedLatitude = correctedLat,
-                    correctedLongitude = correctedLon,
-                    areaLatitude = correctedLat,
-                    areaLongitude = correctedLon,
-                    osmId = osmId,
-                    displayAddress = displayAddress
+            _state.update { it.copy(isSavingCorrection = true, correctionSaveError = null) }
+            try {
+                val correctionId = merchantLocationRepository.saveCorrection(
+                    MerchantLocationCorrection(
+                        normalizedMerchantName = merchantLocationRepository.normalizeKey(merchantName),
+                        correctedLatitude = correctedLat,
+                        correctedLongitude = correctedLon,
+                        areaLatitude = correctedLat,
+                        areaLongitude = correctedLon,
+                        osmId = osmId,
+                        displayAddress = displayAddress
+                    )
                 )
-            )
-            // LOC-1: Check save result — conflict (id <= 0) means silent failure
-            if (correctionId <= 0L) {
-                _state.update { it.copy(snackbarMessage = "Location correction could not be saved (duplicate entry)") }
-                return@launch
+                if (correctionId <= 0L) {
+                    // S10-010: Conflict — keep sheet open with error
+                    _state.update { it.copy(isSavingCorrection = false, correctionSaveError = "Location correction could not be saved (duplicate entry)") }
+                    return@launch
+                }
+                // S10-010: Catch expense update failure separately
+                val expenseUpdateOk = runCatching {
+                    expenseRepository.updateExpenseLocation(
+                        expenseId = forMarker.expenseId,
+                        latitude = correctedLat,
+                        longitude = correctedLon,
+                        source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL,
+                        placeId = osmId,
+                        address = displayAddress
+                    )
+                }.isSuccess
+                if (!expenseUpdateOk) {
+                    // S10-010: Partial failure — correction saved but expense not updated
+                    _state.update { it.copy(isSavingCorrection = false, correctionSaveError = "Correction saved but expense location could not be updated. Retry to apply.") }
+                    return@launch
+                }
+                // S10-022: Close sheet only on full success
+                _state.update { it.copy(
+                    isSavingCorrection = false,
+                    showCorrectionSheet = false,
+                    pendingCorrectionMerchant = null,
+                    correctionSaveError = null,
+                    snackbarMessage = "Correction saved for $merchantName"
+                ) }
+                refreshStats()
+            } catch (e: Exception) {
+                _state.update { it.copy(isSavingCorrection = false, correctionSaveError = e.message ?: "Save failed") }
             }
-            expenseRepository.updateExpenseLocation(
-                expenseId = forMarker.expenseId,
-                latitude = correctedLat,
-                longitude = correctedLon,
-                source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL,
-                placeId = osmId,
-                address = displayAddress
-            )
-            _state.update { it.copy(
-                showCorrectionSheet = false,
-                pendingCorrectionMerchant = null,
-                snackbarMessage = "Correction saved for $merchantName"
-            ) }
-            refreshStats()
         }
     }
 
     fun onSnackbarDismissed() {
         _state.update { it.copy(snackbarMessage = null) }
+    }
+
+    fun dismissGpsPrivacyBlocked() {
+        _state.update { it.copy(gpsPrivacyBlocked = false) }
+    }
+
+    fun dismissCorrectionError() {
+        _state.update { it.copy(correctionSaveError = null) }
     }
 
     // Feature E: pin-this flow for unlocated expenses
@@ -385,6 +417,8 @@ class SpendingMapViewModel @Inject constructor(
      */
     private suspend fun recomputeMapData(locatedExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>) {
         val currentState = _state.value
+        // S10-002: Block computation until home currency is loaded — never compute with placeholder EUR
+        val homeCurrency = currentState.homeCurrency ?: return
         val filteredExpenses = locatedExpenses.filter { expense ->
             val dateInRange = (currentState.dateRangeStartMs == null || expense.date >= currentState.dateRangeStartMs) &&
                 (currentState.dateRangeEndMs == null || expense.date < currentState.dateRangeEndMs)
@@ -407,18 +441,18 @@ class SpendingMapViewModel @Inject constructor(
             val markerDisplayCurrency: String
             val markerOriginalCurrency: String
             val markerConversionWarning: String?
-            if (e.currency != currentState.homeCurrency) {
+            if (e.currency != homeCurrency) {
                 // #6: Use convertAsOf for historically accurate rates at the expense date
                 val converted = currencyConverter.convertAsOf(
                     amount = e.effectiveAmount,
                     fromCurrency = e.currency,
-                    toCurrency = currentState.homeCurrency,
+                    toCurrency = homeCurrency,
                     atMillis = e.date
                 )
                 if (converted != null) {
                     markerAmount = converted.convertedAmount
                     markerIsConverted = true
-                    markerDisplayCurrency = currentState.homeCurrency
+                    markerDisplayCurrency = homeCurrency
                     markerOriginalCurrency = e.currency
                     markerConversionWarning = null
                 } else {
@@ -427,12 +461,12 @@ class SpendingMapViewModel @Inject constructor(
                     markerIsConverted = false
                     markerDisplayCurrency = e.currency
                     markerOriginalCurrency = e.currency
-                    markerConversionWarning = "Conversion to ${currentState.homeCurrency} failed — showing original ${e.currency}"
+                    markerConversionWarning = "Conversion to ${homeCurrency} failed — showing original ${e.currency}"
                 }
             } else {
                 markerAmount = e.effectiveAmount
                 markerIsConverted = true
-                markerDisplayCurrency = currentState.homeCurrency
+                markerDisplayCurrency = homeCurrency
                 markerOriginalCurrency = e.currency
                 markerConversionWarning = null
             }
@@ -500,13 +534,13 @@ class SpendingMapViewModel @Inject constructor(
         val moneyExpenses = spendingOnlyExpenses.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
-            val (normalizedAmount, conversionStatus) = if (e.currency == currentState.homeCurrency) {
+            val (normalizedAmount, conversionStatus) = if (e.currency == homeCurrency) {
                 Pair(e.effectiveAmount, ConversionStatus.HOME_CURRENCY)
             } else {
                 val converted = currencyConverter.convertAsOf(
                     amount = e.effectiveAmount,
                     fromCurrency = e.currency,
-                    toCurrency = currentState.homeCurrency,
+                    toCurrency = homeCurrency,
                     atMillis = e.date
                 )
                 if (converted != null) {
@@ -520,7 +554,7 @@ class SpendingMapViewModel @Inject constructor(
                 latitude = lat,
                 longitude = lon,
                 normalizedAmount = normalizedAmount,
-                normalizedCurrency = currentState.homeCurrency,
+                normalizedCurrency = homeCurrency,
                 originalAmount = e.effectiveAmount,
                 originalCurrency = e.currency,
                 conversionStatus = conversionStatus,
@@ -548,6 +582,8 @@ class SpendingMapViewModel @Inject constructor(
         }
 
         val failedConversions = moneyExpenses.count { it.conversionStatus == ConversionStatus.FAILED }
+        // S10-006: Count marker conversion failures separately (all transaction types)
+        val markerConversionFailures = markers.count { !it.isConverted }
 
         _state.update { it.copy(
             isLoading = false,
@@ -556,7 +592,8 @@ class SpendingMapViewModel @Inject constructor(
             placeInsights = insights,
             availableCategories = availableCategories,
             referenceNowMillis = timeProvider.now(),
-            mapConversionWarnings = failedConversions
+            mapConversionWarnings = failedConversions,
+            markerConversionWarnings = markerConversionFailures
         ) }
     }
 
@@ -567,7 +604,9 @@ class SpendingMapViewModel @Inject constructor(
             }
             current.copy(selectedCategories = next)
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        // S10-005: Cancel prior recompute to prevent race
+        recomputeJob?.cancel()
+        recomputeJob = viewModelScope.launch(Dispatchers.IO) {
             recomputeMapData(expenseRepository.getLocatedExpenses().first())
         }
     }
@@ -582,7 +621,9 @@ class SpendingMapViewModel @Inject constructor(
                 highlightedMerchantQuery = null
             )
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        // S10-005: Cancel prior recompute to prevent race
+        recomputeJob?.cancel()
+        recomputeJob = viewModelScope.launch(Dispatchers.IO) {
             recomputeMapData(expenseRepository.getLocatedExpenses().first())
         }
     }
@@ -599,7 +640,8 @@ class SpendingMapViewModel @Inject constructor(
                 dateRangeEndMs = endMs
             )
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        recomputeJob?.cancel()
+        recomputeJob = viewModelScope.launch(Dispatchers.IO) {
             recomputeMapData(expenseRepository.getLocatedExpenses().first())
         }
     }
@@ -634,9 +676,8 @@ class SpendingMapViewModel @Inject constructor(
             val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
             if (decision.blocksExecution()) {
                 Timber.d("Device GPS denied by privacy settings")
-                _state.update {
-                    it.copy(snackbarMessage = "Device GPS is disabled in Privacy settings.")
-                }
+                // S10-004: Typed blocked state instead of transient snackbar
+                _state.update { it.copy(gpsPrivacyBlocked = true) }
                 return@launch
             }
             try {
