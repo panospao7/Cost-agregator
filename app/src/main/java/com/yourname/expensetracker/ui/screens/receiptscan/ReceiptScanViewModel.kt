@@ -106,6 +106,13 @@ data class ReceiptScanState(
     val isAnalyzingItems: Boolean = false,
     val showItemBreakdown: Boolean = false,
     val itemAnalysisError: String? = null,
+    /** S7-027: false when AI is disabled/blocked so UI can show reason instead of Analyze button */
+    val itemAnalysisAvailable: Boolean = true,
+    /** S7-024: non-null when rationale dialog should be shown */
+    val selectedItemRationale: ReceiptItemCategorizationSnapshot? = null,
+    /** S7-025: IDs of items currently being updated (spinner/disabled state) */
+    val itemCorrectionUpdatingIds: Set<Long> = emptySet(),
+    val itemCorrectionError: String? = null,
 
     // Debug data
     val debugData: DebugData? = null
@@ -143,12 +150,10 @@ private data class ReceiptSaveRequest(
 )
 
 sealed class SaveReceiptResult {
-    data object Success : SaveReceiptResult()
-    /** S7-014: Transaction duplicate (deduplication by lifecycle coordinator) */
+    /** S7-022: Include expenseId so UI can offer "View transaction" */
+    data class Success(val expenseId: Long) : SaveReceiptResult()
     data object DuplicateTransaction : SaveReceiptResult()
-    /** S7-014: Receipt image already scanned and linked */
     data class DuplicateReceipt(val existingReceiptId: Long, val linkedExpenseId: Long?) : SaveReceiptResult()
-    /** S7-005: Expense created but receipt link failed — partial success */
     data class PartialLinkFailure(val expenseId: Long, val message: String) : SaveReceiptResult()
     data class Error(val message: String) : SaveReceiptResult()
 }
@@ -272,7 +277,14 @@ class ReceiptScanViewModel @Inject constructor(
             val parsingLogs = mutableListOf<String>()
 
             try {
-                val receiptResult = receiptLifecycleCoordinator.processReceiptInput(uri)
+                // S7-015: Disable auto-match for interactive scan — user must confirm save first
+                val receiptResult = receiptLifecycleCoordinator.processReceiptInput(
+                    uri,
+                    com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions(
+                        createReview = false,
+                        autoMatchExistingExpense = false
+                    )
+                )
                 if (receiptResult.isFailure) throw receiptResult.exceptionOrNull()!!
                 val receipt = receiptResult.getOrThrow()
 
@@ -401,6 +413,9 @@ class ReceiptScanViewModel @Inject constructor(
                                 val settings = aiSettingsRepository.settings().first()
                                 if (settings.aiEnabled && settings.receiptItemCategorizationEnabled) {
                                     analyzeReceiptItemsInternal(receipt.id)
+                                } else {
+                                    // S7-027: Mark analysis unavailable so UI shows reason
+                                    _state.update { s -> s.copy(itemAnalysisAvailable = false) }
                                 }
                             }.onFailure { e ->
                                 if (e is CancellationException) throw e
@@ -1068,8 +1083,10 @@ class ReceiptScanViewModel @Inject constructor(
                     request.amount
                 }
 
+                // S7-013: Preserve user-visible merchant; use normalized only for classifier/deduplication
+                val displayMerchant = request.merchant.trim()
                 val normalizedMerchant = merchantNormalizer.normalize(
-                    rawName = request.merchant,
+                    rawName = displayMerchant,
                     autoCreate = true
                 ).canonical.normalizedName
 
@@ -1081,7 +1098,8 @@ class ReceiptScanViewModel @Inject constructor(
                 val notes = request.notes ?: "Scanned from receipt"
 
                 val createRequest = CreateExpenseRequest(
-                    merchant = normalizedMerchant,
+                    // S7-013: Display merchant shown in ledger; normalized used for classifier below
+                    merchant = displayMerchant,
                     amount = effectiveAmount,
                     currency = resolvedCurrency,
                     date = request.date,
@@ -1137,9 +1155,9 @@ class ReceiptScanViewModel @Inject constructor(
                             request.appliedAiCapabilities.forEach { capability ->
                                 markLatestArtifactApplied(capability)
                             }
-                            // S7-008: Clear preview only on success
+                            // S7-008/S7-022: Clear preview on success; include expenseId
                             _state.update {
-                                it.copy(isSaving = false, step = ScanStep.DONE, saveResult = SaveReceiptResult.Success, quickSavePreview = null)
+                                it.copy(isSaving = false, step = ScanStep.DONE, saveResult = SaveReceiptResult.Success(result.expenseId), quickSavePreview = null)
                             }
                         }
                     }
@@ -1265,22 +1283,25 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun updateItemCategory(item: ReceiptItemCategorizationSnapshot, category: Category?) {
+        // S7-025: Mark item as updating
+        _state.update { it.copy(itemCorrectionUpdatingIds = it.itemCorrectionUpdatingIds + item.id, itemCorrectionError = null) }
         viewModelScope.launch {
-            val now = timeProvider.now()
-            
-            // Update in database
-            receiptItemCategorizationRepository.updateUserCorrection(
-                itemId = item.id,
-                categoryId = category?.id,
-                categoryName = category?.name,
-                timestamp = now
-            )
-            
-            // Reload items
-            val receiptId = _state.value.receiptId ?: return@launch
-            val updatedItems = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
-            
-            _state.update { it.copy(itemCategorizations = updatedItems) }
+            runCatching {
+                val now = timeProvider.now()
+                receiptItemCategorizationRepository.updateUserCorrection(
+                    itemId = item.id,
+                    categoryId = category?.id,
+                    categoryName = category?.name,
+                    timestamp = now
+                )
+                val receiptId = _state.value.receiptId ?: return@runCatching
+                val updatedItems = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
+                _state.update { it.copy(itemCategorizations = updatedItems) }
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _state.update { it.copy(itemCorrectionError = "Failed to save category: ${e.message}") }
+            }
+            _state.update { it.copy(itemCorrectionUpdatingIds = it.itemCorrectionUpdatingIds - item.id) }
         }
     }
 
@@ -1288,9 +1309,17 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update { it.copy(showItemBreakdown = !it.showItemBreakdown) }
     }
 
+    // S7-024: Show rationale dialog
     fun showItemRationale(item: ReceiptItemCategorizationSnapshot) {
-        // This would show a dialog with AI rationale - for now just log it
-        Timber.d("Item rationale: ${item.aiRationale}")
+        _state.update { it.copy(selectedItemRationale = item) }
+    }
+
+    fun dismissItemRationale() {
+        _state.update { it.copy(selectedItemRationale = null) }
+    }
+
+    fun clearItemCorrectionError() {
+        _state.update { it.copy(itemCorrectionError = null) }
     }
 
     private fun ReceiptScanState.clearItemAnalysisState(): ReceiptScanState {
@@ -1298,7 +1327,11 @@ class ReceiptScanViewModel @Inject constructor(
             itemCategorizations = emptyList(),
             isAnalyzingItems = false,
             showItemBreakdown = false,
-            itemAnalysisError = null
+            itemAnalysisError = null,
+            itemAnalysisAvailable = true,
+            selectedItemRationale = null,
+            itemCorrectionUpdatingIds = emptySet(),
+            itemCorrectionError = null
         )
     }
 

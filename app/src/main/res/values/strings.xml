@@ -382,6 +382,8 @@
     <string name="receipt_duplicate_transaction">A similar transaction already exists</string>
     <string name="receipt_duplicate_receipt">This receipt has already been scanned</string>
     <string name="receipt_partial_link_failure">Expense saved, but receipt could not be linked. You can retry from the transaction detail.</string>
+    <string name="receipt_item_categories_metadata_note">Item categories are for insights only and do not split the transaction.</string>
+    <string name="receipt_item_analysis_ai_disabled">AI item analysis is off</string>
     <string name="receipt_quick_save_cd">Quick save expense using AI to fill missing fields</string>
     <string name="receipt_quick_save_button">Quick Save With AI</string>
     <string name="receipt_quick_save_standby">Quick save is standing by</string>

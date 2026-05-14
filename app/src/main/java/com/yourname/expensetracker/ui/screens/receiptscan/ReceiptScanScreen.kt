@@ -860,15 +860,54 @@ private fun ReviewStep(
         onSelect = { viewModel.selectCategory(it) }
     )
 
+    // S7-024: Rationale dialog
+    state.selectedItemRationale?.let { item ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissItemRationale,
+            title = { Text(item.itemDescription, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.receipt_category_label) + ": ${item.userCorrectedCategoryName ?: item.suggestedCategoryName ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.receipt_confidence_indicator_format, "", (item.confidence * 100).toInt()), style = MaterialTheme.typography.bodySmall)
+                    item.aiRationale?.let { rationale ->
+                        HorizontalDivider()
+                        Text(rationale, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissItemRationale) { Text(stringResource(R.string.review_close_button)) }
+            }
+        )
+    }
+
+    // S7-025: Item correction error
+    state.itemCorrectionError?.let { err ->
+        Spacer(modifier = Modifier.height(8.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer), modifier = Modifier.fillMaxWidth()) {
+            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(err, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = viewModel::clearItemCorrectionError) { Text(stringResource(R.string.review_close_button)) }
+            }
+        }
+    }
+
     // Line items breakdown with AI categorization
     val itemCategorizations = state.itemCategorizations
     if (itemCategorizations.isNotEmpty() && state.showItemBreakdown) {
         Spacer(modifier = Modifier.height(16.dp))
-        
+        // S7-023: Clarify item categories are metadata only
+        Text(
+            text = stringResource(R.string.receipt_item_categories_metadata_note),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
         ReceiptItemBreakdownCard(
             items = itemCategorizations,
             categories = categories,
             isLoading = state.isAnalyzingItems,
+            updatingItemIds = state.itemCorrectionUpdatingIds,
             onItemCategoryChanged = { item, category ->
                 viewModel.updateItemCategory(item, category)
             },
@@ -877,14 +916,10 @@ private fun ReviewStep(
             }
         )
     } else if (parsed?.lineItems?.isNotEmpty() == true) {
-        // Show simple preview with analyze button if AI not yet run
         Spacer(modifier = Modifier.height(16.dp))
-        
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-            )
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(
@@ -897,77 +932,51 @@ private fun ReviewStep(
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelLarge
                     )
-                    
-                    // Analyze button
-                    if (state.isAnalyzingItems) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        val analyzeItemsCd = stringResource(R.string.receipt_analyze_items_cd)
-                        TextButton(
-                            onClick = { viewModel.analyzeReceiptItems() },
-                            modifier = Modifier.semantics { contentDescription = analyzeItemsCd }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+                    when {
+                        state.isAnalyzingItems -> CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        // S7-027: AI disabled — show info instead of Analyze button
+                        !state.itemAnalysisAvailable -> {
+                            Text(
+                                stringResource(R.string.receipt_item_analysis_ai_disabled),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.receipt_analyze_button))
+                        }
+                        else -> {
+                            val analyzeItemsCd = stringResource(R.string.receipt_analyze_items_cd)
+                            TextButton(
+                                onClick = { viewModel.analyzeReceiptItems() },
+                                modifier = Modifier.semantics { contentDescription = analyzeItemsCd }
+                            ) {
+                                Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(stringResource(R.string.receipt_analyze_button))
+                            }
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 parsed.lineItems.forEachIndexed { index, item ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            item.description,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Text(item.description, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            CurrencyFormatter.formatMoney(item.totalPrice, parsed.currency),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Text(CurrencyFormatter.formatMoney(item.totalPrice, parsed.currency), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                     }
                     if (index < parsed.lineItems.size - 1) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 2.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                     }
                 }
 
-                // Tax if detected
                 parsed.tax?.let { tax ->
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            stringResource(R.string.receipt_tax_vat_label),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            CurrencyFormatter.formatMoney(tax, parsed.currency),
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(stringResource(R.string.receipt_tax_vat_label), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(CurrencyFormatter.formatMoney(tax, parsed.currency), style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }

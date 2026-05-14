@@ -27,6 +27,8 @@ fun ReceiptItemBreakdownCard(
     items: List<ReceiptItemCategorizationSnapshot>,
     categories: List<Category>,
     isLoading: Boolean,
+    /** S7-025: IDs of items currently being updated */
+    updatingItemIds: Set<Long> = emptySet(),
     onItemCategoryChanged: (ReceiptItemCategorizationSnapshot, Category?) -> Unit,
     onShowRationale: (ReceiptItemCategorizationSnapshot) -> Unit,
     modifier: Modifier = Modifier
@@ -68,6 +70,7 @@ fun ReceiptItemBreakdownCard(
                 CategorizedItemRow(
                     item = item,
                     categories = categories,
+                    isUpdating = item.id in updatingItemIds,
                     onCategoryChanged = { category ->
                         onItemCategoryChanged(item, category)
                     },
@@ -89,6 +92,7 @@ fun ReceiptItemBreakdownCard(
 private fun CategorizedItemRow(
     item: ReceiptItemCategorizationSnapshot,
     categories: List<Category>,
+    isUpdating: Boolean = false,
     onCategoryChanged: (Category?) -> Unit,
     onShowRationale: () -> Unit
 ) {
@@ -151,24 +155,22 @@ private fun CategorizedItemRow(
                         else -> MaterialTheme.colorScheme.outline
                     }
                 ),
-                modifier = Modifier.clickable { showCategoryPicker = true }
+                modifier = Modifier.clickable(enabled = !isUpdating) { showCategoryPicker = true }
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isUserCorrected) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
+                    if (isUpdating) {
+                        // S7-025: Show spinner while saving
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        if (isUserCorrected) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                        Text(text = displayCategoryName, style = MaterialTheme.typography.labelMedium)
                     }
-                    Text(
-                        text = displayCategoryName,
-                        style = MaterialTheme.typography.labelMedium
-                    )
                 }
             }
             
