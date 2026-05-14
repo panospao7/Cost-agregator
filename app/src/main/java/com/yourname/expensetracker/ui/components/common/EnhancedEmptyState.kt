@@ -180,6 +180,7 @@ fun EnhancedEmptyState(
                     actionLabel?.let { label ->
                         Button(
                             onClick = { onPrimaryClick?.invoke() },
+                            enabled = onPrimaryClick != null,
                             modifier = Modifier
                                 .heightIn(min = 48.dp)
                                 .fillMaxWidth(0.6f),
@@ -205,6 +206,7 @@ fun EnhancedEmptyState(
                     secondaryLabel?.let { label ->
                         OutlinedButton(
                             onClick = { onSecondaryClick?.invoke() },
+                            enabled = onSecondaryClick != null,
                             modifier = Modifier
                                 .heightIn(min = 48.dp)
                                 .fillMaxWidth(0.6f),

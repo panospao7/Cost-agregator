@@ -102,103 +102,20 @@ fun EmptyState(
     onSecondaryClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val displayTitle = title ?: stringResource(type.titleResId)
-    val displayMessage = message ?: stringResource(type.messageResId)
-    val emptyContentDescription = stringResource(R.string.a11y_empty_state_format, displayTitle, displayMessage)
-    
-    Column(
+    EnhancedEmptyState(
+        type = type,
+        title = title,
+        message = message,
+        actions = emptyList(),
+        onActionClick = null,
+        onDismissAction = null,
+        actionLabel = actionLabel,
+        actionIcon = actionIcon,
+        secondaryLabel = secondaryLabel,
+        onPrimaryClick = onActionClick,
+        onSecondaryClick = onSecondaryClick,
         modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(Dimens.Space24)
-            .semantics { this.contentDescription = emptyContentDescription },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // Icon with glassmorphism styling
-        Icon(
-            imageVector = type.icon,
-            contentDescription = null,
-            modifier = Modifier
-                .size(Dimens.IconXLarge)
-                .alpha(0.6f),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        
-        Spacer(modifier = Modifier.height(Dimens.Space24))
-        
-        // Title
-        Text(
-            text = displayTitle,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-        
-        Spacer(modifier = Modifier.height(Dimens.Space12))
-        
-        // Message
-        Text(
-            text = displayMessage,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(0.8f)
-        )
-        
-        // Action buttons
-        if (actionLabel != null || secondaryLabel != null) {
-            Spacer(modifier = Modifier.height(Dimens.Space32))
-            
-            Column(
-                verticalArrangement = Arrangement.spacedBy(Dimens.Space12),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                actionLabel?.let { label ->
-                    Button(
-                        onClick = { onActionClick?.invoke() },
-                        enabled = onActionClick != null,
-                        modifier = Modifier
-                            .height(Dimens.ButtonHeightMedium)
-                            .fillMaxWidth(0.6f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        if (actionIcon != null) {
-                            Icon(
-                                imageVector = actionIcon,
-                                contentDescription = null,
-                                modifier = Modifier.size(Dimens.IconSmall)
-                            )
-                        }
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                    }
-                }
-                
-                secondaryLabel?.let { label ->
-                    OutlinedButton(
-                        onClick = { onSecondaryClick?.invoke() },
-                        enabled = onSecondaryClick != null,
-                        modifier = Modifier
-                            .height(Dimens.ButtonHeightMedium)
-                            .fillMaxWidth(0.6f),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    ) {
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                    }
-                }
-            }
-        }
-    }
+    )
 }
 
 /**
