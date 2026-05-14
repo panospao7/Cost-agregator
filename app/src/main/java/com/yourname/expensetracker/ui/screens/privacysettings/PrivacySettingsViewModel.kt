@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.privacysettings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,7 +16,8 @@ import javax.inject.Inject
 data class PrivacySettingsUiState(
     val settings: PrivacySettings = PrivacySettings(),
     val isSaving: Boolean = false,
-    val deniedFeatures: List<String> = emptyList()
+    val blocked: List<PrivacyBlocked> = emptyList(),
+    val errorMessage: String? = null
 )
 
 @HiltViewModel
@@ -31,24 +33,17 @@ class PrivacySettingsViewModel @Inject constructor(
             repository.observeSettings().collect { settings ->
                 _uiState.value = _uiState.value.copy(
                     settings = settings,
-                    deniedFeatures = computeDeniedFeatures(settings)
+                    blocked = computeBlocked(settings)
                 )
             }
         }
     }
 
-    private fun computeDeniedFeatures(settings: PrivacySettings): List<String> = buildList {
-        if (!settings.cloudAiEnabled) {
-            add("AI Receipt Assist")
-            add("Auto-categorization")
-            add("Dashboard Briefing")
-        }
-        if (!settings.externalGeocodingEnabled) {
-            add("Location enrichment")
-        }
-        if (!settings.notificationCaptureEnabled) {
-            add("Automatic expense capture")
-        }
+    private fun computeBlocked(settings: PrivacySettings): List<PrivacyBlocked> = buildList {
+        if (!settings.cloudAiEnabled) add(PrivacyBlocked.CloudAiDisabled())
+        if (!settings.receiptImageCloudEnabled) add(PrivacyBlocked.ReceiptImageUploadDisabled())
+        if (!settings.externalGeocodingEnabled) add(PrivacyBlocked.ExternalGeocodingDisabled())
+        if (!settings.notificationCaptureEnabled) add(PrivacyBlocked.NotificationCaptureDisabled())
     }
 
     fun setNotificationCaptureEnabled(enabled: Boolean) = update { it.copy(notificationCaptureEnabled = enabled) }
@@ -65,13 +60,20 @@ class PrivacySettingsViewModel @Inject constructor(
     fun setRawNotificationRetentionDays(days: Int) = update { it.copy(rawNotificationRetentionDays = days.coerceIn(0, 365)) }
     fun setRawOcrRetentionDays(days: Int) = update { it.copy(rawOcrRetentionDays = days.coerceIn(0, 365)) }
 
+    fun clearError() {
+        _uiState.value = _uiState.value.copy(errorMessage = null)
+    }
+
     private fun update(transform: (PrivacySettings) -> PrivacySettings) {
         viewModelScope.launch {
             try {
-                _uiState.value = _uiState.value.copy(isSaving = true)
+                _uiState.value = _uiState.value.copy(isSaving = true, errorMessage = null)
                 repository.updateSettings(transform)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to update privacy setting")
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Failed to save privacy setting. Please retry."
+                )
             } finally {
                 _uiState.value = _uiState.value.copy(isSaving = false)
             }

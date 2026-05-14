@@ -141,10 +141,10 @@ class BackupRestoreViewModel @Inject constructor(
             // Copy URI content to a temp file for processing
             val tempFile = runCatching {
                 val temp = File.createTempFile("restore_", ".costbackup", context.cacheDir)
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    temp.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
+                val input = context.contentResolver.openInputStream(uri)
+                    ?: error("Could not open selected backup file")
+                input.use { src ->
+                    temp.outputStream().use { dst -> src.copyTo(dst) }
                 }
                 temp
             }.getOrElse { error ->

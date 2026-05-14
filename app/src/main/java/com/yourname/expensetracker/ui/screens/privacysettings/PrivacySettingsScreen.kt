@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yourname.expensetracker.ui.components.PrivacyBlockedCard
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -79,6 +80,32 @@ fun PrivacySettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            // -- Blocked features summary --
+            if (uiState.blocked.isNotEmpty()) {
+                item {
+                    SectionHeader("Disabled Features")
+                }
+                items(uiState.blocked.size) { index ->
+                    PrivacyBlockedCard(
+                        blocked = uiState.blocked[index],
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                item { HorizontalDivider() }
+            }
+
+            // -- Error message --
+            if (uiState.errorMessage != null) {
+                item {
+                    Text(
+                        text = uiState.errorMessage!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+
             // -- Notification section --
             item {
                 SectionHeader("Notification Capture")

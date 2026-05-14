@@ -35,6 +35,7 @@ import com.yourname.expensetracker.R
 @Composable
 fun BackupRestoreScreen(
     onNavigateBack: () -> Unit,
+    onRestartRequired: () -> Unit = { Runtime.getRuntime().exit(0) },
     viewModel: BackupRestoreViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -312,11 +313,7 @@ fun BackupRestoreScreen(
                             horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Button(onClick = {
-                                // P7-P1-08: Force-kill the process. Android will relaunch
-                                // the activity with a fresh Room instance on next user tap.
-                                Runtime.getRuntime().exit(0)
-                            }) {
+                            Button(onClick = onRestartRequired) {
                                 Text(stringResource(R.string.backup_restore_restart_now))
                             }
                         }
