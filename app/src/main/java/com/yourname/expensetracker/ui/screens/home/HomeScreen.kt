@@ -274,20 +274,43 @@ fun HomeScreen(
                         when (widget) {
                             is DashboardWidget.SafeToSpend -> {
                                 HeroBentoCard {
-                                    Text(
-                                        text = stringResource(R.string.widget_safe_to_spend),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SemanticColors.PrimaryLight,
-                                        letterSpacing = 1.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    AmountText(
-                                        amount = widget.amount,
-                                        style = MaterialTheme.typography.displayMedium,
-                                        color = SemanticColors.TextPrimary
-                                    )
-                                    if (widget.totalBudget != null) {
+                                    if (widget.totalBudget == null || widget.totalBudget <= 0.0) {
+                                        // No budget: show month-to-date spent with CTA
+                                        Text(
+                                            text = stringResource(R.string.widget_month_spent),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.PrimaryLight,
+                                            letterSpacing = 1.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        AmountText(
+                                            amount = widget.amount,
+                                            style = MaterialTheme.typography.displayMedium,
+                                            color = SemanticColors.TextPrimary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = stringResource(R.string.widget_set_budget_cta),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 0.5.sp
+                                        )
+                                    } else {
+                                        // Has budget: show safe-to-spend with progress
+                                        Text(
+                                            text = stringResource(R.string.widget_safe_to_spend),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.PrimaryLight,
+                                            letterSpacing = 1.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        AmountText(
+                                            amount = widget.amount,
+                                            style = MaterialTheme.typography.displayMedium,
+                                            color = SemanticColors.TextPrimary
+                                        )
                                         LinearProgressIndicator(
                                             progress = { ((widget.totalBudget - widget.amount) / widget.totalBudget).toFloat().coerceIn(0f, 1f) },
                                             modifier = Modifier

@@ -737,6 +737,8 @@
     
     <!-- Dashboard Widget Titles -->
     <string name="widget_safe_to_spend">SAFE TO SPEND</string>
+    <string name="widget_month_spent">SPENT THIS MONTH</string>
+    <string name="widget_set_budget_cta">Set a monthly budget to track safe-to-spend</string>
     <string name="widget_pace">PACE</string>
     <string name="widget_review">REVIEW</string>
     <string name="widget_pending">PENDING</string>

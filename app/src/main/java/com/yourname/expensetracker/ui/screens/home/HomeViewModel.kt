@@ -175,8 +175,14 @@ class HomeViewModel @Inject constructor(
 
         recommendationStateManager.refreshForUser(defaultRecommendationUserId)
         
-        // Load category trends for retro widgets
-        loadCategoryTrends()
+        // Load category trends reactively when homeCurrency changes
+        viewModelScope.launch {
+            homeCurrency.collect { currency ->
+                if (currency.isNotBlank()) {
+                    loadCategoryTrends()
+                }
+            }
+        }
     }
 
     private val processedDataFlow: StateFlow<ProcessedDashboardUiState> =
