@@ -478,6 +478,10 @@
     <string name="review_hide_button">Hide</string>
     <string name="review_edit_button">Edit</string>
     <string name="review_add_button">Add</string>
+    <string name="review_clear_button">Clear</string>
+    <string name="review_transfer_metadata_label">Transfer Direction</string>
+    <string name="review_transfer_account_label">Account / Reference</string>
+    <string name="review_location_search_label">Search location</string>
     <string name="review_confirm_fix_button">Confirm Fix</string>
     <string name="review_ai_prefilled_format">AI prefilled %1$s from this receipt. Review before approving.</string>
     <string name="review_receipt_assist_hint">This review has a linked scanned receipt, so AI receipt assist can help prefill edits.</string>

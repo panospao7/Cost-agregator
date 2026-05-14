@@ -70,6 +70,38 @@ data class ReviewQuickApprovePreview(
     val diagnostics: List<String>
 )
 
+// S6-008/S6-009: Typed operation state — replaces coarse _isBatchProcessing/_batchProgress
+enum class ReviewOperation { APPROVE_ALL, REJECT_ALL, RECEIPT_BATCH_IMPORT, BANK_STATEMENT_IMPORT }
+
+data class ReviewOperationState(
+    val operation: ReviewOperation,
+    /** null = indeterminate; non-null = determinate progress */
+    val current: Int? = null,
+    val total: Int? = null,
+    val canCancel: Boolean = false
+)
+
+// S6-014: One-shot event to open edit sheet with optional prefill
+sealed interface ReviewUiEvent {
+    data class OpenEditWithPrefill(
+        val reviewId: Long,
+        val categoryId: Long? = null,
+        val receiptPrefill: com.yourname.expensetracker.domain.ai.model.ReviewReceiptPrefill? = null
+    ) : ReviewUiEvent
+}
+
+// S6-018: Location search state owned by ViewModel
+data class ReviewLocationEditState(
+    val query: String = "",
+    val isSearching: Boolean = false,
+    val results: List<com.yourname.expensetracker.domain.location.GeocodingResult> = emptyList(),
+    val selectedLat: Double? = null,
+    val selectedLon: Double? = null,
+    val selectedAddress: String? = null,
+    val selectedPlaceId: String? = null,
+    val error: String? = null
+)
+
 sealed interface ReviewEvent {
     data class ConsumePrefilledCategorySuggestion(val reviewId: Long) : ReviewEvent
     data class ConsumePrefilledReceiptSuggestion(val reviewId: Long) : ReviewEvent
@@ -83,7 +115,7 @@ class ReviewViewModel @Inject constructor(
     private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage,
-    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
+    private val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
     private val explainPendingReviewUseCase: ExplainPendingReviewUseCase,
     private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
     private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
@@ -101,12 +133,22 @@ class ReviewViewModel @Inject constructor(
     private val _editApproveSuccess = kotlinx.coroutines.flow.MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val editApproveSuccess: kotlinx.coroutines.flow.SharedFlow<Long> = _editApproveSuccess.asSharedFlow()
 
-    private val _batchProgress = MutableStateFlow<Pair<Int, Int>?>(null) // current, total
-    val batchProgress = _batchProgress.asStateFlow()
+    // S6-008/S6-009: Typed operation state — replaces coarse _isBatchProcessing/_batchProgress
+    private val _operationState = MutableStateFlow<ReviewOperationState?>(null)
+    val operationState: StateFlow<ReviewOperationState?> = _operationState.asStateFlow()
 
-    private val _isBatchProcessing = MutableStateFlow(false)
-    val isBatchProcessing = _isBatchProcessing.asStateFlow()
-    
+    // S6-014: One-shot UI events (OpenEditWithPrefill replaces prefill maps + LaunchedEffect)
+    private val _uiEvents = MutableSharedFlow<ReviewUiEvent>(extraBufferCapacity = 4)
+    val uiEvents: SharedFlow<ReviewUiEvent> = _uiEvents.asSharedFlow()
+
+    // S6-025: Per-review mutation state for button disabled/loading UI
+    private val _inFlightMutationKinds = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val inFlightMutationKinds: StateFlow<Map<Long, String>> = _inFlightMutationKinds.asStateFlow()
+
+    // S6-018: Location search state owned by ViewModel
+    private val _locationEditState = MutableStateFlow(ReviewLocationEditState())
+    val locationEditState: StateFlow<ReviewLocationEditState> = _locationEditState.asStateFlow()
+
     private val _debugData = MutableStateFlow<com.yourname.expensetracker.ui.screens.debug.DebugData?>(null)
     val debugData = _debugData.asStateFlow()
 
@@ -121,14 +163,6 @@ class ReviewViewModel @Inject constructor(
         MutableStateFlow<Map<Long, ReviewCaptureAssistState>>(emptyMap())
     val reviewCaptureAssistStates: StateFlow<Map<Long, ReviewCaptureAssistState>> =
         _reviewCaptureAssistStates.asStateFlow()
-
-    private val _prefilledCategorySuggestions = MutableStateFlow<Map<Long, Long>>(emptyMap())
-    val prefilledCategorySuggestions: StateFlow<Map<Long, Long>> =
-        _prefilledCategorySuggestions.asStateFlow()
-
-    private val _prefilledReceiptSuggestions = MutableStateFlow<Map<Long, ReviewReceiptPrefill>>(emptyMap())
-    val prefilledReceiptSuggestions: StateFlow<Map<Long, ReviewReceiptPrefill>> =
-        _prefilledReceiptSuggestions.asStateFlow()
 
     private val _quickApprovePreview = MutableStateFlow<ReviewQuickApprovePreview?>(null)
     val quickApprovePreview: StateFlow<ReviewQuickApprovePreview?> =
@@ -148,13 +182,16 @@ class ReviewViewModel @Inject constructor(
     private val _inFlightAssist = mutableSetOf<Pair<Long, String>>()
 
     /** S6-003: Attempt to begin a mutation. Returns false if already in-flight. */
-    private fun beginMutation(reviewId: Long): Boolean {
-        return _inFlightMutations.add(reviewId)
+    private fun beginMutation(reviewId: Long, kind: String = "mutation"): Boolean {
+        if (!_inFlightMutations.add(reviewId)) return false
+        _inFlightMutationKinds.update { it + (reviewId to kind) }
+        return true
     }
 
     /** S6-003: Always call in finally block. */
     private fun endMutation(reviewId: Long) {
         _inFlightMutations.remove(reviewId)
+        _inFlightMutationKinds.update { it - reviewId }
     }
 
     init {
@@ -286,7 +323,7 @@ class ReviewViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun approveReview(reviewId: Long) {
-        if (!beginMutation(reviewId)) return // S6-003: idempotency guard
+        if (!beginMutation(reviewId, "approve")) return // S6-003: idempotency guard
         viewModelScope.launch {
             try {
                 val result = reviewQueueRepository.approveReview(reviewId)
@@ -308,7 +345,7 @@ class ReviewViewModel @Inject constructor(
 
 
     fun rejectReview(reviewId: Long) {
-        if (!beginMutation(reviewId)) return // S6-003: idempotency guard
+        if (!beginMutation(reviewId, "reject")) return // S6-003: idempotency guard
         viewModelScope.launch {
             try {
                 reviewQueueRepository.rejectReview(reviewId)
@@ -336,7 +373,7 @@ class ReviewViewModel @Inject constructor(
         finalPlaceId: String? = null
     ) {
         viewModelScope.launch {
-            if (!beginMutation(reviewId)) return@launch // S6-003: idempotency guard
+            if (!beginMutation(reviewId, "edit")) return@launch // S6-003: idempotency guard
             try {
                 // S6-006: Fetch original review BEFORE approval so bulk logic has correct merchant
                 val originalReview = reviewQueueRepository.getReviewById(reviewId)
@@ -585,7 +622,8 @@ class ReviewViewModel @Inject constructor(
     fun applyCategorySuggestion(reviewId: Long) {
         val suggestion = (_reviewCaptureAssistStates.value[reviewId]?.categorySuggestion as? AiLoadState.Ready)?.value
             ?: return
-        _prefilledCategorySuggestions.update { it + (reviewId to suggestion.categoryId) }
+        // S6-014: Emit one-shot event instead of writing to prefill map
+        _uiEvents.tryEmit(ReviewUiEvent.OpenEditWithPrefill(reviewId = reviewId, categoryId = suggestion.categoryId))
         viewModelScope.launch {
             markCategoryArtifactApplied(reviewId)
         }
@@ -604,7 +642,8 @@ class ReviewViewModel @Inject constructor(
             ReceiptApplyField.DATE     -> ReviewReceiptPrefill(date = full.date)
             ReceiptApplyField.ALL      -> full
         }
-        _prefilledReceiptSuggestions.update { current -> current + (reviewId to prefill) }
+        // S6-014: Emit one-shot event instead of writing to prefill map
+        _uiEvents.tryEmit(ReviewUiEvent.OpenEditWithPrefill(reviewId = reviewId, receiptPrefill = prefill))
         viewModelScope.launch {
             val receiptId = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)?.receipt?.id
             if (receiptId != null) markReceiptArtifactApplied(receiptId)
@@ -686,25 +725,63 @@ class ReviewViewModel @Inject constructor(
 
     fun onEvent(event: ReviewEvent) {
         when (event) {
-            is ReviewEvent.ConsumePrefilledCategorySuggestion -> {
-                consumePrefilledCategorySuggestion(event.reviewId)
-            }
-            is ReviewEvent.ConsumePrefilledReceiptSuggestion -> {
-                consumePrefilledReceiptSuggestion(event.reviewId)
+            is ReviewEvent.ConsumePrefilledCategorySuggestion -> { /* no-op: replaced by uiEvents */ }
+            is ReviewEvent.ConsumePrefilledReceiptSuggestion -> { /* no-op: replaced by uiEvents */ }
+        }
+    }
+
+    // S6-018: Location search actions — UI calls these instead of accessing geocodingService directly
+    fun onLocationQueryChanged(query: String) {
+        _locationEditState.update { it.copy(query = query, error = null) }
+        if (query.length < 3) {
+            _locationEditState.update { it.copy(results = emptyList(), isSearching = false) }
+            return
+        }
+        viewModelScope.launch {
+            _locationEditState.update { it.copy(isSearching = true) }
+            try {
+                val batchResult = geocodingService.searchMultiple(query)
+                val results = when (batchResult) {
+                    is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Success -> batchResult.results
+                    is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Failure -> emptyList()
+                }
+                _locationEditState.update { it.copy(results = results, isSearching = false) }
+            } catch (e: Exception) {
+                _locationEditState.update { it.copy(isSearching = false, error = e.message, results = emptyList()) }
             }
         }
     }
 
-    private fun consumePrefilledCategorySuggestion(reviewId: Long): Long? {
-        val value = _prefilledCategorySuggestions.value[reviewId]
-        _prefilledCategorySuggestions.update { it - reviewId }
-        return value
+    fun onLocationSelected(result: com.yourname.expensetracker.domain.location.GeocodingResult) {
+        _locationEditState.update {
+            it.copy(
+                selectedLat = result.latitude,
+                selectedLon = result.longitude,
+                selectedAddress = result.displayAddress,
+                selectedPlaceId = result.osmId,
+                results = emptyList(),
+                query = result.displayAddress ?: result.name ?: ""
+            )
+        }
     }
 
-    private fun consumePrefilledReceiptSuggestion(reviewId: Long): ReviewReceiptPrefill? {
-        val value = _prefilledReceiptSuggestions.value[reviewId]
-        _prefilledReceiptSuggestions.update { it - reviewId }
-        return value
+    fun onLocationCleared() {
+        _locationEditState.update {
+            it.copy(
+                selectedLat = null, selectedLon = null,
+                selectedAddress = null, selectedPlaceId = null,
+                query = "", results = emptyList()
+            )
+        }
+    }
+
+    fun initLocationForReview(lat: Double?, lon: Double?, address: String?) {
+        _locationEditState.value = ReviewLocationEditState(
+            selectedLat = lat,
+            selectedLon = lon,
+            selectedAddress = address,
+            query = address ?: if (lat != null && lon != null) "%.4f, %.4f".format(lat, lon) else ""
+        )
     }
 
     fun dismissCategoryAssist(reviewId: Long) {
@@ -744,14 +821,16 @@ class ReviewViewModel @Inject constructor(
     }
 
     fun approveAll() {
-        if (_isBatchProcessing.value) return
+        // S6-009/S6-028: Guard — only one global operation at a time
+        if (_operationState.value != null) {
+            _errorMessage.value = "Another operation is already running."
+            return
+        }
         viewModelScope.launch {
             try {
-                _isBatchProcessing.value = true
-                _batchProgress.value = Pair(0, 1)
+                // S6-008: Indeterminate — no fake 0/1 progress
+                _operationState.value = ReviewOperationState(operation = ReviewOperation.APPROVE_ALL)
                 val results = reviewQueueRepository.approveAllReview()
-                _batchProgress.value = Pair(1, 1)
-                // S6-007: Report per-item failures
                 val successCount = results.count { it.second is Result.Success }
                 val duplicateCount = results.count { it.second is Result.Duplicate }
                 val errorCount = results.count { it.second is Result.Error }
@@ -763,38 +842,56 @@ class ReviewViewModel @Inject constructor(
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to approve all: ${e.message}"
             } finally {
-                _isBatchProcessing.value = false
-                _batchProgress.value = null
+                _operationState.value = null
             }
         }
     }
 
     fun rejectAll() {
+        // S6-028: Guard — cannot run during other operations
+        if (_operationState.value != null) {
+            _errorMessage.value = "Another operation is already running."
+            return
+        }
         viewModelScope.launch {
             try {
+                _operationState.value = ReviewOperationState(operation = ReviewOperation.REJECT_ALL)
                 reviewQueueRepository.rejectAllReviews()
                 _errorMessage.value = "All pending reviews cleared."
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to clear all: ${e.message}"
+            } finally {
+                _operationState.value = null
             }
         }
     }
 
     fun processBatch(uris: List<android.net.Uri>) {
         if (uris.isEmpty()) return
-        batchJob?.cancel() // Cancel previous if any
+        if (_operationState.value != null) {
+            _errorMessage.value = "Another operation is already running."
+            return
+        }
+        batchJob?.cancel()
         batchJob = viewModelScope.launch {
             try {
-                _isBatchProcessing.value = true
-                _batchProgress.value = Pair(0, uris.size)
-                
+                _operationState.value = ReviewOperationState(
+                    operation = ReviewOperation.RECEIPT_BATCH_IMPORT,
+                    current = 0,
+                    total = uris.size,
+                    canCancel = true
+                )
                 val result = receiptRepository.processBatch(uris) { current, total ->
-                    _batchProgress.value = Pair(current, total)
+                    _operationState.value = ReviewOperationState(
+                        operation = ReviewOperation.RECEIPT_BATCH_IMPORT,
+                        current = current,
+                        total = total,
+                        canCancel = true
+                    )
                 }
-                
                 if (result.failureCount > 0) {
-                    val firstError = result.errors.firstOrNull()?.let { 
-                        if (it.length > 60) it.take(57) + "..." else it 
+                    val firstError = result.errors.firstOrNull()?.let {
+                        if (it.length > 60) it.take(57) + "..." else it
                     }
                     _errorMessage.value = "Processed ${result.successCount} ok. ${result.failureCount} failed: $firstError"
                 } else {
@@ -803,31 +900,30 @@ class ReviewViewModel @Inject constructor(
             } catch (e: Exception) {
                 _errorMessage.value = "Batch failed: ${e.message}"
             } finally {
-                _isBatchProcessing.value = false
-                _batchProgress.value = null
+                _operationState.value = null
             }
         }
     }
 
     fun cancelBatchProcessing() {
         batchJob?.cancel()
-        _isBatchProcessing.value = false
-        _batchProgress.value = null
+        _operationState.value = null
         _errorMessage.value = "Batch processing cancelled."
     }
 
     fun processStatement(uri: android.net.Uri) {
+        if (_operationState.value != null) {
+            _errorMessage.value = "Another operation is already running."
+            return
+        }
         viewModelScope.launch {
             try {
-                _isBatchProcessing.value = true // Reuse batch loading state
-                _batchProgress.value = Pair(0, 1)
-                
+                _operationState.value = ReviewOperationState(operation = ReviewOperation.BANK_STATEMENT_IMPORT)
                 when (val result = receiptLifecycleCoordinator.processBankStatement(uri)) {
                     is Result.Success<*> -> {
                         val bankResult = result.data as BankStatementResult
                         _errorMessage.value = "Imported ${bankResult.transactionsFound} transactions from statement! " +
                             "(${bankResult.reviewsCreated} reviews created, ${bankResult.duplicatesSkipped} duplicates skipped)"
-                        // Save debug data for the debug viewer
                         bankResult.debugData?.let { data ->
                             _debugData.value = data
                             debugDataStorage.save(data)
@@ -844,8 +940,7 @@ class ReviewViewModel @Inject constructor(
             } catch (e: Exception) {
                 _errorMessage.value = "Import failed: ${e.message}"
             } finally {
-                _isBatchProcessing.value = false
-                _batchProgress.value = null
+                _operationState.value = null
             }
         }
     }

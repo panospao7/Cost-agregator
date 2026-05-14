@@ -41,7 +41,6 @@ import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
 import com.yourname.expensetracker.domain.ai.model.ReviewReceiptPrefill
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.AmountText
-import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
 import com.yourname.expensetracker.ui.components.ai.DedupeAssistCard
 import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
@@ -75,19 +74,22 @@ fun ReviewScreen(
     val reviewCaptureAssistStates by viewModel.reviewCaptureAssistStates.collectAsState()
     val quickApprovePreview by viewModel.quickApprovePreview.collectAsState()
     val reviewQuickApproveEnabled by viewModel.reviewQuickApproveEnabled.collectAsState()
-    val prefilledCategorySuggestions by viewModel.prefilledCategorySuggestions.collectAsState()
-    val prefilledReceiptSuggestions by viewModel.prefilledReceiptSuggestions.collectAsState()
-    var editingReview by remember { mutableStateOf<PendingReview?>(null) }
-    var editingReviewReceipt by remember { mutableStateOf<PendingReviewWithReceipt?>(null) }
+    val operationState by viewModel.operationState.collectAsState()
+    val inFlightMutationKinds by viewModel.inFlightMutationKinds.collectAsState()
+    val locationEditState by viewModel.locationEditState.collectAsState()
+
+    // S6-014: editingReview driven by uiEvents, not by prefill maps
+    var editingReview by remember { mutableStateOf<PendingReviewWithReceipt?>(null) }
+    var editPrefillCategoryId by remember { mutableStateOf<Long?>(null) }
+    var editPrefillReceipt by remember { mutableStateOf<com.yourname.expensetracker.domain.ai.model.ReviewReceiptPrefill?>(null) }
+
     var debugReview by remember { mutableStateOf<PendingReview?>(null) }
-    // Guard against double-swipes/rapid-fire actions
     val processingIds = remember { mutableStateListOf<Long>() }
     val haptic = rememberHapticFeedback()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
-    val isBatchProcessing by viewModel.isBatchProcessing.collectAsState()
-    val batchProgress by viewModel.batchProgress.collectAsState()
+    val isBatchProcessing = operationState != null
     
     val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
@@ -126,7 +128,30 @@ fun ReviewScreen(
     LaunchedEffect(Unit) {
         viewModel.editApproveSuccess.collect { _ ->
             editingReview = null
-            editingReviewReceipt = null
+            editPrefillCategoryId = null
+            editPrefillReceipt = null
+        }
+    }
+
+    // S6-014: Collect one-shot OpenEditWithPrefill events
+    LaunchedEffect(Unit) {
+        viewModel.uiEvents.collect { event ->
+            when (event) {
+                is ReviewUiEvent.OpenEditWithPrefill -> {
+                    val item = pendingReviews.firstOrNull { it.review.id == event.reviewId }
+                    if (item != null) {
+                        editPrefillCategoryId = event.categoryId
+                        editPrefillReceipt = event.receiptPrefill
+                        // S6-018: Init location state from review before opening sheet
+                        viewModel.initLocationForReview(
+                            lat = item.review.suggestedLatitude,
+                            lon = item.review.suggestedLongitude,
+                            address = null
+                        )
+                        editingReview = item
+                    }
+                }
+            }
         }
     }
 
@@ -370,11 +395,18 @@ fun ReviewScreen(
                             ReviewCard(
                                 item = item,
                                 categories = categories,
+                                mutationKind = inFlightMutationKinds[item.review.id],
                                 onApprove = { viewModel.approveReview(item.review.id) },
                                 onReject = { viewModel.rejectReview(item.review.id) },
                                 onEdit = {
-                                    editingReview = item.review
-                                    editingReviewReceipt = item
+                                    viewModel.initLocationForReview(
+                                        lat = item.review.suggestedLatitude,
+                                        lon = item.review.suggestedLongitude,
+                                        address = null
+                                    )
+                                    editPrefillCategoryId = null
+                                    editPrefillReceipt = null
+                                    editingReview = item
                                 },
                                 onDebug = {
                                     if (debugActionsEnabled) {
@@ -402,23 +434,19 @@ fun ReviewScreen(
                                 onLoadCategoryAssist = {
                                     viewModel.requestCategoryAssist(item.review.id)
                                 },
+                                // S6-014: applyCategorySuggestion emits OpenEditWithPrefill event
                                 onApplyCategoryAssist = {
                                     viewModel.applyCategorySuggestion(item.review.id)
-                                    editingReview = item.review
-                                    editingReviewReceipt = item
                                 },
                                 onLoadReceiptAssist = {
                                     viewModel.requestReceiptAssist(item.review.id, force = true)
                                 },
+                                // S6-014: applyReceiptSuggestion emits OpenEditWithPrefill event
                                 onApplyReceiptAssist = {
                                     viewModel.applyReceiptSuggestion(item.review.id, ReviewViewModel.ReceiptApplyField.ALL)
-                                    editingReview = item.review
-                                    editingReviewReceipt = item
                                 },
                                 onApplyReceiptAssistField = { field ->
                                     viewModel.applyReceiptSuggestion(item.review.id, field)
-                                    editingReview = item.review
-                                    editingReviewReceipt = item
                                 },
                                 reviewQuickApproveEnabled = reviewQuickApproveEnabled,
                                 canQuickApprove = viewModel.canOfferQuickApprove(item.review.id),
@@ -444,35 +472,20 @@ fun ReviewScreen(
             }
         }
 
-        editingReview?.let { review ->
-            var initialCategoryIdOverride by remember(review.id) { mutableStateOf<Long?>(null) }
-            var initialReceiptPrefill by remember(review.id) { mutableStateOf<ReviewReceiptPrefill?>(null) }
-            val prefilledCategoryId = prefilledCategorySuggestions[review.id]
-            val prefilledReceipt = prefilledReceiptSuggestions[review.id]
-
-            LaunchedEffect(review.id, prefilledCategoryId, prefilledReceipt) {
-                prefilledCategoryId?.let { categoryId ->
-                    initialCategoryIdOverride = categoryId
-                    viewModel.onEvent(ReviewEvent.ConsumePrefilledCategorySuggestion(review.id))
-                }
-                prefilledReceipt?.let { receiptPrefill ->
-                    initialReceiptPrefill = receiptPrefill
-                    viewModel.onEvent(ReviewEvent.ConsumePrefilledReceiptSuggestion(review.id))
-                }
-            }
-
-            key(initialCategoryIdOverride, initialReceiptPrefill) {
+        editingReview?.let { item ->
+            key(editPrefillCategoryId, editPrefillReceipt) {
                 EditReviewDialog(
-                    review = review,
-                    receipt = editingReviewReceipt?.receipt,
+                    review = item.review,
+                    receipt = item.receipt,
                     categories = categories,
                     onDismiss = {
                         editingReview = null
-                        editingReviewReceipt = null
+                        editPrefillCategoryId = null
+                        editPrefillReceipt = null
                     },
                     onSave = { amount, merchant, categoryId, date, type, applyToAll, approveAllPending, lat, lon, address, osmId ->
                         viewModel.approveReviewWithEdits(
-                            reviewId = review.id,
+                            reviewId = item.review.id,
                             finalAmount = amount,
                             finalMerchant = merchant,
                             finalCategoryId = categoryId,
@@ -487,9 +500,12 @@ fun ReviewScreen(
                         )
                         // S6-005: Dialog closes via editApproveSuccess LaunchedEffect, not here
                     },
-                    initialCategoryIdOverride = initialCategoryIdOverride,
-                    initialReceiptPrefill = initialReceiptPrefill,
-                    geocodingService = viewModel.geocodingService
+                    initialCategoryIdOverride = editPrefillCategoryId,
+                    initialReceiptPrefill = editPrefillReceipt,
+                    locationEditState = locationEditState,
+                    onLocationQueryChanged = viewModel::onLocationQueryChanged,
+                    onLocationSelected = viewModel::onLocationSelected,
+                    onLocationCleared = viewModel::onLocationCleared
                 )
             }
         }
@@ -708,18 +724,28 @@ fun ReviewScreen(
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
-                    batchProgress?.let { (current, total) ->
-                        Text(
-                            "$current / $total",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        LinearProgressIndicator(
-                            progress = { current.toFloat() / total },
-                            modifier = Modifier.width(200.dp),
-                            color = SemanticColors.PrimaryIndigo
-                        )
+                    // S6-008: Only show progress bar when we have real determinate progress
+                    operationState?.let { op ->
+                        if (op.current != null && op.total != null && op.total > 0) {
+                            Text(
+                                "${op.current} / ${op.total}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            LinearProgressIndicator(
+                                progress = { op.current.toFloat() / op.total },
+                                modifier = Modifier.width(200.dp),
+                                color = SemanticColors.PrimaryIndigo
+                            )
+                        }
+                        // S6-009: Only show cancel for cancellable operations
+                        if (op.canCancel) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            TextButton(onClick = viewModel::cancelBatchProcessing) {
+                                Text(stringResource(R.string.cancel_button), color = Color.White)
+                            }
+                        }
                     }
                 }
             }
@@ -741,6 +767,7 @@ fun ReviewScreen(
 fun ReviewCard(
     item: PendingReviewWithReceipt,
     categories: List<Category>,
+    mutationKind: String? = null,
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onEdit: () -> Unit,
@@ -765,6 +792,10 @@ fun ReviewCard(
     val review = item.review
     val quickApproveBlockedByDuplicate =
         ((captureAssistState.dedupeSuggestion as? AiLoadState.Ready)?.value?.verdict == DuplicateVerdict.LIKELY_DUPLICATE)
+    // S6-025: Derive per-button states from mutationKind
+    val isAnyMutationInFlight = mutationKind != null
+    val isApproving = mutationKind == "approve" || mutationKind == "edit"
+    val isRejecting = mutationKind == "reject"
     
     // Find the suggested category
     val suggestedCategory = categories.find { it.id == review.suggestedCategoryId }
@@ -1053,7 +1084,8 @@ fun ReviewCard(
                         onEdit()
                     },
                     modifier = Modifier.size(48.dp),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isAnyMutationInFlight
                 ) {
                     Icon(Icons.Rounded.Edit, editCd, modifier = Modifier.size(20.dp))
                 }
@@ -1065,12 +1097,17 @@ fun ReviewCard(
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
+                    enabled = !isAnyMutationInFlight,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
                         contentColor = MaterialTheme.colorScheme.onErrorContainer
                     )
                 ) {
-                    Text(stringResource(R.string.review_reject_button), fontWeight = FontWeight.Bold)
+                    if (isRejecting) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onErrorContainer)
+                    } else {
+                        Text(stringResource(R.string.review_reject_button), fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 Button(
@@ -1080,12 +1117,17 @@ fun ReviewCard(
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
+                    enabled = !isAnyMutationInFlight,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SemanticColors.SuccessGreen,
                         contentColor = Color.White
                     )
                 ) {
-                    Text(stringResource(R.string.review_approve_button), fontWeight = FontWeight.Bold)
+                    if (isApproving) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    } else {
+                        Text(stringResource(R.string.review_approve_button), fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -1510,7 +1552,10 @@ fun EditReviewDialog(
     onSave: (Double?, String?, Long?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
     initialCategoryIdOverride: Long? = null,
     initialReceiptPrefill: ReviewReceiptPrefill? = null,
-    geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
+    locationEditState: ReviewLocationEditState = ReviewLocationEditState(),
+    onLocationQueryChanged: (String) -> Unit = {},
+    onLocationSelected: (com.yourname.expensetracker.domain.location.GeocodingResult) -> Unit = {},
+    onLocationCleared: () -> Unit = {}
 ) {
     var amount by remember {
         mutableStateOf(String.format("%.2f", initialReceiptPrefill?.amount ?: review.suggestedAmount ?: 0.0))
@@ -1528,11 +1573,13 @@ fun EditReviewDialog(
     var typeExpanded by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
 
-    // Location state
-    var locationLat by remember { mutableStateOf<Double?>(review.suggestedLatitude) }
-    var locationLon by remember { mutableStateOf<Double?>(review.suggestedLongitude) }
-    var locationAddress by remember { mutableStateOf<String?>(null) }
-    var locationOsmId by remember { mutableStateOf<String?>(null) }  // F7: capture osmId
+    // S6-017: Transfer metadata fields
+    var transferDirection by remember {
+        mutableStateOf(parseTransferDirectionOrNull(review.suggestedDirection))
+    }
+    var transferAccount by remember { mutableStateOf(review.suggestedAccountName ?: "") }
+
+    // S6-018: Location state comes from ViewModel — no local lat/lon/address vars
     var showLocationPicker by remember { mutableStateOf(false) }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1566,7 +1613,7 @@ fun EditReviewDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
+                TransactionType.entries.filter { it != TransactionType.UNKNOWN }.forEach { type ->
                     val isSelected = selectedType == type
                     val typeColor = when (type) {
                         TransactionType.PURCHASE -> SemanticColors.DangerRed
@@ -1615,6 +1662,45 @@ fun EditReviewDialog(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             )
+
+            // S6-017: Transfer metadata — only shown when type is TRANSFER
+            if (selectedType == TransactionType.TRANSFER) {
+                Text(
+                    stringResource(R.string.review_transfer_metadata_label),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                val directions = TransferDirection.entries
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    directions.forEach { dir ->
+                        val isSelected = transferDirection == dir
+                        Surface(
+                            onClick = { transferDirection = dir },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) SemanticColors.PrimaryIndigo.copy(alpha = 0.2f) else Color.Transparent,
+                            border = BorderStroke(1.dp, if (isSelected) SemanticColors.PrimaryIndigo else SemanticColors.GlassBorder)
+                        ) {
+                            Text(
+                                dir.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (isSelected) SemanticColors.PrimaryIndigo else SemanticColors.TextSecondary,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = transferAccount,
+                    onValueChange = { transferAccount = it },
+                    label = { Text(stringResource(R.string.review_transfer_account_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
 
             OutlinedTextField(
                 value = amount,
@@ -1733,7 +1819,7 @@ fun EditReviewDialog(
                 )
             }
 
-            // Location section
+            // Location section — S6-018: driven by VM locationEditState
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1744,15 +1830,22 @@ fun EditReviewDialog(
                     stringResource(R.string.review_location_label),
                     style = MaterialTheme.typography.labelMedium
                 )
-                TextButton(onClick = { showLocationPicker = !showLocationPicker }) {
-                    Text(
-                        if (showLocationPicker) stringResource(R.string.review_hide_button)
-                        else if (locationLat != null) stringResource(R.string.review_edit_button)
-                        else stringResource(R.string.review_add_button)
-                    )
+                Row {
+                    if (locationEditState.selectedLat != null) {
+                        TextButton(onClick = onLocationCleared) {
+                            Text(stringResource(R.string.review_clear_button), color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { showLocationPicker = !showLocationPicker }) {
+                        Text(
+                            if (showLocationPicker) stringResource(R.string.review_hide_button)
+                            else if (locationEditState.selectedLat != null) stringResource(R.string.review_edit_button)
+                            else stringResource(R.string.review_add_button)
+                        )
+                    }
                 }
             }
-            if (locationLat != null && locationLon != null && !showLocationPicker) {
+            if (locationEditState.selectedLat != null && !showLocationPicker) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1764,29 +1857,44 @@ fun EditReviewDialog(
                         tint = SemanticColors.PrimaryIndigo
                     )
                     Text(
-                        text = locationAddress ?: "%.4f, %.4f".format(locationLat, locationLon),
+                        text = locationEditState.selectedAddress
+                            ?: "%.4f, %.4f".format(locationEditState.selectedLat, locationEditState.selectedLon),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.PrimaryIndigo
                     )
                 }
             }
             if (showLocationPicker) {
-                LocationSearchPicker(
-                    currentLat = locationLat,
-                    currentLon = locationLon,
-                    currentAddress = locationAddress,
-                    onResult = { lat, lon, address, osmId ->
-                        locationLat = lat
-                        locationLon = lon
-                        locationAddress = address
-                        locationOsmId = osmId  // F7: capture osmId instead of discarding it
-                        if (lat != null) showLocationPicker = false
-                    },
-                    geocodingService = geocodingService,
-                    // Bias toward the review's existing location if available
-                    biasLat = locationLat,
-                    biasLon = locationLon
+                OutlinedTextField(
+                    value = locationEditState.query,
+                    onValueChange = onLocationQueryChanged,
+                    label = { Text(stringResource(R.string.review_location_search_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = {
+                        if (locationEditState.isSearching) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        }
+                    }
                 )
+                locationEditState.results.forEach { result ->
+                    Surface(
+                        onClick = { onLocationSelected(result) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Text(
+                            text = result.displayAddress ?: result.name ?: "Unknown",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+                locationEditState.error?.let { err ->
+                    Text(err, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
             }
 
             // Action buttons
@@ -1810,26 +1918,33 @@ fun EditReviewDialog(
                         // S6-015: Validate before save
                         val parsedAmount = AmountUtils.parseAmount(amount)
                         if (amount.isNotBlank() && parsedAmount == null) {
-                            // Invalid amount — don't save
                             return@Button
                         }
                         if (merchant.isBlank()) {
-                            // Blank merchant — don't save
+                            return@Button
+                        }
+                        // S6-017: Transfer requires direction
+                        if (selectedType == TransactionType.TRANSFER && transferDirection == null) {
                             return@Button
                         }
                         val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - (review.suggestedAmount ?: 0.0)) > 0.001) parsedAmount else null
                         val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
                         val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
                         val originalType = parseTransactionTypeOrNull(review.suggestedType)
-                        val editedType = selectedType.takeIf { 
-                            originalType != it
-                        }
+                        val editedType = selectedType.takeIf { originalType != it }
                         val editedDate = selectedDateMs.takeIf { it != (review.suggestedDate ?: review.createdAt) }
-                        onSave(editedAmount, editedMerchant, editedCategory, editedDate, editedType, applyToAll, approveAllPending,
-                            locationLat.takeIf { it != review.suggestedLatitude },
-                            locationLon.takeIf { it != review.suggestedLongitude },
-                            locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude },
-                            locationOsmId
+                        // S6-018: Use VM location state
+                        val locLat = locationEditState.selectedLat
+                        val locLon = locationEditState.selectedLon
+                        val locAddress = locationEditState.selectedAddress
+                        val locPlaceId = locationEditState.selectedPlaceId
+                        onSave(
+                            editedAmount, editedMerchant, editedCategory, editedDate, editedType,
+                            applyToAll, approveAllPending,
+                            locLat.takeIf { it != review.suggestedLatitude },
+                            locLon.takeIf { it != review.suggestedLongitude },
+                            locAddress.takeIf { locLat != review.suggestedLatitude || locLon != review.suggestedLongitude },
+                            locPlaceId
                         )
                     },
                     shape = RoundedCornerShape(12.dp)
