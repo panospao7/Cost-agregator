@@ -62,8 +62,8 @@ class EmptyStateRegistryCompletenessTest {
         allKeys.forEach { key ->
             registry.getActions(key, excludeCompleted = false).forEach { action ->
                 assertTrue("Action in '$key' has blank id", action.id.isNotBlank())
-                assertTrue("Action in '$key' has blank title", action.title.isNotBlank())
-                assertTrue("Action in '$key' has blank description", action.description.isNotBlank())
+                assertTrue("Action in '$key' has zero titleRes", action.titleRes != 0)
+                assertTrue("Action in '$key' has zero descriptionRes", action.descriptionRes != 0)
             }
         }
     }

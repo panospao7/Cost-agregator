@@ -246,7 +246,7 @@ private fun ActionChip(
                 .minimumInteractiveComponentSize(),
             label = {
                 Text(
-                    text = action.title,
+                    text = stringResource(action.titleRes),
                     style = MaterialTheme.typography.labelMedium
                 )
             },
@@ -331,16 +331,16 @@ private fun EnhancedEmptyStateWithActionsPreview() {
             actions = listOf(
                 EmptyStateAction(
                     id = "scan_receipt",
-                    title = "Scan Receipt",
-                    description = "Scan a receipt to add expenses",
+                    titleRes = R.string.empty_action_scan_receipt_title,
+                    descriptionRes = R.string.empty_action_scan_receipt_desc,
                     icon = Icons.Default.Check,
                     action = EmptyStateActionType.OpenFeature("scan_receipt"),
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "add_manual",
-                    title = "Add Manually",
-                    description = "Add an expense manually",
+                    titleRes = R.string.empty_action_add_manually_title,
+                    descriptionRes = R.string.empty_action_add_expense_desc,
                     icon = Icons.Default.Check,
                     action = EmptyStateActionType.OpenFeature("add_expense"),
                     priority = 5

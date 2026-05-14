@@ -127,8 +127,8 @@ class ContextualActionRegistryTest {
     private fun action(id: String, priority: Int = 0): EmptyStateAction {
         return EmptyStateAction(
             id = id,
-            title = "Title $id",
-            description = "Description $id",
+            titleRes = android.R.string.ok, // Dummy resource for testing
+            descriptionRes = android.R.string.cancel,
             icon = mockk<ImageVector>(relaxed = true),
             action = EmptyStateActionType.NavigateToDestination(NavigationDestination.Home),
             priority = priority

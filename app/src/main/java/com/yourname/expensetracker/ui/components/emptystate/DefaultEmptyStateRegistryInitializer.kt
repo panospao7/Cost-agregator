@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.TrendingUp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.di.EmptyStateRegistryInitializer
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import javax.inject.Inject
@@ -38,16 +39,16 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "scan_receipt",
-                    title = "Scan Receipt",
-                    description = "Scan receipt to detect warranties",
+                    titleRes = R.string.empty_action_scan_receipt_title,
+                    descriptionRes = R.string.empty_action_scan_receipt_desc,
                     icon = Icons.Default.CameraAlt,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.ScanReceipt),
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "add_warranty",
-                    title = "Add Manually",
-                    description = "Manually add a warranty",
+                    titleRes = R.string.empty_action_add_manually_title,
+                    descriptionRes = R.string.empty_action_add_warranty_desc,
                     icon = Icons.Default.Add,
                     action = EmptyStateActionType.OpenFeature("add_warranty"),
                     priority = 5
@@ -62,24 +63,24 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "connect_notifications",
-                    title = "Connect Notifications",
-                    description = "Connect notifications to detect subscriptions",
+                    titleRes = R.string.empty_action_connect_notifications_title,
+                    descriptionRes = R.string.empty_action_connect_notifications_desc,
                     icon = Icons.Default.Notifications,
                     action = EmptyStateActionType.OpenFeature("notification_settings"),
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "add_subscription",
-                    title = "Add Subscription",
-                    description = "Add a subscription manually",
+                    titleRes = R.string.empty_action_add_subscription_title,
+                    descriptionRes = R.string.empty_action_add_subscription_desc,
                     icon = Icons.Default.Add,
                     action = EmptyStateActionType.OpenFeature("add_subscription"),
                     priority = 8
                 ),
                 EmptyStateAction(
                     id = "scan_bank",
-                    title = "Scan Bank Statements",
-                    description = "Scan bank statements for subscriptions",
+                    titleRes = R.string.empty_action_scan_bank_title,
+                    descriptionRes = R.string.empty_action_scan_bank_desc,
                     icon = Icons.Default.ReceiptLong,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.BankConnections),
                     priority = 5
@@ -94,16 +95,16 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "create_goal",
-                    title = "Create First Goal",
-                    description = "Create your first savings goal",
+                    titleRes = R.string.empty_action_create_goal_title,
+                    descriptionRes = R.string.empty_action_create_goal_desc,
                     icon = Icons.Default.Savings,
                     action = EmptyStateActionType.OpenFeature("create_savings_goal"),
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "view_recommendations",
-                    title = "View Recommendations",
-                    description = "See how much you can save",
+                    titleRes = R.string.empty_action_view_recommendations_title,
+                    descriptionRes = R.string.empty_action_view_recommendations_desc,
                     icon = Icons.Default.ShowChart,
                     action = EmptyStateActionType.OpenFeature("savings_recommendations"),
                     priority = 7
@@ -118,16 +119,16 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "start_challenge",
-                    title = "Start Challenge",
-                    description = "Start a spending challenge",
+                    titleRes = R.string.empty_action_start_challenge_title,
+                    descriptionRes = R.string.empty_action_start_challenge_desc,
                     icon = Icons.Default.EmojiEvents,
                     action = EmptyStateActionType.OpenFeature("create_challenge"),
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "view_no_spend",
-                    title = "No-Spend Streak",
-                    description = "View your no-spend streak progress",
+                    titleRes = R.string.empty_action_no_spend_streak_title,
+                    descriptionRes = R.string.empty_action_no_spend_streak_desc,
                     icon = Icons.Default.TrendingUp,
                     action = EmptyStateActionType.OpenFeature("no_spend_streak"),
                     priority = 5
@@ -142,26 +143,24 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "track_carbon",
-                    title = "Track Footprint",
-                    description = "Track your carbon footprint",
+                    titleRes = R.string.empty_action_track_carbon_title,
+                    descriptionRes = R.string.empty_action_track_carbon_desc,
                     icon = Icons.Default.Spa,
-                    action = EmptyStateActionType.ExecuteAction {
-                        // Trigger carbon calculation
-                    },
+                    action = EmptyStateActionType.ExecuteAction { },
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "view_offset",
-                    title = "Offset Options",
-                    description = "View carbon offset options",
+                    titleRes = R.string.empty_action_offset_options_title,
+                    descriptionRes = R.string.empty_action_offset_options_desc,
                     icon = Icons.Default.Forest,
                     action = EmptyStateActionType.OpenFeature("carbon_offset"),
                     priority = 7
                 ),
                 EmptyStateAction(
                     id = "add_transactions",
-                    title = "Add Transactions",
-                    description = "Add transactions to calculate footprint",
+                    titleRes = R.string.empty_action_add_transactions_title,
+                    descriptionRes = R.string.empty_action_add_transactions_desc,
                     icon = Icons.Default.ReceiptLong,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
                     priority = 5
@@ -176,26 +175,24 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "analyze_patterns",
-                    title = "Analyze Patterns",
-                    description = "Analyze your lifestyle patterns",
+                    titleRes = R.string.empty_action_analyze_patterns_title,
+                    descriptionRes = R.string.empty_action_analyze_patterns_desc,
                     icon = Icons.Default.ShowChart,
-                    action = EmptyStateActionType.ExecuteAction {
-                        // Trigger lifestyle analysis
-                    },
+                    action = EmptyStateActionType.ExecuteAction { },
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "view_income",
-                    title = "Set Income",
-                    description = "Set your income for tracking",
+                    titleRes = R.string.empty_action_set_income_title,
+                    descriptionRes = R.string.empty_action_set_income_desc,
                     icon = Icons.Default.TrendingUp,
                     action = EmptyStateActionType.OpenFeature("income_settings"),
                     priority = 8
                 ),
                 EmptyStateAction(
                     id = "add_expenses",
-                    title = "Add Expenses",
-                    description = "Add expenses for analysis",
+                    titleRes = R.string.empty_action_add_expenses_title,
+                    descriptionRes = R.string.empty_action_add_expenses_desc,
                     icon = Icons.Default.ReceiptLong,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
                     priority = 5
@@ -210,16 +207,16 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "add_expense",
-                    title = "Add Expense",
-                    description = "Add your first expense",
+                    titleRes = R.string.empty_action_add_expense_title,
+                    descriptionRes = R.string.empty_action_add_expense_desc,
                     icon = Icons.Default.Add,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
                     priority = 10
                 ),
                 EmptyStateAction(
                     id = "scan_receipt",
-                    title = "Scan Receipt",
-                    description = "Scan a receipt to add expense",
+                    titleRes = R.string.empty_action_scan_first_receipt_title,
+                    descriptionRes = R.string.empty_action_scan_first_receipt_desc,
                     icon = Icons.Default.CameraAlt,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.ScanReceipt),
                     priority = 8
@@ -234,8 +231,8 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "scan_receipt",
-                    title = "Scan Receipt",
-                    description = "Scan your first receipt",
+                    titleRes = R.string.empty_action_scan_first_receipt_title,
+                    descriptionRes = R.string.empty_action_scan_first_receipt_desc,
                     icon = Icons.Default.CameraAlt,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.ScanReceipt),
                     priority = 10
@@ -250,8 +247,8 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "add_expense",
-                    title = "Add Expenses",
-                    description = "Add expenses to see analytics",
+                    titleRes = R.string.empty_action_add_for_analytics_title,
+                    descriptionRes = R.string.empty_action_add_for_analytics_desc,
                     icon = Icons.Default.Add,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
                     priority = 10
@@ -266,8 +263,8 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
             listOf(
                 EmptyStateAction(
                     id = "create_budget",
-                    title = "Create Budget",
-                    description = "Set up your first budget",
+                    titleRes = R.string.empty_action_create_budget_title,
+                    descriptionRes = R.string.empty_action_create_budget_desc,
                     icon = Icons.Default.Add,
                     action = EmptyStateActionType.NavigateToDestination(NavigationDestination.Budget),
                     priority = 10

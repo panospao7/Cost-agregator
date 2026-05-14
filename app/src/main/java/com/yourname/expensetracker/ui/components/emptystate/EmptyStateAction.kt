@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.components.emptystate
 
+import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 
@@ -7,16 +8,16 @@ import com.yourname.expensetracker.ui.navigation.NavigationDestination
  * Data class representing a single action available in an empty state.
  *
  * @property id Unique identifier for the action
- * @property title Display title for the action
- * @property description Brief description of what the action does
+ * @property titleRes String resource ID for the action title
+ * @property descriptionRes String resource ID for the action description
  * @property icon Icon to display for the action
  * @property action The type of action to perform when clicked
  * @property priority Higher values indicate more important actions (sorted descending)
  */
 data class EmptyStateAction(
     val id: String,
-    val title: String,
-    val description: String,
+    @StringRes val titleRes: Int,
+    @StringRes val descriptionRes: Int,
     val icon: ImageVector,
     val action: EmptyStateActionType,
     val priority: Int = 0
