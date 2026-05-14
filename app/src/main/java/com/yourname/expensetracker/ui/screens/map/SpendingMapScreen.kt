@@ -71,13 +71,17 @@ import kotlin.math.max
  *  - Overpass candidate list when automatic resolution is ambiguous
  *  - Place-insights card list below the map
  */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Route entry point — owns Hilt, permission launcher, snackbar, and event collection.
+ * S10-021: Separated from SpendingMapScreenContent for testability.
+ */
 @Composable
 fun SpendingMapScreen(
     initialLocationQuery: String? = null,
     viewModel: SpendingMapViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    val locationPickerState by viewModel.locationPickerState.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -85,7 +89,6 @@ fun SpendingMapScreen(
         viewModel.focusOnMerchant(initialLocationQuery)
     }
 
-    // ── Permission launcher ───────────────────────────────────────────────────
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -94,55 +97,66 @@ fun SpendingMapScreen(
         viewModel.onPermissionResult(granted)
     }
 
-    // Check current permission status once
     LaunchedEffect(Unit) {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
-        val alreadyGranted = fine == PackageManager.PERMISSION_GRANTED ||
-                             coarse == PackageManager.PERMISSION_GRANTED
+        val alreadyGranted = fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
         viewModel.onPermissionResult(alreadyGranted)
-        if (!alreadyGranted) {
-            viewModel.onShowPermissionRationale(true)
-        }
+        if (!alreadyGranted) viewModel.onShowPermissionRationale(true)
     }
 
-    // ── Snackbar ──────────────────────────────────────────────────────────────
     LaunchedEffect(state.snackbarMessage) {
         val msg = state.snackbarMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
         viewModel.onSnackbarDismissed()
     }
-
-    // S10-004: GPS privacy blocked — persistent snackbar with dismiss
     LaunchedEffect(state.gpsPrivacyBlocked) {
         if (state.gpsPrivacyBlocked) {
-            snackbarHostState.showSnackbar(
-                "Device GPS is disabled in Privacy settings.",
-                actionLabel = "Dismiss",
-                duration = SnackbarDuration.Long
-            )
+            snackbarHostState.showSnackbar("Device GPS is disabled in Privacy settings.", actionLabel = "Dismiss", duration = SnackbarDuration.Long)
             viewModel.dismissGpsPrivacyBlocked()
         }
     }
-
-    // S10-022: Correction save error — show inline via snackbar (sheet stays open)
     LaunchedEffect(state.correctionSaveError) {
         val err = state.correctionSaveError ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(err, duration = SnackbarDuration.Long)
         viewModel.dismissCorrectionError()
     }
 
+    SpendingMapScreenContent(
+        state = state,
+        locationPickerState = locationPickerState,
+        snackbarHostState = snackbarHostState,
+        onRequestPermission = {
+            locationPermissionLauncher.launch(arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
+        },
+        viewModel = viewModel
+    )
+}
+
+/**
+ * Pure content composable — testable with fake state.
+ * S10-021: Separated from route for focused component tests.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SpendingMapScreenContent(
+    state: SpendingMapState,
+    locationPickerState: LocationPickerState,
+    snackbarHostState: SnackbarHostState,
+    onRequestPermission: () -> Unit,
+    viewModel: SpendingMapViewModel
+) {
+
     // ── Permission dialog ─────────────────────────────────────────────────────
     LocationPermissionDialog(
         showDialog = state.showPermissionRationale,
         onDismiss = { viewModel.onShowPermissionRationale(false) },
         onGrant = {
-            locationPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+            onRequestPermission()
+            viewModel.onShowPermissionRationale(false)
         }
     )
 
@@ -150,11 +164,21 @@ fun SpendingMapScreen(
     if (state.showCorrectionSheet) {
         val marker = state.selectedMarker
         if (marker != null) {
+            // Reset picker when sheet opens
+            LaunchedEffect(marker.expenseId) {
+                viewModel.resetLocationPicker(marker.latitude, marker.longitude)
+            }
             LocationCorrectionSheet(
                 merchantName = state.pendingCorrectionMerchant ?: marker.merchant,
                 initialLat = state.pendingCorrectionLat ?: marker.latitude,
                 initialLon = state.pendingCorrectionLon ?: marker.longitude,
-                geocodingService = viewModel.geocodingService,
+                pickerState = locationPickerState,
+                onQueryChanged = viewModel::onLocationQueryChanged,
+                onResultSelected = viewModel::onLocationResultSelected,
+                onMapLongPressed = viewModel::onLocationMapLongPressed,
+                onPinConfirmed = viewModel::onLocationPinConfirmed,
+                onPinCancelled = viewModel::onLocationPinCancelled,
+                onLocationCleared = viewModel::onLocationCleared,
                 onDismiss = { viewModel.onCloseCorrectionSheet() },
                 onConfirm = { lat, lon, address, osmId ->
                     viewModel.onSaveCorrection(
@@ -173,13 +197,22 @@ fun SpendingMapScreen(
     // ── Pin expense sheet (Feature E) ─────────────────────────────────────────
     val pinExpense = state.expenseToPin
     if (pinExpense != null) {
+        LaunchedEffect(pinExpense.id) {
+            viewModel.resetLocationPicker(pinExpense.latitude, pinExpense.longitude)
+        }
         PinExpenseSheet(
             expense = pinExpense,
+            pickerState = locationPickerState,
+            onQueryChanged = viewModel::onLocationQueryChanged,
+            onResultSelected = viewModel::onLocationResultSelected,
+            onMapLongPressed = viewModel::onLocationMapLongPressed,
+            onPinConfirmed = viewModel::onLocationPinConfirmed,
+            onPinCancelled = viewModel::onLocationPinCancelled,
+            onLocationCleared = viewModel::onLocationCleared,
             onDismiss = { viewModel.onDismissPinSheet() },
             onSave = { lat, lon, address, osmId ->
                 viewModel.assignLocationToExpense(pinExpense, lat, lon, address, osmId)
             },
-            geocodingService = viewModel.geocodingService,
             deviceLat = state.deviceLatitude,
             deviceLon = state.deviceLongitude
         )
@@ -850,9 +883,15 @@ private fun heatmapRenderSignature(point: com.yourname.expensetracker.domain.loc
 @Composable
 private fun PinExpenseSheet(
     expense: Expense,
+    pickerState: com.yourname.expensetracker.ui.screens.map.LocationPickerState,
+    onQueryChanged: (String, Boolean) -> Unit,
+    onResultSelected: (com.yourname.expensetracker.domain.location.GeocodingResult) -> Unit,
+    onMapLongPressed: (Double, Double) -> Unit,
+    onPinConfirmed: () -> Unit,
+    onPinCancelled: () -> Unit,
+    onLocationCleared: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (Double, Double, String?, String?) -> Unit,
-    geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
     deviceLat: Double? = null,
     deviceLon: Double? = null
 ) {
@@ -877,23 +916,17 @@ private fun PinExpenseSheet(
             )
             Spacer(modifier = Modifier.height(16.dp))
 
-            var selectedLat by remember { mutableStateOf<Double?>(null) }
-            var selectedLon by remember { mutableStateOf<Double?>(null) }
-            var selectedAddress by remember { mutableStateOf<String?>(null) }
-            var selectedOsmId by remember { mutableStateOf<String?>(null) }
-
             LocationSearchPicker(
+                state = pickerState,
+                onQueryChanged = onQueryChanged,
+                onResultSelected = onResultSelected,
+                onMapLongPressed = onMapLongPressed,
+                onPinConfirmed = onPinConfirmed,
+                onPinCancelled = onPinCancelled,
+                onCleared = onLocationCleared,
                 currentLat = expense.latitude,
                 currentLon = expense.longitude,
                 currentAddress = expense.resolvedAddress,
-                onResult = { lat, lon, address, osmId ->
-                    selectedLat = lat
-                    selectedLon = lon
-                    selectedAddress = address
-                    selectedOsmId = osmId
-                },
-                geocodingService = geocodingService,
-                // Bias toward device location when available, else expense's own location
                 biasLat = deviceLat ?: expense.latitude,
                 biasLon = deviceLon ?: expense.longitude
             )
@@ -904,19 +937,16 @@ private fun PinExpenseSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f)
-                ) {
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
                     Text(stringResource(R.string.action_cancel))
                 }
                 Button(
                     onClick = {
-                        if (selectedLat != null && selectedLon != null) {
-                            onSave(selectedLat!!, selectedLon!!, selectedAddress, selectedOsmId)
-                        }
+                        val lat = pickerState.pendingLat ?: return@Button
+                        val lon = pickerState.pendingLon ?: return@Button
+                        onSave(lat, lon, pickerState.pendingAddress, pickerState.pendingOsmId)
                     },
-                    enabled = selectedLat != null && selectedLon != null,
+                    enabled = pickerState.hasSelection,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(stringResource(R.string.action_save))

@@ -8,23 +8,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.location.GeocodingResult
+import com.yourname.expensetracker.ui.screens.map.LocationPickerState
 
 /**
- * Bottom sheet that lets the user search for and correct the location of a
- * merchant pin on the spending map.
- *
- * Upgraded from raw lat/lon text fields to the full [LocationSearchPicker]
- * so the correction experience is consistent with EditLocationDialog (Transactions),
- * EditReviewDialog (Review), and PinExpenseSheet (Map unlocated panel).
- *
- * B9 fix: Removed verticalScroll() from the content Column. The scroll modifier
- * was intercepting all vertical touch events, which prevented the embedded
- * osmdroid MapView from being panned or zoomed. The ModalBottomSheet now uses
- * skipPartiallyExpanded = true so the full content is visible without scrolling.
- *
- * @param geocodingService Used by [LocationSearchPicker] for search + reverse geocoding.
- * @param onConfirm Delivers (lat, lon, address, osmId) when the user confirms.
+ * Bottom sheet for correcting a merchant pin location.
+ * S10-001/S10-020: Uses ViewModel-owned [LocationPickerState] — no GeocodingService in UI.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,16 +21,17 @@ fun LocationCorrectionSheet(
     merchantName: String,
     initialLat: Double?,
     initialLon: Double?,
-    geocodingService: GeocodingService,
+    pickerState: LocationPickerState,
+    onQueryChanged: (String, Boolean) -> Unit,
+    onResultSelected: (GeocodingResult) -> Unit,
+    onMapLongPressed: (Double, Double) -> Unit,
+    onPinConfirmed: () -> Unit,
+    onPinCancelled: () -> Unit,
+    onLocationCleared: () -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (lat: Double, lon: Double, address: String?, osmId: String?) -> Unit
 ) {
-    // Staged selection — null until the user picks something in the picker
-    var pendingLat by remember { mutableStateOf<Double?>(null) }
-    var pendingLon by remember { mutableStateOf<Double?>(null) }
-    var pendingAddress by remember { mutableStateOf<String?>(null) }
-    var pendingOsmId by remember { mutableStateOf<String?>(null) }
-    val hasSelection = pendingLat != null && pendingLon != null
+    val hasSelection = pickerState.hasSelection
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -75,16 +65,16 @@ fun LocationCorrectionSheet(
 
             // ── Location picker ──────────────────────────────────────────────
             LocationSearchPicker(
-                currentLat = if (hasSelection) pendingLat else initialLat,
-                currentLon = if (hasSelection) pendingLon else initialLon,
-                currentAddress = if (hasSelection) pendingAddress else null,
-                onResult = { lat, lon, address, osmId ->
-                    pendingLat = lat
-                    pendingLon = lon
-                    pendingAddress = address
-                    pendingOsmId = osmId
-                },
-                geocodingService = geocodingService,
+                state = pickerState,
+                onQueryChanged = onQueryChanged,
+                onResultSelected = onResultSelected,
+                onMapLongPressed = onMapLongPressed,
+                onPinConfirmed = onPinConfirmed,
+                onPinCancelled = onPinCancelled,
+                onCleared = onLocationCleared,
+                currentLat = if (hasSelection) pickerState.pendingLat else initialLat,
+                currentLon = if (hasSelection) pickerState.pendingLon else initialLon,
+                currentAddress = if (hasSelection) pickerState.pendingAddress else null,
                 biasLat = initialLat,
                 biasLon = initialLon
             )
@@ -102,9 +92,9 @@ fun LocationCorrectionSheet(
                 }
                 Button(
                     onClick = {
-                        val lat = pendingLat ?: return@Button
-                        val lon = pendingLon ?: return@Button
-                        onConfirm(lat, lon, pendingAddress, pendingOsmId)
+                        val lat = pickerState.pendingLat ?: return@Button
+                        val lon = pickerState.pendingLon ?: return@Button
+                        onConfirm(lat, lon, pickerState.pendingAddress, pickerState.pendingOsmId)
                     },
                     enabled = hasSelection,
                     modifier = Modifier.weight(1f)

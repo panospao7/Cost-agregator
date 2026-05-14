@@ -118,6 +118,26 @@ data class SpendingMapState(
       }
 }
 
+// ── LocationPickerState ───────────────────────────────────────────────────────
+
+/** S10-001/S10-020: ViewModel-owned state for LocationSearchPicker — no GeocodingService in UI */
+data class LocationPickerState(
+    val query: String = "",
+    val results: List<com.yourname.expensetracker.domain.location.GeocodingResult> = emptyList(),
+    val isSearching: Boolean = false,
+    val searchError: String? = null,
+    val pinnedLat: Double? = null,
+    val pinnedLon: Double? = null,
+    val isPinResolving: Boolean = false,
+    val pinResult: com.yourname.expensetracker.domain.location.GeocodingResult? = null,
+    val pendingLat: Double? = null,
+    val pendingLon: Double? = null,
+    val pendingAddress: String? = null,
+    val pendingOsmId: String? = null
+) {
+    val hasSelection: Boolean get() = pendingLat != null && pendingLon != null
+}
+
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
 @HiltViewModel
@@ -378,6 +398,119 @@ class SpendingMapViewModel @Inject constructor(
 
     fun dismissCorrectionError() {
         _state.update { it.copy(correctionSaveError = null) }
+    }
+
+    // ── S10-001/S10-020: Location picker state owned by ViewModel ─────────────
+
+    private val _locationPickerState = MutableStateFlow(LocationPickerState())
+    val locationPickerState: StateFlow<LocationPickerState> = _locationPickerState.asStateFlow()
+
+    private var locationSearchJob: kotlinx.coroutines.Job? = null
+    private var locationSearchRequestId = 0L
+    private var locationPinRequestId = 0L
+
+    fun onLocationQueryChanged(query: String, useGoogle: Boolean) {
+        _locationPickerState.update { it.copy(query = query, searchError = null) }
+        locationSearchJob?.cancel()
+        if (query.length < 2) {
+            _locationPickerState.update { it.copy(results = emptyList(), isSearching = false) }
+            return
+        }
+        val requestId = ++locationSearchRequestId
+        locationSearchJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(1100)
+            if (requestId != locationSearchRequestId) return@launch
+            _locationPickerState.update { it.copy(isSearching = true) }
+            try {
+                val batchResult = geocodingService.searchMultiple(
+                    query,
+                    _state.value.deviceLatitude,
+                    _state.value.deviceLongitude,
+                    useGoogle = useGoogle
+                )
+                if (requestId != locationSearchRequestId) return@launch
+                when (batchResult) {
+                    is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Success -> {
+                        _locationPickerState.update {
+                            it.copy(results = batchResult.results, isSearching = false,
+                                searchError = if (batchResult.results.isEmpty()) "No results found" else null)
+                        }
+                    }
+                    is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Failure -> {
+                        _locationPickerState.update {
+                            it.copy(results = emptyList(), isSearching = false,
+                                searchError = "Search unavailable (${batchResult.error})")
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (requestId != locationSearchRequestId) return@launch
+                _locationPickerState.update { it.copy(isSearching = false, searchError = "Search failed — check network") }
+            }
+        }
+    }
+
+    fun onLocationResultSelected(result: com.yourname.expensetracker.domain.location.GeocodingResult) {
+        _locationPickerState.update {
+            it.copy(
+                pendingLat = result.latitude,
+                pendingLon = result.longitude,
+                pendingAddress = result.displayAddress,
+                pendingOsmId = result.osmId,
+                results = emptyList(),
+                query = result.displayAddress ?: result.name ?: ""
+            )
+        }
+    }
+
+    fun onLocationMapLongPressed(lat: Double, lon: Double) {
+        val requestId = ++locationPinRequestId
+        _locationPickerState.update { it.copy(pinnedLat = lat, pinnedLon = lon, isPinResolving = true, pinResult = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val resolved = geocodingService.reverseGeocode(lat, lon)
+                if (requestId != locationPinRequestId) return@launch
+                val result = when (resolved) {
+                    is com.yourname.expensetracker.domain.location.GeocodingLookupResult.Success -> resolved.result
+                    is com.yourname.expensetracker.domain.location.GeocodingLookupResult.Failure -> null
+                } ?: com.yourname.expensetracker.domain.location.GeocodingResult(
+                    latitude = lat, longitude = lon, osmId = null, name = null,
+                    displayAddress = "%.5f, %.5f".format(lat, lon), confidence = 1.0f, source = "pin"
+                )
+                _locationPickerState.update { it.copy(isPinResolving = false, pinResult = result) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (requestId != locationPinRequestId) return@launch
+                _locationPickerState.update { it.copy(isPinResolving = false) }
+            }
+        }
+    }
+
+    fun onLocationPinConfirmed() {
+        val pin = _locationPickerState.value.pinResult ?: return
+        _locationPickerState.update {
+            it.copy(pendingLat = pin.latitude, pendingLon = pin.longitude,
+                pendingAddress = pin.displayAddress, pendingOsmId = pin.osmId,
+                pinnedLat = null, pinnedLon = null, pinResult = null)
+        }
+    }
+
+    fun onLocationPinCancelled() {
+        _locationPickerState.update { it.copy(pinnedLat = null, pinnedLon = null, pinResult = null) }
+    }
+
+    fun onLocationCleared() {
+        _locationPickerState.update { LocationPickerState() }
+    }
+
+    fun resetLocationPicker(initialLat: Double? = null, initialLon: Double? = null) {
+        _locationPickerState.value = LocationPickerState(
+            pendingLat = initialLat,
+            pendingLon = initialLon
+        )
     }
 
     // Feature E: pin-this flow for unlocated expenses
