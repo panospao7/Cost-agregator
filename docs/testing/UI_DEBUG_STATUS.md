@@ -110,3 +110,36 @@ Last updated: 2026-05-14
 | 2 — Shared UI | 12 | 5 | 7 | 42% |
 | 3 — Privacy | 12 | 8 | 4 | 67% |
 | 4 — Dashboard | 14 | 2 | 12 | 14% (critical UX + currency fixed) |
+
+---
+
+## Slice 5 — Transactions + Manual Add
+
+| Issue | Description | Status | Commit |
+|-------|-------------|--------|--------|
+| S5-001 | TransactionsScreen monolithic | ⏭️ Deferred (extraction) | — |
+| S5-002 | Initial filter can leave stale filters | ⏭️ Deferred | — |
+| S5-003 | Tab label disagrees with date-range filter | ⏭️ Deferred (UX) | — |
+| S5-004 | Mixed-currency list totals incorrect | ⏭️ Deferred (needs ViewModel conversion) | — |
+| S5-005 | homeCurrency placeholder EUR can leak into saves | ✅ Fixed | `3943ad10` |
+| S5-006 | Amount input sanitizer weak | ⏭️ Deferred (needs shared sanitizer) | — |
+| S5-007 | Save not idempotency-safe (double-tap) | ✅ Fixed | `3943ad10` |
+| S5-008 | Merchant suggestion no failure handling | ⏭️ Deferred | — |
+| S5-009 | Suggestion amount formatting locale-sensitive | ⏭️ Deferred | — |
+| S5-010 | Transfer type update not atomic | ⏭️ Deferred (needs new repo method) | — |
+| S5-011 | Ownership/shared validation inconsistent | ⏭️ Deferred | — |
+| S5-012 | Mutation dialogs close before persistence result | ⏭️ Deferred | — |
+
+**Production fixes:** EUR placeholder save blocked, double-tap guard added.
+
+---
+
+## Updated Summary
+
+| Slice | Total Issues | Fixed | Deferred | Coverage |
+|-------|-------------|-------|----------|----------|
+| 1 — Navigation | 8 | 8 | 0 | 100% |
+| 2 — Shared UI | 12 | 5 | 7 | 42% |
+| 3 — Privacy | 12 | 8 | 4 | 67% |
+| 4 — Dashboard | 14 | 3 | 11 | 21% |
+| 5 — Transactions | 12 | 2 | 10 | 17% (critical data fixes) |
