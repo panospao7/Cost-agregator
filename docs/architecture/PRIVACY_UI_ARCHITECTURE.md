@@ -58,4 +58,14 @@ All current implementations satisfy this invariant via error strings in UiState.
 
 - `PrivacyGateEnforcementGoldenTest` — verifies gate deny + audit at DB level
 - `PrivacyDoNotStoreTest` — verifies storage mode enforcement
+- `PrivacyCapabilityHandlingPolicyTest` — ensures all capabilities have explicit handling policy
 - ViewModel tests should verify that denied state is exposed in UiState
+
+## Recent Fixes (Slice 3)
+
+- `PrivacyBlockedCard` upgraded: typed `PrivacyBlocked` API, semantics, testTag, `displayLabel()`
+- `PrivacySettingsViewModel` now exposes `blocked: List<PrivacyBlocked>` and `errorMessage`
+- `PrivacySettingsScreen` renders blocked cards at top when features are disabled
+- `BackupRestoreViewModel` null input stream now throws explicit error
+- `BackupRestoreScreen` restart action extracted to `onRestartRequired` callback
+- `PrivacyCapabilityHandlingPolicyTest` prevents new capabilities from being fail-open
