@@ -400,7 +400,7 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double, homeCurrenc
             ) {
                 Column {
                 Text(
-                    text = CurrencyFormatter.format(monthlyTotal, homeCurrency),
+                    text = CurrencyFormatter.formatMoney(monthlyTotal, homeCurrency),
                     style = MaterialTheme.typography.headlineSmall,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Bold
@@ -414,7 +414,7 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double, homeCurrenc
                 
                 Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = CurrencyFormatter.format(annualTotal, homeCurrency),
+                    text = CurrencyFormatter.formatMoney(annualTotal, homeCurrency),
                     style = MaterialTheme.typography.headlineSmall,
                     color = SemanticColors.PrimaryIndigo,
                     fontWeight = FontWeight.Bold
@@ -497,7 +497,7 @@ private fun SubscriptionCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${CurrencyFormatter.format(subscription.subscription.amount, homeCurrency)} ${subscription.subscription.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    text = "${CurrencyFormatter.formatMoney(subscription.subscription.amount, homeCurrency)} ${subscription.subscription.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary
                 )
@@ -539,7 +539,7 @@ private fun SubscriptionCard(
                     )
                     
                     Text(
-                        text = stringResource(R.string.label_per_use_format, CurrencyFormatter.format(subscription.costPerUse, homeCurrency)),
+                        text = stringResource(R.string.label_per_use_format, CurrencyFormatter.formatMoney(subscription.costPerUse, homeCurrency)),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Medium
@@ -657,14 +657,14 @@ private fun SubscriptionCandidateCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = CurrencyFormatter.format(candidate.averageAmount, homeCurrency),
+                    text = CurrencyFormatter.formatMoney(candidate.averageAmount, homeCurrency),
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Medium
                 )
                 
                 Text(
-                    text = stringResource(R.string.label_estimated_annual, CurrencyFormatter.format(candidate.estimatedAnnualCost, homeCurrency)),
+                    text = stringResource(R.string.label_estimated_annual, CurrencyFormatter.formatMoney(candidate.estimatedAnnualCost, homeCurrency)),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )

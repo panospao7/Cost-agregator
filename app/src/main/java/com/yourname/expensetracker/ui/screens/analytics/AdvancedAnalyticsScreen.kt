@@ -144,17 +144,17 @@ private fun CashflowOverviewCard(data: AnalyticsDashboardData, currency: String)
             ) {
                 CashflowItem(
                     label = stringResource(R.string.analytics_income),
-                    value = CurrencyFormatter.format(data.totalIncome, currency),
+                    value = CurrencyFormatter.formatMoney(data.totalIncome, currency),
                     color = MaterialTheme.colorScheme.tertiary
                 )
                 CashflowItem(
                     label = stringResource(R.string.analytics_spent),
-                    value = CurrencyFormatter.format(data.totalSpent, currency),
+                    value = CurrencyFormatter.formatMoney(data.totalSpent, currency),
                     color = MaterialTheme.colorScheme.error
                 )
                 CashflowItem(
                     label = stringResource(R.string.analytics_net),
-                    value = CurrencyFormatter.format(data.netCashflow, currency),
+                    value = CurrencyFormatter.formatMoney(data.netCashflow, currency),
                     color = if (data.netCashflow >= 0) 
                         MaterialTheme.colorScheme.tertiary 
                     else 
@@ -252,7 +252,7 @@ private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.
             }
             
             Text(
-                text = CurrencyFormatter.format(category.amount, category.displayCurrency),
+                text = CurrencyFormatter.formatMoney(category.amount, category.displayCurrency),
                 style = MaterialTheme.typography.titleLarge
             )
         }

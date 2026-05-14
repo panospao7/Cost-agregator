@@ -230,7 +230,7 @@ fun SearchResultsContent(
                             )
                             
                             Text(
-                                text = CurrencyFormatter.format(totalInHomeCurrency, homeCurrency),
+                                text = CurrencyFormatter.formatMoney(totalInHomeCurrency, homeCurrency),
                                 style = MaterialTheme.typography.headlineLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -441,7 +441,7 @@ fun TransactionResultCard(
             }
             
             Text(
-                text = CurrencyFormatter.format(expense.amount, homeCurrency),
+                text = CurrencyFormatter.formatMoney(expense.amount, homeCurrency),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )

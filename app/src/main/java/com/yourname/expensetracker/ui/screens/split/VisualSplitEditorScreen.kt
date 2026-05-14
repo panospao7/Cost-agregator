@@ -211,7 +211,7 @@ fun VisualSplitEditorScreen(
                     currentSplit?.let { split ->
                         if (split.remainingAmount != 0.0) {
                         Text(
-                            text = stringResource(R.string.visual_split_remaining_format, CurrencyFormatter.format(split.remainingAmount, currencyCode)),
+                            text = stringResource(R.string.visual_split_remaining_format, CurrencyFormatter.formatMoney(split.remainingAmount, currencyCode)),
                             color = if (split.remainingAmount > 0) MaterialTheme.colorScheme.primary 
                                     else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyMedium,
@@ -278,7 +278,7 @@ fun VisualSplitEditorScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
                         Text(
-                            text = CurrencyFormatter.format(totalAmount, currencyCode),
+                            text = CurrencyFormatter.formatMoney(totalAmount, currencyCode),
                             style = MaterialTheme.typography.headlineLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -654,7 +654,7 @@ fun ParticipantSplitCard(
             when (splitType) {
                 SplitTemplate.SplitType.EQUAL -> {
                     Text(
-                        text = stringResource(R.string.visual_split_equal_split_format, CurrencyFormatter.format(assignedAmount, currencyCode)),
+                        text = stringResource(R.string.visual_split_equal_split_format, CurrencyFormatter.formatMoney(assignedAmount, currencyCode)),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -676,7 +676,7 @@ fun ParticipantSplitCard(
                             singleLine = true
                         )
                         Spacer(modifier = Modifier.width(12.dp))
-                        val amountPrefix = stringResource(R.string.visual_split_amount_prefix_format, CurrencyFormatter.format(assignedAmount, currencyCode))
+                        val amountPrefix = stringResource(R.string.visual_split_amount_prefix_format, CurrencyFormatter.formatMoney(assignedAmount, currencyCode))
                         Text(
                             text = amountPrefix,
                             style = MaterialTheme.typography.bodyMedium,

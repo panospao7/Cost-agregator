@@ -1077,7 +1077,7 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
         Spacer(modifier = Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                CurrencyFormatter.format(item.total, item.currency),
+                CurrencyFormatter.formatMoney(item.total, item.currency),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -1142,7 +1142,7 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
             }
         }
     Text(
-        CurrencyFormatter.format(expense.amount, expense.currency),
+        CurrencyFormatter.formatMoney(expense.amount, expense.currency),
         fontWeight = FontWeight.Bold
     )
     }
@@ -1455,16 +1455,16 @@ private fun SavingsSweepPromptCard(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.sweepAmount, homeCurrency)}",
+                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.sweepAmount, homeCurrency)}",
                 style = MaterialTheme.typography.bodyLarge
             )
             Text(
-                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.underspend, homeCurrency)} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.riskBuffer, homeCurrency)}",
+                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.underspend, homeCurrency)} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.riskBuffer, homeCurrency)}",
                 style = MaterialTheme.typography.bodySmall
             )
             widget.goalAllocations.firstOrNull()?.let { topGoal ->
                 Text(
-                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(topGoal.suggestedAmount, homeCurrency)})",
+                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(topGoal.suggestedAmount, homeCurrency)})",
                     style = MaterialTheme.typography.bodySmall
                 )
             }

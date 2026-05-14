@@ -23,7 +23,14 @@ data class ReceiptMatchingState(
     val isLoading: Boolean = false,
     val autoMatchedCount: Int = 0,
     val pendingSuggestionCount: Int = 0
-)
+) {
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<ScannedReceipt>>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            unmatchedReceipts.isEmpty() && suggestedMatches.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(com.yourname.expensetracker.domain.model.UiText.DynamicString("All receipts matched"))
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(unmatchedReceipts)
+        }
+}
 
 data class MatchSuggestion(
     val receipt: ScannedReceipt,

@@ -32,13 +32,13 @@ fun PlaceInsightCard(insight: PlaceInsight, modifier: Modifier = Modifier, homeC
                     )
                 }
                 Text(
-                    text = "${insight.transactionCount} transactions · avg ${CurrencyFormatter.format(insight.avgTransaction, homeCurrency)}",
+                    text = "${insight.transactionCount} transactions · avg ${CurrencyFormatter.formatMoney(insight.avgTransaction, homeCurrency)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                text = CurrencyFormatter.format(insight.totalSpend, homeCurrency),
+                text = CurrencyFormatter.formatMoney(insight.totalSpend, homeCurrency),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary
             )

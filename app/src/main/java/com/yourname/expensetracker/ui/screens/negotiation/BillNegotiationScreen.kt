@@ -106,7 +106,7 @@ fun BillNegotiationScreen(
                         val totalYearlySavings = opportunities.sumOf { it.potentialYearlySavings }
                         
                         Text(
-                            text = CurrencyFormatter.format(totalYearlySavings, homeCurrency),
+                            text = CurrencyFormatter.formatMoney(totalYearlySavings, homeCurrency),
                                 style = MaterialTheme.typography.headlineLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -279,7 +279,7 @@ fun NegotiationOpportunityCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = CurrencyFormatter.format(opportunity.potentialMonthlySavings, homeCurrency),
+                        text = CurrencyFormatter.formatMoney(opportunity.potentialMonthlySavings, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -376,7 +376,7 @@ fun PriceColumn(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = CurrencyFormatter.format(price, homeCurrency),
+            text = CurrencyFormatter.formatMoney(price, homeCurrency),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             textDecoration = if (isStrikethrough) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
@@ -563,7 +563,7 @@ fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer, homeCur
             
             offer.discount?.let {
                 Text(
-                    text = CurrencyFormatter.format(it, homeCurrency),
+                    text = CurrencyFormatter.formatMoney(it, homeCurrency),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold

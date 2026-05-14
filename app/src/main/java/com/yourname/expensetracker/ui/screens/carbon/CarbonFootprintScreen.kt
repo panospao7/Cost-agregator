@@ -630,7 +630,7 @@ fun OffsetCard(
                 )
                 
                 Text(
-                    text = stringResource(R.string.carbon_offset_format, report.totalEmissionsKg, CurrencyFormatter.format(report.offsetCost, homeCurrency)),
+                    text = stringResource(R.string.carbon_offset_format, report.totalEmissionsKg, CurrencyFormatter.formatMoney(report.offsetCost, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
                 )
@@ -755,7 +755,7 @@ fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternativ
                 )
                 
                 Text(
-                    text = stringResource(R.string.carbon_savings_format, CurrencyFormatter.format(alternative.costSavings, homeCurrency)),
+                    text = stringResource(R.string.carbon_savings_format, CurrencyFormatter.formatMoney(alternative.costSavings, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.tertiary,
                     fontWeight = FontWeight.Medium

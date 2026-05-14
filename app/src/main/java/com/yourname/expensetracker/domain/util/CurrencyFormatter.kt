@@ -96,4 +96,4 @@ object CurrencyFormatter {
 
 @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use toCurrency(explicitCurrencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
 fun Double.toCurrency(currencyCode: String = "EUR"): String = 
-    CurrencyFormatter.format(this, currencyCode)
+    CurrencyFormatter.formatMoney(this, currencyCode)

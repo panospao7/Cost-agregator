@@ -403,7 +403,7 @@ fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String) 
         }
         
         Text(
-            text = CurrencyFormatter.format(item.amount, currency, showCents = false),
+            text = CurrencyFormatter.formatMoney(item.amount, currency, showCents = false),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = SemanticColors.TextPrimary

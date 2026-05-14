@@ -266,7 +266,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
             // Budget Amount
             DetailRow(
                 label = stringResource(R.string.budget_forecast_limit_label),
-                value = CurrencyFormatter.format(budget.amount, homeCurrency),
+                value = CurrencyFormatter.formatMoney(budget.amount, homeCurrency),
                 icon = Icons.Default.AccountBalanceWallet
             )
             
@@ -275,7 +275,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
             // Predicted Spending
             DetailRow(
                 label = stringResource(R.string.budget_forecast_predicted_spending),
-                value = CurrencyFormatter.format(forecast.predictedSpending, homeCurrency),
+                value = CurrencyFormatter.formatMoney(forecast.predictedSpending, homeCurrency),
                 icon = Icons.Default.TrendingUp,
                 valueColor = if (forecast.predictedSpending > budget.amount) 
                     SemanticColors.DangerRed else SemanticColors.TextPrimary
@@ -286,7 +286,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
             // Predicted Remaining
             DetailRow(
                 label = stringResource(R.string.budget_forecast_predicted_remaining),
-                value = CurrencyFormatter.format(forecast.predictedRemaining, homeCurrency),
+                value = CurrencyFormatter.formatMoney(forecast.predictedRemaining, homeCurrency),
                 icon = if (forecast.predictedRemaining >= 0) 
                     Icons.Default.Savings else Icons.Default.Warning,
                 valueColor = when {
@@ -380,7 +380,7 @@ private fun RangeRow(
                 color = SemanticColors.TextSecondary
             )
             Text(
-                text = CurrencyFormatter.format(amount, homeCurrency),
+                text = CurrencyFormatter.formatMoney(amount, homeCurrency),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Medium
@@ -604,7 +604,7 @@ private fun RecommendationCard(recommendation: BudgetRecommendation, homeCurrenc
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 Text(
-                    text = stringResource(R.string.budget_forecast_potential_savings_format, CurrencyFormatter.format(savings, homeCurrency)),
+                    text = stringResource(R.string.budget_forecast_potential_savings_format, CurrencyFormatter.formatMoney(savings, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = SemanticColors.StatusGreen,
                     fontWeight = FontWeight.SemiBold

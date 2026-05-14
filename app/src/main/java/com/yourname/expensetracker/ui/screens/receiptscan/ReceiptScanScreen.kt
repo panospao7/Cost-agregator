@@ -449,7 +449,7 @@ private fun ReviewStep(
                     preview.fieldSummaries.forEach { field ->
                         val renderedValue = when (field.label) {
                             // Falls back to "EUR" when parsed currency is unavailable
-                            "Amount" -> CurrencyFormatter.format(preview.amount, parsed?.currency ?: "EUR")
+                            "Amount" -> CurrencyFormatter.formatMoney(preview.amount, parsed?.currency ?: "EUR")
                             "Date" -> DateFormatterUtils.formatTimestampJavaTime(preview.date, "dd/MM/yyyy")
                             else -> field.value
                         }
@@ -935,7 +935,7 @@ private fun ReviewStep(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            CurrencyFormatter.format(item.totalPrice, parsed.currency),
+                            CurrencyFormatter.formatMoney(item.totalPrice, parsed.currency),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -961,7 +961,7 @@ private fun ReviewStep(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            CurrencyFormatter.format(tax, parsed.currency),
+                            CurrencyFormatter.formatMoney(tax, parsed.currency),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

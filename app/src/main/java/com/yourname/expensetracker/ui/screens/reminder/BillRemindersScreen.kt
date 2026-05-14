@@ -110,7 +110,7 @@ private fun MonthlyBillsCard(total: Double, homeCurrency: String) {
                 style = MaterialTheme.typography.labelLarge
             )
             Text(
-                text = CurrencyFormatter.format(total, homeCurrency),
+                text = CurrencyFormatter.formatMoney(total, homeCurrency),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -190,7 +190,7 @@ private fun BillReminderCard(
                 }
                 
                 Text(
-                    text = CurrencyFormatter.format(reminder.amount, homeCurrency),
+                    text = CurrencyFormatter.formatMoney(reminder.amount, homeCurrency),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )

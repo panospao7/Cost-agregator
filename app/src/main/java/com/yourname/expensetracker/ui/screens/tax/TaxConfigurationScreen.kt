@@ -289,9 +289,9 @@ private fun TaxBracketCard(bracket: TaxBracket, currency: String) {
             Spacer(modifier = Modifier.height(4.dp))
             
             val rangeText = when {
-                bracket.maxIncome == null -> "Above ${CurrencyFormatter.format(bracket.minIncome, currency)}"
-                bracket.minIncome == 0.0 -> "Up to ${CurrencyFormatter.format(bracket.maxIncome, currency)}"
-                else -> "${CurrencyFormatter.format(bracket.minIncome, currency)} - ${CurrencyFormatter.format(bracket.maxIncome, currency)}"
+                bracket.maxIncome == null -> "Above ${CurrencyFormatter.formatMoney(bracket.minIncome, currency)}"
+                bracket.minIncome == 0.0 -> "Up to ${CurrencyFormatter.formatMoney(bracket.maxIncome, currency)}"
+                else -> "${CurrencyFormatter.formatMoney(bracket.minIncome, currency)} - ${CurrencyFormatter.formatMoney(bracket.maxIncome, currency)}"
             }
             
             Text(
@@ -356,7 +356,7 @@ private fun SampleCalculatorCard(
                             color = SemanticColors.TextSecondary
                         )
                         Text(
-                            text = CurrencyFormatter.format(it.estimatedIncome, currency),
+                            text = CurrencyFormatter.formatMoney(it.estimatedIncome, currency),
                             color = SemanticColors.TextPrimary,
                             fontWeight = FontWeight.Medium
                         )
@@ -371,7 +371,7 @@ private fun SampleCalculatorCard(
                             color = SemanticColors.TextSecondary
                         )
                         Text(
-                            text = CurrencyFormatter.format(it.taxableIncome, currency),
+                            text = CurrencyFormatter.formatMoney(it.taxableIncome, currency),
                             color = SemanticColors.TextPrimary,
                             fontWeight = FontWeight.Medium
                         )
@@ -386,7 +386,7 @@ private fun SampleCalculatorCard(
                             color = SemanticColors.TextSecondary
                         )
                         Text(
-                            text = CurrencyFormatter.format(it.deductibleExpenses, currency),
+                            text = CurrencyFormatter.formatMoney(it.deductibleExpenses, currency),
                             color = SemanticColors.TextPrimary,
                             fontWeight = FontWeight.Medium
                         )
@@ -404,7 +404,7 @@ private fun SampleCalculatorCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = CurrencyFormatter.format(it.estimatedIncomeTax, currency),
+                            text = CurrencyFormatter.formatMoney(it.estimatedIncomeTax, currency),
                             color = Color(0xFFF44336),
                             fontWeight = FontWeight.Bold
                         )
@@ -420,7 +420,7 @@ private fun SampleCalculatorCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = CurrencyFormatter.format(it.estimatedVatPortion, currency),
+                            text = CurrencyFormatter.formatMoney(it.estimatedVatPortion, currency),
                             color = Color(0xFFF44336),
                             fontWeight = FontWeight.Bold
                         )
@@ -454,7 +454,7 @@ private fun SampleCalculatorCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = CurrencyFormatter.format(netIncome, currency),
+                            text = CurrencyFormatter.formatMoney(netIncome, currency),
                             color = Color(0xFF4CAF50),
                             fontWeight = FontWeight.Bold
                         )

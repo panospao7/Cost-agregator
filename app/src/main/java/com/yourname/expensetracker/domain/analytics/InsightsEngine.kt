@@ -782,7 +782,7 @@ class InsightsEngine @Inject constructor(
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses, displayCurrency = displayCurrency)
     }
 
-    private fun formatCurrency(amount: Double, /** Placeholder default. Production callers should pass explicit currency. */ currency: String = "EUR"): String = CurrencyFormatter.format(amount, currency)
+    private fun formatCurrency(amount: Double, /** Placeholder default. Production callers should pass explicit currency. */ currency: String = "EUR"): String = CurrencyFormatter.formatMoney(amount, currency)
     
     private fun formatDate(dateMs: Long): String {
          return DateFormatterUtils.formatTimestampJavaTime(dateMs, "MMM dd")

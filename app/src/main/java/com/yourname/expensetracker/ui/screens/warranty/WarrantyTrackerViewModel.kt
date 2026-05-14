@@ -27,7 +27,14 @@ data class WarrantyTrackerState(
     val showAutoDetectedOnly: Boolean = false,
     val showNeedsReviewOnly: Boolean = false,
     val referenceNowMillis: Long = 0L
-)
+) {
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<Warranty>>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            warranties.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(com.yourname.expensetracker.domain.model.UiText.DynamicString("No warranties tracked"))
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(warranties)
+        }
+}
 
 @HiltViewModel
 class WarrantyTrackerViewModel @Inject constructor(

@@ -36,8 +36,8 @@ fun PercentileGridCard(
 ) {
     val a11yContentDesc = stringResource(
         R.string.a11y_percentile_range_format,
-        CurrencyFormatter.format(percentiles.p25, currency, showCents = false),
-        CurrencyFormatter.format(percentiles.p75, currency, showCents = false)
+        CurrencyFormatter.formatMoney(percentiles.p25, currency, showCents = false),
+        CurrencyFormatter.formatMoney(percentiles.p75, currency, showCents = false)
     )
     
     Card(
@@ -100,8 +100,8 @@ fun PercentileGridCard(
             Text(
                 text = stringResource(
                     R.string.percentile_range_format,
-                    CurrencyFormatter.format(percentiles.p25, currency, showCents = false),
-                    CurrencyFormatter.format(percentiles.p75, currency, showCents = false)
+                    CurrencyFormatter.formatMoney(percentiles.p25, currency, showCents = false),
+                    CurrencyFormatter.formatMoney(percentiles.p75, currency, showCents = false)
                 ),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -143,7 +143,7 @@ private fun PercentileColumn(
         )
         
         Text(
-            text = CurrencyFormatter.format(value, currency, showCents = false),
+            text = CurrencyFormatter.formatMoney(value, currency, showCents = false),
             style = when {
                 isPrimary -> MaterialTheme.typography.titleMedium
                 isSecondary -> MaterialTheme.typography.bodyLarge
@@ -251,7 +251,7 @@ fun TransactionHistogramChart(
                         
                         // X-axis label (amount range)
                         Text(
-                            text = CurrencyFormatter.format(bin.rangeStart, currency, showCents = false),
+                            text = CurrencyFormatter.formatMoney(bin.rangeStart, currency, showCents = false),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -267,8 +267,8 @@ fun TransactionHistogramChart(
                     text = stringResource(
                         R.string.analytics_peak_format,
                         it.percentage.toInt(),
-                        CurrencyFormatter.format(it.rangeStart, currency, showCents = false),
-                        CurrencyFormatter.format(it.rangeEnd, currency, showCents = false)
+                        CurrencyFormatter.formatMoney(it.rangeStart, currency, showCents = false),
+                        CurrencyFormatter.formatMoney(it.rangeEnd, currency, showCents = false)
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -305,8 +305,8 @@ fun CategoryPercentileBadge(
             Text(
                 text = stringResource(
                     R.string.analytics_percentile_p25_p75_format,
-                    CurrencyFormatter.format(percentile25, currency, showCents = false),
-                    CurrencyFormatter.format(percentile75, currency, showCents = false)
+                    CurrencyFormatter.formatMoney(percentile25, currency, showCents = false),
+                    CurrencyFormatter.formatMoney(percentile75, currency, showCents = false)
                 ),
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -411,7 +411,7 @@ fun RichMerchantCard(
                         text = stringResource(
                             R.string.analytics_merchant_visits_format,
                             transactionCount,
-                            CurrencyFormatter.format(averagePerVisit, currency)
+                            CurrencyFormatter.formatMoney(averagePerVisit, currency)
                         ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

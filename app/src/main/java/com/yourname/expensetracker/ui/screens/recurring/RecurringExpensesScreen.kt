@@ -358,7 +358,7 @@ fun PlannedExpenseItem(
                 )
                 // Remember expensive string calculations
         val amountAndPriority = remember(expense.amount, expense.priority, homeCurrency) {
-                "${CurrencyFormatter.format(expense.amount, homeCurrency)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                "${CurrencyFormatter.formatMoney(expense.amount, homeCurrency)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
                 }
                 Text(
                     text = amountAndPriority,

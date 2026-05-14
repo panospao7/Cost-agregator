@@ -198,7 +198,7 @@ fun PriceDropsTab(
                         )
                         
                         Text(
-                            text = CurrencyFormatter.format(totalSavings, homeCurrency),
+                            text = CurrencyFormatter.formatMoney(totalSavings, homeCurrency),
                             style = MaterialTheme.typography.headlineLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -291,7 +291,7 @@ fun PriceDropCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = CurrencyFormatter.format(alert.item.purchasePrice, homeCurrency),
+                        text = CurrencyFormatter.formatMoney(alert.item.purchasePrice, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
                     )
@@ -310,7 +310,7 @@ fun PriceDropCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = CurrencyFormatter.format(alert.currentPrice, homeCurrency),
+                        text = CurrencyFormatter.formatMoney(alert.currentPrice, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -323,7 +323,7 @@ fun PriceDropCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = CurrencyFormatter.format(alert.priceDrop, homeCurrency),
+                        text = CurrencyFormatter.formatMoney(alert.priceDrop, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -542,7 +542,7 @@ fun ProtectedItemCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = stringResource(R.string.price_price_label, CurrencyFormatter.format(item.purchasePrice, homeCurrency)),
+                    text = stringResource(R.string.price_price_label, CurrencyFormatter.formatMoney(item.purchasePrice, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
@@ -717,7 +717,7 @@ fun DealCard(deal: PriceProtectionTracker.DealAlternative, homeCurrency: String)
             ) {
                 Column {
                     Text(
-                        text = stringResource(R.string.price_current_label, CurrencyFormatter.format(deal.originalPrice, homeCurrency)),
+                        text = stringResource(R.string.price_current_label, CurrencyFormatter.formatMoney(deal.originalPrice, homeCurrency)),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -744,7 +744,7 @@ fun DealCard(deal: PriceProtectionTracker.DealAlternative, homeCurrency: String)
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = stringResource(R.string.price_save_at_merchant, CurrencyFormatter.format(deal.savings, homeCurrency), deal.betterMerchant),
+                text = stringResource(R.string.price_save_at_merchant, CurrencyFormatter.formatMoney(deal.savings, homeCurrency), deal.betterMerchant),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -858,7 +858,7 @@ fun CreditCardBenefitCard(benefit: PriceProtectionTracker.CreditCardBenefit, hom
             }
             
             Text(
-                text = stringResource(R.string.price_plus_value_format, CurrencyFormatter.format(benefit.estimatedValue, homeCurrency)),
+                text = stringResource(R.string.price_plus_value_format, CurrencyFormatter.formatMoney(benefit.estimatedValue, homeCurrency)),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary

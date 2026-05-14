@@ -296,7 +296,7 @@ private fun GroupCard(
                 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = CurrencyFormatter.format(group.totalSpent, groupCurrency),
+                        text = CurrencyFormatter.formatMoney(group.totalSpent, groupCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Bold
@@ -345,7 +345,7 @@ private fun GroupDetailContent(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        text = CurrencyFormatter.format(group.totalSpent, groupCurrency),
+                        text = CurrencyFormatter.formatMoney(group.totalSpent, groupCurrency),
                         style = MaterialTheme.typography.headlineMedium,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Bold
@@ -471,7 +471,7 @@ private fun SettlementPlanSection(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "$fromName → $toName: ${CurrencyFormatter.format(amount, groupCurrency)}",
+                            text = "$fromName → $toName: ${CurrencyFormatter.formatMoney(amount, groupCurrency)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = SemanticColors.TextPrimary,
                             modifier = Modifier.weight(1f)
@@ -565,9 +565,9 @@ private fun MemberBalanceCard(
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = when {
-                        isPositive -> stringResource(R.string.label_gets_back_format, CurrencyFormatter.format(displayBalance, groupCurrency))
+                        isPositive -> stringResource(R.string.label_gets_back_format, CurrencyFormatter.formatMoney(displayBalance, groupCurrency))
                         isZero -> stringResource(R.string.label_settled_up)
-                        else -> stringResource(R.string.label_owes_format, CurrencyFormatter.format(-displayBalance, groupCurrency))
+                        else -> stringResource(R.string.label_owes_format, CurrencyFormatter.formatMoney(-displayBalance, groupCurrency))
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = when {
@@ -613,7 +613,7 @@ private fun ExpenseCard(
                 )
                 
                 Text(
-                    text = CurrencyFormatter.format(expense.expense.totalAmount, groupCurrency),
+                    text = CurrencyFormatter.formatMoney(expense.expense.totalAmount, groupCurrency),
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.PrimaryIndigo,
                     fontWeight = FontWeight.Bold

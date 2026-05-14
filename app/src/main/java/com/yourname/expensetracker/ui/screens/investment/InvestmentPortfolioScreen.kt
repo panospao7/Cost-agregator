@@ -98,7 +98,7 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary, homeCurrency: String
             )
             
             Text(
-                text = CurrencyFormatter.format(summary.totalValue, homeCurrency),
+                text = CurrencyFormatter.formatMoney(summary.totalValue, homeCurrency),
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -111,11 +111,11 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary, homeCurrency: String
             ) {
                 SummaryItem(
                     label = stringResource(R.string.label_invested),
-                    value = CurrencyFormatter.format(summary.totalInvested, homeCurrency)
+                    value = CurrencyFormatter.formatMoney(summary.totalInvested, homeCurrency)
                 )
                 SummaryItem(
                     label = stringResource(R.string.label_gain_loss),
-                    value = CurrencyFormatter.format(summary.totalGainLoss, homeCurrency),
+                    value = CurrencyFormatter.formatMoney(summary.totalGainLoss, homeCurrency),
                     isPositive = summary.totalGainLoss >= 0
                 )
                 SummaryItem(
@@ -184,7 +184,7 @@ private fun InvestmentCard(performance: InvestmentPerformance, homeCurrency: Str
                 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = CurrencyFormatter.format(performance.currentValue, homeCurrency),
+                        text = CurrencyFormatter.formatMoney(performance.currentValue, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )

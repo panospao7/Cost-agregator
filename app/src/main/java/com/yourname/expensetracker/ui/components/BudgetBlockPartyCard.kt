@@ -308,7 +308,7 @@ fun DayAtAGlanceDialog(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = (if (balance >= 0) "+" else "") + CurrencyFormatter.format(kotlin.math.abs(balance), currency),
+                        text = (if (balance >= 0) "+" else "") + CurrencyFormatter.formatMoney(kotlin.math.abs(balance), currency),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
@@ -329,26 +329,26 @@ fun DayAtAGlanceDialog(
                 Column(Modifier.padding(12.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(stringResource(R.string.budget_base_allowance), color = SemanticColors.TextPrimary)
-                        Text(CurrencyFormatter.format(day.baseTarget, currency), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text(CurrencyFormatter.formatMoney(day.baseTarget, currency), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                     }
                     if (day.recurringImpact > 0) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(stringResource(R.string.budget_recurring_format, day.recurringItems.joinToString(", ")), color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            Text("+${CurrencyFormatter.format(day.recurringImpact, currency)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                            Text("+${CurrencyFormatter.formatMoney(day.recurringImpact, currency)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         }
                     }
                     if (day.plannedImpact > 0) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(stringResource(R.string.budget_planned_format, day.plannedItems.joinToString(", ")), color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            Text("+${CurrencyFormatter.format(day.plannedImpact, currency)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                            Text("+${CurrencyFormatter.formatMoney(day.plannedImpact, currency)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp), color = SemanticColors.GlassBorder)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(stringResource(R.string.budget_total_target), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
-                        Text(CurrencyFormatter.format(day.targetBudget, currency), fontWeight = FontWeight.Bold, color = SemanticColors.PrimaryIndigo)
+                        Text(CurrencyFormatter.formatMoney(day.targetBudget, currency), fontWeight = FontWeight.Bold, color = SemanticColors.PrimaryIndigo)
                     }
                 }
             }
@@ -365,7 +365,7 @@ fun DayAtAGlanceDialog(
                 Column(Modifier.padding(12.dp)) {
                      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(stringResource(R.string.budget_total_spent), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
-                        Text(CurrencyFormatter.format(day.actualSpent, currency), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text(CurrencyFormatter.formatMoney(day.actualSpent, currency), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     if (day.topTransactions.isNotEmpty()) {
@@ -381,7 +381,7 @@ fun DayAtAGlanceDialog(
                                     modifier = Modifier.weight(1f),
                                     maxLines = 2
                                 )
-                                Text(CurrencyFormatter.format(exp.amount, currency), color = SemanticColors.TextPrimary, fontSize = 13.sp)
+                                Text(CurrencyFormatter.formatMoney(exp.amount, currency), color = SemanticColors.TextPrimary, fontSize = 13.sp)
                             }
                         }
                     } else if (day.actualSpent > 0) {

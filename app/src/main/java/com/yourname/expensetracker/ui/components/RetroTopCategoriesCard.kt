@@ -327,7 +327,7 @@ private fun RetroCategoryRow(
                     ) {
                         // Amount
                         Text(
-                            text = CurrencyFormatter.format(category.total, currency, showCents = false),
+                            text = CurrencyFormatter.formatMoney(category.total, currency, showCents = false),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -485,7 +485,7 @@ private fun RetroCategoryDetailDialog(
                         )
                         
                         Text(
-                            text = CurrencyFormatter.format(category.total, currency),
+                            text = CurrencyFormatter.formatMoney(category.total, currency),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -708,7 +708,7 @@ private fun RetroTransactionsSection(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = CurrencyFormatter.format(expense.amount, currency),
+                        text = CurrencyFormatter.formatMoney(expense.amount, currency),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
@@ -781,25 +781,25 @@ private fun RetroAnalyticsSection(
         )
         
         // Current stats
- RetroStatRowCategories("THIS MONTH", CurrencyFormatter.format(category.total, currency), RetroColorsCategories.NeonWhite)
+ RetroStatRowCategories("THIS MONTH", CurrencyFormatter.formatMoney(category.total, currency), RetroColorsCategories.NeonWhite)
 
  if (trendInfo?.previousTotal != null) {
  Spacer(modifier = Modifier.height(4.dp))
  val change = category.total - trendInfo.previousTotal
  val changeText = if (change >= 0) {
- "+${CurrencyFormatter.format(change, currency)}"
+ "+${CurrencyFormatter.formatMoney(change, currency)}"
  } else {
- "-${CurrencyFormatter.format(kotlin.math.abs(change), currency)}"
+ "-${CurrencyFormatter.formatMoney(kotlin.math.abs(change), currency)}"
  }
  val changeColor = if (change > 0) RetroColorsCategories.NeonRed else if (change < 0) RetroColorsCategories.NeonGreen else RetroColorsCategories.NeonWhite
- RetroStatRowCategories("LAST MONTH", CurrencyFormatter.format(trendInfo.previousTotal, currency), RetroColorsCategories.NeonWhite.copy(alpha = 0.7f))
+ RetroStatRowCategories("LAST MONTH", CurrencyFormatter.formatMoney(trendInfo.previousTotal, currency), RetroColorsCategories.NeonWhite.copy(alpha = 0.7f))
  Spacer(modifier = Modifier.height(4.dp))
  RetroStatRowCategories("CHANGE", changeText, changeColor)
  }
 
  if (trendInfo?.averageOverMonths != null) {
  Spacer(modifier = Modifier.height(4.dp))
- RetroStatRowCategories("3-MO AVG", CurrencyFormatter.format(trendInfo.averageOverMonths, currency), RetroColorsCategories.NeonCyan)
+ RetroStatRowCategories("3-MO AVG", CurrencyFormatter.formatMoney(trendInfo.averageOverMonths, currency), RetroColorsCategories.NeonCyan)
         }
         
         Spacer(modifier = Modifier.height(8.dp))

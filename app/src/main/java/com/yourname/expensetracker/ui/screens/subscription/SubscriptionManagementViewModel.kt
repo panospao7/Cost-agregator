@@ -41,7 +41,15 @@ data class SubscriptionManagementUiState(
     val detectedCount: Int = 0,
     val selectedSubscription: SubscriptionInfo? = null,
     val referenceNowMillis: Long = 0L
-)
+) {
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<SubscriptionInfo>>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            error != null -> com.yourname.expensetracker.ui.model.LoadableUiState.Error(com.yourname.expensetracker.domain.model.UiText.DynamicString(error))
+            subscriptions.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(com.yourname.expensetracker.domain.model.UiText.DynamicString("No subscriptions tracked"))
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(subscriptions)
+        }
+}
 
 data class SubscriptionInfo(
     val subscription: ManualRecurringExpense,

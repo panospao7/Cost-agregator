@@ -63,7 +63,7 @@ fun PeriodBlock(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = CurrencyFormatter.format(period.totalAmount, currency, showCents = false),
+                text = CurrencyFormatter.formatMoney(period.totalAmount, currency, showCents = false),
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,

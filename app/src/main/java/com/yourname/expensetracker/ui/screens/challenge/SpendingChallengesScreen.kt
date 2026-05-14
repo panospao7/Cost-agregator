@@ -300,8 +300,8 @@ private fun formatChallengeTargetText(
 ): String {
  return when (challenge.type) {
  ChallengeType.REDUCE_SPENDING -> {
- val baseline = challenge.baselineAmount?.let { CurrencyFormatter.format(it, homeCurrency) }
- val reduction = CurrencyFormatter.format(targetAmount, homeCurrency)
+ val baseline = challenge.baselineAmount?.let { CurrencyFormatter.formatMoney(it, homeCurrency) }
+ val reduction = CurrencyFormatter.formatMoney(targetAmount, homeCurrency)
             if (baseline != null) {
                 stringResource(
                     R.string.challenges_target_reduce_with_baseline_format,
@@ -315,7 +315,7 @@ private fun formatChallengeTargetText(
 
         else -> stringResource(
  R.string.challenges_target_generic_format,
- CurrencyFormatter.format(targetAmount, homeCurrency)
+ CurrencyFormatter.formatMoney(targetAmount, homeCurrency)
         )
     }
 }
@@ -376,7 +376,7 @@ private fun NoSpendStreakCard(status: NoSpendStatus?, homeCurrency: String) {
                 status.savedToday?.let { saved ->
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = stringResource(R.string.challenges_saved_today_format, CurrencyFormatter.format(saved, homeCurrency)),
+                        text = stringResource(R.string.challenges_saved_today_format, CurrencyFormatter.formatMoney(saved, homeCurrency)),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer
                     )

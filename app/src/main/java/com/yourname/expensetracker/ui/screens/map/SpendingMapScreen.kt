@@ -634,7 +634,7 @@ private fun MarkerDetailCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = marker.merchant, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        text = CurrencyFormatter.format(marker.amount, marker.displayCurrency),
+                        text = CurrencyFormatter.formatMoney(marker.amount, marker.displayCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -786,7 +786,7 @@ private fun UnlocatedExpensesPanel(
                                 )
                             }
                             Text(
-                                text = CurrencyFormatter.format(expense.amount, expense.currency),
+                                text = CurrencyFormatter.formatMoney(expense.amount, expense.currency),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -853,7 +853,7 @@ private fun PinExpenseSheet(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "${expense.merchant} · ${CurrencyFormatter.format(expense.amount, expense.currency)}",
+                text = "${expense.merchant} · ${CurrencyFormatter.formatMoney(expense.amount, expense.currency)}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

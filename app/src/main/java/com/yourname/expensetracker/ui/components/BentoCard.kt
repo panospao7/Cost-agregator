@@ -137,7 +137,7 @@ fun AmountText(
     color: Color = MaterialTheme.colorScheme.onSurface
 ) {
     Text(
-        text = CurrencyFormatter.format(amount, currency),
+        text = CurrencyFormatter.formatMoney(amount, currency),
         style = style.copy(fontFeatureSettings = "tnum"),
         fontWeight = FontWeight.ExtraBold, // More premium weight
         color = color,

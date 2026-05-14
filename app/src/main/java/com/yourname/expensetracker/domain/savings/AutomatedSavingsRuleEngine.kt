@@ -124,7 +124,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         return RuleExecution(
             rule = rule,
             amount = amount,
-            reason = "${percentage}% of ${CurrencyFormatter.format(normalizedIncome, displayCurrency)} income",
+            reason = "${percentage}% of ${CurrencyFormatter.formatMoney(normalizedIncome, displayCurrency)} income",
             timestamp = timeProvider.now()
         )
     }
@@ -197,7 +197,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return RuleExecution(
                 rule = rule,
                 amount = roundUpAmount,
-                reason = "Round up ${CurrencyFormatter.format(candidateAmount, displayCurrency)} to ${CurrencyFormatter.format(roundedTarget, displayCurrency)}",
+                reason = "Round up ${CurrencyFormatter.formatMoney(candidateAmount, displayCurrency)} to ${CurrencyFormatter.formatMoney(roundedTarget, displayCurrency)}",
                 timestamp = timeProvider.now()
             )
         }
@@ -228,7 +228,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return RuleExecution(
                 rule = rule,
                 amount = candidateAmount,
-                reason = "Spare change: ${expense.merchant} ${CurrencyFormatter.format(candidateAmount, displayCurrency)}",
+                reason = "Spare change: ${expense.merchant} ${CurrencyFormatter.formatMoney(candidateAmount, displayCurrency)}",
                 timestamp = timeProvider.now()
             )
         }

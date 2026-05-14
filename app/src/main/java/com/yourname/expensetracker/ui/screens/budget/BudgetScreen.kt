@@ -1173,7 +1173,7 @@ fun AutopilotRecommendationItem(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = CurrencyFormatter.format(recommendation.currentBudget, homeCurrency, showCents = false),
+                        text = CurrencyFormatter.formatMoney(recommendation.currentBudget, homeCurrency, showCents = false),
                         style = MaterialTheme.typography.bodySmall,
                         textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1184,7 +1184,7 @@ fun AutopilotRecommendationItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = CurrencyFormatter.format(recommendation.recommendedBudget, homeCurrency, showCents = false),
+                        text = CurrencyFormatter.formatMoney(recommendation.recommendedBudget, homeCurrency, showCents = false),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (recommendation.delta > 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen

@@ -10,7 +10,6 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelChildren
@@ -158,7 +157,7 @@ class BudgetMonitor @Inject constructor(
             }
             Timber.e(lastException, "checkBudgets failed after $MAX_RETRIES attempts")
             // P2-20: Durable record of failed budget check
-            serviceScope.launch(Dispatchers.IO) {
+            serviceScope.launch(ioDispatcher) {
                 try {
                     diagnosticEventDao.insert(
                         PipelineDiagnosticEvent(
@@ -215,7 +214,7 @@ class BudgetMonitor @Inject constructor(
         val budget = status.budget
 
         // P2-20: Durable diagnostic — record that a budget check started.
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             diagnosticEventDao.insert(
                 PipelineDiagnosticEvent(
                     pipeline = "budget_monitor",
@@ -247,8 +246,8 @@ class BudgetMonitor @Inject constructor(
         val adjustedPercent = if (effectiveLimit > 0) (spent / effectiveLimit).toFloat() else 0f
 
         // P2-20: Write a diagnostic event recording the budget check attempt.
-        // Writes on Dispatchers.IO to avoid blocking the monitor coroutine.
-        withContext(Dispatchers.IO) {
+        // Writes on ioDispatcher to avoid blocking the monitor coroutine.
+        withContext(ioDispatcher) {
             diagnosticEventDao.insert(
                 PipelineDiagnosticEvent(
                     pipeline = "budget_monitor",
@@ -316,7 +315,7 @@ class BudgetMonitor @Inject constructor(
         delivered: Boolean,
         now: Long
     ) {
-        serviceScope.launch(Dispatchers.IO) {
+        serviceScope.launch(ioDispatcher) {
             try {
                 diagnosticEventDao.insert(
                     PipelineDiagnosticEvent(

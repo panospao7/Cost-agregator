@@ -197,7 +197,7 @@ private fun HorizonDetailView(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = CurrencyFormatter.format(horizon.projectedBalance, currency, showCents = false),
+                    text = CurrencyFormatter.formatMoney(horizon.projectedBalance, currency, showCents = false),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = if (horizon.projectedBalance < 0) SemanticColors.DangerRed else SemanticColors.TextPrimary
@@ -242,7 +242,7 @@ private fun HorizonDetailView(
                     Text("⚠️", fontSize = 14.sp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Min projected: ${CurrencyFormatter.format(horizon.minProjectedBalance, currency, showCents = false)}",
+                        text = "Min projected: ${CurrencyFormatter.formatMoney(horizon.minProjectedBalance, currency, showCents = false)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.DangerRed
                     )
@@ -258,17 +258,17 @@ private fun HorizonDetailView(
         ) {
             BreakdownItem(
                 label = "Recurring (${horizon.daysAhead}d total)",
-                value = "-${CurrencyFormatter.format(horizon.recurringObligations, currency, showCents = false)}",
+                value = "-${CurrencyFormatter.formatMoney(horizon.recurringObligations, currency, showCents = false)}",
                 color = SemanticColors.WarningOrange
             )
             BreakdownItem(
                 label = "Income",
-                value = "+${CurrencyFormatter.format(horizon.expectedIncome, currency, showCents = false)}",
+                value = "+${CurrencyFormatter.formatMoney(horizon.expectedIncome, currency, showCents = false)}",
                 color = SemanticColors.SuccessGreen
             )
             BreakdownItem(
                 label = "Buffer",
-                value = CurrencyFormatter.format(horizon.discretionaryBuffer, currency, showCents = false),
+                value = CurrencyFormatter.formatMoney(horizon.discretionaryBuffer, currency, showCents = false),
                 color = SemanticColors.PrimaryIndigo
             )
         }

@@ -28,7 +28,15 @@ data class ManualRecurringExpenseUiState(
     val activeCount: Int = 0,
     val upcomingCount: Int = 0,
     val referenceNowMillis: Long = 0L
-)
+) {
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<ManualRecurringExpense>>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            error != null -> com.yourname.expensetracker.ui.model.LoadableUiState.Error(com.yourname.expensetracker.domain.model.UiText.DynamicString(error))
+            recurringExpenses.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(com.yourname.expensetracker.domain.model.UiText.DynamicString("No recurring expenses"))
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(recurringExpenses)
+        }
+}
 
 @HiltViewModel
 class ManualRecurringExpenseViewModel @Inject constructor(

@@ -461,7 +461,7 @@ private fun RetroStageCard(
             
             // Amount (score)
             Text(
-                text = CurrencyFormatter.format(period.totalAmount, currency, showCents = false),
+                text = CurrencyFormatter.formatMoney(period.totalAmount, currency, showCents = false),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold
@@ -779,7 +779,7 @@ private fun RetroStageDialog(
                     Spacer(modifier = Modifier.height(12.dp))
                     
                     // Comparison stats
-                    RetroStatRowTotals("STAGE BUDGET", CurrencyFormatter.format(averageAmount, currency), RetroColorsTotals.NeonCyan)
+                    RetroStatRowTotals("STAGE BUDGET", CurrencyFormatter.formatMoney(averageAmount, currency), RetroColorsTotals.NeonCyan)
                     Spacer(modifier = Modifier.height(4.dp))
                     val diff = period.totalAmount - averageAmount
                     val diffText = CurrencyFormatter.formatWithSign(diff, currency)

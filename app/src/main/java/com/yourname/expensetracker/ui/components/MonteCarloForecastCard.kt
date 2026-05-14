@@ -107,7 +107,7 @@ fun MonteCarloForecastCard(
                             color = SemanticColors.TextSecondary
                         )
             Text(
-                text = CurrencyFormatter.format(result.percentile50, currency, showCents = false),
+                text = CurrencyFormatter.formatMoney(result.percentile50, currency, showCents = false),
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.ExtraBold,
                 color = SemanticColors.TextPrimary
@@ -150,7 +150,7 @@ fun MonteCarloForecastCard(
                             color = probabilityColor ?: SemanticColors.TextPrimary
                         )
                         Text(
-                            "of ${CurrencyFormatter.format(result.budgetAmount, currency, showCents = false)}",
+                            "of ${CurrencyFormatter.formatMoney(result.budgetAmount, currency, showCents = false)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextMuted
                         )
@@ -173,7 +173,7 @@ fun MonteCarloForecastCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(result.spentToDate, currency, showCents = false),
+                        CurrencyFormatter.formatMoney(result.spentToDate, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -188,7 +188,7 @@ fun MonteCarloForecastCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(result.knownUpcoming, currency, showCents = false),
+                        CurrencyFormatter.formatMoney(result.knownUpcoming, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.WarningOrange

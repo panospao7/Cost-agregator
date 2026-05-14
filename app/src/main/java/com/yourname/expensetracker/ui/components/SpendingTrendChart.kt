@@ -142,7 +142,7 @@ fun SpendingTrendChart(
             val maxValue = (allValues.maxOrNull() ?: 0.0).toDouble()
             val currentValue = (currentValues.lastOrNull() ?: 0.0).toDouble()
             val chartSummary = remember(subtitle, minValue, maxValue, currentValue) {
-                "Spending trend chart for $subtitle. Current value ${CurrencyFormatter.format(currentValue, currency, showCents = false)}, minimum ${CurrencyFormatter.format(minValue, currency, showCents = false)}, maximum ${CurrencyFormatter.format(maxValue, currency, showCents = false)}."
+                "Spending trend chart for $subtitle. Current value ${CurrencyFormatter.formatMoney(currentValue, currency, showCents = false)}, minimum ${CurrencyFormatter.formatMoney(minValue, currency, showCents = false)}, maximum ${CurrencyFormatter.formatMoney(maxValue, currency, showCents = false)}."
             }
 
             Chart(

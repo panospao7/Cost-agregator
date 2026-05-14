@@ -127,19 +127,19 @@ fun ForecastTimeline(
         val chartSummary = if (hasValidBudget) {
  stringResource(
  R.string.forecast_timeline_summary_with_budget,
- CurrencyFormatter.format(currentPoint, currency, showCents = false),
- CurrencyFormatter.format(projectedEnd, currency, showCents = false),
- CurrencyFormatter.format(minPoint, currency, showCents = false),
- CurrencyFormatter.format(maxPoint, currency, showCents = false),
- CurrencyFormatter.format(budgetLimit, currency, showCents = false)
+ CurrencyFormatter.formatMoney(currentPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(projectedEnd, currency, showCents = false),
+ CurrencyFormatter.formatMoney(minPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(maxPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(budgetLimit, currency, showCents = false)
  )
  } else {
  stringResource(
  R.string.forecast_timeline_summary_without_budget,
- CurrencyFormatter.format(currentPoint, currency, showCents = false),
- CurrencyFormatter.format(projectedEnd, currency, showCents = false),
- CurrencyFormatter.format(minPoint, currency, showCents = false),
- CurrencyFormatter.format(maxPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(currentPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(projectedEnd, currency, showCents = false),
+ CurrencyFormatter.formatMoney(minPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(maxPoint, currency, showCents = false),
                 noBudgetSetText
             )
         }

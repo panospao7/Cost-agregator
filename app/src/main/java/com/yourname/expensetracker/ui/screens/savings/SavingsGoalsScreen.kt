@@ -218,7 +218,7 @@ fun SavingsGoalsScreen(
                     Text(
                         stringResource(
                             R.string.savings_contribute_dialog_message_format,
-                            CurrencyFormatter.format(recommendation.recommendedAmount, state.homeCurrency)
+                            CurrencyFormatter.formatMoney(recommendation.recommendedAmount, state.homeCurrency)
                         )
                     )
                 },
@@ -232,7 +232,7 @@ fun SavingsGoalsScreen(
                             recommendationToConfirm = null
                             val savedMessage = context.getString(
                                 R.string.savings_saved_amount_message_format,
-                                CurrencyFormatter.format(recommendation.recommendedAmount, state.homeCurrency)
+                                CurrencyFormatter.formatMoney(recommendation.recommendedAmount, state.homeCurrency)
                             )
                             scope.launch {
                                 snackbarHostState.showSnackbar(
@@ -300,7 +300,7 @@ private fun GamificationHeader(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = stringResource(R.string.savings_label_total_saved, CurrencyFormatter.format(totalSaved, homeCurrency)),
+                text = stringResource(R.string.savings_label_total_saved, CurrencyFormatter.formatMoney(totalSaved, homeCurrency)),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -344,7 +344,7 @@ private fun SmartRecommendationCard(
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = stringResource(R.string.savings_safe_to_save, CurrencyFormatter.format(rec.recommendedAmount, homeCurrency)),
+                    text = stringResource(R.string.savings_safe_to_save, CurrencyFormatter.formatMoney(rec.recommendedAmount, homeCurrency)),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
@@ -581,11 +581,11 @@ private fun GoalCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = CurrencyFormatter.format(goal.currentAmount, homeCurrency),
+                    text = CurrencyFormatter.formatMoney(goal.currentAmount, homeCurrency),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = stringResource(R.string.savings_of_target, CurrencyFormatter.format(goal.targetAmount, homeCurrency)),
+                    text = stringResource(R.string.savings_of_target, CurrencyFormatter.formatMoney(goal.targetAmount, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -757,7 +757,7 @@ private fun SweepRecommendationCard(
             Text(
                 text = stringResource(
                     R.string.savings_safe_to_save_sweep_format,
-                    CurrencyFormatter.format(recommendation.safeSweepAmount, homeCurrency)
+                    CurrencyFormatter.formatMoney(recommendation.safeSweepAmount, homeCurrency)
                 ),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
@@ -770,8 +770,8 @@ private fun SweepRecommendationCard(
             Text(
                 text = stringResource(
                     R.string.savings_underspend_buffer_format,
-                    CurrencyFormatter.format(recommendation.totalUnderspend, homeCurrency),
-                    CurrencyFormatter.format(recommendation.riskBuffer, homeCurrency)
+                    CurrencyFormatter.formatMoney(recommendation.totalUnderspend, homeCurrency),
+                    CurrencyFormatter.formatMoney(recommendation.riskBuffer, homeCurrency)
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
@@ -860,7 +860,7 @@ private fun GoalAllocationRow(allocation: GoalAllocation, homeCurrency: String) 
         }
         
         Text(
-            text = "+${CurrencyFormatter.format(allocation.suggestedAllocation, homeCurrency)}",
+            text = "+${CurrencyFormatter.formatMoney(allocation.suggestedAllocation, homeCurrency)}",
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary

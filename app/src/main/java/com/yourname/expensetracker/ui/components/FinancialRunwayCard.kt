@@ -153,7 +153,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(discretionaryRemaining, currency, showCents = false),
+                        CurrencyFormatter.formatMoney(discretionaryRemaining, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -166,7 +166,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(averageDailyDiscretionarySpend, currency),
+                        CurrencyFormatter.formatMoney(averageDailyDiscretionarySpend, currency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -179,7 +179,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(monthlyIncome, currency, showCents = false),
+                        CurrencyFormatter.formatMoney(monthlyIncome, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.SuccessGreen
@@ -199,7 +199,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.WarningOrange.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "${CurrencyFormatter.format(committedExpenses, currency, showCents = false)} committed",
+                                "${CurrencyFormatter.formatMoney(committedExpenses, currency, showCents = false)} committed",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.WarningOrange,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -212,7 +212,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "${CurrencyFormatter.format(likelyExpenses, currency, showCents = false)} planned",
+                                "${CurrencyFormatter.formatMoney(likelyExpenses, currency, showCents = false)} planned",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.PrimaryIndigo,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

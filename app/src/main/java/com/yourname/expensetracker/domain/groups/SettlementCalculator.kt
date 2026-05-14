@@ -124,12 +124,12 @@ class SettlementCalculator @Inject constructor(
 
         var totalVolumeCents = 0L
         for ((index, settlement) in settlements.withIndex()) {
-            builder.append("${index + 1}. ${settlement.fromMemberName} pays ${settlement.toMemberName}: ${CurrencyFormatter.format(settlement.amount, groupCurrency)}\n")
+            builder.append("${index + 1}. ${settlement.fromMemberName} pays ${settlement.toMemberName}: ${CurrencyFormatter.formatMoney(settlement.amount, groupCurrency)}\n")
             totalVolumeCents += amountToCents(settlement.amount)
         }
 
         val totalVolume = centsToAmount(totalVolumeCents)
-        builder.append("\nTotal to settle: ${CurrencyFormatter.format(totalVolume, groupCurrency)}")
+        builder.append("\nTotal to settle: ${CurrencyFormatter.formatMoney(totalVolume, groupCurrency)}")
         builder.append("\n${settlements.size} transaction${if (settlements.size > 1) "s" else ""} needed")
         if (settlements.any { it.usedGreedyFallback }) {
             builder.append("\n(Approximate plan used due to solver budget limit)")

@@ -322,7 +322,7 @@ private fun TotalMonthlyCard(totalMonthly: Double, homeCurrency: String) {
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = CurrencyFormatter.format(totalMonthly, homeCurrency),
+                text = CurrencyFormatter.formatMoney(totalMonthly, homeCurrency),
                 style = MaterialTheme.typography.headlineSmall,
                 color = SemanticColors.PrimaryIndigo,
                 fontWeight = FontWeight.Bold
@@ -403,7 +403,7 @@ private fun RecurringExpenseCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${CurrencyFormatter.format(expense.amount, homeCurrency)} ${expense.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    text = "${CurrencyFormatter.formatMoney(expense.amount, homeCurrency)} ${expense.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary
                 )

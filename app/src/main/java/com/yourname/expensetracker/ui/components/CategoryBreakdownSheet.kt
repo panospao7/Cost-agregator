@@ -168,7 +168,7 @@ private fun CategoryRow(category: CategorySpending, /** Placeholder default. Pro
                 }
 
                 Text(
-                    text = CurrencyFormatter.format(category.amount, currency),
+                    text = CurrencyFormatter.formatMoney(category.amount, currency),
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontFeatureSettings = "tnum"
