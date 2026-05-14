@@ -304,6 +304,23 @@ fun TransactionsScreen(
                 // Tab row with counts - scrollable for proper tab widths
                 val tabSelectedStr = stringResource(R.string.transactions_tab_selected)
                 val tabNotSelectedStr = stringResource(R.string.transactions_tab_not_selected)
+                // S5-003: Show active date-range filter chip above tabs
+                if (activeFilter?.dateRange != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.Start
+                    ) {
+                        androidx.compose.material3.FilterChip(
+                            selected = true,
+                            onClick = { viewModel.clearRouteFilter() },
+                            label = { Text(stringResource(R.string.transactions_filter_date_range), style = MaterialTheme.typography.labelSmall) },
+                            trailingIcon = { Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Clear date filter", modifier = Modifier.size(14.dp)) }
+                        )
+                    }
+                }
+
                 ScrollableTabRow(
                     selectedTabIndex = selectedTab.ordinal,
                     edgePadding = 0.dp,

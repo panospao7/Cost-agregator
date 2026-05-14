@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 import kotlinx.coroutines.isActive
 import com.yourname.expensetracker.domain.util.AmountUtils
@@ -110,15 +111,21 @@ class AddExpenseViewModel @Inject constructor(
                 delay(300)
                 if (!isActive) return@launch
                 
-                val suggestions = expenseRepository.searchMerchants(sanitized)
-                
-                if (!isActive) return@launch
-                
-                _state.update {
-                    it.copy(
-                        suggestions = suggestions,
-                        showSuggestions = suggestions.isNotEmpty()
-                    )
+                try {
+                    val suggestions = expenseRepository.searchMerchants(sanitized)
+                    if (!isActive) return@launch
+                    _state.update {
+                        it.copy(
+                            suggestions = suggestions,
+                            showSuggestions = suggestions.isNotEmpty()
+                        )
+                    }
+                } catch (e: Exception) {
+                    // S5-008: Silently clear suggestions on failure (non-critical)
+                    Timber.w(e, "Merchant suggestion search failed for: $sanitized")
+                    if (isActive) {
+                        _state.update { it.copy(suggestions = emptyList(), showSuggestions = false) }
+                    }
                 }
             }
         } else {
@@ -131,7 +138,7 @@ class AddExpenseViewModel @Inject constructor(
             it.copy(
                 merchant = suggestion.merchant,
                 selectedCategoryId = suggestion.categoryId ?: it.selectedCategoryId,
-                amount = if (it.amount.isBlank()) String.format("%.2f", suggestion.avgAmount) else it.amount,
+                amount = if (it.amount.isBlank()) com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(String.format(java.util.Locale.US, "%.2f", suggestion.avgAmount)) else it.amount,
                 suggestions = emptyList(),
                 showSuggestions = false,
                 merchantError = null

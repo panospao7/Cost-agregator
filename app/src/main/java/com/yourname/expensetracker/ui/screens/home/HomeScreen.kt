@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -247,14 +248,13 @@ fun HomeScreen(
                     }
                 }
 
-                items(
+                itemsIndexed(
                     items = state.widgets,
-                    key = { HomeViewModel.getWidgetId(it) },
-                    span = { widget ->
+                    key = { _, widget -> HomeViewModel.getWidgetId(widget) },
+                    span = { _, widget ->
                         GridItemSpan(if (isFullSpan(widget)) 2 else 1)
                     },
-                    contentType = { it.javaClass.simpleName }
-                ) { widget ->
+                ) { index, widget ->
                     val widgetId = HomeViewModel.getWidgetId(widget)
                     val widgetStyle = if (widgetId in StyledWidgets.all) {
                         state.widgetStyles.getStyle(widgetId)
@@ -264,8 +264,8 @@ fun HomeScreen(
                         widget = widget,
                         isEditMode = state.isEditMode,
                         widgetStyle = widgetStyle,
-                        onMoveUp = { viewModel.moveWidget(widgetId, true) },
-                        onMoveDown = { viewModel.moveWidget(widgetId, false) },
+                        onMoveUp = if (index > 0) { { viewModel.moveWidget(widgetId, true) } } else null,
+                        onMoveDown = if (index < state.widgets.lastIndex) { { viewModel.moveWidget(widgetId, false) } } else null,
                         onToggleVisibility = { viewModel.toggleWidgetVisibility(widgetId) },
                         onToggleStyle = if (widgetId in StyledWidgets.all) {
                             { viewModel.toggleWidgetStyle(widgetId) }
@@ -880,8 +880,8 @@ fun WidgetWrapper(
     widget: DashboardWidget,
     isEditMode: Boolean,
     widgetStyle: WidgetStyle?,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?,
     onToggleVisibility: () -> Unit,
     onToggleStyle: (() -> Unit)? = null,
     content: @Composable () -> Unit
@@ -906,10 +906,11 @@ fun WidgetWrapper(
                     val moveDownDesc = stringResource(R.string.a11y_move_widget_down)
                     
                     IconButton(
-                        onClick = onMoveUp,
+                        onClick = { onMoveUp?.invoke() },
+                        enabled = onMoveUp != null,
                         modifier = Modifier.semantics { contentDescription = moveUpDesc }
                     ) {
-                        Icon(Icons.Rounded.ArrowUpward, contentDescription = null, tint = Color.White)
+                        Icon(Icons.Rounded.ArrowUpward, contentDescription = null, tint = if (onMoveUp != null) Color.White else Color.White.copy(alpha = 0.3f))
                     }
                     IconButton(
                         onClick = onToggleVisibility,
@@ -942,7 +943,8 @@ fun WidgetWrapper(
                     }
                     
                     IconButton(
-                        onClick = onMoveDown,
+                        onClick = { onMoveDown?.invoke() },
+                        enabled = onMoveDown != null,
                         modifier = Modifier.semantics { contentDescription = moveDownDesc }
                     ) {
                         Icon(Icons.Rounded.ArrowDownward, contentDescription = null, tint = Color.White)
