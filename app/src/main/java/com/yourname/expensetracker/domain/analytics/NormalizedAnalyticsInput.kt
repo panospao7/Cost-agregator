@@ -60,6 +60,10 @@ data class AnalyticsDataQuality(
 /**
  * A06: Converts a [NormalizedExpense] back to a minimal [ExpenseSnapshot]
  * for consumption by legacy analytics engines that haven't been migrated yet.
+ *
+ * S9-007: Uses normalizedAmount and normalizedCurrency so effectiveAmount and
+ * currency are on the same basis. Callers that need the original amount/currency
+ * should read [NormalizedExpense.originalAmount] and [NormalizedExpense.originalCurrency] directly.
  */
 fun NormalizedExpense.toExpenseSnapshot(): com.yourname.expensetracker.domain.model.ExpenseSnapshot {
     val txType = when (transactionType) {
@@ -71,9 +75,10 @@ fun NormalizedExpense.toExpenseSnapshot(): com.yourname.expensetracker.domain.mo
     }
     return com.yourname.expensetracker.domain.model.ExpenseSnapshot(
         id = id,
-        amount = originalAmount,
+        // S9-007: Both amount and effectiveAmount use the normalized value/currency
+        amount = normalizedAmount,
         effectiveAmount = normalizedAmount,
-        currency = originalCurrency,
+        currency = normalizedCurrency,
         merchant = merchant,
         merchantKey = merchantKey,
         categoryId = categoryId,

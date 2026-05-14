@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
@@ -37,7 +38,8 @@ class AdvancedAnalyticsViewModel @Inject constructor(
     private val refreshNonce = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     val uiState: StateFlow<AnalyticsUiState> = combine(
-        currencySettingsRepository.homeCurrency().catch { emit("EUR") }, // Safe fallback if repo fails
+        // S9-003: null on failure — never silently default to "EUR"
+        currencySettingsRepository.homeCurrency().map<String, String?> { it }.catch { emit(null) },
         currencySettingsRepository.lastRateUpdate().catch { emit(0L) },
         refreshNonce
     ) { homeCurrency, latestRateTimestamp, _ ->
@@ -50,10 +52,11 @@ class AdvancedAnalyticsViewModel @Inject constructor(
                     val now = timeProvider.now()
                     val thirtyDaysAgo = TimePeriodUtils.addDays(now, -30)
                     val data = analyticsDashboard.generateDashboardData(thirtyDaysAgo, now)
+                    val resolvedCurrency = homeCurrency ?: throw IllegalStateException("Home currency not available")
                     emit(
                         AnalyticsUiState.Success(
                             data = data,
-                            homeCurrency = homeCurrency,
+                            homeCurrency = resolvedCurrency,
                             latestRateTimestamp = latestRateTimestamp.takeIf { it > 0L }
                         )
                     )

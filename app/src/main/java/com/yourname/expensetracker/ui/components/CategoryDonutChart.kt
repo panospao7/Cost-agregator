@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryBreakdown
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -40,9 +41,11 @@ import com.yourname.expensetracker.R
 fun CategoryDonutChart(
     categories: List<AnalyticsCategoryBreakdown>,
     totalSpent: Double,
+    /** S9-004: Required — no default EUR */
+    currency: String,
     modifier: Modifier = Modifier
 ) {
-    if (categories.isEmpty()) {
+    if (categories.isEmpty() || totalSpent <= 0.0) {
         BentoCard(modifier = modifier) {
             Column(
                 modifier = Modifier
@@ -51,14 +54,14 @@ fun CategoryDonutChart(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "No category data yet",
+                    text = stringResource(R.string.chart_no_category_data_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = SemanticColors.TextPrimary
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Add a few categorized transactions to see your spending split.",
+                    text = stringResource(R.string.chart_no_category_data_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )
@@ -67,15 +70,38 @@ fun CategoryDonutChart(
         return
     }
 
+    // S9-005: Sanitize percentages — drop NaN/Infinite/negative, normalize if sum > 100
+    val sanitizedCategories = categories.filter { it.percentage.isFinite() && it.percentage > 0f }
+    val percentageSum = sanitizedCategories.sumOf { it.percentage.toDouble() }.toFloat()
+    val normalizedCategories = if (percentageSum > 0f && sanitizedCategories.isNotEmpty()) {
+        if (percentageSum > 105f) {
+            // Re-normalize relative to sum
+            sanitizedCategories.map { it.copy(percentage = (it.percentage / percentageSum) * 100f) }
+        } else {
+            sanitizedCategories
+        }
+    } else {
+        emptyList()
+    }
+
+    if (normalizedCategories.isEmpty()) {
+        BentoCard(modifier = modifier) {
+            Column(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(stringResource(R.string.chart_no_category_data_title), style = MaterialTheme.typography.titleMedium, color = SemanticColors.TextPrimary)
+            }
+        }
+        return
+    }
+
     // Animate sweep on first composition
     val animationProgress = remember { Animatable(0f) }
-    LaunchedEffect(categories) {
+    LaunchedEffect(normalizedCategories) {
         animationProgress.snapTo(0f)
         animationProgress.animateTo(1f, animationSpec = tween(durationMillis = 800))
     }
 
-    val categoryColors = remember(categories) {
-        categories.map { item ->
+    val categoryColors = remember(normalizedCategories) {
+        normalizedCategories.map { item ->
             try {
                 Color(android.graphics.Color.parseColor(item.category.color))
             } catch (_: Exception) {
@@ -83,25 +109,29 @@ fun CategoryDonutChart(
             }
         }
     }
-    val categoryColorByKey = remember(categories, categoryColors) {
-        categories
+    val categoryColorByKey = remember(normalizedCategories, categoryColors) {
+        normalizedCategories
             .mapIndexed { index, item ->
                 (item.category.id to item.category.name) to categoryColors[index]
             }
             .toMap()
     }
 
-    val topCategorySummary = remember(categories) {
-        categories
+    val topCategorySummary = remember(normalizedCategories) {
+        normalizedCategories
             .sortedByDescending { it.percentage }
             .take(3)
             .joinToString(", ") { "${it.category.name} ${it.percentage.toInt()}%" }
     }
-    val chartSummary = remember(totalSpent, topCategorySummary) {
-        "Category split. Total €${String.format("%.0f", totalSpent)}. Top categories: $topCategorySummary."
+    // S9-004: Use CurrencyFormatter instead of hardcoded euro symbol
+    val formattedTotal = remember(totalSpent, currency) {
+        CurrencyFormatter.formatMoney(totalSpent, currency, showCents = false)
     }
-    val legendSummary = remember(categories) {
-        categories
+    val chartSummary = remember(formattedTotal, topCategorySummary) {
+        "Category split. Total $formattedTotal. Top categories: $topCategorySummary."
+    }
+    val legendSummary = remember(normalizedCategories) {
+        normalizedCategories
             .take(8)
             .joinToString(", ") { "${it.category.name} ${it.percentage.toInt()}%" }
     }
@@ -109,7 +139,7 @@ fun CategoryDonutChart(
     BentoCard(modifier = modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                "CATEGORY SPLIT",
+                stringResource(R.string.chart_category_split_label),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = SemanticColors.TextSecondary,
@@ -133,7 +163,7 @@ fun CategoryDonutChart(
                     val topLeft = Offset(padding, padding)
 
                     var startAngle = -90f // start from top
-                    categories.forEachIndexed { index, item ->
+                    normalizedCategories.forEachIndexed { index, item ->
                         val sweepAngle = (item.percentage / 100f) * 360f * animationProgress.value
                         drawArc(
                             color = categoryColors[index],
@@ -156,7 +186,7 @@ fun CategoryDonutChart(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        text = "\u20AC${String.format("%.0f", totalSpent)}",
+                        text = formattedTotal,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = SemanticColors.TextPrimary
@@ -167,11 +197,11 @@ fun CategoryDonutChart(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Compact legend (2-column grid)
-            val legendItems = categories.take(8) // cap at 8 for readability
+            val legendItems = normalizedCategories.take(8) // cap at 8 for readability
             Column(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.semantics {
-                    contentDescription = "Legend: $legendSummary"
+                    contentDescription = legendSummary
                 }
             ) {
                 legendItems.chunked(2).forEach { row ->

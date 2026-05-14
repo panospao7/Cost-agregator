@@ -41,9 +41,8 @@ class AnalyticsInputAssembler @Inject constructor(
         period: PeriodRange,
         options: AnalyticsInputOptions = AnalyticsInputOptions()
     ): NormalizedAnalyticsInput {
-        val homeCurrency = runCatching {
-            currencySettingsRepository.homeCurrency().first()
-        }.getOrDefault("EUR")
+        // S9-018: Do not fall back to "EUR" — throw if home currency unavailable
+        val homeCurrency = currencySettingsRepository.homeCurrency().first()
 
         val rawExpenses = expenseRepository.getExpensesBetween(
             period.startInclusiveMillis,

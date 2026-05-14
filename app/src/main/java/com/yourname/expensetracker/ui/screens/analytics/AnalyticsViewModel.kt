@@ -52,11 +52,11 @@ data class BudgetVsActualItem(
     val budgetAmount: Double,
     val actualSpent: Double,
     val percentUsed: Float, // 0.0 - 1.0+
-    /** Placeholder default; should be populated with actual home currency from [CurrencySettingsRepository]. */
-    val displayCurrency: String = "EUR"
+    /** S9-003: null until home currency loads — never defaults to "EUR" */
+    val displayCurrency: String? = null
 ) {
-    val moneyBudgetAmount: MoneyAmount get() = MoneyAmount(budgetAmount, CurrencyCode(displayCurrency))
-    val moneyActualSpent: MoneyAmount get() = MoneyAmount(actualSpent, CurrencyCode(displayCurrency))
+    val moneyBudgetAmount: MoneyAmount get() = MoneyAmount(budgetAmount, CurrencyCode(displayCurrency ?: ""))
+    val moneyActualSpent: MoneyAmount get() = MoneyAmount(actualSpent, CurrencyCode(displayCurrency ?: ""))
 }
 
 data class AnalyticsState(
@@ -90,20 +90,16 @@ data class AnalyticsState(
     // F13: Spending Personality Profile
     val personalityProfile: SpendingPersonalityProfile? = null,
     val isLoading: Boolean = true,
-    /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
-    val homeCurrency: String = "EUR",
+    /** S9-003: null until home currency loads — never defaults to "EUR" */
+    val homeCurrency: String? = null,
     val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
-    /**
-     * Plain-text quality warnings derived from [conversionWarnings].
-     * Populated automatically when the state is built. Consumers (UI, forecast,
-     * health) use this for simple "show warning banner" logic without parsing
-     * the richer [AnalyticsConversionWarning] type.
-     */
     val qualityWarnings: List<String> = emptyList(),
     val latestRateTimestamp: Long? = null,
+    /** S9-013: Top-level error — null when healthy, non-null when analytics load failed */
+    val error: String? = null,
     val referenceNowMillis: Long = 0L
 ) {
-    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(homeCurrency))
+    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(homeCurrency ?: ""))
 
     /** Universal contract: typed loadable state. */
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<AnalyticsState>
@@ -175,7 +171,8 @@ class AnalyticsViewModel @Inject constructor(
         val period: TimePeriod,
         val expenseFreshness: ExpenseFreshness,
         val budgetFreshness: BudgetFreshness,
-        val homeCurrency: String,
+        /** S9-003: null until home currency loads */
+        val homeCurrency: String?,
         val rateTimestamp: Long
     )
 
@@ -230,8 +227,9 @@ class AnalyticsViewModel @Inject constructor(
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<AnalyticsState> = combine(
         analyticsBaseInputs,
+        // S9-003: null on failure — never silently default to "EUR"
         currencySettingsRepository.homeCurrency()
-            .catch { emit("EUR") },
+            .map<String, String?> { it }.catch { emit(null) },
         currencySettingsRepository.lastRateUpdate()
             .catch { emit(0L) }
     ) { baseInputs, homeCurrency, rateTimestamp ->
@@ -257,6 +255,12 @@ class AnalyticsViewModel @Inject constructor(
             val rateTimestamp = inputs.rateTimestamp
 
             emit(AnalyticsState(isLoading = true, selectedPeriod = period, homeCurrency = homeCurrency, latestRateTimestamp = rateTimestamp, referenceNowMillis = timeProvider.now(), qualityWarnings = emptyList()))
+
+            // S9-003/S9-013: Block computation if currency not yet loaded
+            if (homeCurrency == null) {
+                emit(AnalyticsState(isLoading = false, selectedPeriod = period, homeCurrency = null, error = "Home currency not available. Please check your settings."))
+                return@flow
+            }
 
             if (
                 freshness.dataVersion != lastExpenseDataVersion ||
@@ -514,16 +518,18 @@ class AnalyticsViewModel @Inject constructor(
         val dateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm", Locale.getDefault())
         fun formatTimestamp(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(dateFormatter)
 
-        Timber.d("=== ANALYTICS DEBUG ===")
-        Timber.d("Period: $period")
-        Timber.d("Date Range: ${formatTimestamp(currentStart)} → ${formatTimestamp(currentEnd)}")
-        Timber.d("Period Days: $periodDays")
-        Timber.d("Transactions: ${currentExpenseSnapshots.size}")
-        Timber.d("Total: $homeCurrency$currentTotal")
-        Timber.d("Daily Totals: $dailyTotals")
-        Timber.d("Average Daily: $homeCurrency${if (periodDays > 0) currentTotal / periodDays else 0.0} ($homeCurrency$currentTotal / $periodDays days)")
-        Timber.d("========================")
-        // === END DEBUG ===
+        // S9-017: Gate financial debug logging — never log amounts/daily totals in release
+        if (com.yourname.expensetracker.BuildConfig.DEBUG) {
+            Timber.d("=== ANALYTICS DEBUG ===")
+            Timber.d("Period: $period")
+            Timber.d("Date Range: ${formatTimestamp(currentStart)} → ${formatTimestamp(currentEnd)}")
+            Timber.d("Period Days: $periodDays")
+            Timber.d("Transactions: ${currentExpenseSnapshots.size}")
+            Timber.d("Total: $homeCurrency$currentTotal")
+            Timber.d("Daily Totals: $dailyTotals")
+            Timber.d("Average Daily: $homeCurrency${if (periodDays > 0) currentTotal / periodDays else 0.0} ($homeCurrency$currentTotal / $periodDays days)")
+            Timber.d("========================")
+        }
 
         val advancedPeriod = timePeriodToAnalyticsPeriod(period)
         val advRange = if (advancedPeriod != null) {
@@ -559,8 +565,8 @@ class AnalyticsViewModel @Inject constructor(
             val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(currentInput, previousInput, categories, budgetSnapshots) }
             val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(currentInput, historicalInput, limit = 15) }
             // Spending patterns and statistical insights still use the old API (not yet migrated)
-            val patternsDeferred = async { @Suppress("DEPRECATION") advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
-            val statsDeferred = async { @Suppress("DEPRECATION") advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
+            val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
+            val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
             val (cats, catWarnings) = try { catDeferred.await() } catch (_: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
             val (merchs, merchWarnings) = try { merchDeferred.await() } catch (_: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
             val (patterns, patternWarnings) = try { patternsDeferred.await() } catch (_: Exception) { null to emptyList<AnalyticsConversionWarning>() }

@@ -2142,6 +2142,9 @@
     <string name="financial_runway_title">FINANCIAL RUNWAY</string>
     <string name="financial_runway_days">days</string>
     <string name="chart_total">Total</string>
+    <string name="chart_category_split_label">CATEGORY SPLIT</string>
+    <string name="chart_no_category_data_title">No category data yet</string>
+    <string name="chart_no_category_data_subtitle">Add a few categorized transactions to see your spending split.</string>
     
     <!-- Debug Screens -->
     <string name="debug_error_review_not_found">Review not found</string>

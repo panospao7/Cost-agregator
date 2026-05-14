@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.components.analytics
+﻿package com.yourname.expensetracker.ui.components.analytics
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,8 +31,8 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 fun PercentileGridCard(
     percentiles: TransactionPercentiles,
     modifier: Modifier = Modifier,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    // S9-024: Required - no default EUR
+    currency: String
 ) {
     val a11yContentDesc = stringResource(
         R.string.a11y_percentile_range_format,
@@ -120,8 +120,8 @@ private fun PercentileColumn(
     isSecondary: Boolean = false,
     isSmall: Boolean = false,
     isLarge: Boolean = false,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    // S9-024: Required - no default EUR
+    currency: String
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -167,8 +167,8 @@ private fun PercentileColumn(
 fun TransactionHistogramChart(
     bins: List<HistogramBin>,
     modifier: Modifier = Modifier,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    // S9-024: Required - no default EUR
+    currency: String
 ) {
     if (bins.isEmpty()) return
     
@@ -288,8 +288,8 @@ fun CategoryPercentileBadge(
     percentile25: Double,
     percentile75: Double,
     velocity: Double,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR",
+    // S9-024: Required - no default EUR
+    currency: String,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -355,8 +355,8 @@ fun RichMerchantCard(
     totalSpent: Double,
     transactionCount: Int,
     averagePerVisit: Double,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR",
+    // S9-024: Required - no default EUR
+    currency: String,
     loyaltyScore: Float,
     consecutiveMonthsVisited: Int,
     consistencyRating: String,
@@ -560,3 +560,4 @@ fun RichMerchantCard(
         }
     }
 }
+

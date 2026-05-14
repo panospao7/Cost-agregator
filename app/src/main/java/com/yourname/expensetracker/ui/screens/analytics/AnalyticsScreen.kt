@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.analytics
+﻿package com.yourname.expensetracker.ui.screens.analytics
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -79,6 +79,8 @@ fun AnalyticsScreen(
     viewModel: AnalyticsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    // S9-003: Use empty string as display fallback when currency not yet loaded
+    val currency = state.homeCurrency ?: ""
 
     LaunchedEffect(initialPeriod) {
         initialPeriod
@@ -152,11 +154,11 @@ fun AnalyticsScreen(
                     item { StatisticalHighlights(stats) }
                     
                     // NEW: Percentile Grid - Shows P10, P25, P50, P75, P90
-                    item { PercentileGridCard(percentiles = stats.percentiles, currency = state.homeCurrency) }
+                    item { PercentileGridCard(percentiles = stats.percentiles, currency = currency) }
                     
                     // NEW: Transaction Histogram - Visual distribution of transaction sizes
                     if (stats.histogramBins.isNotEmpty()) {
-                        item { TransactionHistogramChart(bins = stats.histogramBins, currency = state.homeCurrency) }
+                        item { TransactionHistogramChart(bins = stats.histogramBins, currency = currency) }
                     }
                 }
 
@@ -175,7 +177,7 @@ fun AnalyticsScreen(
 
                 // 5c. Hour-of-Day Spending Chart (period-aware)
                 if (state.hourOfDayPattern.isNotEmpty()) {
-                    item { HourOfDayChartBento(state.hourOfDayPattern, state.homeCurrency) }
+                    item { HourOfDayChartBento(state.hourOfDayPattern, currency) }
                 }
 
                 // 5d. Spending Patterns (weekend vs weekday, detected behaviors)
@@ -190,7 +192,8 @@ fun AnalyticsScreen(
                     item {
                         CategoryDonutChart(
                             categories = state.categoryBreakdown,
-                            totalSpent = state.currentTotal
+                            totalSpent = state.currentTotal,
+                            currency = currency
                         )
                     }
                     items(state.enhancedCategories) { cat ->
@@ -211,10 +214,11 @@ fun AnalyticsScreen(
                     item {
                         CategoryDonutChart(
                             categories = state.categoryBreakdown,
-                            totalSpent = state.currentTotal
+                            totalSpent = state.currentTotal,
+                            currency = currency
                         )
                     }
-                    items(state.categoryBreakdown) { CategoryItem(it, homeCurrency = state.homeCurrency) }
+                    items(state.categoryBreakdown) { CategoryItem(it, homeCurrency = currency) }
                 }
 
                 // 6b. Budget vs Actual
@@ -258,14 +262,14 @@ fun AnalyticsScreen(
                     }
                 } else if (state.merchantBreakdown.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_top_merchants)) }
-                    items(state.merchantBreakdown.take(8)) { MerchantItem(it, homeCurrency = state.homeCurrency) }
+                    items(state.merchantBreakdown.take(8)) { MerchantItem(it, homeCurrency = currency) }
                 }
 
                 // 8.5. Top Spending Places (B5 — LocationInsightsEngine)
                 if (state.locationInsights.isNotEmpty()) {
                     item { AnalyticsSectionHeader(stringResource(R.string.analytics_section_top_places), stringResource(R.string.analytics_section_top_places_subtitle)) }
                     items(state.locationInsights.take(5)) { insight ->
-                        PlaceInsightCard(insight, homeCurrency = state.homeCurrency)
+                        PlaceInsightCard(insight, homeCurrency = currency)
                     }
                 }
 
@@ -273,7 +277,7 @@ fun AnalyticsScreen(
                 if (state.areaSpending.isNotEmpty()) {
                     item { AnalyticsSectionHeader(stringResource(R.string.analytics_section_spending_by_area), stringResource(R.string.analytics_section_spending_by_area_subtitle)) }
                     items(state.areaSpending.take(6)) { area ->
-                        AreaSpendingItem(area, homeCurrency = state.homeCurrency)
+                        AreaSpendingItem(area, homeCurrency = currency)
                     }
                 }
 
@@ -281,38 +285,38 @@ fun AnalyticsScreen(
                 state.travelInsight?.let { travel ->
                     if (travel.travelSpend > 0 || travel.localSpend > 0) {
                         item { AnalyticsSectionHeader(stringResource(R.string.analytics_section_travel_vs_home), stringResource(R.string.analytics_section_travel_vs_home_subtitle)) }
-                        item { TravelInsightCard(travel, homeCurrency = state.homeCurrency) }
+                        item { TravelInsightCard(travel, homeCurrency = currency) }
                     }
                 }
 
                 // 9. Velocity Anomalies
                 if (state.velocityAnomalies.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_velocity_anomalies)) }
-                    items(state.velocityAnomalies) { VelocityAnomalyCard(it, homeCurrency = state.homeCurrency) }
+                    items(state.velocityAnomalies) { VelocityAnomalyCard(it, homeCurrency = currency) }
                 }
 
                 // 10. Year-over-Year Comparison
                 state.yearOverYear?.let { yoy ->
                     item { SectionHeader(stringResource(R.string.analytics_section_yoy_comparison)) }
-                    item { YearOverYearCard(yoy, homeCurrency = state.homeCurrency) }
+                    item { YearOverYearCard(yoy, homeCurrency = currency) }
                 }
 
                 // 11. Post-Salary Sequential Pattern
                 state.postSalaryPattern?.let { pattern ->
                     item { SectionHeader(stringResource(R.string.analytics_section_post_salary)) }
-                    item { PostSalaryPatternCard(pattern, homeCurrency = state.homeCurrency) }
+                    item { PostSalaryPatternCard(pattern, homeCurrency = currency) }
                 }
 
                 // 12. Suspect / Duplicate Transactions
                 if (state.suspectTransactions.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_suspect_duplicates)) }
-                    items(state.suspectTransactions) { SuspectTransactionCard(it, homeCurrency = state.homeCurrency) }
+                    items(state.suspectTransactions) { SuspectTransactionCard(it, homeCurrency = currency) }
                 }
 
                 // 13. Recurring
                 if (state.recurring.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_subscription_detection)) }
-                    items(state.recurring) { RecurringItem(it, homeCurrency = state.homeCurrency) }
+                    items(state.recurring) { RecurringItem(it, homeCurrency = currency) }
                 }
 
                 // 14. Spending Personality Profile (F13)
@@ -750,7 +754,7 @@ fun TotalSpentHero(state: AnalyticsState) {
             Spacer(modifier = Modifier.height(4.dp))
             AmountText(
                 amount = state.currentTotal,
-                currency = state.homeCurrency,
+                currency = state.homeCurrency ?: "",
                 style = MaterialTheme.typography.displayMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
@@ -788,7 +792,7 @@ fun TotalSpentHero(state: AnalyticsState) {
                 Text(
                     text = stringResource(
                         R.string.analytics_vs_last_period_format,
-                        CurrencyFormatter.formatMoney(prevTotal, state.homeCurrency, showCents = false)
+                        CurrencyFormatter.formatMoney(prevTotal, state.homeCurrency ?: "", showCents = false)
                     ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
@@ -1007,8 +1011,8 @@ fun BudgetVsActualChart(items: List<BudgetVsActualItem>) {
                                 text = if (hasValidBudget) {
                                     stringResource(
                                         R.string.analytics_budget_range_format,
-                                        formatAmount(item.actualSpent, item.displayCurrency, showCents = false),
-                                        formatAmount(item.budgetAmount, item.displayCurrency, showCents = false)
+                                        formatAmount(item.actualSpent, item.displayCurrency ?: "", showCents = false),
+                                        formatAmount(item.budgetAmount, item.displayCurrency ?: "", showCents = false)
                                     )
                                 } else {
                                     stringResource(R.string.forecast_no_budget_set)

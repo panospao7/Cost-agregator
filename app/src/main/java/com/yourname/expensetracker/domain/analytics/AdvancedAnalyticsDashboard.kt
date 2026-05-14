@@ -112,7 +112,8 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         startDate: Long,
         endDate: Long
     ): AnalyticsDashboardData = withContext(Dispatchers.IO) {
-        val displayCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
+        // S9-010: Do not fall back to "EUR" — throw if home currency unavailable
+        val displayCurrency = currencySettingsRepository.homeCurrency().first()
         val expensesRaw = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
         val comparisonExpenses = if (endDate > startDate) {
             val daysInPeriod = TimePeriodUtils.daysBetween(startDate, endDate).coerceAtLeast(1)
