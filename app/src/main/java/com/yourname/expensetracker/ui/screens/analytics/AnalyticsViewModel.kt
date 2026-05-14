@@ -104,6 +104,13 @@ data class AnalyticsState(
     val referenceNowMillis: Long = 0L
 ) {
     val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(homeCurrency))
+
+    /** Universal contract: typed loadable state. */
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<AnalyticsState>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(this)
+        }
 }
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)

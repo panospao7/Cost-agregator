@@ -44,6 +44,16 @@ data class SavingsGoalsState(
 	val homeCurrency: String = "EUR"
 ) {
  val moneyTotalSaved: MoneyAmount get() = MoneyAmount(totalSaved, CurrencyCode(homeCurrency))
+
+ /** Universal contract: typed loadable state. */
+ val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<SavingsGoal>>
+     get() = when {
+         isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+         goals.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(
+             com.yourname.expensetracker.domain.model.UiText.DynamicString("No savings goals yet")
+         )
+         else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(goals)
+     }
 }
 
 data class SmartRecommendation(

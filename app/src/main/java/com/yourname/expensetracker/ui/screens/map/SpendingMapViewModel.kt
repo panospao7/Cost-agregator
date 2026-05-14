@@ -105,7 +105,17 @@ data class SpendingMapState(
    val homeCurrency: String = "EUR",
   val referenceNowMillis: Long = 0L,
   val mapConversionWarnings: Int = 0
-)
+) {
+  /** Universal contract: typed loadable state for map markers. */
+  val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<MapExpenseMarker>>
+      get() = when {
+          isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+          markers.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(
+              com.yourname.expensetracker.domain.model.UiText.DynamicString("No located expenses")
+          )
+          else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(markers)
+      }
+}
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 

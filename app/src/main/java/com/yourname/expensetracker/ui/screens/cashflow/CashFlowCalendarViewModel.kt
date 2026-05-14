@@ -35,6 +35,16 @@ data class CashFlowCalendarState(
 	val homeCurrency: String = "EUR"
 ) {
  val moneyStartingBalance: MoneyAmount get() = MoneyAmount(startingBalance, CurrencyCode(homeCurrency))
+
+ /** Universal contract: typed loadable state. */
+ val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<DailyCashFlow>>
+     get() = when {
+         isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+         dailyCashFlows.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(
+             com.yourname.expensetracker.domain.model.UiText.DynamicString("No cash flow data")
+         )
+         else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(dailyCashFlows)
+     }
 }
 
 enum class CalendarViewMode {

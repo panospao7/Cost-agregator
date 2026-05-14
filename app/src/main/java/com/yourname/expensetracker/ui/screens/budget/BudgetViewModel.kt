@@ -33,7 +33,20 @@ data class BudgetUiState(
     /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
     val homeCurrency: String = "EUR",
     val referenceNowMillis: Long = 0L
-)
+) {
+    /** Universal contract: typed loadable state for budget list. */
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<BudgetStatus>>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            error != null -> com.yourname.expensetracker.ui.model.LoadableUiState.Error(
+                com.yourname.expensetracker.domain.model.UiText.DynamicString(error)
+            )
+            budgets.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(
+                com.yourname.expensetracker.domain.model.UiText.DynamicString("No budgets configured")
+            )
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(budgets)
+        }
+}
 
 @HiltViewModel
 class BudgetViewModel @Inject constructor(

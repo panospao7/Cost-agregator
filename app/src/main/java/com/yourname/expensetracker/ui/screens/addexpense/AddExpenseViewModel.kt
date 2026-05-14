@@ -44,6 +44,7 @@ data class AddExpenseState(
  val showSuggestions: Boolean = false,
  val isSaving: Boolean = false,
  val saveResult: SaveResult? = null,
+ val mutation: com.yourname.expensetracker.ui.model.MutationState = com.yourname.expensetracker.ui.model.MutationState.idle(),
  val merchantError: String? = null,
  val amountError: String? = null,
  val transferDirection: TransferDirection? = null,
