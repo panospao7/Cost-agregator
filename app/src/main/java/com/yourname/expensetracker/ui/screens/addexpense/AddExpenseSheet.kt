@@ -87,13 +87,10 @@ fun AddExpenseSheet(
     val scrollState = rememberScrollState()
 
     // Handle save result
-    LaunchedEffect(state.saveResult) {
-        when (state.saveResult) {
-            is SaveResult.Success -> {
-                viewModel.reset()
-                onDismiss()
-            }
-            else -> { /* handled in UI */ }
+    LaunchedEffect(state.mutation.isSuccess) {
+        if (state.mutation.isSuccess) {
+            viewModel.reset()
+            onDismiss()
         }
     }
 
@@ -141,10 +138,10 @@ fun AddExpenseSheet(
                 actions = {
                     Button(
                         onClick = { viewModel.save() },
-                        enabled = !state.isSaving,
+                        enabled = !state.mutation.isRunning,
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
-                        if (state.isSaving) {
+                        if (state.mutation.isRunning) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 color = MaterialTheme.colorScheme.onPrimary,

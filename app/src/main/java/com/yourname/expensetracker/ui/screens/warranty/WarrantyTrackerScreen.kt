@@ -253,7 +253,7 @@ fun WarrantyTrackerScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Warranty List
-            if (state.isLoading) {
+            if (state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Loading) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center

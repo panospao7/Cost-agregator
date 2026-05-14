@@ -495,9 +495,9 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                    StatLabel(stringResource(R.string.widget_today), CurrencyFormatter.formatMoney(widget.todaySpent, homeCurrency), modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_week), CurrencyFormatter.formatMoney(widget.weekSpent, homeCurrency), modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_month), CurrencyFormatter.formatMoney(widget.monthSpent, homeCurrency), modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency).formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency).formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_month), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency).formatted, modifier = Modifier.weight(1f))
                                     }
                                 }
                             }

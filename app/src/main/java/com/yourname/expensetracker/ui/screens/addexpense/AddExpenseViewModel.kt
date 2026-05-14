@@ -259,7 +259,7 @@ class AddExpenseViewModel @Inject constructor(
 
         // S5-005: Block save until homeCurrency is loaded (prevent EUR placeholder persistence)
         if (currentState.homeCurrency == "EUR" && homeCurrencyJob?.isActive == true) {
-            _state.update { it.copy(saveResult = SaveResult.Error("Loading currency settings...")) }
+            _state.update { it.copy(saveResult = SaveResult.Error("Loading currency settings..."), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Loading currency settings..."))) }
             return
         }
 
@@ -286,7 +286,7 @@ class AddExpenseViewModel @Inject constructor(
             TimePeriodUtils.getEndOfDay(timeProvider.now()) - 1
         }
         if (currentState.date > endOfToday) {
-            _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future")) }
+            _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Date cannot be in the future"))) }
             return
         }
 
@@ -294,13 +294,13 @@ class AddExpenseViewModel @Inject constructor(
         if (currentState.transactionType == TransactionType.TRANSFER) {
             if (currentState.transferDirection == null) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Transfer direction is required for transfer transactions"))
+                    it.copy(saveResult = SaveResult.Error("Transfer direction is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer direction is required for transfer transactions")))
                 }
                 return
             }
             if (transferAccountNameTrimmed.isBlank()) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Transfer account name is required for transfer transactions"))
+                    it.copy(saveResult = SaveResult.Error("Transfer account name is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer account name is required for transfer transactions")))
                 }
                 return
             }
@@ -313,7 +313,7 @@ class AddExpenseViewModel @Inject constructor(
 
         if (currentState.isNotMine && currentState.isSharedExpense) {
             _state.update {
-                it.copy(saveResult = SaveResult.Error("Expense cannot be both not-mine and shared"))
+                it.copy(saveResult = SaveResult.Error("Expense cannot be both not-mine and shared"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Expense cannot be both not-mine and shared")))
             }
             return
         }
@@ -323,14 +323,14 @@ class AddExpenseViewModel @Inject constructor(
         if (currentState.isSharedExpense) {
             if (currentState.sharedWithName.trim().isBlank()) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Shared with name is required for shared expenses"))
+                    it.copy(saveResult = SaveResult.Error("Shared with name is required for shared expenses"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Shared with name is required for shared expenses")))
                 }
                 return
             }
 
             if (hasSharePercentage == hasShareAmount) {
                 _state.update {
-                    it.copy(saveResult = SaveResult.Error("Set either share % or share amount for shared expenses"))
+                    it.copy(saveResult = SaveResult.Error("Set either share % or share amount for shared expenses"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Set either share % or share amount for shared expenses")))
                 }
                 return
             }
@@ -339,7 +339,7 @@ class AddExpenseViewModel @Inject constructor(
                 val parsedSharePercentage = sharePercentageText.toIntOrNull()
                 if (parsedSharePercentage == null || parsedSharePercentage !in 0..100) {
                     _state.update {
-                        it.copy(saveResult = SaveResult.Error("Share percentage must be between 0 and 100"))
+                        it.copy(saveResult = SaveResult.Error("Share percentage must be between 0 and 100"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Share percentage must be between 0 and 100")))
                     }
                     return
                 }
@@ -349,7 +349,7 @@ class AddExpenseViewModel @Inject constructor(
                 val parsedShareAmount = AmountUtils.parseAmount(shareAmountText)
                 if (parsedShareAmount == null || parsedShareAmount <= 0) {
                     _state.update {
-                        it.copy(saveResult = SaveResult.Error("Share amount must be greater than 0"))
+                        it.copy(saveResult = SaveResult.Error("Share amount must be greater than 0"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Share amount must be greater than 0")))
                     }
                     return
                 }
@@ -366,7 +366,7 @@ class AddExpenseViewModel @Inject constructor(
             .setScale(2, java.math.RoundingMode.HALF_UP)
             .toDouble()
 
-        _state.update { it.copy(isSaving = true, saveResult = null) }
+        _state.update { it.copy(isSaving = true, saveResult = null, mutation = com.yourname.expensetracker.ui.model.MutationState.running("save")) }
 
         viewModelScope.launch {
             try {
@@ -400,12 +400,12 @@ class AddExpenseViewModel @Inject constructor(
                 when (result) {
                     is Result.Success -> {
                         _state.update {
-                            it.copy(isSaving = false, saveResult = SaveResult.Success)
+                            it.copy(isSaving = false, saveResult = SaveResult.Success, mutation = com.yourname.expensetracker.ui.model.MutationState.success("save"))
                         }
                     }
                     is Result.Duplicate -> {
                         _state.update {
-                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
+                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate, mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Duplicate expense")))
                         }
                     }
                     is Result.Error -> {
