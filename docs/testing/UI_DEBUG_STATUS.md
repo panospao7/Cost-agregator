@@ -76,3 +76,37 @@ Last updated: 2026-05-14
 - S2-007/008/009: Localization pass (not blocking functionality)
 - S3-005/006/007: Require deeper ViewModel refactors
 - S3-011: Documentation-only fix
+
+---
+
+## Slice 4 — Home/Dashboard
+
+| Issue | Description | Status | Commit |
+|-------|-------------|--------|--------|
+| S4-001 | HomeScreen monolithic composable | ⏭️ Deferred (large extraction) | — |
+| S4-002 | HomeViewModel too many responsibilities | ⏭️ Deferred (large extraction) | — |
+| S4-003 | Widget render else branch (silent failures) | ⏭️ Deferred (risky without full test coverage) | — |
+| S4-004 | Widget ID/config/style mapping drift | ⏭️ Deferred | — |
+| S4-005 | SafeToSpend no-budget misleading | ✅ Fixed | `c0148aac` |
+| S4-006 | Calendar.getInstance in composable | ✅ Acceptable (computes from widget dateMs) | — |
+| S4-007 | Currency reactivity bug (category trends) | ✅ Fixed | `c0148aac` |
+| S4-008 | Cross-widget financial invariants not enforced | ⏭️ Deferred (needs fixture) | — |
+| S4-009 | Totals drill-down state machine fragile | ⏭️ Deferred | — |
+| S4-010 | Totals/category errors invisible | ⏭️ Deferred | — |
+| S4-011 | Widget config mutations synchronous | ⏭️ Deferred | — |
+| S4-012 | Widget edit overlay lacks boundary UX | ⏭️ Deferred | — |
+| S4-013 | Unsafe Array casts in combine | ⏭️ Deferred | — |
+| S4-014 | Recommendation navigation error handling | ⏭️ Deferred | — |
+
+**Tests:** All 24 HomeViewModelRecommendationTest pass.
+
+---
+
+## Updated Summary
+
+| Slice | Total Issues | Fixed | Deferred | Coverage |
+|-------|-------------|-------|----------|----------|
+| 1 — Navigation | 8 | 8 | 0 | 100% |
+| 2 — Shared UI | 12 | 5 | 7 | 42% |
+| 3 — Privacy | 12 | 8 | 4 | 67% |
+| 4 — Dashboard | 14 | 2 | 12 | 14% (critical UX + currency fixed) |
