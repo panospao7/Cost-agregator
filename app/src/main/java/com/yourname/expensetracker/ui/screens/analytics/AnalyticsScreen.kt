@@ -105,7 +105,7 @@ fun AnalyticsScreen(
             )
         }
     ) { padding ->
-        if (state.isLoading) {
+        if (state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Loading) {
             // Skeleton loading state
             Column(
                 modifier = Modifier

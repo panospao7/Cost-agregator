@@ -170,79 +170,93 @@ fun BudgetScreen(
             )
         }
         
-        // Migration note: uiState.loadableState provides typed LoadableUiState<List<BudgetStatus>>
-        // Future refactor can use: when (uiState.loadableState) { Loading -> ..., Data -> ..., Empty -> ..., Error -> ... }
-        if (uiState.isLoading) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp)
-            ) {
-                // Summary card skeleton
-                Card(
+        when (uiState.loadableState) {
+            is com.yourname.expensetracker.ui.model.LoadableUiState.Loading -> {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(80.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    )
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(16.dp)
                 ) {
-                    Box(modifier = Modifier.fillMaxSize())
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                // Budget cards skeleton
-                ListSkeleton(itemCount = 4)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item { BudgetSummaryCard(uiState.budgets) }
-
-                if (uiState.suggestions.isNotEmpty()) {
-                    item { SuggestionsBanner(uiState.suggestions, categories, uiState.referenceNowMillis, onAdd = { viewModel.addBudget(it) }) }
-                }
-
-                // F9: AI Budget Autopilot Banner
-                item {
-        AutopilotBanner(
-            recommendations = uiState.autopilotRecommendations,
-            isLoading = uiState.autopilotLoading,
-            onGenerate = { viewModel.generateAutopilotRecommendations() },
-            onApply = { recommendation ->
-                viewModel.applyAutopilotRecommendation(recommendation)
-            },
-            onApplyAll = { viewModel.applyAllAutopilotRecommendations() },
-            onDismiss = { viewModel.dismissAllAutopilotRecommendations() },
-            homeCurrency = uiState.homeCurrency
-        )
-                }
-
-                if (uiState.budgets.isEmpty()) {
-                    item {
-                        EmptyBudgetsState {
-                            preselectedCategoryIdForAdd = null
-                            showAddDialog = true
-                        }
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(80.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize())
                     }
-                } else {
-            items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
-                        BudgetCard(
-                            status = budgetStatus,
-                            referenceNowMillis = uiState.referenceNowMillis,
-                            onEdit = { editingBudget = budgetStatus },
-                            onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
-                            onDelete = { viewModel.deleteBudget(it) },
-                            onViewForecast = onNavigateToForecast?.let { navigate ->
-                                { navigate(budgetStatus.budget) }
-                            }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    ListSkeleton(itemCount = 4)
+                }
+            }
+            is com.yourname.expensetracker.ui.model.LoadableUiState.Error -> {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = (uiState.loadableState as com.yourname.expensetracker.ui.model.LoadableUiState.Error).message.let {
+                            (it as? com.yourname.expensetracker.domain.model.UiText.DynamicString)?.value ?: "Error loading budgets"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            is com.yourname.expensetracker.ui.model.LoadableUiState.Empty,
+            is com.yourname.expensetracker.ui.model.LoadableUiState.Data -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item { BudgetSummaryCard(uiState.budgets) }
+
+                    if (uiState.suggestions.isNotEmpty()) {
+                        item { SuggestionsBanner(uiState.suggestions, categories, uiState.referenceNowMillis, onAdd = { viewModel.addBudget(it) }) }
+                    }
+
+                    // F9: AI Budget Autopilot Banner
+                    item {
+                        AutopilotBanner(
+                            recommendations = uiState.autopilotRecommendations,
+                            isLoading = uiState.autopilotLoading,
+                            onGenerate = { viewModel.generateAutopilotRecommendations() },
+                            onApply = { recommendation ->
+                                viewModel.applyAutopilotRecommendation(recommendation)
+                            },
+                            onApplyAll = { viewModel.applyAllAutopilotRecommendations() },
+                            onDismiss = { viewModel.dismissAllAutopilotRecommendations() },
+                            homeCurrency = uiState.homeCurrency
                         )
                     }
+
+                    if (uiState.budgets.isEmpty()) {
+                        item {
+                            EmptyBudgetsState {
+                                preselectedCategoryIdForAdd = null
+                                showAddDialog = true
+                            }
+                        }
+                    } else {
+                        items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
+                            BudgetCard(
+                                status = budgetStatus,
+                                referenceNowMillis = uiState.referenceNowMillis,
+                                onEdit = { editingBudget = budgetStatus },
+                                onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
+                                onDelete = { viewModel.deleteBudget(it) },
+                                onViewForecast = onNavigateToForecast?.let { navigate ->
+                                    { navigate(budgetStatus.budget) }
+                                }
+                            )
+                        }
+                    }
+                    item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
-                item { Spacer(modifier = Modifier.height(80.dp)) }
             }
         }
 

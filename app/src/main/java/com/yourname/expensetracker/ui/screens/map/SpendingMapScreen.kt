@@ -170,14 +170,14 @@ fun SpendingMapScreen(
         containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        if (state.isLoading) {
+        // Universal contract: use loadableState for typed loading check
+        if (state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Loading) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
                     .padding(16.dp)
             ) {
-                // Map area skeleton
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -190,7 +190,6 @@ fun SpendingMapScreen(
                     Box(modifier = Modifier.fillMaxSize())
                 }
                 Spacer(modifier = Modifier.height(16.dp))
-                // Stats bar skeleton
                 ListSkeleton(itemCount = 3)
             }
             return@Scaffold

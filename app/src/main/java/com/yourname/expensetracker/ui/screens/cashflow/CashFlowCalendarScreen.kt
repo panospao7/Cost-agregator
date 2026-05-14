@@ -155,14 +155,32 @@ fun CashFlowCalendarScreen(
             Spacer(modifier = Modifier.height(8.dp))
             
             // Calendar Grid
-            if (state.isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
+            when (state.loadableState) {
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Loading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-            } else {
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Empty -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No cash flow data for this period", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Error -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Error loading cash flow", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Data -> {
                 val calendar = Calendar.getInstance()
                 calendar.time = state.currentMonth
                 calendar.set(Calendar.DAY_OF_MONTH, 1)
@@ -206,6 +224,7 @@ fun CashFlowCalendarScreen(
                         }
                     }
                 }
+            }
             }
 
             state.selectedDate?.let { selectedDate ->
