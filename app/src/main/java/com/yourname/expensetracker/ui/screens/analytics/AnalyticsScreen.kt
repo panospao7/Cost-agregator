@@ -147,18 +147,46 @@ fun AnalyticsScreen(
 
                 if (state.conversionWarnings.isNotEmpty()) {
                     item { AnalyticsWarningsCard(state.conversionWarnings) }
+                } else if (state.dataQualityPartial) {
+                    // S9-011: Show partial data indicator even when warnings list is empty
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f))
+                        ) {
+                            Text(
+                                text = "Some data may be incomplete due to missing exchange rates.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
                 }
 
                 // 3. Statistical Highlights (daily avg, largest spend, volatility)
                 state.statisticalInsights?.let { stats ->
                     item { StatisticalHighlights(stats) }
-                    
-                    // NEW: Percentile Grid - Shows P10, P25, P50, P75, P90
                     item { PercentileGridCard(percentiles = stats.percentiles, currency = currency) }
-                    
-                    // NEW: Transaction Histogram - Visual distribution of transaction sizes
                     if (stats.histogramBins.isNotEmpty()) {
                         item { TransactionHistogramChart(bins = stats.histogramBins, currency = currency) }
+                    }
+                } ?: run {
+                    // S9-012: Show section error if statistics engine failed
+                    state.advancedSectionErrors["statistics"]?.let { err ->
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f))
+                            ) {
+                                Text(
+                                    text = "Statistical insights unavailable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(12.dp)
+                                )
+                            }
+                        }
                     }
                 }
 

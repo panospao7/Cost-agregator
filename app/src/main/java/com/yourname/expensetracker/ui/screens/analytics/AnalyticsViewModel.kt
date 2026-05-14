@@ -97,6 +97,10 @@ data class AnalyticsState(
     val latestRateTimestamp: Long? = null,
     /** S9-013: Top-level error — null when healthy, non-null when analytics load failed */
     val error: String? = null,
+    /** S9-012: Per-section errors — key = section name, value = error message */
+    val advancedSectionErrors: Map<String, String> = emptyMap(),
+    /** S9-011: true when any conversion warnings exist (data is partial) */
+    val dataQualityPartial: Boolean = false,
     val referenceNowMillis: Long = 0L
 ) {
     val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(homeCurrency ?: ""))
@@ -181,7 +185,9 @@ class AnalyticsViewModel @Inject constructor(
         val merchs: List<EnhancedMerchantAnalytics>,
         val patterns: SpendingPatternAnalysis?,
         val stats: StatisticalInsights?,
-        val warnings: List<AnalyticsConversionWarning> = emptyList()
+        val warnings: List<AnalyticsConversionWarning> = emptyList(),
+        /** S9-012: section name → error message for failed sub-engines */
+        val sectionErrors: Map<String, String> = emptyMap()
     )
 
     private data class BudgetChartResult(
@@ -567,16 +573,24 @@ class AnalyticsViewModel @Inject constructor(
             // Spending patterns and statistical insights still use the old API (not yet migrated)
             val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
             val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
-            val (cats, catWarnings) = try { catDeferred.await() } catch (_: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
-            val (merchs, merchWarnings) = try { merchDeferred.await() } catch (_: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
-            val (patterns, patternWarnings) = try { patternsDeferred.await() } catch (_: Exception) { null to emptyList<AnalyticsConversionWarning>() }
-            val (stats, statWarnings) = try { statsDeferred.await() } catch (_: Exception) { null to emptyList<AnalyticsConversionWarning>() }
+            val (cats, catWarnings) = try { catDeferred.await() } catch (e: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
+            val (merchs, merchWarnings) = try { merchDeferred.await() } catch (e: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
+            val (patterns, patternWarnings) = try { patternsDeferred.await() } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
+            val (stats, statWarnings) = try { statsDeferred.await() } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
+            // S9-012: Collect per-section errors so UI can show "section unavailable" instead of silent empty
+            val sectionErrors = buildMap<String, String> {
+                try { catDeferred.await() } catch (e: Exception) { put("categories", e.message ?: "Category analytics failed") }
+                try { merchDeferred.await() } catch (e: Exception) { put("merchants", e.message ?: "Merchant analytics failed") }
+                try { patternsDeferred.await() } catch (e: Exception) { put("patterns", e.message ?: "Spending patterns failed") }
+                try { statsDeferred.await() } catch (e: Exception) { put("statistics", e.message ?: "Statistical insights failed") }
+            }
             AdvResult(
                 cats = cats,
                 merchs = merchs,
                 patterns = patterns,
                 stats = stats,
-                warnings = (catWarnings + merchWarnings + patternWarnings + statWarnings).distinct()
+                warnings = (catWarnings + merchWarnings + patternWarnings + statWarnings).distinct(),
+                sectionErrors = sectionErrors
             ).also { advancedCache[cacheKey] = it }
         }
 
@@ -690,7 +704,11 @@ class AnalyticsViewModel @Inject constructor(
   conversionWarnings = mergeWarnings(conversionWarnings + advResult.warnings),
   qualityWarnings = mergeWarnings(conversionWarnings + advResult.warnings).map { it.message },
   latestRateTimestamp = latestRateTimestamp,
-  referenceNowMillis = timeProvider.now()
+  referenceNowMillis = timeProvider.now(),
+  // S9-012: Surface per-section errors so UI can show "unavailable" instead of silent empty
+  advancedSectionErrors = advResult.sectionErrors,
+  // S9-011: Mark partial when any conversion warnings exist
+  dataQualityPartial = (conversionWarnings + advResult.warnings).isNotEmpty()
   )
     }
 
