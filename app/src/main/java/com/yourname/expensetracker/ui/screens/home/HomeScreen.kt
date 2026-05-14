@@ -339,16 +339,7 @@ fun HomeScreen(
                                         days = widget.days.toUi(),
                                         modifier = Modifier.fillMaxWidth(),
                                         onNavigateToDay = { dateMs ->
-                                            val cal = Calendar.getInstance().apply {
-                                                timeInMillis = dateMs
-                                                set(Calendar.HOUR_OF_DAY, 0)
-                                                set(Calendar.MINUTE, 0)
-                                                set(Calendar.SECOND, 0)
-                                                set(Calendar.MILLISECOND, 0)
-                                            }
-                                            val startOfDay = cal.timeInMillis
-                                            cal.add(Calendar.DAY_OF_MONTH, 1)
-                                            val nextDayStart = cal.timeInMillis
+                                            val (startOfDay, nextDayStart) = com.yourname.expensetracker.ui.util.UiTimeUtils.dayRange(dateMs)
                                             onNavigateToTransactions(
                                                 TransactionFilter(dateRange = startOfDay to nextDayStart)
                                             )
@@ -359,16 +350,7 @@ fun HomeScreen(
                                         days = widget.days.toUi(),
                                         modifier = Modifier.fillMaxWidth(),
                                         onNavigateToDay = { dateMs ->
-                                            val cal = Calendar.getInstance().apply {
-                                                timeInMillis = dateMs
-                                                set(Calendar.HOUR_OF_DAY, 0)
-                                                set(Calendar.MINUTE, 0)
-                                                set(Calendar.SECOND, 0)
-                                                set(Calendar.MILLISECOND, 0)
-                                            }
-                                            val startOfDay = cal.timeInMillis
-                                            cal.add(Calendar.DAY_OF_MONTH, 1)
-                                            val nextDayStart = cal.timeInMillis
+                                            val (startOfDay, nextDayStart) = com.yourname.expensetracker.ui.util.UiTimeUtils.dayRange(dateMs)
                                             onNavigateToTransactions(
                                                 TransactionFilter(dateRange = startOfDay to nextDayStart)
                                             )

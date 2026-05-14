@@ -842,7 +842,9 @@ private fun DateHeader(
                     }
                 ) {
                     Text(
-                        text = CurrencyFormatter.formatWithSign(totalAmount, homeCurrency),
+                        // TODO S5-004: totalAmount is raw sum of mixed currencies.
+                        // Should use MoneyDisplayUi from ViewModel with currency conversion.
+                        text = CurrencyFormatter.formatMoneyWithSign(totalAmount, homeCurrency),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = when {
