@@ -330,10 +330,12 @@ fun ListSkeleton(
     itemCount: Int = 5,
     modifier: Modifier = Modifier
 ) {
+    val loadingDescription = stringResource(R.string.a11y_loading_content)
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(Dimens.Space16),
+            .padding(Dimens.Space16)
+            .semantics { contentDescription = loadingDescription },
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(Dimens.Space12)
     ) {
         repeat(itemCount) {

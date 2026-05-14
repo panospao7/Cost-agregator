@@ -191,10 +191,12 @@ fun FormDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
     confirmEnabled: Boolean = true,
-    confirmText: String = "Save",
-    dismissText: String = "Cancel",
+    confirmText: String = "",
+    dismissText: String = "",
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val resolvedConfirm = confirmText.ifEmpty { stringResource(com.yourname.expensetracker.R.string.save_button) }
+    val resolvedDismiss = dismissText.ifEmpty { stringResource(com.yourname.expensetracker.R.string.cancel_button) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -210,12 +212,12 @@ fun FormDialog(
                 onClick = onConfirm,
                 enabled = confirmEnabled
             ) {
-                Text(confirmText)
+                Text(resolvedConfirm)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(dismissText)
+                Text(resolvedDismiss)
             }
         }
     )
@@ -253,10 +255,12 @@ fun FormActions(
     onCancel: () -> Unit,
     onSubmit: () -> Unit,
     submitEnabled: Boolean = true,
-    submitText: String = "Save",
-    cancelText: String = "Cancel",
+    submitText: String = "",
+    cancelText: String = "",
     modifier: Modifier = Modifier
 ) {
+    val resolvedSubmit = submitText.ifEmpty { stringResource(com.yourname.expensetracker.R.string.save_button) }
+    val resolvedCancel = cancelText.ifEmpty { stringResource(com.yourname.expensetracker.R.string.cancel_button) }
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -265,7 +269,7 @@ fun FormActions(
             onClick = onCancel,
             modifier = Modifier.weight(1f)
         ) {
-            Text(cancelText)
+            Text(resolvedCancel)
         }
         
         Button(
@@ -273,7 +277,7 @@ fun FormActions(
             enabled = submitEnabled,
             modifier = Modifier.weight(1f)
         ) {
-            Text(submitText)
+            Text(resolvedSubmit)
         }
     }
 }
