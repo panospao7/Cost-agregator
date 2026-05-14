@@ -185,10 +185,14 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - BudgetDetail (parameterized: categoryId/categoryName)
 - AiSettings
 - CategoryManagement
+- Debug (BuildConfig.DEBUG gated)
 
 ### Navigation Infrastructure
 - **NavigationController.kt:** State management for navigation
-- **FeatureConfig.kt:** Feature feature configuration
+- **NavigationDestination.kt:** Sealed class with all routes + token serialization
+- **FeatureConfig.kt:** Feature menu configuration
+- **DeepLinkParser.kt:** Deep link parsing with security classification (Allow/RequireConfirmation/Reject)
+- **DestinationPersistencePolicy.kt:** Classifies destinations as FULL/DEGRADED/EPHEMERAL
 - **MainActivity.kt:** Navigation host and activity setup
 
 ### Gaps / notes

@@ -71,7 +71,7 @@
 | Route | Destination Class | ViewModel | Screen File | Segment |
 |-------|------------------|-----------|-------------|---------|
 | Privacy Settings | *(no NavigationDestination)* | `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | 6 (Privacy) |
-| Debug | _(Debug-only, not in NavigationDestination)_ | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` | — |
+| Debug | `NavigationDestination.Debug` | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` | BuildConfig.DEBUG gated |
 
 ---
 
