@@ -69,9 +69,10 @@ import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import android.provider.Settings
 
-/** Returns the currency symbol, defaulting to "€" (EUR) when [currencyCode] is null. */
+/** Returns the currency symbol for [currencyCode], or "?" if not yet loaded. */
 private fun getCurrencySymbol(currencyCode: String?): String {
-    return CurrencyFormatter.getCurrencySymbol(currencyCode ?: "EUR")
+    if (currencyCode.isNullOrBlank()) return "?"
+    return CurrencyFormatter.getCurrencySymbol(currencyCode)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -159,8 +160,10 @@ fun ReceiptScanScreen(
                     }
                 },
                 actions = {
-                    // Debug button (only show in review/error steps)
-                    if ((state.step == ScanStep.REVIEW || state.step == ScanStep.ERROR) && state.debugData != null) {
+                    // S7-018: Debug button only in debug builds
+                    if (com.yourname.expensetracker.BuildConfig.DEBUG &&
+                        (state.step == ScanStep.REVIEW || state.step == ScanStep.ERROR) &&
+                        state.debugData != null) {
                         val viewDebugCd = stringResource(R.string.receipt_view_debug_cd)
                         IconButton(
                             onClick = { showDebugViewer = true },
@@ -448,8 +451,8 @@ private fun ReviewStep(
                     HorizontalDivider()
                     preview.fieldSummaries.forEach { field ->
                         val renderedValue = when (field.label) {
-                            // Falls back to "EUR" when parsed currency is unavailable
-                            "Amount" -> CurrencyFormatter.formatMoney(preview.amount, parsed?.currency ?: "EUR")
+                            // S7-009: Use editCurrency, not parsed?.currency ?: "EUR"
+                            "Amount" -> CurrencyFormatter.formatMoney(preview.amount, state.editCurrency ?: "")
                             "Date" -> DateFormatterUtils.formatTimestampJavaTime(preview.date, "dd/MM/yyyy")
                             else -> field.value
                         }
@@ -778,8 +781,9 @@ private fun ReviewStep(
         value = state.editAmount,
         onValueChange = { viewModel.updateAmount(it) },
         label = { Text(stringResource(totalLabelRes)) },
-        leadingIcon = { 
-            Text(getCurrencySymbol(parsed?.currency), fontSize = 18.sp, fontWeight = FontWeight.Bold) 
+        leadingIcon = {
+            // S7-010: Use editCurrency (user-selected), not parsed OCR currency
+            Text(getCurrencySymbol(state.editCurrency), fontSize = 18.sp, fontWeight = FontWeight.Bold)
         },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
@@ -792,7 +796,7 @@ private fun ReviewStep(
 
     // Currency (RCP-10/N2)
     CurrencyPicker(
-        selectedCurrency = state.editCurrency,
+        selectedCurrency = state.editCurrency ?: "",
         onCurrencySelected = { viewModel.updateCurrency(it) }
     )
 
@@ -1016,45 +1020,45 @@ private fun ReviewStep(
         maxLines = 3
     )
 
-    // Raw OCR toggle
-    Spacer(modifier = Modifier.height(8.dp))
-    val toggleCd = stringResource(R.string.receipt_toggle_cd)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { viewModel.toggleRawText() },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            stringResource(R.string.receipt_raw_ocr_label),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Icon(
-            if (state.showRawText) Icons.Default.KeyboardArrowUp
-            else Icons.Default.KeyboardArrowDown,
-            contentDescription = toggleCd,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+    // S7-034: Typed raw OCR display — hide when blank (privacy policy may have purged it)
+    val rawOcrUiState = when {
+        state.rawOcrText.isBlank() -> null // Not available or purged by privacy policy
+        else -> state.rawOcrText
     }
-
-    AnimatedVisibility(visible = state.showRawText) {
-        Card(
+    if (rawOcrUiState != null) {
+        Spacer(modifier = Modifier.height(8.dp))
+        val toggleCd = stringResource(R.string.receipt_toggle_cd)
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 4.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-            )
+                .clickable { viewModel.toggleRawText() },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = state.rawOcrText.ifBlank { stringResource(R.string.receipt_no_text_detected) },
-                modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp
+                stringResource(R.string.receipt_raw_ocr_label),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Icon(
+                if (state.showRawText) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = toggleCd,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        AnimatedVisibility(visible = state.showRawText) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            ) {
+                Text(
+                    text = rawOcrUiState,
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp
+                )
+            }
         }
     }
 
@@ -1087,27 +1091,46 @@ private fun ReviewStep(
     }
 
     when (state.saveResult) {
-        is SaveReceiptResult.Duplicate -> {
+        is SaveReceiptResult.DuplicateTransaction -> {
             Spacer(modifier = Modifier.height(8.dp))
             Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                ),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onErrorContainer
-                    )
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.receipt_duplicate_transaction), color = MaterialTheme.colorScheme.onErrorContainer)
+                }
+            }
+        }
+        is SaveReceiptResult.DuplicateReceipt -> {
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.receipt_duplicate_receipt), color = MaterialTheme.colorScheme.onErrorContainer)
+                }
+            }
+        }
+        is SaveReceiptResult.PartialLinkFailure -> {
+            // S7-005: Expense was created but receipt link failed
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        stringResource(R.string.receipt_duplicate_transaction),
-                        color = MaterialTheme.colorScheme.onErrorContainer
+                        text = stringResource(R.string.receipt_partial_link_failure),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -1115,25 +1138,13 @@ private fun ReviewStep(
         is SaveReceiptResult.Error -> {
             Spacer(modifier = Modifier.height(8.dp))
             Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                ),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Error,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onErrorContainer
-                    )
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        (state.saveResult as SaveReceiptResult.Error).message,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
+                    Text((state.saveResult as SaveReceiptResult.Error).message, color = MaterialTheme.colorScheme.onErrorContainer)
                 }
             }
         }
