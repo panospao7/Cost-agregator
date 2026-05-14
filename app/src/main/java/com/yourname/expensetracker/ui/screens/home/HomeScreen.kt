@@ -496,8 +496,8 @@ fun HomeScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                     StatLabel(stringResource(R.string.widget_today), CurrencyFormatter.formatMoney(widget.todaySpent, homeCurrency), modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_week), CurrencyFormatter.format(widget.weekSpent, homeCurrency), modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_month), CurrencyFormatter.format(widget.monthSpent, homeCurrency), modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), CurrencyFormatter.formatMoney(widget.weekSpent, homeCurrency), modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_month), CurrencyFormatter.formatMoney(widget.monthSpent, homeCurrency), modifier = Modifier.weight(1f))
                                     }
                                 }
                             }

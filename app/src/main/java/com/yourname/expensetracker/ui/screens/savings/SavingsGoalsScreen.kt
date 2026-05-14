@@ -148,27 +148,34 @@ fun SavingsGoalsScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (state.isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
+            when (val loadable = state.loadableState) {
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Loading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-            } else if (state.goals.isEmpty()) {
-                EmptyGoalsState()
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(state.goals) { goal ->
-            GoalCard(
-                goal = goal,
-                dateFormat = dateFormat,
-                onClick = { viewModel.selectGoal(goal) },
-                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0) },
-                homeCurrency = state.homeCurrency
-            )
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Empty -> {
+                    EmptyGoalsState()
+                }
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Error -> {
+                    EmptyGoalsState() // Fallback to empty state on error
+                }
+                is com.yourname.expensetracker.ui.model.LoadableUiState.Data -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(loadable.value) { goal ->
+                            GoalCard(
+                                goal = goal,
+                                dateFormat = dateFormat,
+                                onClick = { viewModel.selectGoal(goal) },
+                                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0) },
+                                homeCurrency = state.homeCurrency
+                            )
+                        }
                     }
                 }
             }

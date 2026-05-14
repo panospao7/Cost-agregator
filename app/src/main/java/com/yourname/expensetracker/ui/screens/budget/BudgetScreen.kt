@@ -170,6 +170,8 @@ fun BudgetScreen(
             )
         }
         
+        // Migration note: uiState.loadableState provides typed LoadableUiState<List<BudgetStatus>>
+        // Future refactor can use: when (uiState.loadableState) { Loading -> ..., Data -> ..., Empty -> ..., Error -> ... }
         if (uiState.isLoading) {
             Column(
                 modifier = Modifier
