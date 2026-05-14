@@ -26,18 +26,18 @@ Last updated: 2026-05-14
 | S2-001 | Shared primitives bypass theme colors | ✅ Fixed | `e4c66f4d` |
 | S2-002 | Buttons with null callbacks look clickable | ✅ Fixed | `e4c66f4d` |
 | S2-003 | EmptyState/ErrorState not scroll-safe | ✅ Fixed | `e4c66f4d` |
-| S2-004 | EmptyState/EnhancedEmptyState duplication | ⏭️ Deferred (low risk, larger refactor) | — |
-| S2-005 | Loading skeleton accessibility noise | ⏭️ Deferred (medium priority) | — |
+| S2-004 | EmptyState/EnhancedEmptyState duplication | ✅ Fixed (EmptyState delegates) | `ff1a056f` |
+| S2-005 | Loading skeleton accessibility noise | ✅ Fixed (parent semantics) | `c740f4cd` |
 | S2-006 | Registry overwrites on duplicate registration | ✅ Fixed (merge semantics) | `e4c66f4d` |
-| S2-007 | Empty-state actions hardcoded English strings | ⏭️ Deferred (localization pass) | — |
-| S2-008 | Form amount input too naive for money | ⏭️ Deferred (needs AmountInputSanitizer) | — |
-| S2-009 | Form dialogs hardcoded defaults | ⏭️ Deferred (localization pass) | — |
+| S2-007 | Empty-state actions hardcoded English strings | ✅ Fixed (@StringRes) | `c332c5b0` |
+| S2-008 | Form amount input too naive for money | ✅ Fixed (AmountInputSanitizer) | `c740f4cd` |
+| S2-009 | Form dialogs hardcoded defaults | ✅ Fixed (string resources) | `c740f4cd` |
 | S2-010 | Theme Activity cast fragile | ✅ Fixed (safe findActivity) | `e4c66f4d` |
 | S2-011 | Missing Compose tests for global components | ⏭️ Deferred (needs Compose test infra) | — |
 | S2-012 | Documentation numbering drift | ⏭️ Deferred (low priority) | — |
 
 **Tests added:** EmptyStateRegistryCompletenessTest (2)
-**Production fixes:** 4 missing empty state registrations, theme colors, scroll, button states, registry merge, Activity cast
+**Production fixes:** Theme colors, scroll safety, button states, registry merge, Activity cast, skeleton a11y, amount sanitizer, form defaults, EmptyState deduplication, action string localization, 4 missing empty state registrations
 
 ---
 
@@ -72,8 +72,8 @@ Last updated: 2026-05-14
 | 3 — Privacy | 12 | 8 | 4 | 67% |
 
 **Deferred items rationale:**
-- S2-004/005/011: Require Compose test infrastructure or larger refactors
-- S2-007/008/009: Localization pass (not blocking functionality)
+- S2-011: Requires Compose test infrastructure setup
+- S2-012: Trivial docs numbering fix
 - S3-005/006/007: Require deeper ViewModel refactors
 - S3-011: Documentation-only fix
 
@@ -139,7 +139,7 @@ Last updated: 2026-05-14
 | Slice | Total Issues | Fixed | Deferred | Coverage |
 |-------|-------------|-------|----------|----------|
 | 1 — Navigation | 8 | 8 | 0 | 100% |
-| 2 — Shared UI | 12 | 5 | 7 | 42% |
+| 2 — Shared UI | 12 | 10 | 2 | 83% |
 | 3 — Privacy | 12 | 8 | 4 | 67% |
 | 4 — Dashboard | 14 | 3 | 11 | 21% |
 | 5 — Transactions | 12 | 2 | 10 | 17% (critical data fixes) |

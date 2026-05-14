@@ -63,6 +63,10 @@ All `EmptyStateScreenKeys` have registered actions:
 | `OpenFeature(featureId)` | Open feature by string ID |
 | `ExecuteAction { }` | Run arbitrary lambda |
 
+### Action Data
+
+`EmptyStateAction` uses `@StringRes titleRes` and `@StringRes descriptionRes` for localization. No hardcoded English strings.
+
 ## Loading Skeleton
 
 - `SkeletonBox` — single shimmer box
@@ -82,7 +86,7 @@ Uses `SemanticColors.SurfaceLight` (acceptable — loading state is always dark-
 ## Known Tech Debt
 
 - 12+ screens use hardcoded `Color(0xFF4CAF50)` instead of `SemanticColors.StatusGreen`
-- `EmptyState` and `EnhancedEmptyState` duplicate layout logic (S2-004)
-- Loading skeleton accessibility is noisy (S2-005)
-- Empty-state action strings are hardcoded English (S2-007)
-- Form amount input lacks proper money sanitization (S2-008)
+- Loading skeleton accessibility is noisy (S2-005) — ✅ FIXED: parent semantics
+- Empty-state action strings are hardcoded English (S2-007) — ✅ FIXED: @StringRes
+- Form amount input lacks proper money sanitization (S2-008) — ✅ FIXED: AmountInputSanitizer
+- `EmptyState` and `EnhancedEmptyState` duplicate layout logic (S2-004) — ✅ FIXED: EmptyState delegates
