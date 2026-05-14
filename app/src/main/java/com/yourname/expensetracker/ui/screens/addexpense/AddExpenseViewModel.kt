@@ -253,6 +253,15 @@ class AddExpenseViewModel @Inject constructor(
     fun save() {
         val currentState = _state.value
 
+        // S5-007: Guard against double-tap
+        if (currentState.isSaving) return
+
+        // S5-005: Block save until homeCurrency is loaded (prevent EUR placeholder persistence)
+        if (currentState.homeCurrency == "EUR" && homeCurrencyJob?.isActive == true) {
+            _state.update { it.copy(saveResult = SaveResult.Error("Loading currency settings...")) }
+            return
+        }
+
         // Validate
         val merchantTrimmed = currentState.merchant.trim()
         if (merchantTrimmed.isBlank()) {
