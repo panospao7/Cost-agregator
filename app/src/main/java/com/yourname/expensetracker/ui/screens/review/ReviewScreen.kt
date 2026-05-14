@@ -122,6 +122,14 @@ fun ReviewScreen(
         }
     }
 
+    // S6-005: Close edit dialog only after successful approval
+    LaunchedEffect(Unit) {
+        viewModel.editApproveSuccess.collect { _ ->
+            editingReview = null
+            editingReviewReceipt = null
+        }
+    }
+
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -472,8 +480,7 @@ fun ReviewScreen(
                             finalAddress = address,
                             finalPlaceId = osmId
                         )
-                        editingReview = null
-                        editingReviewReceipt = null
+                        // S6-005: Dialog closes via editApproveSuccess LaunchedEffect, not here
                     },
                     initialCategoryIdOverride = initialCategoryIdOverride,
                     initialReceiptPrefill = initialReceiptPrefill,
@@ -1592,7 +1599,11 @@ fun EditReviewDialog(
             OutlinedTextField(
                 value = amount,
                 onValueChange = { amount = it },
-                label = { Text(stringResource(R.string.review_amount_euro_label)) },
+                label = { Text(
+                    // S6-016: Show actual currency from review, not hardcoded EUR
+                    if (review.suggestedCurrency != null) "Amount (${review.suggestedCurrency})"
+                    else stringResource(R.string.review_amount_label_generic)
+                ) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
@@ -1776,7 +1787,16 @@ fun EditReviewDialog(
                 Button(
                     onClick = {
                         haptic(HapticType.Success)
+                        // S6-015: Validate before save
                         val parsedAmount = AmountUtils.parseAmount(amount)
+                        if (amount.isNotBlank() && parsedAmount == null) {
+                            // Invalid amount — don't save
+                            return@Button
+                        }
+                        if (merchant.isBlank()) {
+                            // Blank merchant — don't save
+                            return@Button
+                        }
                         val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - (review.suggestedAmount ?: 0.0)) > 0.001) parsedAmount else null
                         val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
                         val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
@@ -1789,7 +1809,7 @@ fun EditReviewDialog(
                             locationLat.takeIf { it != review.suggestedLatitude },
                             locationLon.takeIf { it != review.suggestedLongitude },
                             locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude },
-                            locationOsmId  // F7: pass captured osmId through
+                            locationOsmId
                         )
                     },
                     shape = RoundedCornerShape(12.dp)

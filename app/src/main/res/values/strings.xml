@@ -469,6 +469,7 @@
     <string name="review_transaction_type_label">Transaction Type</string>
     <string name="review_merchant_name_label">Merchant Name</string>
     <string name="review_amount_euro_label">Amount (€)</string>
+    <string name="review_amount_label_generic">Amount</string>
     <string name="review_assign_category">Assign Category</string>
     <string name="review_apply_all_format">Apply to all past transactions for %1$s</string>
     <string name="review_approve_all_identical">Approve all identical pending transactions</string>

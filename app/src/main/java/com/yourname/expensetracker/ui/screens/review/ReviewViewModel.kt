@@ -35,9 +35,12 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoor
 import timber.log.Timber
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
@@ -94,6 +97,10 @@ class ReviewViewModel @Inject constructor(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage = _errorMessage.asStateFlow()
 
+    /** S6-005: Emits reviewId when approveReviewWithEdits succeeds — screen closes dialog on this. */
+    private val _editApproveSuccess = kotlinx.coroutines.flow.MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val editApproveSuccess: kotlinx.coroutines.flow.SharedFlow<Long> = _editApproveSuccess.asSharedFlow()
+
     private val _batchProgress = MutableStateFlow<Pair<Int, Int>?>(null) // current, total
     val batchProgress = _batchProgress.asStateFlow()
 
@@ -133,6 +140,22 @@ class ReviewViewModel @Inject constructor(
 
     /** Tracks review IDs that already have an in-flight coroutine, preventing duplicates. */
     private val _inFlightExplanations = mutableSetOf<Long>()
+
+    /** S6-003: Per-review mutation guard — prevents double-approve/reject. */
+    private val _inFlightMutations = mutableSetOf<Long>()
+
+    /** S6-012: Per-review AI assist in-flight guard — key is (reviewId, assistType). */
+    private val _inFlightAssist = mutableSetOf<Pair<Long, String>>()
+
+    /** S6-003: Attempt to begin a mutation. Returns false if already in-flight. */
+    private fun beginMutation(reviewId: Long): Boolean {
+        return _inFlightMutations.add(reviewId)
+    }
+
+    /** S6-003: Always call in finally block. */
+    private fun endMutation(reviewId: Long) {
+        _inFlightMutations.remove(reviewId)
+    }
 
     init {
         // Recover any reviews stuck in PROCESSING state from prior process death
@@ -246,6 +269,15 @@ class ReviewViewModel @Inject constructor(
         .getAllPendingReviews()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** S6-026: Typed loadable state for the review queue. */
+    val reviewQueueLoadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<PendingReviewWithReceipt>>
+        get() = when {
+            pendingReviews.value.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(
+                com.yourname.expensetracker.domain.model.UiText.DynamicString("All caught up!")
+            )
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(pendingReviews.value)
+        }
+
     val pendingCount: StateFlow<Int> = reviewQueueRepository
         .getPendingReviewCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
@@ -254,9 +286,14 @@ class ReviewViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun approveReview(reviewId: Long) {
+        if (!beginMutation(reviewId)) return // S6-003: idempotency guard
         viewModelScope.launch {
-            val result = reviewQueueRepository.approveReview(reviewId)
-            handleResult(result, "Failed to approve")
+            try {
+                val result = reviewQueueRepository.approveReview(reviewId)
+                handleResult(result, "Failed to approve")
+            } finally {
+                endMutation(reviewId)
+            }
         }
     }
 
@@ -271,12 +308,15 @@ class ReviewViewModel @Inject constructor(
 
 
     fun rejectReview(reviewId: Long) {
+        if (!beginMutation(reviewId)) return // S6-003: idempotency guard
         viewModelScope.launch {
             try {
                 reviewQueueRepository.rejectReview(reviewId)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to reject review $reviewId")
                 _errorMessage.value = "Failed to reject review: ${e.message ?: "Unknown error"}"
+            } finally {
+                endMutation(reviewId)
             }
         }
     }
@@ -296,49 +336,53 @@ class ReviewViewModel @Inject constructor(
         finalPlaceId: String? = null
     ) {
         viewModelScope.launch {
-            val result = reviewQueueRepository.approveReview(
-                reviewId = reviewId,
-                finalAmount = finalAmount,
-                finalMerchant = finalMerchant,
-                finalCategoryId = finalCategoryId,
-                finalDate = finalDate,
-                finalType = finalType,
-                finalLatitude = finalLatitude,
-                finalLongitude = finalLongitude,
-                finalAddress = finalAddress,
-                finalPlaceId = finalPlaceId
-            )
-            handleResult(result, "Failed to approve edits")
-            if (result !is Result.Success) return@launch
+            if (!beginMutation(reviewId)) return@launch // S6-003: idempotency guard
+            try {
+                // S6-006: Fetch original review BEFORE approval so bulk logic has correct merchant
+                val originalReview = reviewQueueRepository.getReviewById(reviewId)
 
-            if (applyToAll && (finalCategoryId != null || finalMerchant != null)) {
-                try {
-                    val review = reviewQueueRepository.getReviewById(reviewId)
-                    val originalMerchant = review?.suggestedMerchant
-                    val merchantName = finalMerchant ?: originalMerchant
-                    val categoryId = finalCategoryId
-                    
-                    if (merchantName != null && categoryId != null) {
-                        expenseRepository.updateExpenseCategoryBulk(merchantName, categoryId)
-                        // Propagation to other pending reviews
-                        reviewQueueRepository.updatePendingReviewCategoryBulk(merchantName, categoryId)
-                    }
+                val result = reviewQueueRepository.approveReview(
+                    reviewId = reviewId,
+                    finalAmount = finalAmount,
+                    finalMerchant = finalMerchant,
+                    finalCategoryId = finalCategoryId,
+                    finalDate = finalDate,
+                    finalType = finalType,
+                    finalLatitude = finalLatitude,
+                    finalLongitude = finalLongitude,
+                    finalAddress = finalAddress,
+                    finalPlaceId = finalPlaceId
+                )
+                handleResult(result, "Failed to approve edits")
+                if (result !is Result.Success) return@launch
 
-                    // Also handle bulk renaming if a new merchant name was provided
-                    if (finalMerchant != null && originalMerchant != null && finalMerchant != originalMerchant) {
-                        expenseRepository.updateExpenseMerchantBulk(originalMerchant, finalMerchant)
-                        reviewQueueRepository.updatePendingReviewMerchantBulk(originalMerchant, finalMerchant)
+                // S6-005: Emit success so screen can close dialog
+                _editApproveSuccess.tryEmit(reviewId)
+
+                if (applyToAll && (finalCategoryId != null || finalMerchant != null)) {
+                    try {
+                        val originalMerchant = originalReview?.suggestedMerchant
+                        val merchantName = finalMerchant ?: originalMerchant
+                        val categoryId = finalCategoryId
+                        
+                        if (merchantName != null && categoryId != null) {
+                            expenseRepository.updateExpenseCategoryBulk(merchantName, categoryId)
+                            reviewQueueRepository.updatePendingReviewCategoryBulk(merchantName, categoryId)
+                        }
+
+                        if (finalMerchant != null && originalMerchant != null && finalMerchant != originalMerchant) {
+                            expenseRepository.updateExpenseMerchantBulk(originalMerchant, finalMerchant)
+                            reviewQueueRepository.updatePendingReviewMerchantBulk(originalMerchant, finalMerchant)
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to apply bulk category update")
                     }
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to apply bulk category update")
                 }
-            }
 
-            if (approveAllPending) {
-                try {
-                    val review = reviewQueueRepository.getReviewById(reviewId)
-                    val originalMerchant = review?.suggestedMerchant
-                    val searchMerchant = finalMerchant ?: originalMerchant
+                if (approveAllPending) {
+                    try {
+                        val originalMerchant = originalReview?.suggestedMerchant
+                        val searchMerchant = finalMerchant ?: originalMerchant
                     if (searchMerchant != null) {
                         val identicalPending = reviewQueueRepository.getPendingReviewsByMerchant(searchMerchant)
                         for (pending in identicalPending) {
@@ -362,6 +406,9 @@ class ReviewViewModel @Inject constructor(
                     Timber.e(e, "Failed to apply bulk approval")
                 }
             }
+            } finally {
+                endMutation(reviewId)
+            }
         }
     }
 
@@ -371,48 +418,46 @@ class ReviewViewModel @Inject constructor(
     }
 
     fun requestCategoryAssist(reviewId: Long, force: Boolean = false) {
+        // S6-012: In-flight guard — prevent duplicate AI calls
+        val key = reviewId to "category"
+        if (!_inFlightAssist.add(key)) return
         viewModelScope.launch {
-            val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
-                ?: return@launch updateCategoryAssistState(
-                    reviewId,
-                    AiLoadState.Error("Review not found")
-                )
+            try {
+                val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
+                    ?: return@launch updateCategoryAssistState(reviewId, AiLoadState.Error("Review not found"))
 
-            updateCategoryAssistState(reviewId, AiLoadState.Loading)
+                updateCategoryAssistState(reviewId, AiLoadState.Loading)
 
-            when (val result = suggestCategoryFallbackUseCase(item, force = force)) {
-                is CategoryAssistGenerationResult.Success -> {
-                    val diagnostics = latestArtifactDiagnostics(
-                        targetKey = "pending_review:$reviewId",
-                        capability = AiCapability.CATEGORIZATION_FALLBACK
-                    )
-                    updateCategoryAssistState(
-                        reviewId = reviewId,
-                        state = AiLoadState.Ready(result.suggestion),
-                        diagnostics = diagnostics
-                    )
+                when (val result = suggestCategoryFallbackUseCase(item, force = force)) {
+                    is CategoryAssistGenerationResult.Success -> {
+                        val diagnostics = latestArtifactDiagnostics(
+                            targetKey = "pending_review:$reviewId",
+                            capability = AiCapability.CATEGORIZATION_FALLBACK
+                        )
+                        updateCategoryAssistState(reviewId = reviewId, state = AiLoadState.Ready(result.suggestion), diagnostics = diagnostics)
+                    }
+                    is CategoryAssistGenerationResult.Disabled -> updateCategoryAssistState(reviewId, AiLoadState.Disabled, diagnostics = null)
+                    is CategoryAssistGenerationResult.NotNeeded -> updateCategoryAssistState(reviewId, AiLoadState.Error("Not needed"), diagnostics = null)
+                    is CategoryAssistGenerationResult.Error -> {
+                        val diagnostics = latestArtifactDiagnostics(targetKey = "pending_review:$reviewId", capability = AiCapability.CATEGORIZATION_FALLBACK, expectedStatus = AiArtifactStatus.FAILED)
+                        updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = diagnostics)
+                    }
                 }
-                is CategoryAssistGenerationResult.Disabled -> {
-                    updateCategoryAssistState(reviewId, AiLoadState.Disabled, diagnostics = null)
-                }
-                is CategoryAssistGenerationResult.NotNeeded -> {
-                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
-                }
-                is CategoryAssistGenerationResult.Error -> {
-                    val diagnostics = latestArtifactDiagnostics(
-                        targetKey = "pending_review:$reviewId",
-                        capability = AiCapability.CATEGORIZATION_FALLBACK,
-                        expectedStatus = AiArtifactStatus.FAILED
-                    )
-                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = diagnostics)
-                }
+            } catch (e: Exception) {
+                Timber.e(e, "Category assist failed for review $reviewId")
+                updateCategoryAssistState(reviewId, AiLoadState.Error(e.message ?: "AI assist failed"))
+            } finally {
+                _inFlightAssist.remove(key)
             }
         }
     }
 
     fun requestReceiptAssist(reviewId: Long, force: Boolean = false) {
+        val key = reviewId to "receipt"
+        if (!_inFlightAssist.add(key)) return // S6-012: in-flight guard
         viewModelScope.launch {
-            val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
+            try {
+        val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
                 ?: return@launch updateReceiptAssistState(
                     reviewId,
                     AiLoadState.Error("Receipt review not found")
@@ -479,11 +524,20 @@ class ReviewViewModel @Inject constructor(
                     )
                 }
             }
+            } catch (e: Exception) {
+                Timber.e(e, "Receipt assist failed for review $reviewId")
+                updateReceiptAssistState(reviewId, AiLoadState.Error(e.message ?: "AI assist failed"), diagnostics = null, message = null)
+            } finally {
+                _inFlightAssist.remove(key)
+            }
         }
     }
 
     fun requestDedupeAssist(reviewId: Long, force: Boolean = false) {
+        val key = reviewId to "dedupe"
+        if (!_inFlightAssist.add(key)) return // S6-012: in-flight guard
         viewModelScope.launch {
+            try {
             val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
                 ?: return@launch updateDedupeAssistState(
                     reviewId,
@@ -519,6 +573,12 @@ class ReviewViewModel @Inject constructor(
                     updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = diagnostics)
                 }
             }
+            } catch (e: Exception) {
+                Timber.e(e, "Dedupe assist failed for review $reviewId")
+                updateDedupeAssistState(reviewId, AiLoadState.Error(e.message ?: "AI assist failed"), diagnostics = null)
+            } finally {
+                _inFlightAssist.remove(key)
+            }
         }
     }
 
@@ -550,8 +610,9 @@ class ReviewViewModel @Inject constructor(
         val state = _reviewCaptureAssistStates.value[reviewId] ?: return false
         val categoryReady = state.categorySuggestion as? AiLoadState.Ready ?: return false
         if (categoryReady.value.categoryId <= 0L) return false
-        val dedupeReady = state.dedupeSuggestion as? AiLoadState.Ready
-        return dedupeReady?.value?.verdict != com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.LIKELY_DUPLICATE
+        // S6-010: Require explicit LIKELY_DISTINCT — no dedupe state = no quick approve
+        val dedupeReady = state.dedupeSuggestion as? AiLoadState.Ready ?: return false
+        return dedupeReady.value.verdict == com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.LIKELY_DISTINCT
     }
 
     fun requestQuickApprovePreview(reviewId: Long) {
