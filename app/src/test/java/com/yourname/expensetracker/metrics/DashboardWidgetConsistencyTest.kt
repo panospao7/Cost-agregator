@@ -30,6 +30,8 @@ import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardDat
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
@@ -39,6 +41,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardDa
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -123,7 +126,6 @@ class DashboardWidgetConsistencyTest {
             synthesisEngine = SynthesisEngine(timeProvider),
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
-            multiCurrencyRepository = mockk(),
             healthCalculator = healthCalculator,
             healthScoreV2 = healthScoreV2,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
@@ -132,7 +134,10 @@ class DashboardWidgetConsistencyTest {
             stressForecastEngine = stressForecastEngine,
             forecastInputAssembler = mockk(),
             currencyConverter = mockk<CurrencyConverter>(relaxed = true),
-            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true).also {
+                coEvery { it.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
+            }
         )
     }
 

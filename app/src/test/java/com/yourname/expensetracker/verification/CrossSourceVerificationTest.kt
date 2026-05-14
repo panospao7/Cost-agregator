@@ -16,6 +16,8 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
@@ -111,15 +113,13 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider
         )
 
+        val multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true).also {
+            coEvery { it.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
+        }
         totalsAggregationEngine = TotalsAggregationEngine(
             expenseRepository = repository,
             timeProvider = timeProvider,
-            multiCurrencyRepository = MultiCurrencyRepository(
-                expenseDao = expenseDao,
-                currencyConverter = testCurrencyConverter(),
-                timeProvider = timeProvider,
-                currencySettingsRepository = TestCurrencySettingsRepository()
-            ),
+            multiCurrencyRepository = multiCurrencyRepository,
             categoryRepository = mockk(),
             ioDispatcher = Dispatchers.Unconfined
         )

@@ -63,7 +63,7 @@ class BudgetMonitorTest {
             notificationService.sendBudgetAlert(
                 11,
                 "Budget Warning",
-                "You've spent €80.00 (80%) of your Groceries budget."
+                "You've spent €80.00 (80%) of your Groceries budget (€100.00)."
             )
         }
     }
@@ -91,7 +91,7 @@ class BudgetMonitorTest {
             notificationService.sendBudgetAlert(
                 22,
                 "Critical Budget Warning",
-                "You've spent €95.00 (95%) of your Groceries budget."
+                "You've spent €95.00 (95%) of your Groceries budget (€100.00)."
             )
         }
     }
@@ -119,7 +119,7 @@ class BudgetMonitorTest {
             notificationService.sendBudgetAlert(
                 33,
                 "Budget Exceeded!",
-                "You've spent €130.00 (130%) of your Groceries budget."
+                "You've spent €130.00 (130%) of your Groceries budget (€100.00)."
             )
         }
     }

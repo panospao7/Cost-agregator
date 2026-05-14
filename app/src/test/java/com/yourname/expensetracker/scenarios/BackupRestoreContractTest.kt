@@ -354,8 +354,8 @@ class BackupRestoreContractTest {
 
     @Test
     fun `backupBundle valid header returns remaining ciphertext`() {
-        // GIVEN: a valid .costbackup header: "COSTBACKUP" + version 1
-        val magic = "COSTBACKUP".toByteArray(Charsets.US_ASCII) // 10 bytes
+        // GIVEN: a valid .costbackup header: "COSTBACKUP1" + version 1
+        val magic = "COSTBACKUP1".toByteArray(Charsets.US_ASCII) // 11 bytes
         val version = byteArrayOf(0x00, 0x01) // big-endian uint16 = 1
         val ciphertext = byteArrayOf(0x01, 0x02, 0x03, 0x04)
         val headerPlusCipher = magic + version + ciphertext
@@ -373,7 +373,7 @@ class BackupRestoreContractTest {
     @Test
     fun `backupBundle invalid magic throws InvalidBackupFormatException`() {
         // GIVEN: an invalid magic prefix
-        val badMagic = "BADMAGIC!!".toByteArray(Charsets.US_ASCII)
+        val badMagic = "BADMAGIC!!!".toByteArray(Charsets.US_ASCII)
         val version = byteArrayOf(0x00, 0x01)
         val header = badMagic + version
 
@@ -392,14 +392,14 @@ class BackupRestoreContractTest {
         )
         assertTrue(
             "Exception should mention the expected magic",
-            exception.message?.contains("COSTBACKUP") == true
+            exception.message?.contains("COSTBACKUP1") == true
         )
     }
 
     @Test
     fun `backupBundle unsupported version throws UnsupportedBackupVersionException`() {
         // GIVEN: magic followed by unsupported version 999
-        val magic = "COSTBACKUP".toByteArray(Charsets.US_ASCII)
+        val magic = "COSTBACKUP1".toByteArray(Charsets.US_ASCII)
         val badVersion = byteArrayOf(0x03, 0xE7.toByte()) // big-endian uint16 = 999
         val header = magic + badVersion
 
@@ -424,8 +424,8 @@ class BackupRestoreContractTest {
 
     @Test
     fun `backupBundle header too short throws IllegalArgumentException`() {
-        // GIVEN: a byte array shorter than the 12-byte header
-        val tooShort = "COSTBACKUP".toByteArray(Charsets.US_ASCII) // only 10 bytes
+        // GIVEN: a byte array shorter than the 13-byte header
+        val tooShort = "COSTBACKUP1".toByteArray(Charsets.US_ASCII) // only 11 bytes
 
         // WHEN: reading the header
         val exception = assertThrows(
@@ -445,13 +445,13 @@ class BackupRestoreContractTest {
     @Test
     fun `backupBundle readHeaderFromStream consumes correct bytes`() {
         // GIVEN: valid header bytes in an input stream
-        val magic = "COSTBACKUP".toByteArray(Charsets.US_ASCII)
+        val magic = "COSTBACKUP1".toByteArray(Charsets.US_ASCII)
         val version = byteArrayOf(0x00, 0x01) // big-endian uint16 = 1
         val ciphertext = ByteArray(32) { it.toByte() }
         val fullData = magic + version + ciphertext
         val inputStream = java.io.ByteArrayInputStream(fullData)
 
-        // WHEN: reading the header from the stream (consumes 12 bytes)
+        // WHEN: reading the header from the stream (consumes 13 bytes)
         CostbackupBundle.readHeaderFromStream(inputStream)
 
         // THEN: the stream is positioned at the ciphertext start

@@ -72,7 +72,6 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `expiring warranty triggers notification`() = runTest {
-        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(0, 0)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(sampleWarranty(id = 1L))
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
 
@@ -84,7 +83,6 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `no expiring warranties sends no notification`() = runTest {
-        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(0, 0)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
 
@@ -96,7 +94,6 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `worker returns success result`() = runTest {
-        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(1, 2)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns listOf(sampleWarranty(id = 2L))
         val notificationIdSlot = slot<Int>()
@@ -111,7 +108,7 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `worker handles exception gracefully`() = runTest {
-        coEvery { warrantyRepository.reconcileExpiredItems() } throws IllegalStateException("db unavailable")
+        coEvery { warrantyRepository.reconcileExpiredItems(any<Long>()) } throws IllegalStateException("db unavailable")
 
         val result = buildWorker().doWork()
 
@@ -121,7 +118,7 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `worker propagates CancellationException instead of returning retry`() = runTest {
-        coEvery { warrantyRepository.reconcileExpiredItems() } throws CancellationException("cancelled")
+        coEvery { warrantyRepository.reconcileExpiredItems(any<Long>()) } throws CancellationException("cancelled")
 
         try {
             buildWorker().doWork()
@@ -134,14 +131,13 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `worker reconciles expired items before notifications`() = runTest {
-        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(4, 5)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { warrantyRepository.reconcileExpiredItems() }
+        coVerify(exactly = 1) { warrantyRepository.reconcileExpiredItems(any<Long>()) }
     }
 
     private fun sampleWarranty(id: Long): Warranty {

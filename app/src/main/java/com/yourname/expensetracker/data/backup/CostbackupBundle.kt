@@ -24,7 +24,7 @@ import java.util.zip.ZipOutputStream
  * - files/receipts/ (receipt image assets)
  *
  * The outer archive is a header + AES-256-GCM ciphertext:
- *   COSTBACKUP1 (10B magic)
+ *   COSTBACKUP1 (11B magic)
  *   format_version (2B, big-endian uint16)
  *   [ciphertext...]
  *
@@ -38,8 +38,8 @@ object CostbackupBundle {
     private const val MAGIC = "COSTBACKUP1"
     private const val FORMAT_VERSION: UShort = 1u
 
-    /** Header size: magic (10) + format version (2) = 12 bytes. */
-    private const val HEADER_SIZE = 10 + 2
+    /** Header size: magic (11) + format version (2) = 13 bytes. */
+    private const val HEADER_SIZE = 11 + 2
 
     // ── Manifest / Checksums data classes (manual JSON) ───────────
 
@@ -200,8 +200,8 @@ object CostbackupBundle {
         var offset = 0
 
         // Magic
-        val magic = String(bytes, offset, 10, Charsets.US_ASCII)
-        offset += 10
+        val magic = String(bytes, offset, 11, Charsets.US_ASCII)
+        offset += 11
         if (magic != MAGIC) {
             throw InvalidBackupFormatException(
                 "Invalid magic: expected '$MAGIC', got '$magic'"

@@ -73,7 +73,7 @@ class ReceiptMatchingWorkerTest {
     @Test
     fun `unmatched receipts matching is attempted`() = runTest {
         val receipt = sampleReceipt(id = 10L)
-        coEvery { receiptRepository.getUnmatchedReceipts() } returns listOf(receipt)
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
         coEvery { matcher.findBestMatch(receipt) } returns MatchResult.NoMatch
 
         val result = buildWorker().doWork()
@@ -84,7 +84,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `all receipts matched no work needed`() = runTest {
-        coEvery { receiptRepository.getUnmatchedReceipts() } returns emptyList()
+        coEvery { receiptRepository.getProcessableReceipts() } returns emptyList()
 
         val result = buildWorker().doWork()
 
@@ -95,7 +95,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `worker returns success`() = runTest {
-        coEvery { receiptRepository.getUnmatchedReceipts() } returns listOf(sampleReceipt(id = 11L))
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(sampleReceipt(id = 11L))
         coEvery { matcher.findBestMatch(any()) } returns MatchResult.NoMatch
 
         val result = buildWorker().doWork()
@@ -105,7 +105,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `worker handles db error gracefully`() = runTest {
-        coEvery { receiptRepository.getUnmatchedReceipts() } throws IllegalStateException("db error")
+        coEvery { receiptRepository.getProcessableReceipts() } throws IllegalStateException("db error")
 
         val result = buildWorker().doWork()
 
@@ -115,7 +115,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `worker stops retrying malformed receipt failures`() = runTest {
-        coEvery { receiptRepository.getUnmatchedReceipts() } throws IllegalArgumentException("malformed receipt data")
+        coEvery { receiptRepository.getProcessableReceipts() } throws IllegalArgumentException("malformed receipt data")
 
         val result = buildWorker().doWork()
 
@@ -125,7 +125,7 @@ class ReceiptMatchingWorkerTest {
 
     @Test
     fun `worker stops retrying logical conflicts`() = runTest {
-        coEvery { receiptRepository.getUnmatchedReceipts() } throws IllegalStateException("receipt matching conflict")
+        coEvery { receiptRepository.getProcessableReceipts() } throws IllegalStateException("receipt matching conflict")
 
         val result = buildWorker().doWork()
 

@@ -45,7 +45,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
 
-        receiptParser = ReceiptParser(MerchantRulesRepository(), timeProvider = mockk(relaxed = true))
+        receiptParser = ReceiptParser(MerchantRulesRepository(), timeProvider = timeProvider)
 
         merchantNormalizationRepository = mockk(relaxed = true)
         coEvery { merchantNormalizationRepository.getAliasByNormalizedKey(any()) } returns null
@@ -89,7 +89,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse(""))
+        val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorizeWithContext(
             merchant = parsed.merchantName ?: "",
@@ -114,7 +114,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
 
         // Act
         val parsed = runCatching {
-            val ocrResult = ocrService.processImage(Uri.parse(""))
+            val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
             receiptParser.parse(ocrResult.fullText)
         }.getOrNull()
 
@@ -132,7 +132,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse(""))
+        val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
 
@@ -155,7 +155,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
         coEvery { merchantCategoryRepository.getAll() } returns emptyList()
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse(""))
+        val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
         val finalCategoryName = categorization.categoryName ?: "Uncategorized"

@@ -240,7 +240,7 @@ class ExecuteFinancialQueryUseCaseTest {
                 sortOrder = any()
             )
         } returns listOf(
-            expenseWithCategory(id = 1L, amount = 120.0, merchant = "Amazon", currency = "USD"),
+            expenseWithCategory(id = 1L, amount = 120.0, merchant = "Amazon", currency = "EUR"),
             expenseWithCategory(id = 2L, amount = 20.0, merchant = "Bakery", currency = "EUR")
         )
 
@@ -255,7 +255,7 @@ class ExecuteFinancialQueryUseCaseTest {
 
         assertTrue(result is FinancialQueryResult.Summary)
         result as FinancialQueryResult.Summary
-        assertEquals("Amazon: 120.00 USD", result.primaryText)
+        assertEquals("Amazon: 120.00 EUR", result.primaryText)
     }
 
     @Test
@@ -274,12 +274,16 @@ class ExecuteFinancialQueryUseCaseTest {
             ),
             metric = QueryMetric.COUNT
         )
-        coEvery { expenseRepository.getAssistantExpenseCountFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 7
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns listOf(expenseWithCategory(id = 1L, amount = 10.0))
 
         useCase(intent)
 
         coVerify {
-            expenseRepository.getAssistantExpenseCountFiltered(
+            expenseRepository.getAssistantExpensesFiltered(
                 startDate = 100L,
                 endDate = 200L,
                 transactionTypes = setOf(TransactionType.PURCHASE, TransactionType.WITHDRAWAL),

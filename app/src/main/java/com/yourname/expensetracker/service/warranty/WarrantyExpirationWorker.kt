@@ -63,7 +63,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 
             try {
                 Timber.d("Checking for expiring warranties...")
-                val reconciliationResult = warrantyRepository.reconcileExpiredItems()
+                val reconciliationResult = warrantyRepository.reconcileExpiredItems(System.currentTimeMillis())
 
                 // ── Persistent reminder state via SharedPreferences ───────────────
                 // Tracks last-notified timestamps per (warrantyId:window) key.

@@ -62,7 +62,7 @@ class InsightsEngineDeepTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
         val expenses = buildList {
             repeat(6) { add(createExpense(date = "2026-04-${(it + 1).toString().padStart(2, '0')}", amount = 100.0, category = "Food")) }
-            repeat(4) { add(createExpense(date = "2026-03-${it + 1}", amount = 100.0, category = "Food")) }
+            repeat(4) { add(createExpense(date = "2026-03-${(it + 1).toString().padStart(2, '0')}", amount = 100.0, category = "Food")) }
         }
 
         val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() }, "EUR")

@@ -455,7 +455,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine,
-            forecastInputAssembler = mockk(),
+            forecastInputAssembler = mockk(relaxed = true),
             currencyConverter = currencyConverter,
             currencySettingsRepository = currencySettingsRepository,
         )

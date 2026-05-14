@@ -4,10 +4,14 @@ import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.BusinessCategoryTotal
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.data.repository.TaxSettingsRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -32,13 +36,24 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
         businessExpenseRepository = mockk(relaxed = true)
+
+        val currencySettingsRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        val taxSettingsRepo = mockk<TaxSettingsRepository>(relaxed = true)
+        every { taxSettingsRepo.getFilingCurrency() } returns "EUR"
+        every { taxSettingsRepo.getTaxCountry() } returns "GR"
+        every { taxSettingsRepo.getFiscalYearStartMonth() } returns 1
+        every { taxSettingsRepo.getFiscalYearStartDay() } returns 1
+        every { currencySettingsRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { expenseDao.getBusinessExpensesBetweenByCurrency(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) } returns emptyList()
+
         taxEstimator = TaxEstimator(
             expenseDao = expenseDao,
             businessExpenseRepository = businessExpenseRepository,
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
-            taxSettings = mockk(relaxed = true),
+            currencySettingsRepository = currencySettingsRepo,
+            taxSettings = taxSettingsRepo,
             ioDispatcher = Dispatchers.Unconfined,
             taxRateProvider = mockk(relaxed = true)
         )
