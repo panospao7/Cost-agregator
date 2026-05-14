@@ -411,7 +411,12 @@ fun ReviewScreen(
                                     viewModel.requestReceiptAssist(item.review.id, force = true)
                                 },
                                 onApplyReceiptAssist = {
-                                    viewModel.applyReceiptSuggestion(item.review.id)
+                                    viewModel.applyReceiptSuggestion(item.review.id, ReviewViewModel.ReceiptApplyField.ALL)
+                                    editingReview = item.review
+                                    editingReviewReceipt = item
+                                },
+                                onApplyReceiptAssistField = { field ->
+                                    viewModel.applyReceiptSuggestion(item.review.id, field)
                                     editingReview = item.review
                                     editingReviewReceipt = item
                                 },
@@ -748,6 +753,7 @@ fun ReviewCard(
     onApplyCategoryAssist: () -> Unit = {},
     onLoadReceiptAssist: () -> Unit = {},
     onApplyReceiptAssist: () -> Unit = {},
+    onApplyReceiptAssistField: (ReviewViewModel.ReceiptApplyField) -> Unit = { onApplyReceiptAssist() },
     reviewQuickApproveEnabled: Boolean = false,
     canQuickApprove: Boolean = false,
     onRequestQuickApprove: () -> Unit = {},
@@ -982,11 +988,23 @@ fun ReviewCard(
                 
                 AnimatedVisibility(visible = showTrustSignal) {
                     Column(modifier = Modifier.padding(top = 16.dp)) {
+                        // S6-020: Only show raw text if it exists (null = privacy policy purged it)
+                        val displayText = when {
+                            review.notificationText.isNullOrBlank() ->
+                                stringResource(R.string.review_raw_evidence_privacy_hidden)
+                            else -> review.notificationText
+                        }
                         Text(
-                            text = review.notificationText ?: stringResource(R.string.review_no_raw_data),
+                            text = displayText,
                             style = MaterialTheme.typography.bodySmall,
-                            color = SemanticColors.TextPrimary,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = if (review.notificationText.isNullOrBlank())
+                                SemanticColors.TextSecondary
+                            else
+                                SemanticColors.TextPrimary,
+                            fontFamily = if (review.notificationText.isNullOrBlank())
+                                androidx.compose.ui.text.font.FontFamily.Default
+                            else
+                                androidx.compose.ui.text.font.FontFamily.Monospace,
                             lineHeight = 18.sp
                         )
                     }
@@ -1009,6 +1027,7 @@ fun ReviewCard(
                 state = captureAssistState,
                 onRequestReceiptAssist = onLoadReceiptAssist,
                 onApplyReceiptAssist = onApplyReceiptAssist,
+                onApplyReceiptAssistField = onApplyReceiptAssistField,
                 onRequestCategoryAssist = onLoadCategoryAssist,
                 onApplyCategoryAssist = onApplyCategoryAssist,
                 reviewQuickApproveEnabled = reviewQuickApproveEnabled,
@@ -1256,6 +1275,7 @@ private fun ReviewCaptureAssistSection(
     state: ReviewCaptureAssistState,
     onRequestReceiptAssist: () -> Unit,
     onApplyReceiptAssist: () -> Unit,
+    onApplyReceiptAssistField: (ReviewViewModel.ReceiptApplyField) -> Unit = { onApplyReceiptAssist() },
     onRequestCategoryAssist: () -> Unit,
     onApplyCategoryAssist: () -> Unit,
     reviewQuickApproveEnabled: Boolean,
@@ -1286,9 +1306,9 @@ private fun ReviewCaptureAssistSection(
                         ReceiptAssistCard(
                             suggestion = receiptState.value,
                             diagnostics = state.receiptDiagnostics,
-                            onApplyMerchant = onApplyReceiptAssist,
-                            onApplyTotal = onApplyReceiptAssist,
-                            onApplyDate = onApplyReceiptAssist,
+                            onApplyMerchant = { onApplyReceiptAssistField(ReviewViewModel.ReceiptApplyField.MERCHANT) },
+                            onApplyTotal = { onApplyReceiptAssistField(ReviewViewModel.ReceiptApplyField.AMOUNT) },
+                            onApplyDate = { onApplyReceiptAssistField(ReviewViewModel.ReceiptApplyField.DATE) },
                             onApplyAll = onApplyReceiptAssist,
                             onDismiss = onDismissReceiptAssist
                         )

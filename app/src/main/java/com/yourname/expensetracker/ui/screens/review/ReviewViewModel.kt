@@ -591,17 +591,23 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
-    fun applyReceiptSuggestion(reviewId: Long) {
+    /** S6-013: Which field(s) to apply from receipt suggestion. */
+    enum class ReceiptApplyField { MERCHANT, AMOUNT, DATE, ALL }
+
+    fun applyReceiptSuggestion(reviewId: Long, field: ReceiptApplyField = ReceiptApplyField.ALL) {
         val suggestion = (_reviewCaptureAssistStates.value[reviewId]?.receiptSuggestion as? AiLoadState.Ready)?.value
             ?: return
-        _prefilledReceiptSuggestions.update { current ->
-            current + (reviewId to suggestion.toPrefill())
+        val full = suggestion.toPrefill()
+        val prefill = when (field) {
+            ReceiptApplyField.MERCHANT -> ReviewReceiptPrefill(merchant = full.merchant)
+            ReceiptApplyField.AMOUNT   -> ReviewReceiptPrefill(amount = full.amount)
+            ReceiptApplyField.DATE     -> ReviewReceiptPrefill(date = full.date)
+            ReceiptApplyField.ALL      -> full
         }
+        _prefilledReceiptSuggestions.update { current -> current + (reviewId to prefill) }
         viewModelScope.launch {
             val receiptId = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)?.receipt?.id
-            if (receiptId != null) {
-                markReceiptArtifactApplied(receiptId)
-            }
+            if (receiptId != null) markReceiptArtifactApplied(receiptId)
         }
     }
 
@@ -648,20 +654,32 @@ class ReviewViewModel @Inject constructor(
             _errorMessage.value = "Review quick approve is turned off."
             return
         }
-        _quickApprovePreview.value = null
+        // S6-011: Don't clear preview yet — keep it open until we know the result
+        if (!beginMutation(preview.reviewId)) return
 
         viewModelScope.launch {
-            val result = reviewQueueRepository.approveReview(
-                reviewId = preview.reviewId,
-                finalCategoryId = preview.categoryId
-            )
-            handleResult(result, "Failed to quick approve")
-            if (result is Result.Success) {
-                markQuickApproveArtifactsApplied(preview.reviewId)
+            try {
+                val result = reviewQueueRepository.approveReview(
+                    reviewId = preview.reviewId,
+                    finalCategoryId = preview.categoryId
+                )
+                if (result is Result.Success) {
+                    // Only clear preview on success
+                    _quickApprovePreview.value = null
+                }
+                handleResult(result, "Failed to quick approve")
+                if (result is Result.Success) {
+                    markQuickApproveArtifactsApplied(preview.reviewId)
+                }
                 aiRuntimeDiagnostics.recordInteraction(
                     type = "phase4_accept",
                     message = "review quick approve confirmed for ${preview.reviewId}"
                 )
+            } catch (e: Exception) {
+                Timber.e(e, "Quick approve failed for ${preview.reviewId}")
+                _errorMessage.value = "Quick approve failed: ${e.message}"
+            } finally {
+                endMutation(preview.reviewId)
             }
         }
     }
@@ -731,9 +749,17 @@ class ReviewViewModel @Inject constructor(
             try {
                 _isBatchProcessing.value = true
                 _batchProgress.value = Pair(0, 1)
-                reviewQueueRepository.approveAllReview()
+                val results = reviewQueueRepository.approveAllReview()
                 _batchProgress.value = Pair(1, 1)
-                _errorMessage.value = "Approved all pending reviews."
+                // S6-007: Report per-item failures
+                val successCount = results.count { it.second is Result.Success }
+                val duplicateCount = results.count { it.second is Result.Duplicate }
+                val errorCount = results.count { it.second is Result.Error }
+                _errorMessage.value = when {
+                    errorCount > 0 || duplicateCount > 0 ->
+                        "Approved $successCount, skipped $duplicateCount duplicates, $errorCount failed."
+                    else -> "Approved all $successCount pending reviews."
+                }
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to approve all: ${e.message}"
             } finally {
