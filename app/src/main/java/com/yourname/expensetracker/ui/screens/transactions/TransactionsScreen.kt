@@ -113,10 +113,12 @@ fun TransactionsScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     
-    // Initial filter application
+    // S5-002: Apply or clear route-provided filter on every navigation
     LaunchedEffect(initialFilter) {
         if (initialFilter != null) {
             viewModel.applyFilter(initialFilter)
+        } else {
+            viewModel.clearRouteFilter()
         }
     }
 
@@ -152,6 +154,8 @@ fun TransactionsScreen(
     // Collect success messages
     LaunchedEffect(Unit) {
         viewModel.successMessage.collect { message ->
+            // S5-012: Close pending dialogs on success
+            expenseToDelete = null
             snackbarHostState.showSnackbar(
                 message = message,
                 duration = SnackbarDuration.Short,
@@ -466,12 +470,15 @@ fun TransactionsScreen(
                         groupedTransactions.forEach { (dateString, items) ->
                             // Date header
                             stickyHeader {
-            DateHeader(
-                    date = dateString,
-                    totalAmount = items.sumOf { it.expense.signedEffectiveAmount() },
-                    itemCount = items.size,
-                    homeCurrency = homeCurrency
-                )
+                                // S5-004: Only sum if all items are in the same currency
+                                val currencies = items.map { it.expense.currency.uppercase() }.toSet()
+                                val isMixedCurrency = currencies.size > 1
+                                DateHeader(
+                                    date = dateString,
+                                    totalAmount = if (isMixedCurrency) null else items.sumOf { it.expense.signedEffectiveAmount() },
+                                    itemCount = items.size,
+                                    homeCurrency = if (isMixedCurrency) null else homeCurrency
+                                )
                             }
                             
                             // Transactions for this date
@@ -546,8 +553,9 @@ fun TransactionsScreen(
                 expense = expenseToDelete!!,
                 onDismiss = { expenseToDelete = null },
                 onConfirm = {
+                    // S5-012: Don't close immediately - close on success event
                     viewModel.deleteExpense(expenseToDelete!!)
-                    expenseToDelete = null
+                    // Dialog closes via LaunchedEffect on successMessage below
                 }
             )
         }
@@ -792,10 +800,10 @@ private fun EmptyTransactionsState(
 @Composable
 private fun DateHeader(
     date: String,
-    totalAmount: Double,
+    totalAmount: Double?,
     itemCount: Int,
     /** Placeholder default. Production callers should pass explicit currency. */
-    homeCurrency: String = "EUR"
+    homeCurrency: String? = null
 ) {
     Box(
         modifier = Modifier
@@ -836,18 +844,22 @@ private fun DateHeader(
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = when {
+                        totalAmount == null -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
                         totalAmount < 0 -> SemanticColors.DangerRed.copy(alpha = 0.1f)
                         totalAmount > 0 -> SemanticColors.SuccessGreen.copy(alpha = 0.1f)
                         else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
                     }
                 ) {
                     Text(
-                        // TODO S5-004: totalAmount is raw sum of mixed currencies.
-                        // Should use MoneyDisplayUi from ViewModel with currency conversion.
-                        text = CurrencyFormatter.formatMoneyWithSign(totalAmount, homeCurrency),
+                        text = if (totalAmount == null || homeCurrency == null) {
+                            "Mixed currencies"
+                        } else {
+                            CurrencyFormatter.formatMoneyWithSign(totalAmount, homeCurrency)
+                        },
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = when {
+                            totalAmount == null -> SemanticColors.TextSecondary
                             totalAmount < 0 -> SemanticColors.DangerRed
                             totalAmount > 0 -> SemanticColors.SuccessGreen
                             else -> SemanticColors.TextSecondary

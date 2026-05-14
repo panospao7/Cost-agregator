@@ -130,12 +130,12 @@ class HomeViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _totalsDrillDownState = MutableStateFlow(PeriodDrillDownState(
-        currentLevel = PeriodType.MONTH,  // Start at MONTH level since we load monthly data
+        currentLevel = PeriodType.MONTH,
         selectedPeriod = null,
-        parentPeriod = null,
+        breadcrumb = emptyList(),
         periodTotals = emptyList(),
         categoryBreakdown = emptyList(),
-        isLoading = true  // Start with loading state
+        isLoading = true
     ))
 
     val totalsDrillDownState: StateFlow<PeriodDrillDownState> = 
@@ -368,25 +368,29 @@ class HomeViewModel @Inject constructor(
     }
 
     fun moveWidget(widgetId: String, moveUp: Boolean) {
-        val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
-        val index = currentConfig.indexOfFirst { it.id == widgetId }
-        if (index == -1) return
+        viewModelScope.launch {
+            val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
+            val index = currentConfig.indexOfFirst { it.id == widgetId }
+            if (index == -1) return@launch
 
-        val newIndex = if (moveUp) index - 1 else index + 1
-        if (newIndex !in currentConfig.indices) return
+            val newIndex = if (moveUp) index - 1 else index + 1
+            if (newIndex !in currentConfig.indices) return@launch
 
-        val temp = currentConfig[index]
-        currentConfig[index] = currentConfig[newIndex].copy(order = index)
-        currentConfig[newIndex] = temp.copy(order = newIndex)
+            val temp = currentConfig[index]
+            currentConfig[index] = currentConfig[newIndex].copy(order = index)
+            currentConfig[newIndex] = temp.copy(order = newIndex)
 
-        dashboardRepository.saveDashboardConfigSync(currentConfig.sortedBy { it.order })
+            dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
+        }
     }
 
     fun toggleWidgetVisibility(widgetId: String) {
-        val currentConfig = dashboardRepository.getDashboardConfig().map {
-            if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
+        viewModelScope.launch {
+            val currentConfig = dashboardRepository.getDashboardConfig().map {
+                if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
+            }
+            dashboardRepository.saveDashboardConfig(currentConfig)
         }
-        dashboardRepository.saveDashboardConfigSync(currentConfig)
     }
 
     /**
@@ -476,8 +480,20 @@ class HomeViewModel @Inject constructor(
     fun navigateToRecommendation(rec: DashboardFollowThroughRecommendation) {
         _selectedRecommendation.value = rec
         viewModelScope.launch {
-            val action = navigationTargetResolver.resolve(rec.navigationTarget, rec.filterCriteria)
-            _navigationActions.emit(action)
+            try {
+                val action = navigationTargetResolver.resolve(rec.navigationTarget, rec.filterCriteria)
+                if (action is NavigationAction.NoOp) {
+                    // S4-014: Resolver returned no-op — clear selection so UI doesn't hang
+                    _selectedRecommendation.value = null
+                    Timber.w("Recommendation navigation resolved to NoOp for target: ${rec.navigationTarget}")
+                } else {
+                    _navigationActions.emit(action)
+                }
+            } catch (e: Exception) {
+                // S4-014: On error, clear selection and log
+                _selectedRecommendation.value = null
+                Timber.e(e, "Failed to navigate to recommendation: ${rec.navigationTarget}")
+            }
         }
     }
 
@@ -571,7 +587,7 @@ class HomeViewModel @Inject constructor(
                     state.copy(
                         currentLevel = newLevel,
                         selectedPeriod = period,
-                        parentPeriod = state.selectedPeriod,
+                        breadcrumb = state.breadcrumb + listOfNotNull(state.selectedPeriod),
                         periodTotals = updatedTotals,
                         categoryBreakdown = categories,
                         isLoading = false
@@ -649,7 +665,7 @@ class HomeViewModel @Inject constructor(
                     it.copy(
                         currentLevel = newLevel,
                         selectedPeriod = newSelectedPeriod,
-                        parentPeriod = newParentPeriod,
+                        breadcrumb = if (it.breadcrumb.isNotEmpty()) it.breadcrumb.dropLast(1) else emptyList(),
                         periodTotals = newTotals,
                         categoryBreakdown = emptyList(),
                         isLoading = false,

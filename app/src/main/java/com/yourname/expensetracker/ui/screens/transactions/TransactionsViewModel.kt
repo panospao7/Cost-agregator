@@ -261,6 +261,17 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
+    /** S5-002: Clear any route-provided filter (called when screen opens with null initialFilter). */
+    fun clearRouteFilter() {
+        if (_filter.value != TransactionFilter()) {
+            _filter.value = TransactionFilter()
+            if (_selectedTab.value == TransactionTab.ALL) {
+                resetAllPagingState()
+                loadInitialAll()
+            }
+        }
+    }
+
     /**
      * Returns the current reference timestamp from the injected [TimeProvider].
      *
