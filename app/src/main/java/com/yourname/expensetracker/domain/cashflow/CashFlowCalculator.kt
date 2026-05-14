@@ -29,8 +29,12 @@ data class DailyCashFlow(
     val predictedRecurring: List<RecurringPattern>,
     val endingBalance: Double,
     val riskLevel: CashFlowRiskLevel,
-    /** @suppress Currency code this cash flow is denominated in (e.g. "EUR", "USD"). */
-    val currency: String = ""
+    /** Currency code this cash flow is denominated in (e.g. "EUR", "USD"). */
+    val currency: String = "",
+    /** S8-023: true when one or more currency conversions failed for this day */
+    val isPartial: Boolean = false,
+    /** S8-023: count of failed currency conversions for this day */
+    val failedConversionCount: Int = 0
 )
 
 enum class CashFlowRiskLevel {
@@ -76,11 +80,8 @@ class CashFlowCalculator @Inject constructor(
         endDate: Date,
         startingBalance: Double = 0.0
     ): List<DailyCashFlow> {
-        val homeCurrency = try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            "EUR"
-        }
+        // S8-024: Do not fall back to "EUR" — fail explicitly if home currency unavailable
+        val homeCurrency = currencySettingsRepository.homeCurrency().first()
         val calendar = Calendar.getInstance()
         val results = mutableListOf<DailyCashFlow>()
         var runningBalance = startingBalance
@@ -284,7 +285,10 @@ class CashFlowCalculator @Inject constructor(
                     predictedRecurring = deduplicatedPredicted,
                     endingBalance = runningBalance,
                     riskLevel = riskLevel,
-                    currency = homeCurrency
+                    currency = homeCurrency,
+                    // S8-022/S8-023: Surface data quality to UI
+                    isPartial = conversionFailures > 0,
+                    failedConversionCount = conversionFailures
                 )
             )
             

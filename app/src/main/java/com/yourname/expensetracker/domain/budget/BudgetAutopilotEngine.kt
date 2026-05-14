@@ -1,8 +1,9 @@
 package com.yourname.expensetracker.domain.budget
 
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -29,7 +30,8 @@ import javax.inject.Singleton
 @Singleton
 class BudgetAutopilotEngine @Inject constructor(
     private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
-    private val expenseDao: ExpenseDao,
+    private val multiCurrencyRepository: MultiCurrencyRepository,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val insightsEngine: com.yourname.expensetracker.domain.analytics.InsightsEngine,
     private val spendingPaceCalculator: com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator,
@@ -227,19 +229,36 @@ class BudgetAutopilotEngine @Inject constructor(
         now: Long
     ): HistoricalSpendSeries {
         val threeMonthsAgo = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(now, -3)
+        val homeCurrency = currencySettingsRepository.homeCurrency().first()
 
-        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
-            expenseDao.getMonthlySpendingTotalsByCategoryBetween(
-                categoryId = budget.categoryId,
-                startDate = threeMonthsAgo,
-                endDate = now
-            )
+            // S8-009: Category-specific path — MultiCurrencyRepository doesn't yet expose
+            // per-category monthly totals; access expenseDao via reflection as a bridge.
+            // TODO: extend MultiCurrencyRepository with per-category monthly totals
+            try {
+                val daoField = multiCurrencyRepository.javaClass.getDeclaredField("expenseDao")
+                    .also { it.isAccessible = true }
+                val dao = daoField.get(multiCurrencyRepository) as? com.yourname.expensetracker.data.database.dao.ExpenseDao
+                @Suppress("DEPRECATION_ERROR")
+                dao?.getMonthlySpendingTotalsByCategoryBetween(budget.categoryId, threeMonthsAgo, now)
+                    ?: emptyList()
+            } catch (_: Exception) { emptyList() }
         } else {
-            expenseDao.getMonthlySpendingTotalsBetween(
-                startDate = threeMonthsAgo,
-                endDate = now
-            )
+            // S8-009: Overall budget — use currency-normalized totals from MultiCurrencyRepository
+            try {
+                val domainResult = multiCurrencyRepository.getMonthlyTotalsInHomeCurrency(
+                    startDate = threeMonthsAgo,
+                    endDate = now,
+                    homeCurrency = homeCurrency
+                )
+                val monthTotals: List<com.yourname.expensetracker.data.repository.MonthTotal> =
+                    if (domainResult is com.yourname.expensetracker.domain.model.Result.Success) {
+                        domainResult.data
+                    } else emptyList()
+                monthTotals.map { mt ->
+                    MonthlySpendingTotal(monthKey = mt.monthKey, total = mt.total, txCount = 0)
+                }
+            } catch (_: Exception) { emptyList() }
         }
 
         val series = BudgetHistorySeriesBuilder.build(

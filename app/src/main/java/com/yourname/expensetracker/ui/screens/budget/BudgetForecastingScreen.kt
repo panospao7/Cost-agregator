@@ -40,7 +40,7 @@ fun BudgetForecastingScreen(
     viewModel: BudgetForecastingViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
+    val homeCurrency = uiState.homeCurrency ?: ""
     
     // Generate forecast on first load
     LaunchedEffect(budget) {

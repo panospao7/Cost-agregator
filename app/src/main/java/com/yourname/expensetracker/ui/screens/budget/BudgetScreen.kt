@@ -78,6 +78,19 @@ fun BudgetScreen(
         viewModel.refreshBudgets()
     }
 
+    // S8-001: Close dialogs only after BudgetSaved event
+    LaunchedEffect(Unit) {
+        viewModel.uiEvents.collect { event ->
+            when (event) {
+                is BudgetViewModel.BudgetUiEvent.BudgetSaved -> {
+                    showAddDialog = false
+                    editingBudget = null
+                    preselectedCategoryIdForAdd = null
+                }
+            }
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -230,7 +243,7 @@ fun BudgetScreen(
                             },
                             onApplyAll = { viewModel.applyAllAutopilotRecommendations() },
                             onDismiss = { viewModel.dismissAllAutopilotRecommendations() },
-                            homeCurrency = uiState.homeCurrency
+                            homeCurrency = uiState.homeCurrency ?: ""
                         )
                     }
 
@@ -264,6 +277,7 @@ fun BudgetScreen(
             AddEditBudgetDialog(
                 initialCategoryId = preselectedCategoryIdForAdd,
                 referenceNowMillis = uiState.referenceNowMillis,
+                homeCurrency = uiState.homeCurrency,
                 onDismiss = {
                     showAddDialog = false
                     preselectedCategoryIdForAdd = null
@@ -280,6 +294,7 @@ fun BudgetScreen(
             AddEditBudgetDialog(
                 initialBudget = status.budget,
                 referenceNowMillis = uiState.referenceNowMillis,
+                homeCurrency = uiState.homeCurrency,
                 onDismiss = { editingBudget = null },
                 onConfirm = { viewModel.updateBudget(it) },
                 categories = categories
@@ -819,6 +834,8 @@ fun AddEditBudgetDialog(
     initialCategoryId: Long? = null,
     categories: List<Category>,
     referenceNowMillis: Long,
+    /** S8-002: null until home currency loads — Save is disabled until set */
+    homeCurrency: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (Budget) -> Unit
 ) {
@@ -899,6 +916,7 @@ fun AddEditBudgetDialog(
             Button(
                 onClick = {
                     val amt = amount.toDoubleOrNull() ?: 0.0
+                    val resolvedCurrency = homeCurrency ?: return@Button
                     if (amt > 0) {
                         val budgetToSave = initialBudget?.copy(
                             categoryId = selectedCategory,
@@ -912,12 +930,16 @@ fun AddEditBudgetDialog(
                             period = period,
                             periodMode = periodMode,
                             startDate = referenceNowMillis,
-                            rollover = rollover
+                            rollover = rollover,
+                            // S8-002: Use resolved home currency, not entity default "EUR"
+                            currency = resolvedCurrency
                         )
                         onConfirm(budgetToSave)
-                        onDismiss()
+                        // S8-001: Do NOT call onDismiss() here — dialog closes via BudgetSaved event
                     }
-                }
+                },
+                // S8-002: Disable Save until currency is loaded
+                enabled = homeCurrency != null
             ) {
                 Text(stringResource(R.string.action_save))
             }

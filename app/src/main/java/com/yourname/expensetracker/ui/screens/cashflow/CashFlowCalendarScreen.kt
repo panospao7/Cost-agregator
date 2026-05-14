@@ -217,7 +217,7 @@ fun CashFlowCalendarScreen(
                         normalizeDateKey(selected) == normalizeDateKey(dayCell.date)
                     } ?: false,
                     onClick = { viewModel.selectDate(dayCell.date) },
-                    homeCurrency = state.homeCurrency
+                    homeCurrency = state.homeCurrency ?: ""
                 )
                         } else {
                             Box(modifier = Modifier.aspectRatio(1f))
@@ -234,7 +234,7 @@ fun CashFlowCalendarScreen(
             DailyCashFlowDetails(
                 selectedDateLabel = Instant.ofEpochMilli(selectedDate.time).atZone(ZoneId.systemDefault()).format(selectedDateFormat),
                 cashFlow = selectedCashFlow,
-                homeCurrency = state.homeCurrency
+                homeCurrency = state.homeCurrency ?: ""
             )
                 }
             }

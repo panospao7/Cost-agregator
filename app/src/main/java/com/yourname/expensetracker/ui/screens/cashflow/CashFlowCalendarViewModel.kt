@@ -18,28 +18,23 @@ import javax.inject.Inject
 data class CashFlowCalendarState(
  val dailyCashFlows: List<DailyCashFlow> = emptyList(),
  val isLoading: Boolean = false,
+ val error: String? = null,
  val currentMonth: Date = Date(0L),
  val selectedDate: Date? = null,
  val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
  val startingBalance: Double = 0.0,
  val upcomingBillsCount: Int = 0,
-	/**
-	 * Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init.
-	 *
-	 * ## Acceptable hardcoded "EUR"
-	 * This is a Compose state initial value that gets immediately replaced by the
-	 * repository flow in `collectHomeCurrency()`. The literal "EUR" here is never
-	 * visible to the user — it is a type-safe default before the async load completes.
-	 * See [CURR-6] in MASTER-ISSUE-REGISTRY for the broader multi-currency strategy.
-	 */
-	val homeCurrency: String = "EUR"
+	/** S8-024: null until loaded — never defaults to "EUR" */
+	val homeCurrency: String? = null
 ) {
- val moneyStartingBalance: MoneyAmount get() = MoneyAmount(startingBalance, CurrencyCode(homeCurrency))
+ val moneyStartingBalance: MoneyAmount get() = MoneyAmount(startingBalance, CurrencyCode(homeCurrency ?: ""))
 
- /** Universal contract: typed loadable state. */
  val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<DailyCashFlow>>
      get() = when {
          isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+         error != null -> com.yourname.expensetracker.ui.model.LoadableUiState.Error(
+             com.yourname.expensetracker.domain.model.UiText.DynamicString(error)
+         )
          dailyCashFlows.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(
              com.yourname.expensetracker.domain.model.UiText.DynamicString("No cash flow data")
          )
@@ -61,6 +56,10 @@ class CashFlowCalendarViewModel @Inject constructor(
     private val _state = MutableStateFlow(CashFlowCalendarState(currentMonth = Date(timeProvider.now())))
     val state: StateFlow<CashFlowCalendarState> = _state.asStateFlow()
 
+    /** S8-020: Race guard — cancel prior load job */
+    private var cashFlowJob: kotlinx.coroutines.Job? = null
+    private var cashFlowRequestId = 0L
+
  init {
  loadCurrentMonth()
  loadUpcomingBills()
@@ -73,23 +72,43 @@ class CashFlowCalendarViewModel @Inject constructor(
     }
 
     fun loadCashFlow(startDate: Date, endDate: Date) {
-        viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
-            
-            val cashFlows = cashFlowCalculator.calculateDailyCashFlow(
-                startDate = startDate,
-                endDate = endDate,
-                startingBalance = _state.value.startingBalance
-            )
-            
-            _state.update { 
-                it.copy(
-                    dailyCashFlows = cashFlows,
-                    isLoading = false,
-                    currentMonth = startDate
+        // S8-020: Cancel prior job and increment request ID
+        val requestId = ++cashFlowRequestId
+        cashFlowJob?.cancel()
+
+        cashFlowJob = viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, error = null) }
+            try {
+                val cashFlows = cashFlowCalculator.calculateDailyCashFlow(
+                    startDate = startDate,
+                    endDate = endDate,
+                    startingBalance = _state.value.startingBalance
                 )
+                // S8-020: Discard stale result
+                if (requestId != cashFlowRequestId) return@launch
+                _state.update {
+                    it.copy(
+                        dailyCashFlows = cashFlows,
+                        isLoading = false,
+                        currentMonth = startDate,
+                        // S8-026: Clear selected date if it's outside the new month
+                        selectedDate = it.selectedDate?.takeIf { d ->
+                            d.time >= startDate.time && d.time < endDate.time
+                        }
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // S8-019: Surface error instead of stuck loading
+                if (requestId != cashFlowRequestId) return@launch
+                _state.update { it.copy(isLoading = false, error = "Failed to load cash flow: ${e.message}") }
             }
         }
+    }
+
+    fun clearError() {
+        _state.update { it.copy(error = null) }
     }
 
     fun selectDate(date: Date?) {
@@ -102,7 +121,6 @@ class CashFlowCalendarViewModel @Inject constructor(
 
     fun setStartingBalance(balance: Double) {
         _state.update { it.copy(startingBalance = balance) }
-        // Reload with new balance
         loadCurrentMonth()
     }
 
@@ -118,16 +136,19 @@ class CashFlowCalendarViewModel @Inject constructor(
 
  private fun loadUpcomingBills() {
  viewModelScope.launch {
- val bills = cashFlowCalculator.getUpcomingBills(30)
- _state.update { it.copy(upcomingBillsCount = bills.size) }
+     runCatching {
+         val bills = cashFlowCalculator.getUpcomingBills(30)
+         _state.update { it.copy(upcomingBillsCount = bills.size) }
+     }
  }
  }
 
  private fun collectHomeCurrency() {
  viewModelScope.launch {
- currencySettingsRepository.homeCurrency().collect { hc ->
- _state.update { it.copy(homeCurrency = hc) }
- }
+     // S8-024: No EUR fallback — null until loaded
+     currencySettingsRepository.homeCurrency().collect { hc ->
+         _state.update { it.copy(homeCurrency = hc) }
+     }
  }
  }
 }

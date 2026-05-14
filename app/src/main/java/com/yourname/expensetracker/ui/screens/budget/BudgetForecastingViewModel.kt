@@ -14,9 +14,9 @@ import com.yourname.expensetracker.domain.budget.BudgetRecommendationRiskLevel
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -28,42 +28,56 @@ data class BudgetForecastUiState(
     val forecast: BudgetForecast? = null,
     val recommendations: List<BudgetRecommendation> = emptyList(),
     val isLoading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    /** S8-013: null until loaded — never empty string */
+    val homeCurrency: String? = null
 )
 
 @HiltViewModel
 class BudgetForecastingViewModel @Inject constructor(
     private val forecastingEngine: BudgetForecastingEngine,
     private val recommendationEngine: BudgetRecommendationEngine,
-    currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
-    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
-    
     private val _uiState = MutableStateFlow(BudgetForecastUiState())
     val uiState: StateFlow<BudgetForecastUiState> = _uiState.asStateFlow()
     private var lastForecastPeriodDays: Int = 30
-    
-    /**
-     * Generate a forecast for a specific budget.
-     */
-    fun generateForecast(budget: Budget, forecastPeriodDays: Int = 30) {
+
+    /** S8-014: Race guard — cancel prior forecast job */
+    private var forecastJob: kotlinx.coroutines.Job? = null
+    private var forecastRequestId = 0L
+
+    init {
         viewModelScope.launch {
-            lastForecastPeriodDays = forecastPeriodDays
-            _uiState.value = _uiState.value.copy(
-                budget = budget,
-                isLoading = true,
-                error = null
-            )
-            
+            currencySettingsRepository.homeCurrency().collect { hc ->
+                _uiState.update { it.copy(homeCurrency = hc) }
+            }
+        }
+    }
+
+    fun generateForecast(budget: Budget, forecastPeriodDays: Int = 30) {
+        // S8-014: Cancel prior job and increment request ID
+        val requestId = ++forecastRequestId
+        forecastJob?.cancel()
+
+        lastForecastPeriodDays = forecastPeriodDays
+        _uiState.update { it.copy(budget = budget, isLoading = true, error = null) }
+
+        forecastJob = viewModelScope.launch {
             try {
-                // Generate forecast
                 val forecast = forecastingEngine.generateForecast(budget, forecastPeriodDays)
-                
-                // Get current spending for recommendations
-                val currentSpending = budget.amount - forecast.predictedRemaining
-                
-                // Generate recommendations
+
+                // S8-014: Discard stale result
+                if (requestId != forecastRequestId) return@launch
+
+                // S8-015: Derive spentToDate from forecast fields
+                // spentToDate = normalizedBudgetAmount - predictedRemaining - predictedSpending
+                // Since we don't have normalizedBudgetAmount, use budget.amount as approximation
+                // (correct when budget currency == home currency)
+                val currentSpending = (budget.amount - forecast.predictedRemaining - forecast.predictedSpending)
+                    .coerceAtLeast(0.0)
+
                 val recommendations = recommendationEngine.generateRecommendations(
                     budget = BudgetRecommendationBudget(amount = budget.amount),
                     forecast = BudgetRecommendationForecast(
@@ -80,38 +94,30 @@ class BudgetForecastingViewModel @Inject constructor(
                     ),
                     currentSpending
                 )
-                
-                _uiState.value = BudgetForecastUiState(
-                    budget = budget,
-                    forecast = forecast,
-                    recommendations = recommendations,
-                    isLoading = false,
-                    error = null
-                )
+
+                _uiState.update {
+                    it.copy(
+                        budget = budget,
+                        forecast = forecast,
+                        recommendations = recommendations,
+                        isLoading = false,
+                        error = null
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                e.printStackTrace()
-                _uiState.value = _uiState.value.copy(
-                    budget = budget,
-                    isLoading = false,
-                    error = "Failed to generate forecast: ${e.message}"
-                )
+                if (requestId != forecastRequestId) return@launch
+                _uiState.update { it.copy(isLoading = false, error = "Failed to generate forecast: ${e.message}") }
             }
         }
     }
-    
-    /**
-     * Refresh forecast with current data.
-     */
+
     fun refreshForecast() {
-        _uiState.value.budget?.let { budget ->
-            generateForecast(budget, lastForecastPeriodDays)
-        }
+        _uiState.value.budget?.let { generateForecast(it, lastForecastPeriodDays) }
     }
-    
-    /**
-     * Clear any error state.
-     */
+
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+        _uiState.update { it.copy(error = null) }
     }
 }

@@ -30,11 +30,10 @@ data class BudgetUiState(
     val autopilotError: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
-    /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
-    val homeCurrency: String = "EUR",
+    /** S8-005: null until home currency loads — never defaults to "EUR" */
+    val homeCurrency: String? = null,
     val referenceNowMillis: Long = 0L
 ) {
-    /** Universal contract: typed loadable state for budget list. */
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<BudgetStatus>>
         get() = when {
             isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
@@ -66,11 +65,20 @@ class BudgetViewModel @Inject constructor(
     private val _suggestionsRefreshTrigger = MutableStateFlow(0)
     private val _autopilotRecommendations = MutableStateFlow<BudgetAutopilotRecommendations?>(null)
     private val _autopilotLoading = MutableStateFlow(false)
+    private val _autopilotError = MutableStateFlow<String?>(null)
+
+    /** S8-001: One-shot event — screen closes dialog only on BudgetSaved. */
+    private val _uiEvents = kotlinx.coroutines.flow.MutableSharedFlow<BudgetUiEvent>(extraBufferCapacity = 4)
+    val uiEvents: kotlinx.coroutines.flow.SharedFlow<BudgetUiEvent> = _uiEvents.asSharedFlow()
 
     private sealed class ManualState {
         object Idle : ManualState()
         object Loading : ManualState()
         data class Error(val message: String?) : ManualState()
+    }
+
+    sealed interface BudgetUiEvent {
+        data object BudgetSaved : BudgetUiEvent
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -83,9 +91,9 @@ class BudgetViewModel @Inject constructor(
                 }
             }
 
-    /** Placeholder initial value "EUR"; immediately replaced by [CurrencySettingsRepository.homeCurrency]. */
+    /** S8-005: null initial value — never defaults to "EUR" before repository emits. */
     private val _homeCurrency = currencySettingsRepository.homeCurrency()
-        .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
+        .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<BudgetUiState> = combine(
@@ -96,17 +104,21 @@ class BudgetViewModel @Inject constructor(
         combine(
             _manualState,
             _autopilotRecommendations,
-            _autopilotLoading
-        ) { manual, autopilot, autopilotLoading -> Triple(manual, autopilot, autopilotLoading) },
+            _autopilotLoading,
+            _autopilotError
+        ) { manual, autopilot, autopilotLoading, autopilotError ->
+            object { val manual = manual; val autopilot = autopilot; val autopilotLoading = autopilotLoading; val autopilotError = autopilotError }
+        },
         _homeCurrency
-    ) { (statuses, suggestions), (manual, autopilot, autopilotLoading), hc ->
+    ) { (statuses, suggestions), ctx, hc ->
         BudgetUiState(
             budgets = statuses,
             suggestions = suggestions,
-            autopilotRecommendations = autopilot?.categoryRecommendations ?: emptyList(),
-            autopilotLoading = autopilotLoading,
-            isLoading = manual is ManualState.Loading,
-            error = (manual as? ManualState.Error)?.message,
+            autopilotRecommendations = ctx.autopilot?.categoryRecommendations ?: emptyList(),
+            autopilotLoading = ctx.autopilotLoading,
+            autopilotError = ctx.autopilotError,
+            isLoading = ctx.manual is ManualState.Loading,
+            error = (ctx.manual as? ManualState.Error)?.message,
             homeCurrency = hc,
             referenceNowMillis = timeProvider.now()
         )
@@ -153,6 +165,8 @@ class BudgetViewModel @Inject constructor(
     )
 
     fun addBudget(budget: Budget) {
+        // S8-007: Idempotency guard
+        if (_manualState.value is ManualState.Loading) return
         if (!validateThresholds(budget)) return
         viewModelScope.launch {
             _manualState.value = ManualState.Loading
@@ -160,6 +174,8 @@ class BudgetViewModel @Inject constructor(
             when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
                     _manualState.value = ManualState.Idle
+                    // S8-001: Emit success event — screen closes dialog on this
+                    _uiEvents.tryEmit(BudgetUiEvent.BudgetSaved)
                 }
                 is com.yourname.expensetracker.domain.model.Result.Error -> {
                     _manualState.value = ManualState.Error(result.message)
@@ -170,6 +186,7 @@ class BudgetViewModel @Inject constructor(
     }
 
     fun updateBudget(budget: Budget) {
+        if (_manualState.value is ManualState.Loading) return
         if (!validateThresholds(budget)) return
         viewModelScope.launch {
             _manualState.value = ManualState.Loading
@@ -177,6 +194,7 @@ class BudgetViewModel @Inject constructor(
             when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
                     _manualState.value = ManualState.Idle
+                    _uiEvents.tryEmit(BudgetUiEvent.BudgetSaved)
                 }
                 is com.yourname.expensetracker.domain.model.Result.Error -> {
                     _manualState.value = ManualState.Error(result.message)
@@ -199,6 +217,7 @@ class BudgetViewModel @Inject constructor(
     }
 
     fun deleteBudget(budget: Budget) {
+        if (_manualState.value is ManualState.Loading) return
         viewModelScope.launch {
             _manualState.value = ManualState.Loading
             val result = budgetRepository.deleteBudget(budget)
@@ -215,6 +234,7 @@ class BudgetViewModel @Inject constructor(
     }
 
     fun toggleBudget(id: Long, isActive: Boolean) {
+        if (_manualState.value is ManualState.Loading) return
         viewModelScope.launch {
             _manualState.value = ManualState.Loading
              val result = budgetRepository.toggleBudget(id, isActive)
@@ -245,103 +265,83 @@ class BudgetViewModel @Inject constructor(
 
     // ==================== AUTOPILOT METHODS ====================
 
-    /**
-     * Generate AI-powered budget adjustment recommendations.
-     */
     fun generateAutopilotRecommendations() {
         viewModelScope.launch {
             _autopilotLoading.value = true
+            _autopilotError.value = null
             try {
                 val recommendations = autopilotEngine.generateRecommendations()
                 _autopilotRecommendations.value = recommendations
             } catch (e: Exception) {
-                _autopilotRecommendations.value = BudgetAutopilotRecommendations(
-                    categoryRecommendations = emptyList(),
-                    totalCurrentBudget = 0.0,
-                    totalRecommendedBudget = 0.0,
-                    overallDelta = 0.0,
-                    confidence = 0.0,
-                    generatedAt = timeProvider.now()
-                )
+                Timber.e(e, "Autopilot generate failed")
+                _autopilotError.value = "Failed to generate recommendations: ${e.message}"
+                _autopilotRecommendations.value = null
             } finally {
                 _autopilotLoading.value = false
             }
         }
     }
 
-    /**
-     * Apply a single autopilot recommendation.
-     */
     fun applyAutopilotRecommendation(recommendation: CategoryBudgetRecommendation) {
         viewModelScope.launch {
             _autopilotLoading.value = true
+            _autopilotError.value = null
             try {
-                // Find the exact budget targeted by the recommendation
                 val budget = budgetRepository.getActiveBudgets()
                     .find { it.id == recommendation.budgetId }
                     ?: budgetRepository.getActiveBudgets().find {
                         recommendation.categoryId != null && it.categoryId == recommendation.categoryId
                     }
-                
+
                 if (budget != null) {
                     val updatedBudget = budget.copy(amount = recommendation.recommendedBudget)
                     val result = budgetRepository.updateBudget(updatedBudget)
-                    
                     when (result) {
                         is com.yourname.expensetracker.domain.model.Result.Success -> {
-                            // Remove applied recommendation from list
                             val current = _autopilotRecommendations.value
                             if (current != null) {
                                 _autopilotRecommendations.value = current.copy(
-                                    categoryRecommendations = current.categoryRecommendations.filter { 
+                                    categoryRecommendations = current.categoryRecommendations.filter {
                                         it.budgetId != recommendation.budgetId
                                     }
                                 )
                             }
                         }
                         is com.yourname.expensetracker.domain.model.Result.Error -> {
-                            // Handle error
+                            _autopilotError.value = "Failed to apply recommendation: ${result.message}"
                         }
                         else -> {}
                     }
                 }
+            } catch (e: Exception) {
+                Timber.e(e, "Autopilot apply single failed")
+                _autopilotError.value = "Failed to apply recommendation: ${e.message}"
             } finally {
                 _autopilotLoading.value = false
             }
         }
     }
 
-    /**
-     * Apply all pending autopilot recommendations.
-     *
-     * BUD-21 / P2-19: The entire apply-all loop is wrapped in a single database
-     * transaction using [BudgetRepository.updateBudgetOrThrow] which propagates
-     * exceptions so Room rolls back the transaction on any per-budget failure.
-     * Previously, [updateBudget] caught exceptions internally and returned
-     * Result.Error, so the transaction committed partial updates.
-     */
     fun applyAllAutopilotRecommendations() {
         viewModelScope.launch {
             _autopilotLoading.value = true
+            _autopilotError.value = null
             try {
                 val recommendations = _autopilotRecommendations.value?.categoryRecommendations ?: emptyList()
                 val activeBudgets = budgetRepository.getActiveBudgets()
-                
+
                 database.withTransaction {
                     for (rec in recommendations) {
-                        val budget = activeBudgets.find { 
+                        val budget = activeBudgets.find {
                             it.id == rec.budgetId ||
                                 (rec.categoryId != null && it.categoryId == rec.categoryId)
                         }
-                        
                         if (budget != null) {
-                            val updatedBudget = budget.copy(amount = rec.recommendedBudget)
-                            budgetRepository.updateBudgetOrThrow(updatedBudget)
+                            budgetRepository.updateBudgetOrThrow(budget.copy(amount = rec.recommendedBudget))
                         }
                     }
                 }
-                
-                // Clear all recommendations after successful transaction
+
                 _autopilotRecommendations.value = BudgetAutopilotRecommendations(
                     categoryRecommendations = emptyList(),
                     totalCurrentBudget = 0.0,
@@ -352,6 +352,7 @@ class BudgetViewModel @Inject constructor(
                 )
             } catch (e: Exception) {
                 Timber.e(e, "Autopilot apply-all transaction failed, rolled back")
+                _autopilotError.value = "Apply all failed and was rolled back: ${e.message}"
             } finally {
                 _autopilotLoading.value = false
             }
