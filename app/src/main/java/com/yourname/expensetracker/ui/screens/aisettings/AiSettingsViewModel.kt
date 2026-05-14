@@ -133,14 +133,14 @@ class AiSettingsViewModel @Inject constructor(
             return
         }
 
+        // S3-007: Blank input with stored key should NOT delete — require explicit removeApiKey()
         if (key.isBlank()) {
-            secureKeyStorage.deleteKey(SecureKeyStorage.KEY_GEMINI)
-            _uiState.value = _uiState.value.copy(
-                hasStoredApiKey = false,
-                apiKeyValidationMessage = null,
-                connectionTestMessage = "API key removed.",
-                isConnectionTestSuccess = null
-            )
+            if (_uiState.value.hasStoredApiKey) {
+                _uiState.value = _uiState.value.copy(
+                    apiKeyValidationMessage = "Enter a new key or use Remove Key to delete the stored key.",
+                    connectionTestMessage = null
+                )
+            }
             return
         }
 
@@ -160,6 +160,21 @@ class AiSettingsViewModel @Inject constructor(
             apiKeyValidationMessage = null,
             connectionTestMessage = "API key saved securely.",
             isConnectionTestSuccess = true
+        )
+    }
+
+    /**
+     * S3-007: Explicit API key removal. Requires user to call this directly
+     * (not triggered by blank save input) to prevent accidental key deletion.
+     */
+    fun removeApiKey() {
+        secureKeyStorage.deleteKey(SecureKeyStorage.KEY_GEMINI)
+        _uiState.value = _uiState.value.copy(
+            hasStoredApiKey = false,
+            apiKeyInput = "",
+            apiKeyValidationMessage = null,
+            connectionTestMessage = "API key removed.",
+            isConnectionTestSuccess = null
         )
     }
 

@@ -490,6 +490,12 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun reloadCurrentTotalsLevel() {
+        val state = _totalsDrillDownState.value
+        val year = com.yourname.expensetracker.ui.util.UiTimeUtils.getYear(timeProvider.now())
+        loadTotalsForYear(year)
+    }
+
     fun loadTotalsForYear(year: Int) {
         viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }

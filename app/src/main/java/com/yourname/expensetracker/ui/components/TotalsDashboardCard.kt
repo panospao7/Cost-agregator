@@ -46,12 +46,35 @@ fun TotalsDashboardCard(
     onShowCategoryBreakdown: () -> Unit,
     modifier: Modifier = Modifier,
     /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR"
+    currency: String = "EUR",
+    error: String? = null,
+    onRetry: (() -> Unit)? = null
 ) {
     BentoCard(
         modifier = modifier,
         contentPadding = PaddingValues(16.dp)
     ) {
+        // Show error state if present
+        if (error != null) {
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f)
+                )
+                if (onRetry != null) {
+                    androidx.compose.material3.TextButton(onClick = onRetry) {
+                        Text(stringResource(R.string.error_try_again), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
         // Title
         Text(
             text = stringResource(R.string.totals_spending_totals),

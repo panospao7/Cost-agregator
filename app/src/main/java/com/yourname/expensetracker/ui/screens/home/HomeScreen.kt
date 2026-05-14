@@ -648,6 +648,8 @@ fun HomeScreen(
                         showCategoryBreakdown = true
                     },
                     currency = homeCurrency,
+                    error = totalsState.error?.let { (it as? com.yourname.expensetracker.domain.model.UiText.DynamicString)?.value },
+                    onRetry = { viewModel.reloadCurrentTotalsLevel() },
                     modifier = Modifier.fillMaxWidth()
                 )
                                 }

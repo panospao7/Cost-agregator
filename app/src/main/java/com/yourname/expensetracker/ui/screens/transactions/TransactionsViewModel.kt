@@ -444,14 +444,19 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
+                // S5-010: Atomic update - set type AND transfer fields together
+                // When changing away from TRANSFER, clear transfer metadata
+                val effectiveDirection = if (newType == TransactionType.TRANSFER) transferDirection else null
+                val effectiveAccount = if (newType == TransactionType.TRANSFER) normalizedTransferAccountName else ""
+
                 expenseRepository.updateExpenseType(expense, newType)
-                if (newType == TransactionType.TRANSFER) {
-                    expenseRepository.updateTransferDetails(
-                        expense = expense,
-                        transferDirection = transferDirection,
-                        transferAccountName = normalizedTransferAccountName
-                    )
-                }
+                // Always update transfer details to ensure consistency
+                // (clears them when not TRANSFER, sets them when TRANSFER)
+                expenseRepository.updateTransferDetails(
+                    expense = expense,
+                    transferDirection = effectiveDirection,
+                    transferAccountName = effectiveAccount
+                )
                 _successMessage.emit("Type changed to ${newType.name}")
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {

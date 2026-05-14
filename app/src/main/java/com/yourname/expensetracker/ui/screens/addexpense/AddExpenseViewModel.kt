@@ -144,11 +144,10 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun updateAmount(value: String) {
-        // Only allow valid decimal input
-        val filtered = value.filter { it.isDigit() || it == '.' || it == ',' }
+        val sanitized = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
         _state.update {
             it.copy(
-                amount = filtered,
+                amount = sanitized,
                 amountError = null,
                 saveResult = null
             )
@@ -247,8 +246,8 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun updateMyShareAmount(value: String) {
-        val filtered = value.filter { it.isDigit() || it == '.' || it == ',' }
-        _state.update { it.copy(myShareAmount = filtered.take(10)) }
+        val sanitized = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
+        _state.update { it.copy(myShareAmount = sanitized) }
     }
 
     fun save() {
@@ -311,9 +310,20 @@ class AddExpenseViewModel @Inject constructor(
         val hasSharePercentage = sharePercentageText.isNotEmpty()
         val hasShareAmount = shareAmountText.isNotEmpty()
 
-        if (currentState.isNotMine && currentState.isSharedExpense) {
+        // S5-011: Use shared OwnershipValidator
+        val ownershipResult = com.yourname.expensetracker.ui.util.OwnershipValidator.validate(
+            isNotMine = currentState.isNotMine,
+            isSharedExpense = currentState.isSharedExpense,
+            sharedWithName = currentState.sharedWithName,
+            sharePercentageText = sharePercentageText,
+            shareAmountText = shareAmountText
+        )
+        if (ownershipResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
             _state.update {
-                it.copy(saveResult = SaveResult.Error("Expense cannot be both not-mine and shared"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Expense cannot be both not-mine and shared")))
+                it.copy(
+                    saveResult = SaveResult.Error(ownershipResult.message),
+                    mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(ownershipResult.message))
+                )
             }
             return
         }
@@ -321,38 +331,12 @@ class AddExpenseViewModel @Inject constructor(
         val sharePercentage: Int?
         val shareAmount: Double?
         if (currentState.isSharedExpense) {
-            if (currentState.sharedWithName.trim().isBlank()) {
-                _state.update {
-                    it.copy(saveResult = SaveResult.Error("Shared with name is required for shared expenses"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Shared with name is required for shared expenses")))
-                }
-                return
-            }
-
-            if (hasSharePercentage == hasShareAmount) {
-                _state.update {
-                    it.copy(saveResult = SaveResult.Error("Set either share % or share amount for shared expenses"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Set either share % or share amount for shared expenses")))
-                }
-                return
-            }
-
             if (hasSharePercentage) {
-                val parsedSharePercentage = sharePercentageText.toIntOrNull()
-                if (parsedSharePercentage == null || parsedSharePercentage !in 0..100) {
-                    _state.update {
-                        it.copy(saveResult = SaveResult.Error("Share percentage must be between 0 and 100"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Share percentage must be between 0 and 100")))
-                    }
-                    return
-                }
+                val parsedSharePercentage = sharePercentageText.toIntOrNull()!!
                 sharePercentage = parsedSharePercentage
                 shareAmount = null
             } else {
-                val parsedShareAmount = AmountUtils.parseAmount(shareAmountText)
-                if (parsedShareAmount == null || parsedShareAmount <= 0) {
-                    _state.update {
-                        it.copy(saveResult = SaveResult.Error("Share amount must be greater than 0"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Share amount must be greater than 0")))
-                    }
-                    return
-                }
+                val parsedShareAmount = AmountUtils.parseAmount(shareAmountText)!!
                 sharePercentage = null
                 shareAmount = parsedShareAmount
             }
