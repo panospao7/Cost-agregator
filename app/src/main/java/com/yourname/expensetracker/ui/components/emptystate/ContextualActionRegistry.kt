@@ -17,14 +17,20 @@ class ContextualActionRegistry {
     val completedActions: StateFlow<Set<String>> = _completedActions.asStateFlow()
 
     /**
-     * Register actions for a specific screen.
+     * Register actions for a specific screen. Merges with existing actions
+     * (does not overwrite). Duplicate action IDs from later registrations
+     * replace earlier ones.
      *
      * @param screenKey Unique identifier for the screen (e.g., "warranty", "subscription")
      * @param actions List of available actions for this screen's empty state
      */
     fun registerActions(screenKey: String, actions: List<EmptyStateAction>) {
-        // Sort by priority (descending) so most important actions appear first
-        this.actions[screenKey] = actions.sortedByDescending { it.priority }
+        val existing = this.actions[screenKey].orEmpty()
+        val merged = (existing + actions)
+            .associateBy { it.id } // later entries win on duplicate ID
+            .values
+            .sortedByDescending { it.priority }
+        this.actions[screenKey] = merged
     }
 
     /**

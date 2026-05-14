@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.ReceiptLong
@@ -39,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
-import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
  * Predefined empty state configurations for common use cases.
@@ -108,6 +109,7 @@ fun EmptyState(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(Dimens.Space24)
             .semantics { this.contentDescription = emptyContentDescription },
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -120,7 +122,7 @@ fun EmptyState(
             modifier = Modifier
                 .size(Dimens.IconXLarge)
                 .alpha(0.6f),
-            tint = SemanticColors.TextSecondary
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
         
         Spacer(modifier = Modifier.height(Dimens.Space24))
@@ -139,7 +141,7 @@ fun EmptyState(
         Text(
             text = displayMessage,
             style = MaterialTheme.typography.bodyMedium,
-            color = SemanticColors.TextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(0.8f)
         )
@@ -155,11 +157,12 @@ fun EmptyState(
                 actionLabel?.let { label ->
                     Button(
                         onClick = { onActionClick?.invoke() },
+                        enabled = onActionClick != null,
                         modifier = Modifier
                             .height(Dimens.ButtonHeightMedium)
                             .fillMaxWidth(0.6f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = SemanticColors.PrimaryIndigo
+                            containerColor = MaterialTheme.colorScheme.primary
                         )
                     ) {
                         if (actionIcon != null) {
@@ -179,17 +182,17 @@ fun EmptyState(
                 secondaryLabel?.let { label ->
                     OutlinedButton(
                         onClick = { onSecondaryClick?.invoke() },
+                        enabled = onSecondaryClick != null,
                         modifier = Modifier
                             .height(Dimens.ButtonHeightMedium)
                             .fillMaxWidth(0.6f),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = SemanticColors.TextSecondary
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     ) {
                         Text(
                             text = label,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = SemanticColors.TextSecondary
+                            style = MaterialTheme.typography.labelLarge
                         )
                     }
                 }

@@ -97,12 +97,14 @@ class ContextualActionRegistryTest {
     }
 
     @Test
-    fun `duplicate action ids are all filtered once id is completed`() {
+    fun `duplicate action ids are deduplicated and filtered once completed`() {
         val duplicateLow = action(id = "duplicate", priority = 1)
         val duplicateHigh = action(id = "duplicate", priority = 9)
 
         registry.registerActions("receipts", listOf(duplicateLow, duplicateHigh))
-        assertEquals(2, registry.getActions("receipts").size)
+        // Merge deduplicates by ID (last wins), so only 1 remains
+        assertEquals(1, registry.getActions("receipts").size)
+        assertEquals(9, registry.getActions("receipts").first().priority)
 
         registry.markCompleted("receipts", "duplicate")
 

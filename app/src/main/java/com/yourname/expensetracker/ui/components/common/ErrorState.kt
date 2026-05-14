@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -38,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
-import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
  * Predefined error types with appropriate icons and messages.
@@ -115,6 +116,7 @@ fun ErrorState(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(Dimens.Space24)
             .semantics { this.contentDescription = errorContentDescription },
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -127,7 +129,7 @@ fun ErrorState(
             modifier = Modifier
                 .size(Dimens.IconXLarge)
                 .alpha(0.8f),
-            tint = SemanticColors.WarningOrange
+            tint = MaterialTheme.colorScheme.error
         )
         
         Spacer(modifier = Modifier.height(Dimens.Space24))
@@ -136,7 +138,7 @@ fun ErrorState(
         Text(
             text = displayTitle,
             style = MaterialTheme.typography.headlineSmall,
-            color = SemanticColors.DangerRed,
+            color = MaterialTheme.colorScheme.error,
             textAlign = TextAlign.Center
         )
         
@@ -146,7 +148,7 @@ fun ErrorState(
         Text(
             text = displayMessage,
             style = MaterialTheme.typography.bodyMedium,
-            color = SemanticColors.TextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(0.8f)
         )
@@ -158,7 +160,7 @@ fun ErrorState(
             verticalArrangement = Arrangement.spacedBy(Dimens.Space12),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Retry button (if retryable and not currently retrying)
+            // Retry button (if retryable and callback provided)
             if (type.isRetryable && onRetry != null) {
                 Button(
                     onClick = onRetry,
@@ -167,7 +169,7 @@ fun ErrorState(
                         .height(Dimens.ButtonHeightMedium)
                         .fillMaxWidth(0.6f),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = SemanticColors.PrimaryIndigo
+                        containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
                     if (isRetrying) {
@@ -198,13 +200,12 @@ fun ErrorState(
                         .height(Dimens.ButtonHeightMedium)
                         .fillMaxWidth(0.6f),
                     colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = SemanticColors.TextSecondary
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 ) {
                     Text(
                         text = stringResource(R.string.error_dismiss),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = SemanticColors.TextSecondary
+                        style = MaterialTheme.typography.labelLarge
                     )
                 }
             }
@@ -227,11 +228,11 @@ fun InlineErrorBanner(
             .fillMaxWidth()
             .padding(horizontal = Dimens.Space16, vertical = Dimens.Space8),
         colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = SemanticColors.DangerRed.copy(alpha = 0.1f)
+            containerColor = MaterialTheme.colorScheme.errorContainer
         ),
         border = androidx.compose.foundation.BorderStroke(
             width = Dimens.BorderWidth,
-            color = SemanticColors.DangerRed.copy(alpha = 0.3f)
+            color = MaterialTheme.colorScheme.error.copy(alpha = 0.3f)
         )
     ) {
         androidx.compose.foundation.layout.Row(
@@ -243,14 +244,14 @@ fun InlineErrorBanner(
             Icon(
                 imageVector = Icons.Default.ErrorOutline,
                 contentDescription = stringResource(R.string.label_error),
-                tint = SemanticColors.DangerRed,
+                tint = MaterialTheme.colorScheme.error,
                 modifier = Modifier.size(Dimens.IconMedium)
             )
             
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
-                color = SemanticColors.DangerRed,
+                color = MaterialTheme.colorScheme.error,
                 modifier = Modifier
                     .weight(1f)
                     .padding(horizontal = Dimens.Space12)
@@ -260,14 +261,14 @@ fun InlineErrorBanner(
                 if (isRetrying) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(Dimens.IconMedium),
-                        color = SemanticColors.DangerRed,
+                        color = MaterialTheme.colorScheme.error,
                         strokeWidth = 2.dp
                     )
                 } else {
                     Button(
                         onClick = it,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = SemanticColors.DangerRed
+                            containerColor = MaterialTheme.colorScheme.error
                         ),
                         modifier = Modifier.height(Dimens.ButtonHeightSmall)
                     ) {
