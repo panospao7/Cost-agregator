@@ -528,22 +528,21 @@ class InvestmentTracker @Inject constructor(
     }
 
     private fun getStartOfDay(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        calendar.set(java.util.Calendar.MINUTE, 0)
-        calendar.set(java.util.Calendar.SECOND, 0)
-        calendar.set(java.util.Calendar.MILLISECOND, 0)
-        return calendar.timeInMillis
+        // S12-023: Use java.time instead of Calendar.getInstance()
+        return java.time.Instant.ofEpochMilli(timestamp)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+            .atStartOfDay(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
     }
     
     private fun getDayKey(timestamp: Long): String {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        val year = calendar.get(java.util.Calendar.YEAR)
-        val month = calendar.get(java.util.Calendar.MONTH) + 1
-        val day = calendar.get(java.util.Calendar.DAY_OF_MONTH)
-        return "$year-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}"
+        // S12-023: Use java.time instead of Calendar.getInstance()
+        val date = java.time.Instant.ofEpochMilli(timestamp)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+        return "${date.year}-${date.monthValue.toString().padStart(2, '0')}-${date.dayOfMonth.toString().padStart(2, '0')}"
     }
     
     fun getAllInvestments(): Flow<List<Investment>> = investmentDao.getAllActiveInvestments()

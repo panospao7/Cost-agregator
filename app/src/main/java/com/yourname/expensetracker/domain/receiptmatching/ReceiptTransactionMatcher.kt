@@ -65,7 +65,9 @@ class ReceiptTransactionMatcher @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val stringDistance: StringDistanceUtils,
     private val timeProvider: TimeProvider,
-    private val receiptLinkService: ReceiptLinkService
+    private val receiptLinkService: ReceiptLinkService,
+    /** S12-031: Used for currency-aware amount comparison */
+    private val currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
 ) {
     suspend fun findBestMatch(
         receipt: ScannedReceipt,
@@ -96,8 +98,7 @@ class ReceiptTransactionMatcher @Inject constructor(
         for (transaction in candidates) {
             val score = calculateMatchScore(receipt, transaction)
             scored.add(MatchCandidate(transaction, score.first, score.second))
-        }
-        
+        }        
         // Find best match
         val best = scored.maxByOrNull { it.score }
         
@@ -109,20 +110,28 @@ class ReceiptTransactionMatcher @Inject constructor(
         }
     }
     
-    private fun calculateMatchScore(
+    private suspend fun calculateMatchScore(
         receipt: ScannedReceipt,
         transaction: Expense
     ): Pair<Double, MatchFactors> {
         // 1. Amount match (35% weight)
-        // N2: Currency compatibility check — if currencies differ and no
-        // conversion is possible, the amount score is halved as a penalty
-        // because nominal-value comparison is unreliable across currencies.
+        // S12-031: Try currency conversion when currencies differ; fall back to penalty if unavailable
         val receiptAmount = receipt.parsedTotal ?: 0.0
-        val currenciesMatch = receipt.currency.equals(transaction.currency, ignoreCase = true)
-        val amountDiff = abs(receiptAmount - transaction.effectiveAmount)
+        val receiptCurrency = receipt.currency
+        val txCurrency = transaction.currency
+        val currenciesMatch = receiptCurrency.equals(txCurrency, ignoreCase = true)
+        val comparableReceiptAmount = if (!currenciesMatch && receiptAmount > 0) {
+            currencyConverter.convert(receiptAmount, receiptCurrency, txCurrency)
+                ?.convertedAmount ?: receiptAmount // fall back to raw if conversion unavailable
+        } else {
+            receiptAmount
+        }
+        val conversionAvailable = currenciesMatch || (comparableReceiptAmount != receiptAmount)
+        val amountDiff = abs(comparableReceiptAmount - transaction.effectiveAmount)
         val amountScore = if (transaction.effectiveAmount > 0) {
             val rawScore = 1.0 - (amountDiff / transaction.effectiveAmount).coerceIn(0.0, 1.0)
-            if (currenciesMatch) rawScore else rawScore * 0.5
+            // Apply penalty only when currencies differ AND conversion was unavailable
+            if (!currenciesMatch && !conversionAvailable) rawScore * 0.5 else rawScore
         } else {
             0.0
         }

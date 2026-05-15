@@ -1121,6 +1121,7 @@
     <string name="label_per_month">per month</string>
     <string name="label_per_year">per year</string>
     <string name="label_uses_this_month_format">%1$d uses this month</string>
+    <string name="label_uses_in_billing_window_format">%1$d uses in billing window</string>
     <string name="label_per_use_format">%1$s/use</string>
     <string name="label_conversion_result">Conversion Result</string>
     <string name="label_currency_conversion">Currency Conversion</string>

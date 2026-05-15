@@ -243,28 +243,47 @@ class ReceiptMatchingViewModel @Inject constructor(
     }
 
     fun rerunForReceipt(receipt: ScannedReceipt) {
+        if (_state.value.mutatingReceiptIds.contains(receipt.id)) return
         viewModelScope.launch {
-            receiptRepository.clearMatchForReceipt(receipt.id)
-            when (val result = matcher.findBestMatch(receipt)) {
-                is MatchResult.AutoMatch -> {
-                    receiptLinkService.linkReceiptToExpense(
+            _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receipt.id) }
+            try {
+                // S12-032: Use ReceiptLinkService for unlink — goes through lifecycle/audit path
+                val currentExpenseId = receiptRepository.getReceiptById(receipt.id)?.expenseId
+                if (currentExpenseId != null) {
+                    receiptLinkService.unlinkReceiptFromExpense(
                         receiptId = receipt.id,
-                        expenseId = result.transaction.id,
-                        linkType = "AUTO_MATCH",
-                        source = "ReceiptMatchingViewModel",
-                        confidence = result.score.toFloat()
+                        expenseId = currentExpenseId
                     )
+                } else {
+                    // No existing link — just clear suggestion fields via repository
+                    receiptRepository.clearMatchForReceipt(receipt.id)
                 }
-                is MatchResult.Suggested -> {
-                    receiptRepository.saveMatchSuggestion(
-                        receipt.id,
-                        result.transaction.id,
-                        result.score
-                    )
+                when (val result = matcher.findBestMatch(receipt)) {
+                    is MatchResult.AutoMatch -> {
+                        val linkResult = runCatching {
+                            receiptLinkService.linkReceiptToExpense(
+                                receiptId = receipt.id,
+                                expenseId = result.transaction.id,
+                                linkType = "AUTO_MATCH",
+                                source = "ReceiptMatchingViewModel",
+                                confidence = result.score.toFloat()
+                            )
+                        }
+                        if (linkResult.isFailure) {
+                            _state.update { it.copy(error = "Rerun link failed: ${linkResult.exceptionOrNull()?.message}") }
+                        }
+                    }
+                    is MatchResult.Suggested -> {
+                        receiptRepository.saveMatchSuggestion(receipt.id, result.transaction.id, result.score)
+                    }
+                    else -> {}
                 }
-                MatchResult.NoMatch -> Unit
+                loadReceipts()
+            } catch (e: Exception) {
+                _state.update { it.copy(error = "Rerun failed: ${e.message}") }
+            } finally {
+                _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receipt.id) }
             }
-            loadReceipts()
         }
     }
 

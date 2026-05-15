@@ -180,7 +180,8 @@ class CarbonFootprintCalculator @Inject constructor(
                 CategoryEmission(
                     category = category,
                     emissionsKg = emissions,
-                    percentage = (emissions / totalEmissions * 100).roundToInt(),
+                    // S12-026: Guard against zero totalEmissions
+                    percentage = if (totalEmissions > 0) (emissions / totalEmissions * 100).roundToInt() else 0,
                     transactionCount = expenses.count { detectCategory(it) == category }
                 )
             }.sortedByDescending { it.emissionsKg },
@@ -188,12 +189,13 @@ class CarbonFootprintCalculator @Inject constructor(
                 MerchantEmission(
                     merchant = merchant,
                     emissionsKg = emissions,
-                    percentage = (emissions / totalEmissions * 100).roundToInt()
+                    percentage = if (totalEmissions > 0) (emissions / totalEmissions * 100).roundToInt() else 0
                 )
             }.sortedByDescending { it.emissionsKg }.take(5),
-            comparisonToNationalAverage = ((dailyAverage / nationalAverage - 1) * 100).roundToInt(),
-            comparisonToGlobalAverage = ((dailyAverage / globalAverage - 1) * 100).roundToInt(),
-            parisAgreementGap = ((dailyAverage - parisAgreementTarget) / parisAgreementTarget * 100).roundToInt(),
+            // S12-026: Guard against zero benchmarks
+            comparisonToNationalAverage = if (nationalAverage > 0) ((dailyAverage / nationalAverage - 1) * 100).roundToInt() else 0,
+            comparisonToGlobalAverage = if (globalAverage > 0) ((dailyAverage / globalAverage - 1) * 100).roundToInt() else 0,
+            parisAgreementGap = if (parisAgreementTarget > 0) ((dailyAverage - parisAgreementTarget) / parisAgreementTarget * 100).roundToInt() else 0,
             sustainabilityScore = calculateSustainabilityScore(dailyAverage, categoryEmissions),
             offsetCost = calculateOffsetCost(totalEmissions),
             recommendations = generateRecommendations(categoryEmissions, dailyAverage),

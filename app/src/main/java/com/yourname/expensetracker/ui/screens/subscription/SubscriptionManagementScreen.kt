@@ -534,7 +534,8 @@ private fun SubscriptionCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = stringResource(R.string.label_uses_this_month_format, subscription.monthlyUsage),
+                        // S12-014: Label matches actual calculation window (varies by frequency)
+                        text = stringResource(R.string.label_uses_in_billing_window_format, subscription.monthlyUsage),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )

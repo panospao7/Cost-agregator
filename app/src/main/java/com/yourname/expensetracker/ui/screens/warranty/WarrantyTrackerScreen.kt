@@ -309,6 +309,7 @@ fun WarrantyTrackerScreen(
     if (showManualAddDialog) {
         ManualWarrantyDialog(
             onDismiss = { showManualAddDialog = false },
+            referenceNowMillis = state.referenceNowMillis,
             onSave = { productName, merchantName, purchaseDate, durationMonths, supportPhone ->
                 viewModel.addManualWarranty(
                     productName = productName,
@@ -326,11 +327,16 @@ fun WarrantyTrackerScreen(
 @Composable
 private fun ManualWarrantyDialog(
     onDismiss: () -> Unit,
-    onSave: (productName: String, merchantName: String, purchaseDate: Long, durationMonths: Int, supportPhone: String?) -> Unit
+    onSave: (productName: String, merchantName: String, purchaseDate: Long, durationMonths: Int, supportPhone: String?) -> Unit,
+    /** S12-008: Use ViewModel reference time instead of LocalDate.now() */
+    referenceNowMillis: Long = System.currentTimeMillis()
 ) {
     var productName by remember { mutableStateOf("") }
     var merchantName by remember { mutableStateOf("") }
-    var purchaseDateText by remember { mutableStateOf(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault()).format(LocalDate.now())) }
+    // S12-008: Use referenceNowMillis from ViewModel (TimeProvider) not wall clock
+    var purchaseDateText by remember { mutableStateOf(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault()).format(
+        java.time.Instant.ofEpochMilli(referenceNowMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    )) }
     var durationMonthsText by remember { mutableStateOf("24") }
     var supportPhone by remember { mutableStateOf("") }
 
