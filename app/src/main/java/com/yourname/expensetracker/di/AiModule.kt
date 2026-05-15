@@ -103,6 +103,12 @@ abstract class AiModule {
 
     @Binds
     @Singleton
+    abstract fun bindCloudProviderConnectionTester(
+        impl: com.yourname.expensetracker.data.ai.OkHttpCloudProviderConnectionTester
+    ): com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester
+
+    @Binds
+    @Singleton
     abstract fun bindAiEnvironmentMonitor(
         impl: DefaultAiEnvironmentMonitor
     ): AiEnvironmentMonitor

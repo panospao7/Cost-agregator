@@ -211,7 +211,15 @@ class AssistantViewModel @Inject constructor(
                 persistUserTurn(sessionId, query)
 
                 val historyMessages = if (settings.storeConversationHistory && sessionId != null) {
-                    aiChatRepository.observeMessages(sessionId).first()
+                    val raw = aiChatRepository.observeMessages(sessionId).first()
+                    // S11-019: Sanitize history for cloud — strip payloadJson under redaction,
+                    // limit to last 10 turns to avoid stale/excessive context
+                    val limited = raw.takeLast(10)
+                    if (settings.redactBeforeCloud) {
+                        limited.map { msg -> msg.copy(payloadJson = null) }
+                    } else {
+                        limited
+                    }
                 } else {
                     emptyList()
                 }

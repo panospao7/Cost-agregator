@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.aisettings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -122,6 +123,34 @@ fun AiSettingsScreen(
                 ) {
                     ToggleRow(stringResource(R.string.ai_toggle_enable), settings.aiEnabled, viewModel::setAiEnabled)
                     ToggleRow(stringResource(R.string.ai_toggle_cloud), settings.allowCloudAi, viewModel::setAllowCloudAi)
+                    // S11-002: Show effective cloud policy status
+                    uiState.effectiveCloudBlocked?.let { reason ->
+                        Text(
+                            text = "⚠ Cloud AI blocked: $reason",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    if (uiState.effectiveCloudBlocked == null && settings.allowCloudAi && settings.aiEnabled) {
+                        Text(
+                            text = "✓ Cloud AI is active",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    // S11-007: Show settings write error
+                    uiState.settingsWriteError?.let { err ->
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = androidx.compose.ui.Modifier
+                                .padding(start = 16.dp, bottom = 4.dp)
+                                .clickable { viewModel.clearSettingsWriteError() }
+                        )
+                    }
                     ToggleRow(stringResource(R.string.ai_toggle_on_device), settings.allowOnDeviceAi, viewModel::setAllowOnDeviceAi)
                 }
             }

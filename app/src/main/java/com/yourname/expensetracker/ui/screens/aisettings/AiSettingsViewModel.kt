@@ -25,12 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import timber.log.Timber
-import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 data class AiSettingsUiState(
@@ -43,7 +38,11 @@ data class AiSettingsUiState(
     val apiKeyValidationMessage: String? = null,
     val isTestingConnection: Boolean = false,
     val connectionTestMessage: String? = null,
-    val isConnectionTestSuccess: Boolean? = null
+    val isConnectionTestSuccess: Boolean? = null,
+    /** S11-007: non-null when a settings write failed */
+    val settingsWriteError: String? = null,
+    /** S11-002: non-null when cloud AI is blocked by privacy/environment */
+    val effectiveCloudBlocked: String? = null
 )
 
 @HiltViewModel
@@ -53,15 +52,10 @@ class AiSettingsViewModel @Inject constructor(
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
     private val syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase,
     private val secureKeyStorage: SecureKeyStorage,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    /** S11-003: Injected tester — no OkHttp construction in ViewModel */
+    private val connectionTester: com.yourname.expensetracker.domain.ai.service.CloudProviderConnectionTester
 ) : ViewModel() {
-
-    private val providerConnectionTestClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .build()
-    }
 
     private val _uiState = MutableStateFlow(AiSettingsUiState())
     val uiState: StateFlow<AiSettingsUiState> = _uiState.asStateFlow()
@@ -108,9 +102,21 @@ class AiSettingsViewModel @Inject constructor(
                 )
                 // S11-006: Discard stale result
                 if (requestId != runtimeRefreshSeq) return@launch
+                // S11-002: Compute effective cloud blocked reason
+                val effectiveCloudBlocked = when {
+                    !_uiState.value.settings.aiEnabled -> "AI is disabled"
+                    !_uiState.value.settings.allowCloudAi -> "Cloud AI is disabled in settings"
+                    !secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) -> "No API key configured"
+                    !summary.networkAvailable -> "No network connection"
+                    _uiState.value.settings.wifiOnlyForCloud && !summary.wifiConnected -> "Wi-Fi required (Wi-Fi-only mode)"
+                    privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL).blocksExecution() ->
+                        "Blocked by Privacy Settings"
+                    else -> null
+                }
                 _uiState.value = _uiState.value.copy(
                     runtimeSummary = summary,
-                    hasStoredApiKey = secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI)
+                    hasStoredApiKey = secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI),
+                    effectiveCloudBlocked = effectiveCloudBlocked
                 )
                 aiRuntimeDiagnostics.recordRuntimeRefresh(
                     message = "AI settings refresh: network=${summary.networkAvailable}, wifi=${summary.wifiConnected}, highest='${summary.highestPriorityMessage ?: "none"}'",
@@ -262,7 +268,7 @@ class AiSettingsViewModel @Inject constructor(
                     else -> null
                 }
 
-                val providerFailure = runtimeFailure ?: probeCloudProviderConnection(keyToUse)
+                val providerFailure = runtimeFailure ?: connectionTester.testGemini(keyToUse)
 
                 _uiState.value = _uiState.value.copy(
                     runtimeSummary = summary,
@@ -280,36 +286,6 @@ class AiSettingsViewModel @Inject constructor(
             } finally {
                 _uiState.value = _uiState.value.copy(isTestingConnection = false)
             }
-        }
-    }
-
-    private suspend fun probeCloudProviderConnection(apiKey: String): String? = withContext(Dispatchers.IO) {
-        // PRIVACY GATE: Check privacy gate before probing cloud provider
-        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
-        if (gateCheck.blocksExecution()) {
-            Timber.w("AiSettingsViewModel: provider probe blocked by privacy gate: ${gateCheck.reason()}")
-            return@withContext "Cloud AI is blocked by privacy settings: ${gateCheck.reason()}"
-        }
-
-        val request = Request.Builder()
-            .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models")
-            .header("x-goog-api-key", apiKey)
-            .get()
-            .build()
-
-        try {
-            providerConnectionTestClient.newCall(request).execute().use { response ->
-                when {
-                    response.isSuccessful -> null
-                    response.code in setOf(400, 401, 403) -> "Provider rejected the API key. Check the key and retry."
-                    response.code == 429 -> "Provider rate limit reached. Wait a moment and retry."
-                    response.code in 500..599 -> "Provider is temporarily unavailable. Please retry."
-                    else -> "Provider connectivity test failed (HTTP ${response.code})."
-                }
-            }
-        } catch (e: IOException) {
-            Timber.w(e, "AI settings provider probe failed")
-            "Could not reach the cloud provider. Check internet and retry."
         }
     }
 
@@ -348,12 +324,21 @@ class AiSettingsViewModel @Inject constructor(
         syncProactiveBriefings: Boolean = false
     ) {
         viewModelScope.launch {
-            val updated = transform(_uiState.value.settings)
-            aiSettingsRepository.update(transform)
-            if (syncProactiveBriefings) {
-                syncProactiveBriefingWorkUseCase(updated)
+            try {
+                val updated = transform(_uiState.value.settings)
+                aiSettingsRepository.update(transform)
+                if (syncProactiveBriefings) {
+                    syncProactiveBriefingWorkUseCase(updated)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "AI settings write failed")
+                _uiState.value = _uiState.value.copy(settingsWriteError = "Settings could not be saved: ${e.message}")
             }
         }
+    }
+
+    fun clearSettingsWriteError() {
+        _uiState.value = _uiState.value.copy(settingsWriteError = null)
     }
 
     private fun validateApiKey(value: String): String? {

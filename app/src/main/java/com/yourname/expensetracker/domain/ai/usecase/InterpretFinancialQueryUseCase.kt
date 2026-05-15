@@ -187,7 +187,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
                 FinancialQueryIntent(
                     rawQuery = rawQuery,
                     normalizedQuery = normalized,
-                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfMonth(java.util.Calendar.getInstance().apply { timeInMillis = now; add(java.util.Calendar.MONTH, -1) }.timeInMillis), TimePeriodUtils.getEndOfMonth(java.util.Calendar.getInstance().apply { timeInMillis = now; add(java.util.Calendar.MONTH, -1) }.timeInMillis))),
+                    // S11-018: Use TimePeriodUtils instead of Calendar.getInstance()
+                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getMonthRange(now, -1).let { (s, e) -> PeriodRange(s, e) }),
                     metric = QueryMetric.TOTAL,
                     grouping = QueryGrouping.NONE,
                     comparison = QueryComparison.NONE
@@ -197,7 +198,8 @@ class InterpretFinancialQueryUseCase @Inject constructor(
                 FinancialQueryIntent(
                     rawQuery = rawQuery,
                     normalizedQuery = normalized,
-                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfDay(java.util.Calendar.getInstance().apply { timeInMillis = now; add(java.util.Calendar.DAY_OF_MONTH, -7) }.timeInMillis), now)),
+                    // S11-018: Use TimePeriodUtils.getWeekRange instead of Calendar.getInstance()
+                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getWeekRange(now, 0).let { (s, e) -> PeriodRange(s, e) }),
                     metric = QueryMetric.TOTAL,
                     grouping = QueryGrouping.NONE,
                     comparison = QueryComparison.NONE
