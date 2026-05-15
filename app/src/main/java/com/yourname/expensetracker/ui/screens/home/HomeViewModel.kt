@@ -205,10 +205,10 @@ class HomeViewModel @Inject constructor(
             }
         }
 
-        // S4-011: Use collectLatest so currency change cancels stale trend load
+        // S4-011R: collectLatest cancels the suspend body directly — no inner launch
         viewModelScope.launch {
             homeCurrency.filterNotNull().collectLatest { currency ->
-                loadCategoryTrends()
+                loadCategoryTrendsForCurrency(currency)
             }
         }
     }
@@ -351,7 +351,10 @@ class HomeViewModel @Inject constructor(
             .filter { it.isVisible || editMode }
             .mapNotNull { conf ->
                 // S4-001: Use canonical registry instead of local getWidgetId
-                compiledData.allWidgets.find { w -> DashboardWidgetRegistry.idFor(w) == conf.id }
+                val widget = compiledData.allWidgets.find { w -> DashboardWidgetRegistry.idFor(w) == conf.id }
+                // S4-007R: Log unknown IDs so they are detectable in debug builds
+                if (widget == null) Timber.w("Unknown widget config ID '${conf.id}' — not in computed widgets")
+                widget
             }
 
         DashboardState(
@@ -402,15 +405,21 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             widgetConfigMutex.withLock {
                 val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
-                // S4-002: Move within visible-only order to prevent swapping with hidden widgets
-                val visibleIds = currentConfig.filter { it.isVisible }.map { it.id }
-                val visibleIndex = visibleIds.indexOf(widgetId)
-                if (visibleIndex == -1) return@withLock
+                // S4-002R: In edit mode all widgets (including hidden) are rendered and moveable.
+                // In normal mode only visible widgets participate in ordering.
+                val editMode = isEditMode.value
+                val orderedIds = if (editMode) {
+                    currentConfig.map { it.id }
+                } else {
+                    currentConfig.filter { it.isVisible }.map { it.id }
+                }
+                val orderedIndex = orderedIds.indexOf(widgetId)
+                if (orderedIndex == -1) return@withLock
 
-                val targetVisibleIndex = if (moveUp) visibleIndex - 1 else visibleIndex + 1
-                if (targetVisibleIndex !in visibleIds.indices) return@withLock
+                val targetOrderedIndex = if (moveUp) orderedIndex - 1 else orderedIndex + 1
+                if (targetOrderedIndex !in orderedIds.indices) return@withLock
 
-                val targetId = visibleIds[targetVisibleIndex]
+                val targetId = orderedIds[targetOrderedIndex]
                 val fromIndex = currentConfig.indexOfFirst { it.id == widgetId }
                 val toIndex = currentConfig.indexOfFirst { it.id == targetId }
                 if (fromIndex == -1 || toIndex == -1) return@withLock
@@ -456,35 +465,36 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * Load and cache category analytics with trend data for the current month.
-     * This is used by the RetroTopCategoriesCard to show spending trends.
+     * S4-011R: Suspend — called directly inside collectLatest so cancellation propagates.
+     * S4-012R: Typed state: emptyMap on error is replaced by explicit error logging.
      */
+    private suspend fun loadCategoryTrendsForCurrency(currency: String) {
+        try {
+            val period = advancedAnalyticsEngine.getPeriodRange(
+                com.yourname.expensetracker.domain.analytics.AnalyticsPeriod.MONTH
+            )
+            val (analytics, _) = advancedAnalyticsEngine.getCategoryAnalytics(period, displayCurrency = currency)
+            _categoryTrends.value = analytics.associate { analytic ->
+                analytic.category.id to com.yourname.expensetracker.ui.components.CategoryTrendInfo(
+                    previousTotal = analytic.previousPeriodTotal,
+                    changePercent = analytic.changePercent,
+                    direction = analytic.trendDirection,
+                    averageOverMonths = null,
+                    monthsOfData = 1
+                )
+            }
+            Timber.d("Loaded ${_categoryTrends.value.size} category trends for $currency")
+        } catch (e: Exception) {
+            Timber.e(e, "Error loading category trends for $currency")
+            // S4-012R: Keep existing trends rather than wiping to emptyMap on transient error
+        }
+    }
+
+    /** Public entry point for manual reload (e.g. retry button). */
     fun loadCategoryTrends() {
         viewModelScope.launch {
-            try {
-                val period = advancedAnalyticsEngine.getPeriodRange(
-                    com.yourname.expensetracker.domain.analytics.AnalyticsPeriod.MONTH
-                )
-                val (analytics, _) = advancedAnalyticsEngine.getCategoryAnalytics(period, displayCurrency = homeCurrency.value ?: return@launch)
-                
-                val trends = analytics.associate { analytic ->
-                    analytic.category.id to com.yourname.expensetracker.ui.components.CategoryTrendInfo(
-                        previousTotal = analytic.previousPeriodTotal,
-                        changePercent = analytic.changePercent,
-                        direction = analytic.trendDirection,
-                        averageOverMonths = null, // Could be loaded from insights engine if needed
-                        monthsOfData = 1
-                    )
-                }
-                
-                _categoryTrends.value = trends
-                
-                Timber.d("Loaded ${trends.size} category trends")
-            } catch (e: Exception) {
-                Timber.e(e, "Error loading category trends")
-                // S4-012: Surface error — empty trends with a log so UI can show degraded state
-                _categoryTrends.value = emptyMap()
-            }
+            val currency = homeCurrency.value ?: return@launch
+            loadCategoryTrendsForCurrency(currency)
         }
     }
 

@@ -205,7 +205,7 @@ data class CategorySpending(
     val category: CategoryInfo,
     val total: Double,
     val percentage: Float,
-    val currency: String = "EUR"
+    val currency: String  // S4-023: no default — callers must pass home currency explicitly
 ) {
     val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(currency))
 }
@@ -535,7 +535,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                     isIncome = false
                 ),
                 total = it.amount,
-                percentage = it.percentage.toFloat()
+                percentage = it.percentage.toFloat(),
+                currency = ctx.data.summary.currency
             )
         }
     }

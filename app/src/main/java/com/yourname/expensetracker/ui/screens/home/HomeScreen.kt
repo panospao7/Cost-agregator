@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.rounded.Settings
@@ -125,14 +126,7 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        val currentYear = if (state.referenceNowMillis > 0L) {
-            TimePeriodUtils.getYear(state.referenceNowMillis)
-        } else {
-            Calendar.getInstance().get(Calendar.YEAR)
-        }
-        viewModel.loadTotalsForYear(currentYear)
-    }
+    // S4-009R: Totals are loaded in HomeViewModel.init — no duplicate load here
 
     var showQuickSettings by remember { mutableStateOf(false) }
     var showAiSettings by remember { mutableStateOf(false) }
@@ -247,6 +241,24 @@ fun HomeScreen(
             }
             }
             else -> {
+                // S4-022: Show data-quality warning when some currencies could not be converted
+                if (state.isPartial) {
+                    androidx.compose.material3.Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                        )
+                    ) {
+                        Text(
+                            text = stringResource(R.string.dashboard_partial_currency_warning),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
                 LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
@@ -675,7 +687,8 @@ fun HomeScreen(
                         showCategoryBreakdown = true
                     },
                     currency = homeCurrency ?: "",
-                    error = totalsState.error?.let { (it as? com.yourname.expensetracker.domain.model.UiText.DynamicString)?.value },
+                    // S4-021: Resolve UiText properly — not just DynamicString
+                    error = totalsState.error?.asString(LocalContext.current),
                     onRetry = { viewModel.reloadCurrentTotalsLevel() },
                     modifier = Modifier.fillMaxWidth()
                 )
