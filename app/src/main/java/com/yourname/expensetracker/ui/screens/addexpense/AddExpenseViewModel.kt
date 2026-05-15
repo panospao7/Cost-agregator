@@ -173,7 +173,14 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun selectTransactionType(type: TransactionType) {
-        _state.update { it.copy(transactionType = type) }
+        // S5-011: Clear transfer metadata when leaving TRANSFER type
+        _state.update {
+            if (type == TransactionType.TRANSFER) {
+                it.copy(transactionType = type)
+            } else {
+                it.copy(transactionType = type, transferDirection = null, transferAccountName = "")
+            }
+        }
     }
 
     fun updateDate(dateMs: Long) {

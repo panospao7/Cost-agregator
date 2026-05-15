@@ -487,14 +487,14 @@ fun TransactionsScreen(
                         groupedTransactions.forEach { (dateString, items) ->
                             // Date header
                             stickyHeader {
-                                // S5-004: Only sum if all items are in the same currency
+                                // S5-007: Use the group's own currency, not homeCurrency
                                 val currencies = items.map { it.expense.currency.uppercase() }.toSet()
-                                val isMixedCurrency = currencies.size > 1
+                                val groupCurrency = currencies.singleOrNull() // null = mixed
                                 DateHeader(
                                     date = dateString,
-                                    totalAmount = if (isMixedCurrency) null else items.sumOf { it.expense.signedEffectiveAmount() },
+                                    totalAmount = if (groupCurrency == null) null else items.sumOf { it.expense.signedEffectiveAmount() },
                                     itemCount = items.size,
-                                    homeCurrency = if (isMixedCurrency) null else homeCurrency
+                                    homeCurrency = groupCurrency // null shows "Mixed currencies"
                                 )
                             }
                             
@@ -590,6 +590,12 @@ fun TransactionsScreen(
 
         // Category picker dialog
         if (expenseToCategorize != null) {
+            // S5-014: Close only after success event, not immediately after invoking VM
+            LaunchedEffect(Unit) {
+                viewModel.categoryUpdateSuccess.collect {
+                    expenseToCategorize = null
+                }
+            }
             CategoryPickerDialog(
                 categories = categories,
                 currentCategoryId = expenseToCategorize?.categoryId,
@@ -597,7 +603,7 @@ fun TransactionsScreen(
                 onDismiss = { expenseToCategorize = null },
                 onCategorySelected = { categoryId, applyToAll ->
                     expenseToCategorize?.let { viewModel.updateCategory(it, categoryId, applyToAll) }
-                    expenseToCategorize = null
+                    // Do NOT set expenseToCategorize = null here — wait for success event
                 }
             )
         }

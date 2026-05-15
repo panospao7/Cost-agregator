@@ -118,6 +118,10 @@ class TransactionsViewModel @Inject constructor(
     private val _successMessage = MutableSharedFlow<String>()
     val successMessage: SharedFlow<String> = _successMessage.asSharedFlow()
 
+    /** S5-014: Emitted after category update succeeds — screen closes dialog on this */
+    private val _categoryUpdateSuccess = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val categoryUpdateSuccess: SharedFlow<Unit> = _categoryUpdateSuccess.asSharedFlow()
+
  // Refresh trigger for pull-to-refresh
  private val _refreshTrigger = MutableStateFlow(0)
 
@@ -261,10 +265,10 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    /** S5-002: Clear any route-provided filter (called when screen opens with null initialFilter). */
+    /** S5-005: Clear any route-provided filter — canonical no-filter state is null. */
     fun clearRouteFilter() {
-        if (_filter.value != TransactionFilter()) {
-            _filter.value = TransactionFilter()
+        if (_filter.value != null) {
+            _filter.value = null
             if (_selectedTab.value == TransactionTab.ALL) {
                 resetAllPagingState()
                 loadInitialAll()
@@ -406,6 +410,8 @@ class TransactionsViewModel @Inject constructor(
                     expenseRepository.updateExpenseCategory(expense, categoryId)
                     _successMessage.emit("Category updated")
                 }
+                // S5-014: Signal success so dialog can close
+                _categoryUpdateSuccess.tryEmit(Unit)
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update category: ${e.message}")
@@ -455,18 +461,15 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                // S5-010: Atomic update - set type AND transfer fields together
-                // When changing away from TRANSFER, clear transfer metadata
+                // S5-010: Use atomic method — type + transfer metadata in one transaction
                 val effectiveDirection = if (newType == TransactionType.TRANSFER) transferDirection else null
                 val effectiveAccount = if (newType == TransactionType.TRANSFER) normalizedTransferAccountName else ""
 
-                expenseRepository.updateExpenseType(expense, newType)
-                // Always update transfer details to ensure consistency
-                // (clears them when not TRANSFER, sets them when TRANSFER)
-                expenseRepository.updateTransferDetails(
+                expenseRepository.updateExpenseTypeAndTransfer(
                     expense = expense,
+                    newType = newType,
                     transferDirection = effectiveDirection,
-                    transferAccountName = effectiveAccount
+                    transferAccountName = effectiveAccount.takeIf { it.isNotBlank() }
                 )
                 _successMessage.emit("Type changed to ${newType.name}")
                 refreshPagedExpensesAfterMutation()
@@ -494,27 +497,7 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    fun updateNotMineDetails(expense: Expense, isNotMine: Boolean, ownerName: String) {
-        viewModelScope.launch {
-            try {
-                if (isNotMine && expense.isSharedExpense) {
-                    expenseRepository.updateSharedExpenseDetails(
-                        expense = expense,
-                        isSharedExpense = false,
-                        sharedWithName = null,
-                        mySharePercentage = null,
-                        myShareAmount = null
-                    )
-                }
-                expenseRepository.updateNotMineDetails(expense, isNotMine, ownerName.takeIf { it.isNotBlank() })
-                _successMessage.emit(if (isNotMine) "Marked as not mine" else "Marked as mine")
-                refreshPagedExpensesAfterMutation()
-            } catch (e: Exception) {
-                _error.emit("Failed to update: ${e.message}")
-            }
-        }
-    }
-
+    @Deprecated("Use updateOwnership", ReplaceWith("updateOwnership(...)"))
     fun updateSharedExpenseDetails(
         expense: Expense,
         isSharedExpense: Boolean,
@@ -522,37 +505,7 @@ class TransactionsViewModel @Inject constructor(
         mySharePercentage: String,
         myShareAmount: String
     ) {
-        val percentageText = mySharePercentage.trim()
-        val parsedSharePercentage = percentageText.takeIf { it.isNotEmpty() }?.toIntOrNull()
-        if (percentageText.isNotEmpty() && (parsedSharePercentage == null || parsedSharePercentage !in 0..100)) {
-            viewModelScope.launch {
-                _error.emit("Share percentage must be between 0 and 100")
-            }
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                if (isSharedExpense && expense.isNotMine) {
-                    expenseRepository.updateNotMineDetails(
-                        expense = expense,
-                        isNotMine = false,
-                        ownerName = null
-                    )
-                }
-                expenseRepository.updateSharedExpenseDetails(
-                    expense = expense,
-                    isSharedExpense = isSharedExpense,
-                    sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
-                    mySharePercentage = parsedSharePercentage,
-                    myShareAmount = myShareAmount.toDoubleOrNull()
-                )
-                _successMessage.emit(if (isSharedExpense) "Marked as shared expense" else "Unmarked shared expense")
-                refreshPagedExpensesAfterMutation()
-            } catch (e: Exception) {
-                _error.emit("Failed to update: ${e.message}")
-            }
-        }
+        updateOwnership(expense, false, "", isSharedExpense, sharedWithName, mySharePercentage, myShareAmount)
     }
 
     /**
@@ -572,14 +525,21 @@ class TransactionsViewModel @Inject constructor(
         mySharePercentage: String,
         myShareAmount: String
     ) {
-        val percentageText = mySharePercentage.trim()
-        val parsedSharePercentage = percentageText.takeIf { it.isNotEmpty() }?.toIntOrNull()
-        if (percentageText.isNotEmpty() && (parsedSharePercentage == null || parsedSharePercentage !in 0..100)) {
-            viewModelScope.launch {
-                _error.emit("Share percentage must be between 0 and 100")
-            }
+        // S5-012: Use shared OwnershipValidator — same rules as Add Expense
+        val validationResult = com.yourname.expensetracker.ui.util.OwnershipValidator.validate(
+            isNotMine = isNotMine,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            sharePercentageText = mySharePercentage.trim(),
+            shareAmountText = myShareAmount.trim()
+        )
+        if (validationResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
+            viewModelScope.launch { _error.emit(validationResult.message) }
             return
         }
+
+        val percentageText = mySharePercentage.trim()
+        val parsedSharePercentage = percentageText.takeIf { it.isNotEmpty() }?.toIntOrNull()
 
         viewModelScope.launch {
             try {
@@ -590,7 +550,7 @@ class TransactionsViewModel @Inject constructor(
                     isSharedExpense = isSharedExpense,
                     sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
                     mySharePercentage = parsedSharePercentage,
-                    myShareAmount = myShareAmount.toDoubleOrNull()
+                    myShareAmount = com.yourname.expensetracker.domain.util.AmountUtils.parseAmount(myShareAmount.trim())
                 )
                 val message = when {
                     isNotMine -> "Marked as not mine"
@@ -604,6 +564,15 @@ class TransactionsViewModel @Inject constructor(
             }
         }
     }
+
+    /** S5-013: Deprecated — use [updateOwnership] for validated atomic ownership update. */
+    @Deprecated("Use updateOwnership", ReplaceWith("updateOwnership(...)"))
+    fun updateNotMineDetails(expense: Expense, isNotMine: Boolean, ownerName: String) {
+        updateOwnership(expense, isNotMine, ownerName, false, "", "", "")
+    }
+
+    /** S5-013: Deprecated — use [updateOwnership] for validated atomic ownership update. */
+    @Deprecated("Use updateOwnership", ReplaceWith("updateOwnership(...)"))
 
     fun updateLocation(expense: Expense, lat: Double, lon: Double, address: String?, osmId: String?) {
         viewModelScope.launch {

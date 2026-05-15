@@ -549,6 +549,42 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    /**
+     * S5-010: Atomically update transaction type AND transfer metadata in one operation.
+     * Prevents the inconsistency where type changes to TRANSFER but direction/account
+     * fails to update (or vice versa).
+     */
+    suspend fun updateExpenseTypeAndTransfer(
+        expense: Expense,
+        newType: TransactionType,
+        transferDirection: TransferDirection?,
+        transferAccountName: String?
+    ) {
+        database.withTransaction {
+            transactionLifecycleCoordinator.updateType(
+                expenseId = expense.id,
+                newType = newType,
+                source = "USER_EDIT"
+            )
+            transactionLifecycleCoordinator.updateTransferDetails(
+                expenseId = expense.id,
+                transferDirection = transferDirection,
+                transferAccountName = transferAccountName,
+                source = "USER_EDIT"
+            )
+        }
+        // Best-effort analytics side effect outside transaction
+        if (transferDirection != null && newType == TransactionType.TRANSFER) {
+            runCatching {
+                transferDirectionAnalytics.recordUserCorrection(
+                    transferId = expense.id,
+                    fromDirection = expense.transferDirection?.toDomainTransferDirection(),
+                    toDirection = transferDirection.toDomainTransferDirection()
+                )
+            }
+        }
+    }
+
     @Deprecated("Use TransactionLifecycleCoordinator.updateOwnership() instead for proper lifecycle tracking.")
     suspend fun updateNotMineDetails(
         expense: Expense,
