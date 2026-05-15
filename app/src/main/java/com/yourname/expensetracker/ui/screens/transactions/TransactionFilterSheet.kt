@@ -82,11 +82,13 @@ fun TransactionFilterSheet(
                 )
                 TextButton(
                     onClick = {
+                        // S5-029: Reset All clears visible AND hidden route-only fields
                         selectedCategoryId = null
                         selectedType = null
                         selectedOwnership = VMOwnershipFilter.ALL
                         selectedYear = null
                         selectedMonth = null
+                        onClear() // clears minAmount/maxAmount/correlationId/merchantName
                     }
                 ) {
                     Text(stringResource(R.string.filter_reset_all), color = SemanticColors.DangerRed)

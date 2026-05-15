@@ -168,6 +168,7 @@ fun TransactionsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     
     val context = LocalContext.current
+    val mutatingExpenseIds by viewModel.mutatingExpenseIds.collectAsState()
 
     // Collect error messages
     LaunchedEffect(Unit) {
@@ -515,18 +516,26 @@ fun TransactionsScreen(
                         groupedTransactions.forEach { (dateString, items) ->
                             // Date header
                             stickyHeader {
-                                // S5-007: Use the group's own currency, not homeCurrency
-                                // S5-024: For mixed-currency groups, sum baseAmount (home-currency-normalized)
                                 val currencies = items.map { it.expense.currency.uppercase() }.toSet()
-                                val groupCurrency = currencies.singleOrNull() // null = mixed
-                                val totalAmount = when {
-                                    groupCurrency != null -> items.sumOf { it.expense.signedEffectiveAmount() }
-                                    // Mixed: use baseAmount if available (> 0), else null
-                                    items.all { it.expense.baseAmount > 0 } ->
-                                        items.sumOf { if (it.expense.isNotMine) 0.0 else it.expense.baseAmount }
-                                    else -> null
+                                val groupCurrency = currencies.singleOrNull()
+                                val totalAmount: Double?
+                                val displayCurrency: String?
+                                if (groupCurrency != null) {
+                                    // S5-007: Same-currency group — use group currency
+                                    totalAmount = items.sumOf { it.expense.signedEffectiveAmount() }
+                                    displayCurrency = groupCurrency
+                                } else {
+                                    // S5-024R-A/B: Mixed — use normalizedEffectiveAmount with baseCurrency
+                                    val baseCurrencies = items.map { it.expense.baseCurrency.uppercase() }.toSet()
+                                    val commonBase = baseCurrencies.singleOrNull()
+                                    if (commonBase != null && items.all { it.expense.baseAmount > 0 }) {
+                                        totalAmount = items.sumOf { it.expense.normalizedEffectiveAmount }
+                                        displayCurrency = commonBase // use stored baseCurrency, not current homeCurrency
+                                    } else {
+                                        totalAmount = null
+                                        displayCurrency = null
+                                    }
                                 }
-                                val displayCurrency = groupCurrency ?: homeCurrency?.takeIf { items.all { e -> e.expense.baseAmount > 0 } }
                                 DateHeader(
                                     date = dateString,
                                     totalAmount = totalAmount,
@@ -620,9 +629,15 @@ fun TransactionsScreen(
                 onDismiss = { expenseToRecurring = null },
                 onFrequencySelected = { frequency ->
                     expenseToRecurring?.let { viewModel.markAsRecurring(it, frequency) }
-                    expenseToRecurring = null
+                    // S5-036: Do NOT close immediately — wait for recurringSuccess event
                 }
             )
+            // S5-036: Close only after success
+            LaunchedEffect(Unit) {
+                viewModel.recurringSuccess.collect { expenseId ->
+                    if (expenseId == expenseToRecurring?.id) expenseToRecurring = null
+                }
+            }
         }
 
         // Category picker dialog
@@ -770,16 +785,22 @@ fun TransactionsScreen(
 
         // Edit location bottom sheet
         if (expenseToEditLocation != null) {
+            // S5-035: Close only after locationSaveSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.locationSaveSuccess.collect { expenseId ->
+                    if (expenseId == expenseToEditLocation?.id) expenseToEditLocation = null
+                }
+            }
             EditLocationDialog(
                 expense = expenseToEditLocation!!,
                 onDismiss = { expenseToEditLocation = null },
                 onSave = { lat, lon, address, osmId ->
                     expenseToEditLocation?.let { viewModel.updateLocation(it, lat, lon, address, osmId) }
-                    expenseToEditLocation = null
+                    // Do NOT close immediately — wait for locationSaveSuccess
                 },
                 onClear = {
                     expenseToEditLocation?.let { viewModel.clearLocation(it) }
-                    expenseToEditLocation = null
+                    expenseToEditLocation = null // clear is immediate (no async)
                 },
                 geocodingService = viewModel.geocodingService
             )

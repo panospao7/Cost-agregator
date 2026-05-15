@@ -47,11 +47,27 @@ import javax.inject.Singleton
 enum class SortOrder(val sql: String, val displayName: String) {
     DATE_DESC("e.date DESC", "Newest First"),
     DATE_ASC("e.date ASC", "Oldest First"),
-    // S5-008R: Amount sorts use baseAmount (home-currency-normalized at save time) when available,
-    // falling back to effectiveAmount for legacy rows where baseAmount = 0.
-    // This ensures mixed-currency lists sort by comparable home-currency values.
-    AMOUNT_DESC("(CASE WHEN e.baseAmount > 0 THEN e.baseAmount ELSE ($EFFECTIVE_AMOUNT_E_SQL) END) DESC", "Amount High to Low"),
-    AMOUNT_ASC("(CASE WHEN e.baseAmount > 0 THEN e.baseAmount ELSE ($EFFECTIVE_AMOUNT_E_SQL) END) ASC", "Amount Low to High")
+    // S5-008R: Amount sorts use ownership-adjusted normalized base amount.
+    // When baseAmount > 0 (home-currency-normalized at save time), apply ownership rules.
+    // Falls back to effectiveAmount for legacy rows where baseAmount = 0.
+    AMOUNT_DESC("""(CASE
+        WHEN e.isNotMine = 1 THEN 0.0
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
+            THEN e.myShareAmount * e.exchangeRateUsed
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL
+            THEN e.baseAmount * e.mySharePercentage / 100.0
+        WHEN e.baseAmount > 0 THEN e.baseAmount
+        ELSE ($EFFECTIVE_AMOUNT_E_SQL)
+    END) DESC""", "Amount High to Low"),
+    AMOUNT_ASC("""(CASE
+        WHEN e.isNotMine = 1 THEN 0.0
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
+            THEN e.myShareAmount * e.exchangeRateUsed
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL
+            THEN e.baseAmount * e.mySharePercentage / 100.0
+        WHEN e.baseAmount > 0 THEN e.baseAmount
+        ELSE ($EFFECTIVE_AMOUNT_E_SQL)
+    END) ASC""", "Amount Low to High")
 }
 
 enum class OwnershipFilter {

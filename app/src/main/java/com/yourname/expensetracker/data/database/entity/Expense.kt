@@ -168,6 +168,22 @@ data class Expense(
             else -> amount
         }
 
+    /**
+     * S5-008R: Ownership-adjusted amount in home currency (normalized at save time).
+     * Uses [baseAmount]/[exchangeRateUsed] when available, falls back to [effectiveAmount].
+     * Use this for cross-currency sort/filter/totals.
+     */
+    val normalizedEffectiveAmount: Double
+        get() = when {
+            isNotMine -> 0.0
+            baseAmount <= 0.0 -> effectiveAmount // legacy row — fall back to raw
+            isSharedExpense && myShareAmount != null && exchangeRateUsed > 0.0 ->
+                myShareAmount * exchangeRateUsed
+            isSharedExpense && mySharePercentage != null ->
+                baseAmount * mySharePercentage / 100.0
+            else -> baseAmount
+        }
+
     val hasConflictingOwnershipFlags: Boolean
         get() = isNotMine && isSharedExpense
 

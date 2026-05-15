@@ -149,6 +149,14 @@ class TransactionsViewModel @Inject constructor(
     private val _ownershipSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val ownershipSuccess: SharedFlow<Long> = _ownershipSuccess.asSharedFlow()
 
+    /** S5-035: Emitted after location save succeeds */
+    private val _locationSaveSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val locationSaveSuccess: SharedFlow<Long> = _locationSaveSuccess.asSharedFlow()
+
+    /** S5-036: Emitted after recurring mark succeeds */
+    private val _recurringSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val recurringSuccess: SharedFlow<Long> = _recurringSuccess.asSharedFlow()
+
  // Refresh trigger for pull-to-refresh
  private val _refreshTrigger = MutableStateFlow(0)
 
@@ -242,8 +250,8 @@ class TransactionsViewModel @Inject constructor(
             when (order) {
                 SortOrder.DATE_DESC -> expenseList.sortedByDescending { it.expense.date }
                 SortOrder.DATE_ASC -> expenseList.sortedBy { it.expense.date }
-                SortOrder.AMOUNT_DESC -> expenseList.sortedByDescending { it.expense.effectiveAmount }
-                SortOrder.AMOUNT_ASC -> expenseList.sortedBy { it.expense.effectiveAmount }
+                SortOrder.AMOUNT_DESC -> expenseList.sortedByDescending { it.expense.normalizedEffectiveAmount }
+                SortOrder.AMOUNT_ASC -> expenseList.sortedBy { it.expense.normalizedEffectiveAmount }
             }
         }
 
@@ -284,15 +292,21 @@ class TransactionsViewModel @Inject constructor(
         )
 
     // ============================================================
-    // PUBLIC API
-    // ============================================================
-
     // ============================================================
     // PUBLIC API
     // ============================================================
 
     fun applyFilter(filter: TransactionFilter) {
-        _filter.value = filter
+        // S5-032/S5-033: Normalize — empty filter and ownership ALL become null
+        val normalized = filter.let { f ->
+            val withNullOwnership = if (f.ownership == com.yourname.expensetracker.data.repository.OwnershipFilter.ALL) f.copy(ownership = null) else f
+            if (withNullOwnership.categoryId == null && withNullOwnership.merchantName == null &&
+                withNullOwnership.transactionType == null && withNullOwnership.dateRange == null &&
+                withNullOwnership.ownership == null && withNullOwnership.minAmount == null &&
+                withNullOwnership.maxAmount == null && withNullOwnership.correlationId == 0L) null
+            else withNullOwnership
+        }
+        _filter.value = normalized
         if (_selectedTab.value == TransactionTab.ALL) {
             resetAllPagingState()
             loadInitialAll()
@@ -330,10 +344,11 @@ class TransactionsViewModel @Inject constructor(
     fun selectTab(tab: TransactionTab) {
         if (_selectedTab.value == tab) return
         
+        searchDebounceJob?.cancel() // S5-031: cancel pending search before switching tab
         _selectedTab.value = tab
         resetAllPagingState()
-        _searchQuery.value = "" // Reset search on tab change
-        _filter.value = null // Clear filter when manually changing tabs
+        _searchQuery.value = ""
+        _filter.value = null
         
         if (tab == TransactionTab.ALL) {
             loadInitialAll()
@@ -343,10 +358,11 @@ class TransactionsViewModel @Inject constructor(
     fun search(query: String) {
         _searchQuery.value = query.trim()
         if (_selectedTab.value == TransactionTab.ALL) {
-            // S5-028: Debounce search for ALL tab — prevents per-keystroke DB loads
+            // S5-028/S5-031: Debounce + re-check tab inside delayed block
             searchDebounceJob?.cancel()
             searchDebounceJob = viewModelScope.launch {
                 kotlinx.coroutines.delay(250)
+                if (_selectedTab.value != TransactionTab.ALL) return@launch // S5-031
                 resetAllPagingState()
                 loadInitialAll()
             }
@@ -391,9 +407,9 @@ class TransactionsViewModel @Inject constructor(
         if (_isLoading.value) return
         if (_hasReachedEnd.value) return
 
-        // S5-016R: Use Mutex for true atomic gate — prevents any race between rapid calls
-        viewModelScope.launch {
-            if (!loadMoreMutex.tryLock()) return@launch // already running
+        // S5-016R/S5-030: Use Mutex + assign job so reset/search can cancel it
+        loadMoreJob = viewModelScope.launch {
+            if (!loadMoreMutex.tryLock()) return@launch
             try {
                 if (_hasReachedEnd.value || _selectedTab.value != TransactionTab.ALL) return@launch
                 _isLoadingMoreState.value = true
@@ -412,7 +428,7 @@ class TransactionsViewModel @Inject constructor(
                 _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions: ${e.message}"))
             } finally {
                 _isLoadingMoreState.value = false
-                loadMoreMutex.unlock()
+                if (loadMoreMutex.isLocked) loadMoreMutex.unlock()
             }
         }
     }
@@ -576,6 +592,7 @@ class TransactionsViewModel @Inject constructor(
         val parsedSharePercentage = percentageText.takeIf { it.isNotEmpty() }?.toIntOrNull()
 
         viewModelScope.launch {
+            beginRowMutation(expense.id) // S5-034
             try {
                 expenseRepository.updateOwnership(
                     expense = expense,
@@ -596,6 +613,8 @@ class TransactionsViewModel @Inject constructor(
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update: ${e.message}"))
+            } finally {
+                endRowMutation(expense.id) // S5-034
             }
         }
     }
@@ -638,6 +657,7 @@ class TransactionsViewModel @Inject constructor(
                 )
                 merchantLocationRepository.saveCorrection(correction)
                 _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Location saved"))
+                _locationSaveSuccess.tryEmit(expense.id) // S5-035
                 refresh()
             } catch (e: Exception) {
                 _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location: ${e.message}"))
@@ -671,7 +691,9 @@ class TransactionsViewModel @Inject constructor(
                     lastDate = timeProvider.now(),
                     currency = expense.currency
                 )
-                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})"))            } catch (e: Exception) {
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})"))
+                _recurringSuccess.tryEmit(expense.id) // S5-036
+            } catch (e: Exception) {
                 _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring: ${e.message}"))
             } finally {
                 _isLoading.value = false
@@ -801,12 +823,9 @@ class TransactionsViewModel @Inject constructor(
         val maxAmount = filter.maxAmount
         if (minAmount == null && maxAmount == null) return expenses
 
-        // S5-008: effectiveAmount is home-currency-normalized (set by transaction lifecycle).
-        // min/max from assistant queries (S11-017) are also home-currency-normalized.
-        // This comparison is correct for current use cases.
-        // TODO: When filter sheet exposes min/max, add explicit currency conversion here.
+        // S5-008R-A: Use normalizedEffectiveAmount for currency-aware comparison
         return expenses.filter { item ->
-            val amount = item.expense.effectiveAmount
+            val amount = item.expense.normalizedEffectiveAmount
             (minAmount == null || amount >= minAmount) &&
                 (maxAmount == null || amount <= maxAmount)
         }
