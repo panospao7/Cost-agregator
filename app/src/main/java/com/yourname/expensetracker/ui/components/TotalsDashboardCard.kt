@@ -45,8 +45,8 @@ fun TotalsDashboardCard(
     onLevelChanged: (PeriodLevel) -> Unit,
     onShowCategoryBreakdown: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Placeholder default. Production callers should pass explicit currency. */
-    currency: String = "EUR",
+    /** S4-018: Required — no default EUR */
+    currency: String,
     error: String? = null,
     onRetry: (() -> Unit)? = null
 ) {

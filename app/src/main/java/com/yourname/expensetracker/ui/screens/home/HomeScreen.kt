@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.home
+﻿package com.yourname.expensetracker.ui.screens.home
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -422,7 +422,7 @@ fun HomeScreen(
                                 ) {
             SpendingTrendChart(
                 series = widget.series,
-                currency = homeCurrency
+                currency = homeCurrency ?: ""
             )
                                 }
                             }
@@ -495,9 +495,9 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                    StatLabel(stringResource(R.string.widget_today), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency).formatted, modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_week), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency).formatted, modifier = Modifier.weight(1f))
-                    StatLabel(stringResource(R.string.widget_month), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency).formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_month), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
                                     }
                                 }
                             }
@@ -602,7 +602,7 @@ fun HomeScreen(
             referenceNowMillis = state.referenceNowMillis,
             totalRecurringCount = widget.weather.totalRecurringCount,
             details = widget.weather.details,
-            currency = homeCurrency,
+            currency = homeCurrency ?: "",
             onManageClick = onNavigateToRecurring,
             onPlanClick = { showAddPlannedExpenseDialog = true }
         )
@@ -632,7 +632,7 @@ fun HomeScreen(
                         viewModel.loadCategoryBreakdownForPeriod(period)
                         showCategoryBreakdown = true
                     },
-                    currency = homeCurrency,
+                    currency = homeCurrency ?: "",
                     modifier = Modifier.fillMaxWidth()
                 )
                                 } else {
@@ -647,7 +647,7 @@ fun HomeScreen(
                         viewModel.loadCategoryBreakdownForCurrentPeriod()
                         showCategoryBreakdown = true
                     },
-                    currency = homeCurrency,
+                    currency = homeCurrency ?: "",
                     error = totalsState.error?.let { (it as? com.yourname.expensetracker.domain.model.UiText.DynamicString)?.value },
                     onRetry = { viewModel.reloadCurrentTotalsLevel() },
                     modifier = Modifier.fillMaxWidth()
@@ -663,13 +663,13 @@ fun HomeScreen(
                 committedExpenses = widget.committedExpenses,
                 likelyExpenses = widget.likelyExpenses,
                 status = widget.status,
-                currency = homeCurrency
+                currency = homeCurrency ?: ""
             )
                             }
                             is DashboardWidget.MonteCarloForecast -> {
             MonteCarloForecastCard(
                 result = widget.result,
-                currency = homeCurrency
+                currency = homeCurrency ?: ""
             )
                             }
                             
@@ -731,7 +731,7 @@ fun HomeScreen(
                             is DashboardWidget.FinancialStressForecast -> {
             FinancialStressForecastCard(
                 result = widget.result,
-                currency = homeCurrency,
+                currency = homeCurrency ?: "",
                 onActionClick = { recommendation ->
                     // Navigate based on recommendation type
                     when {
@@ -753,7 +753,7 @@ fun HomeScreen(
                 is DashboardWidget.SavingsSweepPrompt -> {
                     SavingsSweepPromptCard(
                         widget = widget,
-                        homeCurrency = homeCurrency,
+                        homeCurrency = homeCurrency ?: "",
                         onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
                     )
                 }
@@ -860,14 +860,14 @@ fun HomeScreen(
             RetroCategoryBreakdownSheet(
                 periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
                 categories = totalsState.categoryBreakdown,
-                currency = homeCurrency,
+                currency = homeCurrency ?: "",
                 onDismiss = { showCategoryBreakdown = false }
             )
             } else {
             CategoryBreakdownSheet(
                 periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
                 categories = totalsState.categoryBreakdown,
-                currency = homeCurrency,
+                currency = homeCurrency ?: "",
                 onDismiss = { showCategoryBreakdown = false }
             )
             }
@@ -1459,16 +1459,16 @@ private fun SavingsSweepPromptCard(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.sweepAmount, homeCurrency)}",
+                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.sweepAmount, homeCurrency ?: "")}",
                 style = MaterialTheme.typography.bodyLarge
             )
             Text(
-                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.underspend, homeCurrency)} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.riskBuffer, homeCurrency)}",
+                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.underspend, homeCurrency ?: "")} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.riskBuffer, homeCurrency ?: "")}",
                 style = MaterialTheme.typography.bodySmall
             )
             widget.goalAllocations.firstOrNull()?.let { topGoal ->
                 Text(
-                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(topGoal.suggestedAmount, homeCurrency)})",
+                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(topGoal.suggestedAmount, homeCurrency ?: "")})",
                     style = MaterialTheme.typography.bodySmall
                 )
             }

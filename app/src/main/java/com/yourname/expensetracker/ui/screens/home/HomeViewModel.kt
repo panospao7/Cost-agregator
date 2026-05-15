@@ -48,6 +48,7 @@ import com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.time.Instant
@@ -144,9 +145,11 @@ class HomeViewModel @Inject constructor(
     private val isEditMode = MutableStateFlow(false)
     private val dashboardReloadTrigger = MutableStateFlow(0)
     private val _categoryTrends = MutableStateFlow<Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>>(emptyMap())
-    /** Placeholder initial value "EUR"; immediately replaced by [CurrencySettingsRepository.homeCurrency]. */
-    val homeCurrency: StateFlow<String> = currencySettingsRepository.homeCurrency()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "EUR")
+    /** S4-004: null until home currency loads — never defaults to "EUR" placeholder */
+    val homeCurrency: StateFlow<String?> = currencySettingsRepository.homeCurrency()
+        .map { it as String? }
+        .catch { emit(null) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val dateKeyFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
     private fun dashboardBriefingKeyForToday(): String =
@@ -164,6 +167,9 @@ class HomeViewModel @Inject constructor(
     private val _navigationActions = MutableSharedFlow<NavigationAction>(extraBufferCapacity = 1)
     val navigationActions: SharedFlow<NavigationAction> = _navigationActions.asSharedFlow()
 
+    /** S4-003: Serializes widget config read-modify-write operations */
+    private val widgetConfigMutex = kotlinx.coroutines.sync.Mutex()
+
     init {
         viewModelScope.launch {
             try {
@@ -174,13 +180,14 @@ class HomeViewModel @Inject constructor(
         }
 
         recommendationStateManager.refreshForUser(defaultRecommendationUserId)
-        
-        // Load category trends reactively when homeCurrency changes
+
+        // S4-009: Load initial totals in ViewModel using injected TimeProvider — no Calendar.getInstance() fallback
+        loadTotalsForYear(com.yourname.expensetracker.domain.util.TimePeriodUtils.getYear(timeProvider.now()))
+
+        // S4-011: Use collectLatest so currency change cancels stale trend load
         viewModelScope.launch {
-            homeCurrency.collect { currency ->
-                if (currency.isNotBlank()) {
-                    loadCategoryTrends()
-                }
+            homeCurrency.filterNotNull().collectLatest { currency ->
+                loadCategoryTrends()
             }
         }
     }
@@ -267,7 +274,8 @@ class HomeViewModel @Inject constructor(
             }
             .catch { e ->
                 Timber.e(e, "Error in aiBriefingFlow")
-                emit(AiLoadState.Disabled)
+                // S4-020: Emit Error so UI can distinguish failure from intentionally disabled
+                emit(AiLoadState.Error(application.getString(R.string.home_ai_briefing_unavailable)))
             }
             .stateIn(
                 viewModelScope,
@@ -369,27 +377,33 @@ class HomeViewModel @Inject constructor(
 
     fun moveWidget(widgetId: String, moveUp: Boolean) {
         viewModelScope.launch {
-            val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
-            val index = currentConfig.indexOfFirst { it.id == widgetId }
-            if (index == -1) return@launch
+            // S4-003: Serialize config mutations to prevent read-modify-write races
+            widgetConfigMutex.withLock {
+                val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
+                val index = currentConfig.indexOfFirst { it.id == widgetId }
+                if (index == -1) return@withLock
 
-            val newIndex = if (moveUp) index - 1 else index + 1
-            if (newIndex !in currentConfig.indices) return@launch
+                val newIndex = if (moveUp) index - 1 else index + 1
+                if (newIndex !in currentConfig.indices) return@withLock
 
-            val temp = currentConfig[index]
-            currentConfig[index] = currentConfig[newIndex].copy(order = index)
-            currentConfig[newIndex] = temp.copy(order = newIndex)
+                val temp = currentConfig[index]
+                currentConfig[index] = currentConfig[newIndex].copy(order = index)
+                currentConfig[newIndex] = temp.copy(order = newIndex)
 
-            dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
+                dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
+            }
         }
     }
 
     fun toggleWidgetVisibility(widgetId: String) {
         viewModelScope.launch {
-            val currentConfig = dashboardRepository.getDashboardConfig().map {
-                if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
+            // S4-003: Serialize config mutations
+            widgetConfigMutex.withLock {
+                val currentConfig = dashboardRepository.getDashboardConfig().map {
+                    if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
+                }
+                dashboardRepository.saveDashboardConfig(currentConfig)
             }
-            dashboardRepository.saveDashboardConfig(currentConfig)
         }
     }
 
@@ -422,7 +436,7 @@ class HomeViewModel @Inject constructor(
                 val period = advancedAnalyticsEngine.getPeriodRange(
                     com.yourname.expensetracker.domain.analytics.AnalyticsPeriod.MONTH
                 )
-                val (analytics, _) = advancedAnalyticsEngine.getCategoryAnalytics(period, displayCurrency = homeCurrency.value)
+                val (analytics, _) = advancedAnalyticsEngine.getCategoryAnalytics(period, displayCurrency = homeCurrency.value ?: return@launch)
                 
                 val trends = analytics.associate { analytic ->
                     analytic.category.id to com.yourname.expensetracker.ui.components.CategoryTrendInfo(
@@ -483,11 +497,12 @@ class HomeViewModel @Inject constructor(
             try {
                 val action = navigationTargetResolver.resolve(rec.navigationTarget, rec.filterCriteria)
                 if (action is NavigationAction.NoOp) {
-                    // S4-014: Resolver returned no-op — clear selection so UI doesn't hang
                     _selectedRecommendation.value = null
                     Timber.w("Recommendation navigation resolved to NoOp for target: ${rec.navigationTarget}")
                 } else {
                     _navigationActions.emit(action)
+                    // S4-013: Clear selection after successful navigation
+                    _selectedRecommendation.value = null
                 }
             } catch (e: Exception) {
                 // S4-014: On error, clear selection and log
@@ -569,8 +584,11 @@ class HomeViewModel @Inject constructor(
                         arrayOf(PeriodType.DAY, dailyTotals, emptyList<CategoryBreakdown>())
                     }
                     PeriodType.DAY -> {
-                        // Days are leaf nodes - don't drill further, just show this day
-                        arrayOf(PeriodType.DAY, listOf(period), emptyList<CategoryBreakdown>())
+                        // S4-007: DAY is a leaf node — update selectedPeriod only, do NOT append breadcrumb
+                        _totalsDrillDownState.update { state ->
+                            state.copy(selectedPeriod = period, isLoading = false)
+                        }
+                        return@launch
                     }
                 }
                 
