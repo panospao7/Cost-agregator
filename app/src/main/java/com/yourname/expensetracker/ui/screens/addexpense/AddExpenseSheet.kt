@@ -138,10 +138,11 @@ fun AddExpenseSheet(
                 actions = {
                     Button(
                         onClick = { viewModel.save() },
-                        enabled = !state.mutation.isRunning,
+                        // S5-027: Also disable while currency is loading
+                        enabled = !state.mutation.isRunning && state.homeCurrency != null,
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
-                        if (state.mutation.isRunning) {
+                        if (state.mutation.isRunning || state.homeCurrency == null) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 color = MaterialTheme.colorScheme.onPrimary,

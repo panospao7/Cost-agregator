@@ -98,6 +98,10 @@ class TransactionsViewModel @Inject constructor(
     val hasReachedEnd: StateFlow<Boolean> = _hasReachedEnd.asStateFlow()
     private var loadInitialAllJob: Job? = null
     private var loadMoreJob: Job? = null
+    /** S5-016R: Mutex ensures only one loadMore runs at a time */
+    private val loadMoreMutex = kotlinx.coroutines.sync.Mutex()
+    /** S5-028: Debounce job for search */
+    private var searchDebounceJob: Job? = null
     private var loadInitialAllRequestId: Long = 0L
     
     // Loading states - using StateFlow for thread-safe observable loading state
@@ -118,9 +122,21 @@ class TransactionsViewModel @Inject constructor(
     private val _successMessage = MutableSharedFlow<String>()
     val successMessage: SharedFlow<String> = _successMessage.asSharedFlow()
 
-    /** S5-014: Emitted after category update succeeds — screen closes dialog on this */
-    private val _categoryUpdateSuccess = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val categoryUpdateSuccess: SharedFlow<Unit> = _categoryUpdateSuccess.asSharedFlow()
+    /** S5-014/S5-026: Emitted after category update succeeds — carries expenseId for dialog matching */
+    private val _categoryUpdateSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val categoryUpdateSuccess: SharedFlow<Long> = _categoryUpdateSuccess.asSharedFlow()
+
+    /** S5-014R: Emitted after rename succeeds */
+    private val _renameSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val renameSuccess: SharedFlow<Long> = _renameSuccess.asSharedFlow()
+
+    /** S5-014R: Emitted after type change succeeds */
+    private val _typeChangeSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val typeChangeSuccess: SharedFlow<Long> = _typeChangeSuccess.asSharedFlow()
+
+    /** S5-014R: Emitted after ownership update succeeds */
+    private val _ownershipSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val ownershipSuccess: SharedFlow<Long> = _ownershipSuccess.asSharedFlow()
 
  // Refresh trigger for pull-to-refresh
  private val _refreshTrigger = MutableStateFlow(0)
@@ -316,8 +332,13 @@ class TransactionsViewModel @Inject constructor(
     fun search(query: String) {
         _searchQuery.value = query.trim()
         if (_selectedTab.value == TransactionTab.ALL) {
-            resetAllPagingState()
-            loadInitialAll()
+            // S5-028: Debounce search for ALL tab — prevents per-keystroke DB loads
+            searchDebounceJob?.cancel()
+            searchDebounceJob = viewModelScope.launch {
+                kotlinx.coroutines.delay(250)
+                resetAllPagingState()
+                loadInitialAll()
+            }
         }
     }
 
@@ -355,33 +376,32 @@ class TransactionsViewModel @Inject constructor(
 
     fun loadMore() {
         if (_selectedTab.value != TransactionTab.ALL) return
-        // S5-016: Check flag before launching — prevents race between two rapid calls
         if (_isLoadingMoreState.value) return
         if (_isLoading.value) return
         if (_hasReachedEnd.value) return
 
-        // Only cancel if not currently loading (don't interrupt an active load)
-        if (loadMoreJob?.isActive != true) {
-            loadMoreJob = viewModelScope.launch {
-                if (_isLoadingMoreState.value || _hasReachedEnd.value) return@launch
+        // S5-016R: Use Mutex for true atomic gate — prevents any race between rapid calls
+        viewModelScope.launch {
+            if (!loadMoreMutex.tryLock()) return@launch // already running
+            try {
+                if (_hasReachedEnd.value || _selectedTab.value != TransactionTab.ALL) return@launch
                 _isLoadingMoreState.value = true
-                try {
-                    val nextPage = _currentPage.value + 1
-                    val offset = nextPage * PAGE_SIZE
-                    val nextItems = loadPagedExpensesPage(limit = PAGE_SIZE, offset = offset)
-                    if (nextItems.isNotEmpty()) {
-                        _pagedExpenses.update { current ->
-                            current + nextItems.distinctBy { it.expense.id }
-                        }
-                        _currentPage.value = nextPage
+                val nextPage = _currentPage.value + 1
+                val offset = nextPage * PAGE_SIZE
+                val nextItems = loadPagedExpensesPage(limit = PAGE_SIZE, offset = offset)
+                if (nextItems.isNotEmpty()) {
+                    _pagedExpenses.update { current ->
+                        current + nextItems.distinctBy { it.expense.id }
                     }
-                    _hasReachedEnd.value = nextItems.size < PAGE_SIZE
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    _error.emit("Failed to load more transactions: ${e.message}")
-                } finally {
-                    _isLoadingMoreState.value = false
+                    _currentPage.value = nextPage
                 }
+                _hasReachedEnd.value = nextItems.size < PAGE_SIZE
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _error.emit("Failed to load more transactions: ${e.message}")
+            } finally {
+                _isLoadingMoreState.value = false
+                loadMoreMutex.unlock()
             }
         }
     }
@@ -412,8 +432,8 @@ class TransactionsViewModel @Inject constructor(
                     expenseRepository.updateExpenseCategory(expense, categoryId)
                     _successMessage.emit("Category updated")
                 }
-                // S5-014: Signal success so dialog can close
-                _categoryUpdateSuccess.tryEmit(Unit)
+                // S5-014/S5-026: Signal success with expenseId for dialog matching
+                _categoryUpdateSuccess.tryEmit(expense.id)
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update category: ${e.message}")
@@ -436,6 +456,7 @@ class TransactionsViewModel @Inject constructor(
             expenseRepository.updateExpenseMerchant(expense, trimmedName, applyToAll)
             val message = if (applyToAll) "Merchant renamed to $trimmedName globally" else "Merchant renamed to $trimmedName"
             _successMessage.emit(message)
+            _renameSuccess.tryEmit(expense.id) // S5-014R
             refreshPagedExpensesAfterMutation()
         } catch (e: Exception) {
             _error.emit("Failed to update merchant: ${e.message}")
@@ -474,6 +495,7 @@ class TransactionsViewModel @Inject constructor(
                     transferAccountName = effectiveAccount.takeIf { it.isNotBlank() }
                 )
                 _successMessage.emit("Type changed to ${newType.name}")
+                _typeChangeSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update type: ${e.message}")
@@ -560,6 +582,7 @@ class TransactionsViewModel @Inject constructor(
                     else -> "Ownership updated"
                 }
                 _successMessage.emit(message)
+                _ownershipSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update: ${e.message}")

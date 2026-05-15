@@ -424,7 +424,15 @@ class AddExpenseViewModel @Inject constructor(
                         }
                     }
                     Result.Loading -> {
-                        _state.update { it.copy(isSaving = true) }
+                        // S5-003: Result.Loading is not a valid terminal state for one-shot save
+                        val msg = "Unexpected loading result"
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveResult.Error(msg),
+                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
+                            )
+                        }
                     }
                 }
 
@@ -460,6 +468,9 @@ class AddExpenseViewModel @Inject constructor(
             val merchantIsBlank = current.merchant.isBlank()
 
             if (!amountIsBlank || !merchantIsBlank) {
+                // S5-021R: Mark consumed even when skipped due to dirty form
+                // Prevents prefill applying later if user clears fields
+                initialValuesApplied = true
                 return@update current
             }
 

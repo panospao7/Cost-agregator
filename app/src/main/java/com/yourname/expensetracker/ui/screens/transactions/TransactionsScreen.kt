@@ -590,10 +590,10 @@ fun TransactionsScreen(
 
         // Category picker dialog
         if (expenseToCategorize != null) {
-            // S5-014: Close only after success event, not immediately after invoking VM
+            // S5-014/S5-026: Close only after success event matching this expense
             LaunchedEffect(Unit) {
-                viewModel.categoryUpdateSuccess.collect {
-                    expenseToCategorize = null
+                viewModel.categoryUpdateSuccess.collect { expenseId ->
+                    if (expenseId == expenseToCategorize?.id) expenseToCategorize = null
                 }
             }
             CategoryPickerDialog(
@@ -603,7 +603,6 @@ fun TransactionsScreen(
                 onDismiss = { expenseToCategorize = null },
                 onCategorySelected = { categoryId, applyToAll ->
                     expenseToCategorize?.let { viewModel.updateCategory(it, categoryId, applyToAll) }
-                    // Do NOT set expenseToCategorize = null here — wait for success event
                 }
             )
         }
@@ -635,18 +634,29 @@ fun TransactionsScreen(
 
         // Rename merchant dialog
         if (expenseToRename != null) {
+            // S5-014R: Close only after renameSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.renameSuccess.collect { expenseId ->
+                    if (expenseId == expenseToRename?.id) expenseToRename = null
+                }
+            }
             RenameMerchantDialog(
                 currentName = expenseToRename?.merchant ?: "",
                 onDismiss = { expenseToRename = null },
                 onConfirm = { newName, applyToAll ->
                     expenseToRename?.let { viewModel.updateMerchant(it, newName, applyToAll) }
-                    expenseToRename = null
                 }
             )
         }
 
         // Change type dialog
         if (expenseToChangeType != null) {
+            // S5-014R: Close only after typeChangeSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.typeChangeSuccess.collect { expenseId ->
+                    if (expenseId == expenseToChangeType?.id) expenseToChangeType = null
+                }
+            }
             ChangeTypeDialog(
                 currentType = expenseToChangeType?.transactionType ?: TransactionType.PURCHASE,
                 currentTransferDirection = expenseToChangeType?.transferDirection,
@@ -661,13 +671,18 @@ fun TransactionsScreen(
                             transferAccountName = transferAccountName
                         )
                     }
-                    expenseToChangeType = null
                 }
             )
         }
 
         // Edit ownership/not-mine/shared dialog
         if (expenseToEditOwnership != null) {
+            // S5-014R: Close only after ownershipSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.ownershipSuccess.collect { expenseId ->
+                    if (expenseId == expenseToEditOwnership?.id) expenseToEditOwnership = null
+                }
+            }
             EditOwnershipDialog(
                 expense = expenseToEditOwnership!!,
                 onDismiss = { expenseToEditOwnership = null },
@@ -688,7 +703,6 @@ fun TransactionsScreen(
                     myShareAmount = shareAmount
                 )
             }
-            expenseToEditOwnership = null
         }
             )
         }

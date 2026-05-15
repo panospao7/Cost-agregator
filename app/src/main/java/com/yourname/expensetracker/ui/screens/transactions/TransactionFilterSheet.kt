@@ -274,19 +274,19 @@ fun TransactionFilterSheet(
                         null
                     }
 
-                    val newFilter = if (selectedCategoryId != null || selectedType != null || dateRangeToUse != null) {
-                        // S5-006: Preserve route-only fields (minAmount/maxAmount/correlationId) not editable in sheet
-                        TransactionFilter(
-                            categoryId = selectedCategoryId,
-                            transactionType = selectedType,
-                            merchantName = currentFilter?.merchantName,
-                            dateRange = dateRangeToUse,
-                            minAmount = currentFilter?.minAmount,
-                            maxAmount = currentFilter?.maxAmount,
-                            correlationId = currentFilter?.correlationId ?: 0L
-                        )
-                    } else {
+                    // S5-006R: Build from currentFilter so route-only fields survive Apply even when no visible field selected
+                    val base = currentFilter ?: TransactionFilter()
+                    val candidate = base.copy(
+                        categoryId = selectedCategoryId,
+                        transactionType = selectedType,
+                        dateRange = dateRangeToUse
+                    )
+                    val newFilter = if (candidate.categoryId == null && candidate.transactionType == null &&
+                        candidate.dateRange == null && candidate.merchantName == null &&
+                        candidate.minAmount == null && candidate.maxAmount == null && candidate.correlationId == 0L) {
                         null
+                    } else {
+                        candidate
                     }
                     onApply(newFilter, selectedOwnership)
                 },
