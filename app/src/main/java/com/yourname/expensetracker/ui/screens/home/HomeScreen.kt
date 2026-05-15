@@ -55,6 +55,8 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry
+import com.yourname.expensetracker.ui.screens.home.HomeCurrencyUiState
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
@@ -70,8 +72,8 @@ import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.FeatureConfig
 
 /**
- * S4-016: Route entry point — owns Hilt injection and navigation event collection.
- * HomeScreen can be tested with a fake ViewModel once fully extracted.
+ * S4-016R: Route entry point — owns Hilt injection, state collection, and navigation effects.
+ * HomeScreen is now stateless and testable with fake state.
  */
 @Composable
 fun HomeRoute(
@@ -84,35 +86,11 @@ fun HomeRoute(
     onNavigateToFeature: (NavigationDestination) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
-    HomeScreen(
-        onNavigateToReview = onNavigateToReview,
-        onNavigateToRecurring = onNavigateToRecurring,
-        onNavigateToTransactions = onNavigateToTransactions,
-        onNavigateToAnalytics = onNavigateToAnalytics,
-        onNavigateToMap = onNavigateToMap,
-        onNavigateToBudgetDetail = onNavigateToBudgetDetail,
-        onNavigateToFeature = onNavigateToFeature,
-        viewModel = viewModel
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun HomeScreen(
-    onNavigateToReview: () -> Unit,
-    onNavigateToRecurring: () -> Unit,
-    onNavigateToTransactions: (TransactionFilter) -> Unit,
-    onNavigateToAnalytics: (String?) -> Unit = {},
-    onNavigateToMap: (String?) -> Unit = {},
-    onNavigateToBudgetDetail: (String) -> Unit = {},
-    // Unified Feature Navigation - handles all 22 features from FeatureConfig
-    onNavigateToFeature: (NavigationDestination) -> Unit = {},
-    viewModel: HomeViewModel = hiltViewModel()
-) {
     val state by viewModel.dashboard.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val recommendations by viewModel.recommendations.collectAsState()
     val homeCurrency by viewModel.homeCurrency.collectAsState()
+    val homeCurrencyState by viewModel.homeCurrencyState.collectAsState()
 
     LaunchedEffect(viewModel) {
         viewModel.navigationActions.collect { action ->
@@ -126,7 +104,40 @@ fun HomeScreen(
         }
     }
 
-    // S4-009R: Totals are loaded in HomeViewModel.init — no duplicate load here
+    HomeScreen(
+        state = state,
+        categories = categories,
+        recommendations = recommendations,
+        homeCurrency = homeCurrency,
+        homeCurrencyState = homeCurrencyState,
+        viewModel = viewModel,
+        onNavigateToReview = onNavigateToReview,
+        onNavigateToRecurring = onNavigateToRecurring,
+        onNavigateToTransactions = onNavigateToTransactions,
+        onNavigateToAnalytics = onNavigateToAnalytics,
+        onNavigateToMap = onNavigateToMap,
+        onNavigateToBudgetDetail = onNavigateToBudgetDetail,
+        onNavigateToFeature = onNavigateToFeature,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen(
+    state: DashboardState,
+    categories: List<com.yourname.expensetracker.data.database.entity.Category>,
+    recommendations: List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>,
+    homeCurrency: String?,
+    homeCurrencyState: HomeCurrencyUiState,
+    viewModel: HomeViewModel,
+    onNavigateToReview: () -> Unit,
+    onNavigateToRecurring: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit = {},
+    onNavigateToAnalytics: (String?) -> Unit = {},
+    onNavigateToMap: (String?) -> Unit = {},
+    onNavigateToBudgetDetail: (String) -> Unit = {},
+    onNavigateToFeature: (NavigationDestination) -> Unit = {},
+) {
 
     var showQuickSettings by remember { mutableStateOf(false) }
     var showAiSettings by remember { mutableStateOf(false) }
@@ -241,6 +252,28 @@ fun HomeScreen(
             }
             }
             else -> {
+                // S4-004R: Show currency loading/error state
+                when (val cs = homeCurrencyState) {
+                    is HomeCurrencyUiState.Loading -> androidx.compose.material3.LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    is HomeCurrencyUiState.Error -> androidx.compose.material3.Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                        )
+                    ) {
+                        Text(
+                            text = cs.message.asString(LocalContext.current),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                    is HomeCurrencyUiState.Ready -> Unit
+                }
                 // S4-022: Show data-quality warning when some currencies could not be converted
                 if (state.isPartial) {
                     androidx.compose.material3.Card(
@@ -997,11 +1030,9 @@ fun WidgetWrapper(
 
 // getWidgetId removed - using HomeViewModel.getWidgetId instead
 
-private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
-    is DashboardWidget.SpendingPaceWidget,
-    is DashboardWidget.PendingReviewAlert -> false
-    else -> true
-}
+// S4-001R: isFullSpan now derived from DashboardWidgetRegistry metadata
+private fun isFullSpan(widget: DashboardWidget): Boolean =
+    DashboardWidgetRegistry.isFullSpan(widget)
 
 @Composable
 fun QuickSettingsDialog(

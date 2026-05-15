@@ -40,12 +40,12 @@ data class WidgetStyleConfig(
 }
 
 /**
- * Widget IDs that support style switching.
+ * S4-001R: Delegates to DashboardWidgetRegistry.styleableIds — no independent hardcoded list.
  */
 object StyledWidgets {
-    const val BUDGET_BLOCK_PARTY = "budget_block_party"
-    const val TOP_CATEGORIES = "top_categories"
-    const val TOTALS_DASHBOARD = "totals_dashboard"
-    
-    val all = listOf(BUDGET_BLOCK_PARTY, TOP_CATEGORIES, TOTALS_DASHBOARD)
+    const val BUDGET_BLOCK_PARTY = com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry.BUDGET_BLOCK_PARTY
+    const val TOP_CATEGORIES     = com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry.TOP_CATEGORIES
+    const val TOTALS_DASHBOARD   = com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry.TOTALS_DASHBOARD
+
+    val all: Set<String> get() = com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry.styleableIds
 }

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -102,29 +103,10 @@ class DashboardRepository @Inject constructor(
         _configFlow.value = config
     }
 
-    private fun getDefaultConfig(): List<DashboardWidgetConfig> {
-        return listOf(
-            DashboardWidgetConfig("financial_weather", 0),
-            DashboardWidgetConfig("money_radar", 1),  // NEW: Today's unified alerts (F4)
-            DashboardWidgetConfig("financial_stress_forecast", 2),
-            DashboardWidgetConfig("lifestyle_savings_prompt", 3),
-            DashboardWidgetConfig("savings_sweep_prompt", 4),
-            DashboardWidgetConfig("financial_health_score_v2", 5),
-            DashboardWidgetConfig("financial_health_score", 6),  // NEW: Game-like health score
-            DashboardWidgetConfig("totals_dashboard", 7),
-            DashboardWidgetConfig("no_spend_streak", 8),  // NEW: Gamification widget
-            DashboardWidgetConfig("safe_to_spend", 9),
-            DashboardWidgetConfig("financial_runway", 10),
-            DashboardWidgetConfig("monte_carlo_forecast", 11),
-            DashboardWidgetConfig("spending_pace", 12),
-            DashboardWidgetConfig("review_alert", 13),
-            DashboardWidgetConfig("spending_trend", 14),
-            DashboardWidgetConfig("insight", 15),
-            DashboardWidgetConfig("period_summary", 16),
-            DashboardWidgetConfig("budget_health", 17),
-            DashboardWidgetConfig("top_categories", 18),
-            DashboardWidgetConfig("recent_transactions", 19),
-            DashboardWidgetConfig("budget_block_party", 20)
-        )
-    }
+    // S4-001R: Derived from DashboardWidgetRegistry — no hardcoded IDs here
+    private fun getDefaultConfig(): List<DashboardWidgetConfig> =
+        DashboardWidgetRegistry.all
+            .filter { it.defaultVisible }
+            .sortedBy { it.defaultOrder }
+            .map { meta -> DashboardWidgetConfig(meta.id, meta.defaultOrder) }
 }

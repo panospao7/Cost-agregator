@@ -48,7 +48,7 @@ import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.carbon.CarbonFootprintScreen
 import com.yourname.expensetracker.ui.screens.cashflow.CashFlowCalendarScreen
 import com.yourname.expensetracker.ui.screens.challenge.SpendingChallengesScreen
-import com.yourname.expensetracker.ui.screens.home.HomeScreen
+import com.yourname.expensetracker.ui.screens.home.HomeRoute
 import com.yourname.expensetracker.ui.screens.investment.InvestmentPortfolioScreen
 import com.yourname.expensetracker.ui.screens.lifestyle.LifestyleInflationScreen
 import com.yourname.expensetracker.ui.screens.map.SpendingMapScreen
@@ -512,7 +512,7 @@ fun MainScreen(
                 label = "TabTransition"
             ) { targetTab ->
                 when (targetTab) {
-                    0 -> HomeScreen(
+                    0 -> HomeRoute(
                         onNavigateToReview = { navigation.navigateToTab(2) },
                         onNavigateToRecurring = { navigation.navigateTo(NavigationDestination.RecurringExpenses) },
                         onNavigateToTransactions = { filter ->

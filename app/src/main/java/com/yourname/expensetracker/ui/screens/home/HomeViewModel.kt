@@ -104,6 +104,13 @@ private sealed interface ProcessedDashboardUiState {
     data class Error(val error: UiText) : ProcessedDashboardUiState
 }
 
+/** S4-004R: Typed home-currency loading state exposed to UI. */
+sealed interface HomeCurrencyUiState {
+    data object Loading : HomeCurrencyUiState
+    data class Ready(val code: String) : HomeCurrencyUiState
+    data class Error(val message: UiText) : HomeCurrencyUiState
+}
+
 // ---------------------------------------------------------------------------
 // ViewModel
 // ---------------------------------------------------------------------------
@@ -153,6 +160,12 @@ class HomeViewModel @Inject constructor(
         .map { it as String? }
         .catch { emit(null) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** S4-004R: Typed currency loading state for UI loading/error rendering. */
+    val homeCurrencyState: StateFlow<HomeCurrencyUiState> = currencySettingsRepository.homeCurrency()
+        .map<String, HomeCurrencyUiState> { HomeCurrencyUiState.Ready(it) }
+        .catch { emit(HomeCurrencyUiState.Error(UiText.StringResource(R.string.home_error_currency_unavailable))) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeCurrencyUiState.Loading)
 
     private val dateKeyFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
     private fun dashboardBriefingKeyForToday(): String =

@@ -268,6 +268,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val todaySpent: Double,
         val todayTxCount: Int,
         val weekSpent: Double,
+        /** S4-006R: true when today/week aggregates had conversion failures */
+        val periodIsPartial: Boolean,
         val overallBudget: BudgetStatusSnapshot?,
         val totalBudgetAmount: Double,
         val safeToSpend: Double
@@ -321,6 +323,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val weekStart = TimePeriodUtils.getStartOfWeek(now)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
 
+        // S4-006R: Compute once — reuse both amount and isPartial
+        val todayAgg = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(todayStart, now)
+        val weekAgg  = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(weekStart, now)
+
         val purchases = expenses.filter {
             it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine
         }
@@ -351,12 +357,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             monthSpent = summary.totalSpent,
             txCount = summary.transactionCount,
             previousMonthTotal = summary.previousTotalSpent ?: 0.0,
-            todaySpent = run {
-                val agg = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(todayStart, now)
-                agg.displayAmount
-            },
+            todaySpent = todayAgg.displayAmount,
             todayTxCount = todayPurchases.size,
-            weekSpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(weekStart, now).displayAmount,
+            weekSpent = weekAgg.displayAmount,
+            periodIsPartial = todayAgg.isPartial || weekAgg.isPartial,
             overallBudget = overallBudget,
             totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0,
             safeToSpend = data.weather.discretionaryBudget
@@ -770,7 +774,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                     // which confusingly displays money *already spent* as if it were *available*.
                     amount = if (ctx.overallBudget != null) ctx.safeToSpend else 0.0,
                     totalBudget = ctx.overallBudget?.budgetAmount,
-                    daysRemaining = ctx.daysRemaining
+                    daysRemaining = ctx.daysRemaining,
+                    isPartial = ctx.periodIsPartial
                 )
             )
             if (runwayResult.totalRemaining > 0 || ctx.totalBudgetAmount > 0) add(runwayResult.financialRunway)
@@ -782,7 +787,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             add(trend)
             if (pendingCount > 0) add(DashboardWidget.PendingReviewAlert(pendingCount))
             if (insightText != null) add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
-            add(DashboardWidget.PeriodSummary(ctx.todaySpent, ctx.weekSpent, ctx.monthSpent))
+            add(DashboardWidget.PeriodSummary(ctx.todaySpent, ctx.weekSpent, ctx.monthSpent, isPartial = ctx.periodIsPartial))
             if (budgetStatuses.isNotEmpty()) add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
             if (categoryTotals.isNotEmpty()) add(DashboardWidget.TopCategories(categoryTotals.take(5)))
             if (ctx.purchases.isNotEmpty()) add(DashboardWidget.RecentTransactions(ctx.purchases.take(5)))
