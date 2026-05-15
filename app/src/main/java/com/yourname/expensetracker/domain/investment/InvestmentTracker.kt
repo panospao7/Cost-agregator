@@ -67,6 +67,11 @@ class InvestmentTracker @Inject constructor(
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
+    /** S12-021: Public accessor for all active holdings — used by ViewModel to load performances */
+    suspend fun getAllActiveInvestments(): List<Investment> = withContext(ioDispatcher) {
+        investmentDao.getAllActiveInvestments().first()
+    }
+
     @Deprecated(
         "Raw Double portfolio summary may mix currencies. Use getPortfolioSummaryAggregate() for multi-currency safety.",
         ReplaceWith("getPortfolioSummaryAggregate(investmentDao.getAllActiveInvestments().first())")

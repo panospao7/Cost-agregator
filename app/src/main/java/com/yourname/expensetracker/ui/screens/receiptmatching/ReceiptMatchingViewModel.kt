@@ -22,7 +22,13 @@ data class ReceiptMatchingState(
     val selectedReceiptForManualMatch: ScannedReceipt? = null,
     val isLoading: Boolean = false,
     val autoMatchedCount: Int = 0,
-    val pendingSuggestionCount: Int = 0
+    val pendingSuggestionCount: Int = 0,
+    /** S12-028: non-null when an operation failed */
+    val error: String? = null,
+    /** S12-029: receipt IDs currently being mutated — prevents double-tap */
+    val mutatingReceiptIds: Set<Long> = emptySet(),
+    /** S12-029: true while auto-match is running globally */
+    val isAutoMatching: Boolean = false
 ) {
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<ScannedReceipt>>
         get() = when {
@@ -71,109 +77,117 @@ class ReceiptMatchingViewModel @Inject constructor(
 
     private fun loadReceipts() {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
-            
-            val unmatched = receiptRepository.getUnmatchedReceipts()
-            val withSuggestions = receiptRepository.getReceiptsWithSuggestions()
-            
-            // Build match suggestions
-            val suggestions = withSuggestions.mapNotNull { receipt ->
-                val suggestedId = receipt.suggestedExpenseId ?: return@mapNotNull null
-                val expense = receiptRepository.getExpenseById(suggestedId)
-                
-                MatchSuggestion(
-                    receipt = receipt,
-                    suggestedExpenseId = suggestedId,
-                    confidence = receipt.matchConfidence?.toDouble() ?: 0.0,
-                    expenseMerchant = expense?.merchant,
-                    expenseAmount = expense?.effectiveAmount
-                )
-            }
-            
-            _state.update {
-                it.copy(
-                    unmatchedReceipts = unmatched,
-                    suggestedMatches = suggestions,
-                    isLoading = false,
-                    pendingSuggestionCount = suggestions.size
-                )
+            _state.update { it.copy(isLoading = true, error = null) }
+            try {
+                val unmatched = receiptRepository.getUnmatchedReceipts()
+                val withSuggestions = receiptRepository.getReceiptsWithSuggestions()
+                val suggestions = withSuggestions.mapNotNull { receipt ->
+                    val suggestedId = receipt.suggestedExpenseId ?: return@mapNotNull null
+                    val expense = receiptRepository.getExpenseById(suggestedId)
+                    MatchSuggestion(
+                        receipt = receipt,
+                        suggestedExpenseId = suggestedId,
+                        confidence = receipt.matchConfidence?.toDouble() ?: 0.0,
+                        expenseMerchant = expense?.merchant,
+                        expenseAmount = expense?.effectiveAmount
+                    )
+                }
+                _state.update {
+                    it.copy(
+                        unmatchedReceipts = unmatched,
+                        suggestedMatches = suggestions,
+                        isLoading = false,
+                        pendingSuggestionCount = suggestions.size
+                    )
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "ReceiptMatchingViewModel: loadReceipts failed")
+                _state.update { it.copy(isLoading = false, error = "Failed to load receipts: ${e.message}") }
             }
         }
     }
 
     fun runAutoMatching() {
+        // S12-029: Idempotency guard
+        if (_state.value.isAutoMatching) return
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
-            
-            val unmatched = receiptRepository.getUnmatchedReceipts()
-            var autoMatched = 0
-            
-            for (receipt in unmatched) {
-                when (val result = matcher.findBestMatch(receipt)) {
-                    is MatchResult.AutoMatch -> {
-                        receiptLinkService.linkReceiptToExpense(
-                            receiptId = receipt.id,
-                            expenseId = result.transaction.id,
-                            linkType = "AUTO_MATCH",
-                            source = "ReceiptMatchingViewModel",
-                            confidence = result.score.toFloat()
-                        )
-                        autoMatched++
+            _state.update { it.copy(isAutoMatching = true, error = null) }
+            try {
+                val unmatched = receiptRepository.getUnmatchedReceipts()
+                var autoMatched = 0
+
+                for (receipt in unmatched) {
+                    when (val result = matcher.findBestMatch(receipt)) {
+                        is MatchResult.AutoMatch -> {
+                            // S12-027: Only increment if link succeeds
+                            val linkResult = runCatching {
+                                receiptLinkService.linkReceiptToExpense(
+                                    receiptId = receipt.id,
+                                    expenseId = result.transaction.id,
+                                    linkType = "AUTO_MATCH",
+                                    source = "ReceiptMatchingViewModel",
+                                    confidence = result.score.toFloat()
+                                )
+                            }
+                            if (linkResult.isSuccess) autoMatched++
+                        }
+                        is MatchResult.Suggested -> {
+                            receiptRepository.saveMatchSuggestion(
+                                receipt.id,
+                                result.transaction.id,
+                                result.score
+                            )
+                        }
+                        else -> {}
                     }
-                    is MatchResult.Suggested -> {
-                        receiptRepository.saveMatchSuggestion(
-                            receipt.id,
-                            result.transaction.id,
-                            result.score
-                        )
-                    }
-                    else -> {}
                 }
+
+                _state.update { it.copy(isAutoMatching = false, autoMatchedCount = autoMatched) }
+                loadReceipts()
+            } catch (e: Exception) {
+                Timber.e(e, "ReceiptMatchingViewModel: runAutoMatching failed")
+                _state.update { it.copy(isAutoMatching = false, error = "Auto-matching failed: ${e.message}") }
             }
-            
-            _state.update { 
-                it.copy(
-                    isLoading = false,
-                    autoMatchedCount = autoMatched
+        }
+    }
+
+    fun approveSuggestion(receiptId: Long) {
+        // S12-029: Idempotency guard
+        if (_state.value.mutatingReceiptIds.contains(receiptId)) return
+        viewModelScope.launch {
+            _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receiptId, error = null) }
+            try {
+                val receipt = receiptRepository.getReceiptById(receiptId)
+                val suggestedExpenseId = receipt?.suggestedExpenseId
+                if (receipt == null || suggestedExpenseId == null) {
+                    _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId, error = "Receipt not found or has no suggestion") }
+                    return@launch
+                }
+                val result = receiptLinkService.linkReceiptToExpense(
+                    receiptId = receiptId,
+                    expenseId = suggestedExpenseId,
+                    linkType = "REVIEW_APPROVAL",
+                    source = ExpenseSource.REVIEW_APPROVAL.name,
+                    matchStatus = MatchStatus.MANUALLY_MATCHED
                 )
+                result.fold(
+                    onSuccess = { Timber.d("Approved match for receipt $receiptId -> expense $suggestedExpenseId") },
+                    onFailure = { e ->
+                        Timber.e(e, "Failed to approve match for receipt $receiptId")
+                        _state.update { it.copy(error = "Failed to approve: ${e.message}") }
+                    }
+                )
+            } catch (e: Exception) {
+                _state.update { it.copy(error = "Failed to approve: ${e.message}") }
+            } finally {
+                _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
             }
             loadReceipts()
         }
     }
 
-    fun approveSuggestion(receiptId: Long) {
-        viewModelScope.launch {
-            // 1. Load the receipt to get the suggestedExpenseId
-            val receipt = receiptRepository.getReceiptById(receiptId)
-            val suggestedExpenseId = receipt?.suggestedExpenseId
-            if (receipt == null || suggestedExpenseId == null) {
-                Timber.w("Cannot approve suggestion: receipt $receiptId not found or has no suggestion")
-                loadReceipts()
-                return@launch
-            }
-
-            // 2. Create the link via ReceiptLinkService (writes join table, audit event, legacy field)
-            val result = receiptLinkService.linkReceiptToExpense(
-                receiptId = receiptId,
-                expenseId = suggestedExpenseId,
-                linkType = "REVIEW_APPROVAL",
-                source = ExpenseSource.REVIEW_APPROVAL.name,
-                matchStatus = MatchStatus.MANUALLY_MATCHED
-            )
-
-            // 3. Log result
-            result.fold(
-                onSuccess = {
-                    Timber.d("Approved match suggestion for receipt $receiptId -> expense $suggestedExpenseId")
-                },
-                onFailure = { error ->
-                    Timber.e(error, "Failed to approve match suggestion for receipt $receiptId")
-                }
-            )
-
-            // 4. Reload receipts
-            loadReceipts()
-        }
+    fun clearError() {
+        _state.update { it.copy(error = null) }
     }
 
     fun rejectSuggestion(receiptId: Long) {

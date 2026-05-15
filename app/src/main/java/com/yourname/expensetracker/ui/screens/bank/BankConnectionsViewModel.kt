@@ -21,9 +21,13 @@ class BankConnectionsViewModel @Inject constructor(
     
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    /** S12-016: true while no real repository is wired — UI shows demo/coming-soon state */
+    val isDemoMode: Boolean = true
     
     init {
-        // P0-02: Load connections from stub list until real repository injection is wired
+        // S12-017: Use bankId as stable unique key (not entity id=0)
+        // S12-016: Connections are not actually connected — isDemoMode=true
         _connections.value = com.yourname.expensetracker.domain.bank.BankApiIntegration.SUPPORTED_BANKS.map { bank ->
             BankConnection(
                 bankId = bank.id,
@@ -40,27 +44,19 @@ class BankConnectionsViewModel @Inject constructor(
         }
     }
     
-    private fun loadConnections() {
-        viewModelScope.launch {
-            _isLoading.value = true
-            // TODO: Load from real repository once injected
-            _isLoading.value = false
-        }
-    }
-    
     fun syncConnection(connectionId: Long) {
-        viewModelScope.launch {
-            // Would trigger sync via BankApiIntegration
-        }
+        // S12-016: No-op in demo mode — real sync requires BankRepository
+        if (isDemoMode) return
+        viewModelScope.launch { /* TODO: real sync */ }
     }
     
     fun disconnect(connectionId: Long) {
-        viewModelScope.launch {
-            // Would disconnect via repository
-        }
+        // S12-016: No-op in demo mode — real disconnect requires BankRepository + token wipe
+        if (isDemoMode) return
+        viewModelScope.launch { /* TODO: real disconnect */ }
     }
     
     fun refresh() {
-        loadConnections()
+        // S12-016: No-op in demo mode
     }
 }

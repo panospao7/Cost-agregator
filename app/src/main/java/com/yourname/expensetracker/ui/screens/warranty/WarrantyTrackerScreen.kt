@@ -542,7 +542,8 @@ private fun WarrantyCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = stringResource(R.string.warranty_expires_date, dateFormat.format(Instant.ofEpochMilli(warranty.warrantyEndDate).atZone(ZoneId.systemDefault()))),
+                // S12-007: warrantyEndDate is exclusive — display the day before
+                text = stringResource(R.string.warranty_expires_date, dateFormat.format(Instant.ofEpochMilli(warranty.warrantyEndDate - 1).atZone(ZoneId.systemDefault()))),
                 style = MaterialTheme.typography.bodyMedium
             )
 

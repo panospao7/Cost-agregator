@@ -31,7 +31,7 @@ fun InvestmentPortfolioScreen(
 ) {
     val portfolioSummary by viewModel.portfolioSummary.collectAsState()
     val investments by viewModel.investments.collectAsState()
-    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
+    val homeCurrency = viewModel.homeCurrency.collectAsState().value ?: ""
     
     Scaffold(
         topBar = {

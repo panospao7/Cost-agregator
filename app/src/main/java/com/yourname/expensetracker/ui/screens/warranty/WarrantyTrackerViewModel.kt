@@ -21,12 +21,17 @@ data class WarrantyTrackerState(
     val expiringSoonCount: Int = 0,
     val totalProtectedValue: Double = 0.0,
     val selectedFilter: WarrantyStatus? = null,
-    // F1: Auto-detected warranties needing review
     val needsReviewCount: Int = 0,
     val autoDetectedWarranties: List<Warranty> = emptyList(),
     val showAutoDetectedOnly: Boolean = false,
     val showNeedsReviewOnly: Boolean = false,
-    val referenceNowMillis: Long = 0L
+    val referenceNowMillis: Long = 0L,
+    /** S12-010: IDs of warranties currently being mutated */
+    val mutatingWarrantyIds: Set<Long> = emptySet(),
+    /** S12-010: non-null when a mutation failed */
+    val mutationError: String? = null,
+    /** S12-004: true when add-manual dialog should close (emitted on success) */
+    val addWarrantySuccess: Boolean = false
 ) {
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<Warranty>>
         get() = when {
@@ -156,34 +161,47 @@ class WarrantyTrackerViewModel @Inject constructor(
                 extractionSource = "manual"
             )
             warrantyRepository.addWarranty(manualWarranty)
+            // S12-004: Signal success so dialog can close
+            _state.update { it.copy(addWarrantySuccess = true, mutationError = null) }
             loadStats()
         }
+    }
+
+    fun clearAddWarrantySuccess() {
+        _state.update { it.copy(addWarrantySuccess = false) }
+    }
+
+    fun clearMutationError() {
+        _state.update { it.copy(mutationError = null) }
     }
     
     // F1: Confirm a low-confidence auto-detected warranty
     fun confirmWarranty(warranty: Warranty) {
+        // S12-010: Idempotency guard
+        if (_state.value.mutatingWarrantyIds.contains(warranty.id)) return
         viewModelScope.launch {
-            val updated = warranty.copy(
-                status = WarrantyStatus.ACTIVE,
-                needsReview = false,
-                updatedAt = timeProvider.now()
-            )
-            warrantyRepository.updateWarranty(updated)
-            loadStats()
+            _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds + warranty.id) }
+            try {
+                val updated = warranty.copy(
+                    status = WarrantyStatus.ACTIVE,
+                    needsReview = false,
+                    updatedAt = timeProvider.now()
+                )
+                warrantyRepository.updateWarranty(updated)
+                loadStats()
+            } catch (e: Exception) {
+                _state.update { it.copy(mutationError = "Failed to confirm warranty: ${e.message}") }
+            } finally {
+                _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds - warranty.id) }
+            }
         }
     }
     
     // F1: Reject/delete an auto-detected warranty that was incorrect
     fun rejectAutoDetectedWarranty(warranty: Warranty) {
         viewModelScope.launch {
-            // I5: Also delete the associated return window to keep data consistent
-            if (warranty.receiptId != null) {
-                val returnWindow = warrantyRepository.getReturnWindowByReceiptId(warranty.receiptId)
-                if (returnWindow != null) {
-                    warrantyRepository.deleteReturnWindow(returnWindow)
-                }
-            }
-            warrantyRepository.deleteWarranty(warranty)
+            // S12-009: Use atomic repository method — warranty + return window deleted together
+            warrantyRepository.rejectAutoDetectedWarranty(warranty)
             loadStats()
         }
     }

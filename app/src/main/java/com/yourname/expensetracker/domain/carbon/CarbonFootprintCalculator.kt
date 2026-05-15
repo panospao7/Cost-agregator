@@ -427,8 +427,9 @@ class CarbonFootprintCalculator @Inject constructor(
     }
     
     private suspend fun calculateMonthlyTrend(expenses: List<Expense>): List<MonthlyEmission> {
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        // S12-025: Do not fall back to "EUR" — use null/empty if home currency unavailable
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrNull()
+            ?: return emptyList() // Cannot normalize without home currency
         val normalized = runCatching {
             analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
         }.getOrNull()

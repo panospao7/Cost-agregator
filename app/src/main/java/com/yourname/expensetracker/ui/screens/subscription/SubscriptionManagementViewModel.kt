@@ -40,7 +40,11 @@ data class SubscriptionManagementUiState(
     val inactiveCount: Int = 0,
     val detectedCount: Int = 0,
     val selectedSubscription: SubscriptionInfo? = null,
-    val referenceNowMillis: Long = 0L
+    val referenceNowMillis: Long = 0L,
+    /** S12-015: IDs of subscriptions/candidates currently being mutated */
+    val mutatingIds: Set<Long> = emptySet(),
+    /** S12-013: true when add-subscription succeeded — dialog should close */
+    val addSubscriptionSuccess: Boolean = false
 ) {
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<SubscriptionInfo>>
         get() = when {
@@ -302,12 +306,13 @@ class SubscriptionManagementViewModel @Inject constructor(
                 )
                 subscriptionManagerEngine.validateAndCreate(request).fold(
                     onSuccess = { created ->
-                        // If a subscriptionCategory was provided, update it after creation
                         if (category != null) {
                             repository.updateSubscription(
                                 created.copy(subscriptionCategory = category)
                             )
                         }
+                        // S12-013: Signal success so dialog can close
+                        _uiState.value = _uiState.value.copy(addSubscriptionSuccess = true)
                         loadSubscriptions()
                     },
                     onFailure = { error -> throw error }
@@ -333,6 +338,10 @@ class SubscriptionManagementViewModel @Inject constructor(
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
     }
+
+    fun clearAddSubscriptionSuccess() {
+        _uiState.value = _uiState.value.copy(addSubscriptionSuccess = false)
+    }
     
     /**
      * Select subscription for detail view.
@@ -345,7 +354,11 @@ class SubscriptionManagementViewModel @Inject constructor(
      * Accept a detected subscription candidate and convert it to an active subscription.
      */
     fun acceptCandidate(candidate: SubscriptionCandidate) {
+        val candidateId = candidate.id ?: return
+        // S12-015: Idempotency guard
+        if (_uiState.value.mutatingIds.contains(candidateId)) return
         viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(mutatingIds = _uiState.value.mutatingIds + candidateId)
             try {
                 val frequency = when (candidate.detectedInterval) {
                     "weekly" -> RecurrenceFrequency.WEEKLY
@@ -360,13 +373,12 @@ class SubscriptionManagementViewModel @Inject constructor(
                     lastSeen = candidate.lastSeen,
                     frequency = frequency
                 )
-                // SUB-1: Delegate to engine for atomic subscription creation + candidate conversion
                 subscriptionManagerEngine.acceptCandidate(candidate, frequency, nextDate)
                 loadSubscriptions()
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    error = "Failed to accept candidate: ${e.message}"
-                )
+                _uiState.value = _uiState.value.copy(error = "Failed to accept candidate: ${e.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(mutatingIds = _uiState.value.mutatingIds - candidateId)
             }
         }
     }

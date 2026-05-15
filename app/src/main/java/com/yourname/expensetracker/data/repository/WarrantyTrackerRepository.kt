@@ -192,6 +192,23 @@ class WarrantyTrackerRepository @Inject constructor(
         warrantyDao.deleteWarranty(warranty)
     }
 
+    /**
+     * S12-009: Atomically reject an auto-detected warranty and its linked return window.
+     * Both deletions happen in one transaction — if either fails, both are rolled back.
+     */
+    suspend fun rejectAutoDetectedWarranty(warranty: Warranty) {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.rejectAutoDetectedWarranty")
+        database.withTransaction {
+            if (warranty.receiptId != null) {
+                val returnWindow = getReturnWindowByReceiptId(warranty.receiptId)
+                if (returnWindow != null) {
+                    returnWindowDao.deleteReturnWindow(returnWindow)
+                }
+            }
+            warrantyDao.deleteWarranty(warranty)
+        }
+    }
+
     suspend fun markWarrantyAsClaimed(warrantyId: Long) {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.markWarrantyAsClaimed")
         database.withTransaction {
