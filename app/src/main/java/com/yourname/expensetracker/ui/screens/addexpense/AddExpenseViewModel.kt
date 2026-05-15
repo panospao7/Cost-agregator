@@ -56,8 +56,11 @@ data class AddExpenseState(
  val sharedWithName: String = "",
  val mySharePercentage: String = "",
  val myShareAmount: String = "",
- /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
- val homeCurrency: String = "EUR"
+ /**
+  * S5-001/S5-002: Typed currency state — never defaults to "EUR" sentinel.
+  * null = still loading; non-null = loaded (including real "EUR" users).
+  */
+ val homeCurrency: String? = null
 )
 
 sealed class SaveResult {
@@ -263,8 +266,10 @@ class AddExpenseViewModel @Inject constructor(
         // S5-007: Guard against double-tap
         if (currentState.isSaving) return
 
-        // S5-005: Block save until homeCurrency is loaded (prevent EUR placeholder persistence)
-        if (currentState.homeCurrency == "EUR" && homeCurrencyJob?.isActive == true) {
+        // S5-001: Block save until currency is loaded — null means still loading
+        // Real EUR users (homeCurrency == "EUR") are allowed through once loaded
+        val currency = currentState.homeCurrency
+        if (currency == null) {
             _state.update { it.copy(saveResult = SaveResult.Error("Loading currency settings..."), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Loading currency settings..."))) }
             return
         }
@@ -365,7 +370,8 @@ class AddExpenseViewModel @Inject constructor(
                 val result = manualExpenseRepository.addManualExpense(
                     merchant = merchantTrimmed,
                     amount = normalizedAmount,
-                    currency = _state.value.homeCurrency,
+                    // S5-004: Use currency captured at save-tap, not live _state.value
+                    currency = currency,
                     categoryId = currentState.selectedCategoryId,
                     transactionType = currentState.transactionType,
                     paymentMethod = currentState.paymentMethod,
@@ -400,10 +406,13 @@ class AddExpenseViewModel @Inject constructor(
                         }
                     }
                     is Result.Error -> {
+                        // S5-003: Update mutation so Save button re-enables
+                        val msg = result.message ?: "Failed to save expense"
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                saveResult = SaveResult.Error(result.message ?: "Failed to save expense")
+                                saveResult = SaveResult.Error(msg),
+                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
                             )
                         }
                     }
@@ -413,10 +422,13 @@ class AddExpenseViewModel @Inject constructor(
                 }
 
             } catch (e: Exception) {
+                // S5-003: Update mutation so Save button re-enables after exception
+                val msg = e.message ?: "Unknown error"
                 _state.update {
                     it.copy(
                         isSaving = false,
-                        saveResult = SaveResult.Error(e.message ?: "Unknown error")
+                        saveResult = SaveResult.Error(msg),
+                        mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
                     )
                 }
             }
@@ -428,7 +440,9 @@ class AddExpenseViewModel @Inject constructor(
         searchJob?.cancel()
         searchJob = null
         initialValuesApplied = false
-        _state.value = AddExpenseState(date = timeProvider.now())
+        // S5-002: Preserve loaded currency — do not reset to null sentinel
+        val loadedCurrency = _state.value.homeCurrency
+        _state.value = AddExpenseState(date = timeProvider.now(), homeCurrency = loadedCurrency)
     }
 
     fun setInitialValuesIfBlank(amount: String? = null, merchant: String? = null) {

@@ -199,9 +199,10 @@ fun AddExpenseSheet(
                     supportingText = state.amountError?.let { { Text(it) } },
                     leadingIcon = {
  val currencySymbol = remember(state.homeCurrency) {
- CurrencyFormatter.formatMoney(0.0, state.homeCurrency, showCents = false)
+     val hc = state.homeCurrency ?: ""
+ CurrencyFormatter.formatMoney(0.0, hc, showCents = false)
  .replace(Regex("[0-9\\s.,]"), "")
- .ifBlank { CurrencyFormatter.formatMoney(1.0, state.homeCurrency, showCents = false).replace(Regex("[0-9\\s.,]"), "") }
+ .ifBlank { CurrencyFormatter.formatMoney(1.0, hc, showCents = false).replace(Regex("[0-9\\s.,]"), "") }
                         }
                         Text(
                             text = currencySymbol,
