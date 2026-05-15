@@ -32,8 +32,61 @@ sealed interface PrivacyBlocked {
         override val capability = PrivacyCapability.RAWBACKUP_EXPORT
     }
 
+    // S3-001/002: Additional typed states for all user-facing capabilities
+    data class DeviceGpsDisabled(override val reason: String = "Device GPS location is disabled by privacy settings") : PrivacyBlocked {
+        override val capability = PrivacyCapability.DEVICE_GPS_LOCATION
+    }
+
+    data class BackgroundLocationDisabled(override val reason: String = "Background location backfill is disabled") : PrivacyBlocked {
+        override val capability = PrivacyCapability.BACKGROUND_LOCATION_BACKFILL
+    }
+
+    data class BankStatementAiDisabled(override val reason: String = "Bank statement AI parsing is disabled") : PrivacyBlocked {
+        override val capability = PrivacyCapability.CLOUD_AI_BANK_STATEMENT
+    }
+
+    data class EncryptedBackupDisabled(override val reason: String = "Encrypted backup is disabled") : PrivacyBlocked {
+        override val capability = PrivacyCapability.ENCRYPTED_BACKUP
+    }
+
+    data class OverpassDisabled(override val reason: String = "Overpass API (map data) is disabled") : PrivacyBlocked {
+        override val capability = PrivacyCapability.OVERPASS_API
+    }
+
+    data class DebugDataPersistenceDisabled(override val reason: String = "Debug data persistence is disabled") : PrivacyBlocked {
+        override val capability = PrivacyCapability.DEBUG_DATA_PERSISTENCE
+    }
+
     data class Custom(
         override val capability: PrivacyCapability,
         override val reason: String
     ) : PrivacyBlocked
+}
+
+/** Maps a PrivacyDecision + capability to a typed PrivacyBlocked, or null if allowed. */
+fun PrivacyDecision.toPrivacyBlocked(capability: PrivacyCapability): PrivacyBlocked? = when (this) {
+    is PrivacyDecision.Allowed, is PrivacyDecision.NotApplicable -> null
+    is PrivacyDecision.Denied -> privacyBlockedFromCapability(capability, reason)
+    is PrivacyDecision.FailClosed -> PrivacyBlocked.Custom(capability, "Privacy check failed safely: $reason")
+}
+
+private fun privacyBlockedFromCapability(capability: PrivacyCapability, reason: String): PrivacyBlocked = when (capability) {
+    PrivacyCapability.CLOUD_AI_GENERAL,
+    PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
+    PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
+    PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION,
+    PrivacyCapability.CLOUD_AI_DAILY_BRIEFING -> PrivacyBlocked.CloudAiDisabled(reason)
+    PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
+    PrivacyCapability.AI_BANK_STATEMENT_PARSING -> PrivacyBlocked.BankStatementAiDisabled(reason)
+    PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD -> PrivacyBlocked.ReceiptImageUploadDisabled(reason)
+    PrivacyCapability.EXTERNAL_GEOCODING -> PrivacyBlocked.ExternalGeocodingDisabled(reason)
+    PrivacyCapability.OVERPASS_API -> PrivacyBlocked.OverpassDisabled(reason)
+    PrivacyCapability.NOTIFICATION_CAPTURE,
+    PrivacyCapability.NOTIFICATION_PACKAGE_ALLOWLIST -> PrivacyBlocked.NotificationCaptureDisabled(reason)
+    PrivacyCapability.BACKGROUND_LOCATION_BACKFILL -> PrivacyBlocked.BackgroundLocationDisabled(reason)
+    PrivacyCapability.DEVICE_GPS_LOCATION -> PrivacyBlocked.DeviceGpsDisabled(reason)
+    PrivacyCapability.RAWBACKUP_EXPORT -> PrivacyBlocked.RawExportDisabled(reason)
+    PrivacyCapability.ENCRYPTED_BACKUP -> PrivacyBlocked.EncryptedBackupDisabled(reason)
+    PrivacyCapability.DEBUG_DATA_PERSISTENCE -> PrivacyBlocked.DebugDataPersistenceDisabled(reason)
+    else -> PrivacyBlocked.Custom(capability, reason)
 }

@@ -158,10 +158,11 @@ class ExportOptionsViewModel @Inject constructor(
                 error = null
             )
 
-            // P1-06: Privacy gate check for raw/plaintext export
+            // S3-003: Use the correct capability — encrypted export is not raw export
+            val exportCapability = if (encryptExport) PrivacyCapability.ENCRYPTED_BACKUP else PrivacyCapability.RAWBACKUP_EXPORT
             val privacyDecision = privacyGate.check(
-                PrivacyCapability.RAWBACKUP_EXPORT,
-                mapOf("operation" to "export")
+                exportCapability,
+                mapOf("operation" to "export", "encrypted" to encryptExport.toString())
             )
             if (privacyDecision.blocksExecution()) {
                 _uiState.value = _uiState.value.copy(

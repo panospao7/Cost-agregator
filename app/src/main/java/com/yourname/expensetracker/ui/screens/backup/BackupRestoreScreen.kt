@@ -35,7 +35,7 @@ import com.yourname.expensetracker.R
 @Composable
 fun BackupRestoreScreen(
     onNavigateBack: () -> Unit,
-    onRestartRequired: () -> Unit = { Runtime.getRuntime().exit(0) },
+    onRestartRequired: () -> Unit = {},  // S3-015: host must wire restart — no process-kill default
     viewModel: BackupRestoreViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()

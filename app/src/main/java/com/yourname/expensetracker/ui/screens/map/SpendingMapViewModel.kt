@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.toPrivacyBlocked
 import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -101,8 +102,8 @@ data class SpendingMapState(
   val mapConversionWarnings: Int = 0,
   /** S10-006: Marker conversion failures (all transaction types, shown in original currency) */
   val markerConversionWarnings: Int = 0,
-  /** S10-004: true when GPS is blocked by privacy settings */
-  val gpsPrivacyBlocked: Boolean = false,
+  /** S3-004: Typed GPS privacy blocked state — preserves denial reason and type */
+  val gpsPrivacyBlocked: com.yourname.expensetracker.domain.privacy.PrivacyBlocked? = null,
   /** S10-011: true while a correction/pin save is in progress */
   val isSavingCorrection: Boolean = false,
   val correctionSaveError: String? = null
@@ -393,7 +394,7 @@ class SpendingMapViewModel @Inject constructor(
     }
 
     fun dismissGpsPrivacyBlocked() {
-        _state.update { it.copy(gpsPrivacyBlocked = false) }
+        _state.update { it.copy(gpsPrivacyBlocked = null) }
     }
 
     fun dismissCorrectionError() {
@@ -809,8 +810,8 @@ class SpendingMapViewModel @Inject constructor(
             val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
             if (decision.blocksExecution()) {
                 Timber.d("Device GPS denied by privacy settings")
-                // S10-004: Typed blocked state instead of transient snackbar
-                _state.update { it.copy(gpsPrivacyBlocked = true) }
+                // S3-004: Typed blocked state preserves denial reason
+                _state.update { it.copy(gpsPrivacyBlocked = decision.toPrivacyBlocked(com.yourname.expensetracker.domain.privacy.PrivacyCapability.DEVICE_GPS_LOCATION) ?: com.yourname.expensetracker.domain.privacy.PrivacyBlocked.DeviceGpsDisabled()) }
                 return@launch
             }
             try {

@@ -51,6 +51,7 @@ fun PrivacySettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val settings = uiState.settings
+    val isSaving = uiState.isSaving
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -73,6 +74,11 @@ fun PrivacySettingsScreen(
             )
         }
     ) { padding ->
+        if (uiState.isLoading) {
+            androidx.compose.material3.LinearProgressIndicator(
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+            )
+        }
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -114,7 +120,8 @@ fun PrivacySettingsScreen(
                 ToggleRow(
                     label = "Capture notifications",
                     checked = settings.notificationCaptureEnabled,
-                    onCheckedChange = viewModel::setNotificationCaptureEnabled
+                    onCheckedChange = viewModel::setNotificationCaptureEnabled,
+                    enabled = !isSaving
                 )
             }
 
@@ -128,28 +135,32 @@ fun PrivacySettingsScreen(
                 ToggleRow(
                     label = "Enable cloud AI features",
                     checked = settings.cloudAiEnabled,
-                    onCheckedChange = viewModel::setCloudAiEnabled
+                    onCheckedChange = viewModel::setCloudAiEnabled,
+                    enabled = !isSaving
                 )
             }
             item {
                 ToggleRow(
                     label = "Redact data before cloud upload",
                     checked = settings.redactBeforeCloud,
-                    onCheckedChange = viewModel::setRedactBeforeCloud
+                    onCheckedChange = viewModel::setRedactBeforeCloud,
+                    enabled = !isSaving
                 )
             }
             item {
                 ToggleRow(
                     label = "Upload receipt images to cloud",
                     checked = settings.receiptImageCloudEnabled,
-                    onCheckedChange = viewModel::setReceiptImageCloudEnabled
+                    onCheckedChange = viewModel::setReceiptImageCloudEnabled,
+                    enabled = !isSaving
                 )
             }
             item {
                 ToggleRow(
                     label = "Bank statement AI validation",
                     checked = settings.bankStatementAiEnabled,
-                    onCheckedChange = viewModel::setBankStatementAiEnabled
+                    onCheckedChange = viewModel::setBankStatementAiEnabled,
+                    enabled = !isSaving
                 )
             }
 
@@ -163,21 +174,24 @@ fun PrivacySettingsScreen(
                 ToggleRow(
                     label = "External geocoding (Nominatim/OSM)",
                     checked = settings.externalGeocodingEnabled,
-                    onCheckedChange = viewModel::setExternalGeocodingEnabled
+                    onCheckedChange = viewModel::setExternalGeocodingEnabled,
+                    enabled = !isSaving
                 )
             }
             item {
                 ToggleRow(
                     label = "Background location backfill",
                     checked = settings.backgroundLocationBackfillEnabled,
-                    onCheckedChange = viewModel::setBackgroundLocationBackfillEnabled
+                    onCheckedChange = viewModel::setBackgroundLocationBackfillEnabled,
+                    enabled = !isSaving
                 )
             }
             item {
                 ToggleRow(
                     label = "Device GPS location",
                     checked = settings.deviceGpsLocationEnabled,
-                    onCheckedChange = viewModel::setDeviceGpsLocationEnabled
+                    onCheckedChange = viewModel::setDeviceGpsLocationEnabled,
+                    enabled = !isSaving
                 )
             }
 
@@ -191,7 +205,8 @@ fun PrivacySettingsScreen(
                 ToggleRow(
                     label = "Encrypted backups",
                     checked = settings.encryptedBackupEnabled,
-                    onCheckedChange = viewModel::setEncryptedBackupEnabled
+                    onCheckedChange = viewModel::setEncryptedBackupEnabled,
+                    enabled = !isSaving
                 )
             }
 
@@ -226,7 +241,8 @@ fun PrivacySettingsScreen(
                 ToggleRow(
                     label = "Persist debug data",
                     checked = settings.debugDataPersistenceEnabled,
-                    onCheckedChange = viewModel::setDebugDataPersistenceEnabled
+                    onCheckedChange = viewModel::setDebugDataPersistenceEnabled,
+                    enabled = !isSaving
                 )
             }
 
@@ -249,7 +265,8 @@ private fun SectionHeader(title: String) {
 private fun ToggleRow(
     label: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier
@@ -261,12 +278,13 @@ private fun ToggleRow(
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = SemanticColors.TextPrimary,
+            color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary,
             modifier = Modifier.weight(1f)
         )
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
         )
     }
 }

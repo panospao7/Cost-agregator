@@ -10,12 +10,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import javax.inject.Inject
 
 data class PrivacySettingsUiState(
     val settings: PrivacySettings = PrivacySettings(),
     val isSaving: Boolean = false,
+    val isLoading: Boolean = true,  // S3-017: true until first settings emission
     val blocked: List<PrivacyBlocked> = emptyList(),
     val errorMessage: String? = null
 )
@@ -33,7 +36,8 @@ class PrivacySettingsViewModel @Inject constructor(
             repository.observeSettings().collect { settings ->
                 _uiState.value = _uiState.value.copy(
                     settings = settings,
-                    blocked = computeBlocked(settings)
+                    blocked = computeBlocked(settings),
+                    isLoading = false  // S3-017: clear loading after first real emission
                 )
             }
         }
@@ -44,6 +48,12 @@ class PrivacySettingsViewModel @Inject constructor(
         if (!settings.receiptImageCloudEnabled) add(PrivacyBlocked.ReceiptImageUploadDisabled())
         if (!settings.externalGeocodingEnabled) add(PrivacyBlocked.ExternalGeocodingDisabled())
         if (!settings.notificationCaptureEnabled) add(PrivacyBlocked.NotificationCaptureDisabled())
+        // S3-001: Additional capabilities
+        if (!settings.bankStatementAiEnabled) add(PrivacyBlocked.BankStatementAiDisabled())
+        if (!settings.backgroundLocationBackfillEnabled) add(PrivacyBlocked.BackgroundLocationDisabled())
+        if (!settings.deviceGpsLocationEnabled) add(PrivacyBlocked.DeviceGpsDisabled())
+        if (!settings.encryptedBackupEnabled) add(PrivacyBlocked.EncryptedBackupDisabled())
+        if (!settings.debugDataPersistenceEnabled) add(PrivacyBlocked.DebugDataPersistenceDisabled())
     }
 
     fun setNotificationCaptureEnabled(enabled: Boolean) = update { it.copy(notificationCaptureEnabled = enabled) }
@@ -64,18 +74,22 @@ class PrivacySettingsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
 
+    private val updateMutex = Mutex()
+
     private fun update(transform: (PrivacySettings) -> PrivacySettings) {
         viewModelScope.launch {
-            try {
-                _uiState.value = _uiState.value.copy(isSaving = true, errorMessage = null)
-                repository.updateSettings(transform)
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to update privacy setting")
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = "Failed to save privacy setting. Please retry."
-                )
-            } finally {
-                _uiState.value = _uiState.value.copy(isSaving = false)
+            updateMutex.withLock {
+                try {
+                    _uiState.value = _uiState.value.copy(isSaving = true, errorMessage = null)
+                    repository.updateSettings(transform)
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to update privacy setting")
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "Failed to save privacy setting. Please retry."
+                    )
+                } finally {
+                    _uiState.value = _uiState.value.copy(isSaving = false)
+                }
             }
         }
     }

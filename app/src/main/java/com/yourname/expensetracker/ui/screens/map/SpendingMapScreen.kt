@@ -111,10 +111,9 @@ fun SpendingMapScreen(
         viewModel.onSnackbarDismissed()
     }
     LaunchedEffect(state.gpsPrivacyBlocked) {
-        if (state.gpsPrivacyBlocked) {
-            snackbarHostState.showSnackbar("Device GPS is disabled in Privacy settings.", actionLabel = "Dismiss", duration = SnackbarDuration.Long)
-            viewModel.dismissGpsPrivacyBlocked()
-        }
+        val blocked = state.gpsPrivacyBlocked ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(blocked.reason, actionLabel = "Dismiss", duration = SnackbarDuration.Long)
+        viewModel.dismissGpsPrivacyBlocked()
     }
     LaunchedEffect(state.correctionSaveError) {
         val err = state.correctionSaveError ?: return@LaunchedEffect

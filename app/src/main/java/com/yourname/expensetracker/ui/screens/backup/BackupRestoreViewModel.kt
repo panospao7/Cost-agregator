@@ -70,11 +70,11 @@ class BackupRestoreViewModel @Inject constructor(
      */
     fun createBackup(password: String) {
         if (password.isBlank()) {
-            _uiState.value = _uiState.value.copy(
-                errorMessage = "Password cannot be empty"
-            )
+            _uiState.value = _uiState.value.copy(errorMessage = "Password cannot be empty")
             return
         }
+        // S3-016: Prevent duplicate operations
+        if (_uiState.value.isBackingUp || _uiState.value.isRestoring) return
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -124,11 +124,11 @@ class BackupRestoreViewModel @Inject constructor(
      */
     fun restoreBackup(uri: Uri, password: String) {
         if (password.isBlank()) {
-            _uiState.value = _uiState.value.copy(
-                errorMessage = "Password cannot be empty"
-            )
+            _uiState.value = _uiState.value.copy(errorMessage = "Password cannot be empty")
             return
         }
+        // S3-016: Prevent duplicate operations
+        if (_uiState.value.isRestoring || _uiState.value.isBackingUp) return
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -138,14 +138,11 @@ class BackupRestoreViewModel @Inject constructor(
                 restartRequired = false
             )
 
-            // Copy URI content to a temp file for processing
             val tempFile = runCatching {
                 val temp = File.createTempFile("restore_", ".costbackup", context.cacheDir)
                 val input = context.contentResolver.openInputStream(uri)
                     ?: error("Could not open selected backup file")
-                input.use { src ->
-                    temp.outputStream().use { dst -> src.copyTo(dst) }
-                }
+                input.use { src -> temp.outputStream().use { dst -> src.copyTo(dst) } }
                 temp
             }.getOrElse { error ->
                 _uiState.value = _uiState.value.copy(
@@ -155,40 +152,27 @@ class BackupRestoreViewModel @Inject constructor(
                 return@launch
             }
 
-            val result = databaseBackupRepository.restoreCostBackup(tempFile, password)
-
-            // Clean up temp file
-            tempFile.delete()
+            // S3-006: try/finally ensures isRestoring resets and temp file is deleted even on throw
+            val result = try {
+                databaseBackupRepository.restoreCostBackup(tempFile, password)
+            } catch (t: Throwable) {
+                Result.failure(t)
+            } finally {
+                tempFile.delete()
+            }
 
             result.fold(
                 onSuccess = { importResult ->
                     Timber.d("Restore completed: %s", importResult)
                     when (importResult) {
-                        is DatabaseImportResult.SuccessNeedsRestart -> {
-                            _uiState.value = _uiState.value.copy(
-                                isRestoring = false,
-                                successMessage = "Restore completed successfully!",
-                                restartRequired = true
-                            )
-                        }
-                        is DatabaseImportResult.Success -> {
-                            _uiState.value = _uiState.value.copy(
-                                isRestoring = false,
-                                successMessage = "Restore completed successfully!"
-                            )
-                        }
-                        is DatabaseImportResult.Loading -> {
-                            // Should not happen in practice
-                            _uiState.value = _uiState.value.copy(
-                                isRestoring = false
-                            )
-                        }
-                        is DatabaseImportResult.Error -> {
-                            _uiState.value = _uiState.value.copy(
-                                isRestoring = false,
-                                errorMessage = importResult.message
-                            )
-                        }
+                        is DatabaseImportResult.SuccessNeedsRestart ->
+                            _uiState.value = _uiState.value.copy(isRestoring = false, successMessage = "Restore completed successfully!", restartRequired = true)
+                        is DatabaseImportResult.Success ->
+                            _uiState.value = _uiState.value.copy(isRestoring = false, successMessage = "Restore completed successfully!")
+                        is DatabaseImportResult.Loading ->
+                            _uiState.value = _uiState.value.copy(isRestoring = false)
+                        is DatabaseImportResult.Error ->
+                            _uiState.value = _uiState.value.copy(isRestoring = false, errorMessage = importResult.message)
                     }
                 },
                 onFailure = { error ->
@@ -202,10 +186,7 @@ class BackupRestoreViewModel @Inject constructor(
                             "Privacy gate denied: ${error.message}"
                         else -> "Restore failed: ${error.message ?: "Unknown error"}"
                     }
-                    _uiState.value = _uiState.value.copy(
-                        isRestoring = false,
-                        errorMessage = message
-                    )
+                    _uiState.value = _uiState.value.copy(isRestoring = false, errorMessage = message)
                 }
             )
         }

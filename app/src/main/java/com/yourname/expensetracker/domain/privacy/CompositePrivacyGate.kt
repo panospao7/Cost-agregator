@@ -5,22 +5,15 @@ import timber.log.Timber
 /**
  * Composite [PrivacyGate] that delegates to a chain of gate implementations.
  *
- * Each [check] call iterates through [gates] in order. The first gate that
- * returns a [PrivacyDecision.Denied] or [PrivacyDecision.FailClosed]
- * short-circuits and returns that decision. If all gates return
- * [PrivacyDecision.Allowed] or [PrivacyDecision.NotApplicable], the composite
- * returns [PrivacyDecision.Allowed].
- *
- * P8-P1-03: Only the composite gate writes the final audit event. Concrete
- * gates no longer log decisions for capabilities they don't handle (they
- * return [PrivacyDecision.NotApplicable] instead of [PrivacyDecision.Allowed]).
- *
- * P8-P1-03: Fail-closed exceptions now produce [PrivacyDecision.FailClosed]
- * which carries a distinguishing type for durable audit recording.
+ * S3-012: If a capability is in [gateHandledCapabilities] but no concrete gate
+ * handles it (all return NotApplicable), the composite returns FailClosed instead
+ * of the previous fail-open Allowed default.
  */
 class CompositePrivacyGate(
     private val gates: List<PrivacyGate>,
-    private val auditLogger: PrivacyAuditLogger
+    private val auditLogger: PrivacyAuditLogger,
+    /** Capabilities that must be handled by at least one gate — fail-closed if not. */
+    private val gateHandledCapabilities: Set<PrivacyCapability> = emptySet()
 ) : PrivacyGate {
 
     override suspend fun check(
@@ -57,8 +50,14 @@ class CompositePrivacyGate(
                 else -> { /* NotApplicable — gate does not handle this capability */ }
             }
         }
+        // S3-012: Fail-closed for GATE_HANDLED capabilities with no handler
         if (!anyGateHandled) {
-            Timber.w("No privacy gate handled capability %s — defaulting to Allowed (fail-open)", capability)
+            if (capability in gateHandledCapabilities) {
+                Timber.e("No privacy gate handled GATE_HANDLED capability %s — failing closed", capability)
+                finalDecision = PrivacyDecision.FailClosed("No privacy gate handled $capability")
+            } else {
+                Timber.w("No privacy gate handled capability %s — defaulting to Allowed (local-only)", capability)
+            }
         }
         auditLogger.logDecision(capability, finalDecision, context)
         return finalDecision
