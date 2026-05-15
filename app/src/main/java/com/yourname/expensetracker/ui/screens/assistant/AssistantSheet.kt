@@ -104,11 +104,20 @@ fun AssistantSheet(
             }
 
             if (uiState.isDisabled) {
-                Text(
-                    text = uiState.disabledReason ?: stringResource(R.string.assistant_unavailable),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // S3-011: Show typed PrivacyBlockedCard when cloud AI is the reason
+                val blocked = uiState.privacyBlocked
+                if (blocked != null) {
+                    com.yourname.expensetracker.ui.components.PrivacyBlockedCard(
+                        blocked = blocked,
+                        modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Text(
+                        text = uiState.disabledReason ?: stringResource(R.string.assistant_unavailable),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else {
                 uiState.runtimeStatusMessage?.let { runtimeMessage ->
                     Text(

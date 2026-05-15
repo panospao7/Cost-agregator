@@ -169,7 +169,7 @@ fun BackupRestoreScreen(
                                     if (createPasswordVisible) Icons.Default.VisibilityOff
                                     else Icons.Default.Visibility,
                                     contentDescription = if (createPasswordVisible)
-                                        "Hide password" else "Show password"
+                                        stringResource(R.string.backup_password_hide) else stringResource(R.string.backup_password_show)
                                 )
                             }
                         },
@@ -228,8 +228,8 @@ fun BackupRestoreScreen(
                                 onClick = { filePickerLauncher.launch("application/octet-stream") }
                             ) {
                                 Text(
-                                    if (selectedFileUri == null) "Select"
-                                    else "Change"
+                                    if (selectedFileUri == null) stringResource(R.string.backup_file_select)
+                                    else stringResource(R.string.backup_file_change)
                                 )
                             }
                         }
@@ -250,7 +250,7 @@ fun BackupRestoreScreen(
                                     if (restorePasswordVisible) Icons.Default.VisibilityOff
                                     else Icons.Default.Visibility,
                                     contentDescription = if (restorePasswordVisible)
-                                        "Hide password" else "Show password"
+                                        stringResource(R.string.backup_password_hide) else stringResource(R.string.backup_password_show)
                                 )
                             }
                         },

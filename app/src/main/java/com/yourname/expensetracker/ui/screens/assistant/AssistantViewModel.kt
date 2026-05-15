@@ -45,6 +45,8 @@ data class AssistantUiState(
     val isLoading: Boolean = false,
     val isDisabled: Boolean = false,
     val disabledReason: String? = null,
+    /** S3-011: typed privacy blocked state — shown as PrivacyBlockedCard when cloud AI is denied */
+    val privacyBlocked: com.yourname.expensetracker.domain.privacy.PrivacyBlocked? = null,
     val runtimeStatusMessage: String? = null,
     val runtimeDiagnostics: String? = null,
     val errorMessage: String? = null,
@@ -120,6 +122,10 @@ class AssistantViewModel @Inject constructor(
                     !settings.queryInterpretationEnabled -> "Query interpretation is disabled"
                     else -> null
                 }
+                // S3-011: Expose typed privacy blocked state when cloud AI is the reason
+                val privacyBlocked: com.yourname.expensetracker.domain.privacy.PrivacyBlocked? =
+                    if (!settings.aiEnabled) com.yourname.expensetracker.domain.privacy.PrivacyBlocked.CloudAiDisabled()
+                    else null
                 // S11-013: Cancel in-flight query when settings disable AI
                 if (isDisabled && _currentQueryJob?.isActive == true) {
                     cancelCurrentQuery()
@@ -133,6 +139,7 @@ class AssistantViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isDisabled = isDisabled,
                     disabledReason = disabledReason,
+                    privacyBlocked = privacyBlocked,
                     canPersistHistory = settings.storeConversationHistory,
                     runtimeStatusMessage = runtimePresentation.message,
                     runtimeDiagnostics = runtimePresentation.diagnostics

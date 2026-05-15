@@ -19,9 +19,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 
@@ -59,7 +61,7 @@ fun PrivacyBlockedCard(
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "Feature disabled",
+                    stringResource(R.string.privacy_feature_disabled),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
@@ -72,7 +74,7 @@ fun PrivacyBlockedCard(
             if (onOpenPrivacySettings != null) {
                 TextButton(onClick = onOpenPrivacySettings) {
                     Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
-                    Text("Settings")
+                    Text(stringResource(R.string.privacy_settings_cta))
                 }
             }
         }

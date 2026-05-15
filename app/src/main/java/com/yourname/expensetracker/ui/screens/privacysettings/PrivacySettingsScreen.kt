@@ -19,6 +19,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -89,7 +91,7 @@ fun PrivacySettingsScreen(
             // -- Blocked features summary --
             if (uiState.blocked.isNotEmpty()) {
                 item {
-                    SectionHeader("Disabled Features")
+                    SectionHeader(stringResource(R.string.privacy_section_disabled_features))
                 }
                 items(uiState.blocked.size) { index ->
                     PrivacyBlockedCard(
@@ -114,11 +116,11 @@ fun PrivacySettingsScreen(
 
             // -- Notification section --
             item {
-                SectionHeader("Notification Capture")
+                SectionHeader(stringResource(R.string.privacy_section_notification))
             }
             item {
                 ToggleRow(
-                    label = "Capture notifications",
+                    label = stringResource(R.string.privacy_toggle_notification_capture),
                     checked = settings.notificationCaptureEnabled,
                     onCheckedChange = viewModel::setNotificationCaptureEnabled,
                     enabled = !isSaving
@@ -129,27 +131,27 @@ fun PrivacySettingsScreen(
 
             // -- Cloud AI section --
             item {
-                SectionHeader("Cloud AI")
+                SectionHeader(stringResource(R.string.privacy_section_cloud_ai))
             }
             item {
                 ToggleRow(
-                    label = "Enable cloud AI features",
+                    label = stringResource(R.string.privacy_toggle_cloud_ai),
                     checked = settings.cloudAiEnabled,
-                    onCheckedChange = viewModel::setCloudAiEnabled,
+                    onCheckedChange = viewModel::requestSetCloudAiEnabled,
                     enabled = !isSaving
                 )
             }
             item {
                 ToggleRow(
-                    label = "Redact data before cloud upload",
+                    label = stringResource(R.string.privacy_toggle_redact_before_cloud),
                     checked = settings.redactBeforeCloud,
-                    onCheckedChange = viewModel::setRedactBeforeCloud,
+                    onCheckedChange = viewModel::requestSetRedactBeforeCloud,
                     enabled = !isSaving
                 )
             }
             item {
                 ToggleRow(
-                    label = "Upload receipt images to cloud",
+                    label = stringResource(R.string.privacy_toggle_receipt_image_cloud),
                     checked = settings.receiptImageCloudEnabled,
                     onCheckedChange = viewModel::setReceiptImageCloudEnabled,
                     enabled = !isSaving
@@ -157,7 +159,7 @@ fun PrivacySettingsScreen(
             }
             item {
                 ToggleRow(
-                    label = "Bank statement AI validation",
+                    label = stringResource(R.string.privacy_toggle_bank_statement_ai),
                     checked = settings.bankStatementAiEnabled,
                     onCheckedChange = viewModel::setBankStatementAiEnabled,
                     enabled = !isSaving
@@ -168,11 +170,11 @@ fun PrivacySettingsScreen(
 
             // -- Location section --
             item {
-                SectionHeader("Location")
+                SectionHeader(stringResource(R.string.privacy_section_location))
             }
             item {
                 ToggleRow(
-                    label = "External geocoding (Nominatim/OSM)",
+                    label = stringResource(R.string.privacy_toggle_external_geocoding),
                     checked = settings.externalGeocodingEnabled,
                     onCheckedChange = viewModel::setExternalGeocodingEnabled,
                     enabled = !isSaving
@@ -180,7 +182,7 @@ fun PrivacySettingsScreen(
             }
             item {
                 ToggleRow(
-                    label = "Background location backfill",
+                    label = stringResource(R.string.privacy_toggle_background_location),
                     checked = settings.backgroundLocationBackfillEnabled,
                     onCheckedChange = viewModel::setBackgroundLocationBackfillEnabled,
                     enabled = !isSaving
@@ -188,7 +190,7 @@ fun PrivacySettingsScreen(
             }
             item {
                 ToggleRow(
-                    label = "Device GPS location",
+                    label = stringResource(R.string.privacy_toggle_device_gps),
                     checked = settings.deviceGpsLocationEnabled,
                     onCheckedChange = viewModel::setDeviceGpsLocationEnabled,
                     enabled = !isSaving
@@ -199,11 +201,11 @@ fun PrivacySettingsScreen(
 
             // -- Backup section --
             item {
-                SectionHeader("Backup")
+                SectionHeader(stringResource(R.string.privacy_section_backup))
             }
             item {
                 ToggleRow(
-                    label = "Encrypted backups",
+                    label = stringResource(R.string.privacy_toggle_encrypted_backup),
                     checked = settings.encryptedBackupEnabled,
                     onCheckedChange = viewModel::setEncryptedBackupEnabled,
                     enabled = !isSaving
@@ -214,18 +216,18 @@ fun PrivacySettingsScreen(
 
             // -- Data Retention section --
             item {
-                SectionHeader("Data Retention")
+                SectionHeader(stringResource(R.string.privacy_section_data_retention))
             }
             item {
                 RetentionSlider(
-                    label = "Raw notification retention (days)",
+                    label = stringResource(R.string.privacy_slider_notification_retention),
                     value = settings.rawNotificationRetentionDays.toFloat(),
                     onValueChange = { viewModel.setRawNotificationRetentionDays(it.toInt()) }
                 )
             }
             item {
                 RetentionSlider(
-                    label = "Raw OCR retention (days)",
+                    label = stringResource(R.string.privacy_slider_ocr_retention),
                     value = settings.rawOcrRetentionDays.toFloat(),
                     onValueChange = { viewModel.setRawOcrRetentionDays(it.toInt()) }
                 )
@@ -233,13 +235,44 @@ fun PrivacySettingsScreen(
 
             item { HorizontalDivider() }
 
+            // -- Raw Storage Modes section (S3-009) --
+            item {
+                SectionHeader(stringResource(R.string.privacy_section_raw_storage))
+            }
+            item {
+                RawStorageModeRow(
+                    label = stringResource(R.string.privacy_raw_storage_notification_label),
+                    selected = settings.rawNotificationStorageMode,
+                    onSelect = viewModel::setRawNotificationStorageMode,
+                    enabled = !isSaving
+                )
+            }
+            item {
+                RawStorageModeRow(
+                    label = stringResource(R.string.privacy_raw_storage_ocr_label),
+                    selected = settings.rawOcrStorageMode,
+                    onSelect = viewModel::setRawOcrStorageMode,
+                    enabled = !isSaving
+                )
+            }
+            item {
+                RawStorageModeRow(
+                    label = stringResource(R.string.privacy_raw_storage_email_label),
+                    selected = settings.emailReceiptStorageMode,
+                    onSelect = viewModel::setEmailReceiptStorageMode,
+                    enabled = !isSaving
+                )
+            }
+
+            item { HorizontalDivider() }
+
             // -- Debug section --
             item {
-                SectionHeader("Debug")
+                SectionHeader(stringResource(R.string.privacy_section_debug))
             }
             item {
                 ToggleRow(
-                    label = "Persist debug data",
+                    label = stringResource(R.string.privacy_toggle_debug_persist),
                     checked = settings.debugDataPersistenceEnabled,
                     onCheckedChange = viewModel::setDebugDataPersistenceEnabled,
                     enabled = !isSaving
@@ -247,6 +280,33 @@ fun PrivacySettingsScreen(
             }
 
             item { Spacer(modifier = Modifier.height(32.dp)) }
+        }
+
+        // S3-010: Confirmation dialogs for risky privacy toggles
+        uiState.pendingRiskyConfirm?.let { confirm ->
+            val (title, message) = when (confirm) {
+                RiskyToggleConfirm.ENABLE_CLOUD_AI ->
+                    stringResource(R.string.privacy_confirm_enable_cloud_ai_title) to
+                    stringResource(R.string.privacy_confirm_enable_cloud_ai_message)
+                RiskyToggleConfirm.DISABLE_REDACTION ->
+                    stringResource(R.string.privacy_confirm_disable_redaction_title) to
+                    stringResource(R.string.privacy_confirm_disable_redaction_message)
+            }
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = viewModel::dismissRiskyConfirm,
+                title = { Text(title) },
+                text = { Text(message) },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = viewModel::confirmRiskyToggle) {
+                        Text(stringResource(R.string.privacy_confirm_proceed), color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = viewModel::dismissRiskyConfirm) {
+                        Text(stringResource(R.string.privacy_confirm_cancel))
+                    }
+                }
+            )
         }
     }
 }
@@ -307,5 +367,40 @@ private fun RetentionSlider(
             valueRange = 0f..365f,
             steps = 51 // (365 / 7) approx — every week
         )
+    }
+}
+
+
+@Composable
+private fun RawStorageModeRow(
+    label: String,
+    selected: com.yourname.expensetracker.domain.privacy.RawStorageMode,
+    onSelect: (com.yourname.expensetracker.domain.privacy.RawStorageMode) -> Unit,
+    enabled: Boolean = true
+) {
+    val options = listOf(
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_RAW to stringResource(R.string.privacy_raw_storage_store_raw),
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_REDACTED to stringResource(R.string.privacy_raw_storage_store_redacted),
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_METADATA_ONLY to stringResource(R.string.privacy_raw_storage_metadata_only),
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.DO_NOT_STORE to stringResource(R.string.privacy_raw_storage_do_not_store),
+    )
+    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary)
+        if (selected == com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_RAW) {
+            Text(stringResource(R.string.privacy_raw_storage_warning), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        }
+        options.forEach { (mode, label2) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                androidx.compose.material3.RadioButton(
+                    selected = selected == mode,
+                    onClick = { if (enabled) onSelect(mode) },
+                    enabled = enabled
+                )
+                Text(label2, style = MaterialTheme.typography.bodySmall, color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary)
+            }
+        }
     }
 }

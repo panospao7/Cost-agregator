@@ -18,10 +18,14 @@ import javax.inject.Inject
 data class PrivacySettingsUiState(
     val settings: PrivacySettings = PrivacySettings(),
     val isSaving: Boolean = false,
-    val isLoading: Boolean = true,  // S3-017: true until first settings emission
+    val isLoading: Boolean = true,
     val blocked: List<PrivacyBlocked> = emptyList(),
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /** S3-010: pending risky toggle confirmation */
+    val pendingRiskyConfirm: RiskyToggleConfirm? = null
 )
+
+enum class RiskyToggleConfirm { ENABLE_CLOUD_AI, DISABLE_REDACTION }
 
 @HiltViewModel
 class PrivacySettingsViewModel @Inject constructor(
@@ -57,6 +61,37 @@ class PrivacySettingsViewModel @Inject constructor(
     }
 
     fun setNotificationCaptureEnabled(enabled: Boolean) = update { it.copy(notificationCaptureEnabled = enabled) }
+
+    // S3-010: Risky toggles require confirmation before applying
+    fun requestSetCloudAiEnabled(enabled: Boolean) {
+        if (enabled && !_uiState.value.settings.cloudAiEnabled) {
+            _uiState.value = _uiState.value.copy(pendingRiskyConfirm = RiskyToggleConfirm.ENABLE_CLOUD_AI)
+        } else {
+            update { it.copy(cloudAiEnabled = enabled) }
+        }
+    }
+
+    fun requestSetRedactBeforeCloud(enabled: Boolean) {
+        if (!enabled && _uiState.value.settings.redactBeforeCloud) {
+            _uiState.value = _uiState.value.copy(pendingRiskyConfirm = RiskyToggleConfirm.DISABLE_REDACTION)
+        } else {
+            update { it.copy(redactBeforeCloud = enabled) }
+        }
+    }
+
+    fun confirmRiskyToggle() {
+        when (_uiState.value.pendingRiskyConfirm) {
+            RiskyToggleConfirm.ENABLE_CLOUD_AI -> update { it.copy(cloudAiEnabled = true) }
+            RiskyToggleConfirm.DISABLE_REDACTION -> update { it.copy(redactBeforeCloud = false) }
+            null -> Unit
+        }
+        _uiState.value = _uiState.value.copy(pendingRiskyConfirm = null)
+    }
+
+    fun dismissRiskyConfirm() {
+        _uiState.value = _uiState.value.copy(pendingRiskyConfirm = null)
+    }
+
     fun setCloudAiEnabled(enabled: Boolean) = update { it.copy(cloudAiEnabled = enabled) }
     fun setRedactBeforeCloud(enabled: Boolean) = update { it.copy(redactBeforeCloud = enabled) }
     fun setReceiptImageCloudEnabled(enabled: Boolean) = update { it.copy(receiptImageCloudEnabled = enabled) }
@@ -69,6 +104,11 @@ class PrivacySettingsViewModel @Inject constructor(
 
     fun setRawNotificationRetentionDays(days: Int) = update { it.copy(rawNotificationRetentionDays = days.coerceIn(0, 365)) }
     fun setRawOcrRetentionDays(days: Int) = update { it.copy(rawOcrRetentionDays = days.coerceIn(0, 365)) }
+
+    // S3-009: Raw storage mode controls
+    fun setRawNotificationStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawNotificationStorageMode = mode) }
+    fun setRawOcrStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawOcrStorageMode = mode) }
+    fun setEmailReceiptStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(emailReceiptStorageMode = mode) }
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
