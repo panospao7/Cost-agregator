@@ -83,7 +83,9 @@ class WarrantyTrackerViewModel @Inject constructor(
             _state.update { it.copy(referenceNowMillis = timeProvider.now()) }
             val activeCount = warrantyRepository.getActiveWarrantyCount()
             val expiringSoon = warrantyRepository.getWarrantiesExpiringSoon(30).size
-            val protectedValue = warrantyRepository.getTotalProtectedValue()
+            // S12-006: Use currency-normalized aggregate instead of deprecated raw sum
+            val protectedValueAggregate = runCatching { warrantyRepository.getTotalProtectedValueAggregate() }.getOrNull()
+            val protectedValue = protectedValueAggregate?.displayAmount ?: 0.0
             
             _state.update {
                 it.copy(

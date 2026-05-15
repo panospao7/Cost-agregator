@@ -43,7 +43,9 @@ data class MatchSuggestion(
     val suggestedExpenseId: Long,
     val confidence: Double,
     val expenseMerchant: String?,
-    val expenseAmount: Double?
+    val expenseAmount: Double?,
+    /** S12-030: Explicit currency for display — no raw amount without currency */
+    val expenseCurrency: String? = null
 )
 
 /**
@@ -89,7 +91,8 @@ class ReceiptMatchingViewModel @Inject constructor(
                         suggestedExpenseId = suggestedId,
                         confidence = receipt.matchConfidence?.toDouble() ?: 0.0,
                         expenseMerchant = expense?.merchant,
-                        expenseAmount = expense?.effectiveAmount
+                        expenseAmount = expense?.effectiveAmount,
+                        expenseCurrency = expense?.currency
                     )
                 }
                 _state.update {

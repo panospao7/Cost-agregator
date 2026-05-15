@@ -76,7 +76,8 @@ class SubscriptionManagementViewModel @Inject constructor(
     private val repository: SubscriptionManagementRepository,
     private val timeProvider: TimeProvider,
     private val subscriptionManagerEngine: SubscriptionManagerEngine,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
 ) : ViewModel() {
 
     val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
@@ -128,9 +129,23 @@ class SubscriptionManagementViewModel @Inject constructor(
                     val subscriptionInfos = subscriptionsDeferred.await()
                     val candidates = candidatesDeferred.await()
                     
-                    // Calculate totals
-                    val totalMonthly = subscriptionInfos.filter { it.subscription.isActive }
-                        .sumOf { calculateMonthlyCost(it.subscription) }
+                    // S12-011: Normalize subscription amounts to home currency before summing
+                    val hc = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrNull()
+                    val totalMonthly = if (hc != null) {
+                        subscriptionInfos.filter { it.subscription.isActive }.sumOf { info ->
+                            val rawMonthly = calculateMonthlyCost(info.subscription)
+                            val subCurrency = info.subscription.currency
+                            if (subCurrency.equals(hc, ignoreCase = true)) {
+                                rawMonthly
+                            } else {
+                                currencyConverter.convert(rawMonthly, subCurrency, hc)
+                                    ?.convertedAmount ?: rawMonthly // best-effort fallback to raw
+                            }
+                        }
+                    } else {
+                        subscriptionInfos.filter { it.subscription.isActive }
+                            .sumOf { calculateMonthlyCost(it.subscription) }
+                    }
                     val totalAnnual = totalMonthly * 12
                     
                     _uiState.value = SubscriptionManagementUiState(

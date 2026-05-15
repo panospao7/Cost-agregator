@@ -497,7 +497,8 @@ private fun SubscriptionCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${CurrencyFormatter.formatMoney(subscription.subscription.amount, homeCurrency)} ${subscription.subscription.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    // S12-012: Use subscription's own currency for row display
+                    text = "${CurrencyFormatter.formatMoney(subscription.subscription.amount, subscription.subscription.currency)} ${subscription.subscription.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary
                 )
@@ -657,7 +658,8 @@ private fun SubscriptionCandidateCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = CurrencyFormatter.formatMoney(candidate.averageAmount, homeCurrency),
+                    // S12-012: Use candidate's own currency for row display
+                    text = CurrencyFormatter.formatMoney(candidate.averageAmount, candidate.currency ?: homeCurrency),
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Medium

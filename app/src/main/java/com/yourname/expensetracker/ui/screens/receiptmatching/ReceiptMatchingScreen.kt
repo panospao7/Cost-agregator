@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -244,7 +245,8 @@ private fun ManualMatchDialog(
                                         fontWeight = FontWeight.Medium
                                     )
                                     Text(
-                                        text = "${String.format("%.2f", expense.amount)} • ${dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))}",
+                                        // S12-030: Use expense.currency for display
+                                        text = "${CurrencyFormatter.formatMoney(expense.amount, expense.currency)} • ${dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -357,7 +359,13 @@ private fun MatchSuggestionCard(
                         style = MaterialTheme.typography.labelSmall
                     )
                     Text(
-                        text = stringResource(R.string.receipt_suggested_match_details, suggestion.expenseMerchant ?: stringResource(R.string.receipt_label_unknown), String.format("%.2f", suggestion.expenseAmount ?: 0.0)),
+                        // S12-030: Use suggestion.expenseCurrency for display
+                        text = stringResource(R.string.receipt_suggested_match_details,
+                            suggestion.expenseMerchant ?: stringResource(R.string.receipt_label_unknown),
+                            if (suggestion.expenseAmount != null && suggestion.expenseCurrency != null)
+                                CurrencyFormatter.formatMoney(suggestion.expenseAmount, suggestion.expenseCurrency)
+                            else suggestion.expenseAmount?.let { "%.2f".format(it) } ?: "—"
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )

@@ -129,6 +129,18 @@ class CarbonFootprintCalculator @Inject constructor(
         // LIMIT 2000 DAO path and never relies on live Flow observation.
         val expenses = expenseDao.getExpensesBetweenUncapped(resolvedStartDate, resolvedEndDate)
             .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE }
+
+        // S12-024: Normalize expenses to home currency before applying emission factors
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrNull()
+        val normalizedAmountById = mutableMapOf<Long, Double>()
+        if (homeCurrency != null) {
+            try {
+                val normResult = analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
+                for (ne in normResult.normalizedExpenses) {
+                    normalizedAmountById[ne.snapshot.id] = ne.normalizedEffectiveAmount
+                }
+            } catch (_: Exception) { /* fall back to effectiveAmount per expense */ }
+        }
         
         val categoryEmissions = mutableMapOf<String, Double>()
         val merchantEmissions = mutableMapOf<String, Double>()
@@ -136,7 +148,9 @@ class CarbonFootprintCalculator @Inject constructor(
         
         expenses.forEach { expense ->
             val factor = getEmissionFactor(expense)
-            val co2 = expense.effectiveAmount * factor
+            // S12-024: Use normalized amount if available, else fall back to effectiveAmount
+            val normalizedAmount = normalizedAmountById[expense.id] ?: expense.effectiveAmount
+            val co2 = normalizedAmount * factor
             
             totalEmissions += co2
             
