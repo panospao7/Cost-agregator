@@ -49,7 +49,9 @@ data class AssistantUiState(
     val runtimeDiagnostics: String? = null,
     val errorMessage: String? = null,
     val canPersistHistory: Boolean = false,
-    val currentSessionId: Long? = null
+    val currentSessionId: Long? = null,
+    /** S11-020: true when clear-all-history confirmation dialog should be shown */
+    val showClearHistoryConfirm: Boolean = false
 )
 
 private data class AssistantRuntimePresentation(
@@ -118,6 +120,10 @@ class AssistantViewModel @Inject constructor(
                     !settings.queryInterpretationEnabled -> "Query interpretation is disabled"
                     else -> null
                 }
+                // S11-013: Cancel in-flight query when settings disable AI
+                if (isDisabled && _currentQueryJob?.isActive == true) {
+                    cancelCurrentQuery()
+                }
                 val runtimePresentation = if (isDisabled) {
                     AssistantRuntimePresentation(message = null, diagnostics = null)
                 } else {
@@ -153,7 +159,10 @@ class AssistantViewModel @Inject constructor(
         val error: String? = null
     ) {
         fun toDisplayString(): String = buildString {
-            appendLine("Query: ${query.take(50)}")
+            // S11-009: Never expose raw query text in release builds
+            if (com.yourname.expensetracker.BuildConfig.DEBUG) {
+                appendLine("Query: ${query.take(50)}")
+            }
             appendLine("Total: ${totalDurationMs}ms")
             interpretationDurationMs?.let { appendLine("Interpret: ${it}ms") }
             executionDurationMs?.let { appendLine("Execute: ${it}ms") }
@@ -367,7 +376,17 @@ class AssistantViewModel @Inject constructor(
         }
     }
 
+    /** S11-020: Request confirmation before clearing all history */
+    fun requestClearAllHistory() {
+        _uiState.value = _uiState.value.copy(showClearHistoryConfirm = true)
+    }
+
+    fun dismissClearAllHistory() {
+        _uiState.value = _uiState.value.copy(showClearHistoryConfirm = false)
+    }
+
     fun clearAllHistory() {
+        _uiState.value = _uiState.value.copy(showClearHistoryConfirm = false)
         cancelCurrentQuery()
         viewModelScope.launch {
             aiChatRepository.clearAllHistory()

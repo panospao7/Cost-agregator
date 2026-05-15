@@ -80,7 +80,8 @@ fun AssistantResultCard(
                         ) {
                             Text(row.label, style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    row.valueText ?: row.amount?.let { stringResource(R.string.amount_eur_format_long, it) } ?: stringResource(R.string.value_not_available),
+                                    // S11-015: No EUR fallback — show value_not_available if no explicit text
+                                    row.valueText ?: stringResource(R.string.value_not_available),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                         }

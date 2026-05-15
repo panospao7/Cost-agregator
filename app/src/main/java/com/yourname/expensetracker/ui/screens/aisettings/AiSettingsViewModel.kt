@@ -66,6 +66,10 @@ class AiSettingsViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(AiSettingsUiState())
     val uiState: StateFlow<AiSettingsUiState> = _uiState.asStateFlow()
 
+    /** S11-006: Cancel prior refresh job to prevent race */
+    private var runtimeRefreshJob: kotlinx.coroutines.Job? = null
+    private var runtimeRefreshSeq = 0L
+
     val settings = aiSettingsRepository.settings().stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -85,7 +89,10 @@ class AiSettingsViewModel @Inject constructor(
     }
 
     fun refreshRuntimeStatus() {
-        viewModelScope.launch {
+        // S11-006: Cancel prior refresh and increment request ID
+        val requestId = ++runtimeRefreshSeq
+        runtimeRefreshJob?.cancel()
+        runtimeRefreshJob = viewModelScope.launch {
             try {
                 _uiState.value = _uiState.value.copy(isRefreshingRuntime = true)
                 val summary = getAiRuntimeStatusUseCase(
@@ -95,9 +102,12 @@ class AiSettingsViewModel @Inject constructor(
                         AiCapability.REVIEW_EXPLANATION,
                         AiCapability.RECEIPT_EXTRACTION,
                         AiCapability.CATEGORIZATION_FALLBACK,
-                        AiCapability.DEDUPE_JUDGE
+                        AiCapability.DEDUPE_JUDGE,
+                        AiCapability.RECEIPT_ITEM_CATEGORIZATION
                     )
                 )
+                // S11-006: Discard stale result
+                if (requestId != runtimeRefreshSeq) return@launch
                 _uiState.value = _uiState.value.copy(
                     runtimeSummary = summary,
                     hasStoredApiKey = secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI)
@@ -106,8 +116,15 @@ class AiSettingsViewModel @Inject constructor(
                     message = "AI settings refresh: network=${summary.networkAvailable}, wifi=${summary.wifiConnected}, highest='${summary.highestPriorityMessage ?: "none"}'",
                     now = summary.lastRefreshedAt
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (requestId != runtimeRefreshSeq) return@launch
+                Timber.e(e, "Runtime refresh failed")
             } finally {
-                _uiState.value = _uiState.value.copy(isRefreshingRuntime = false)
+                if (requestId == runtimeRefreshSeq) {
+                    _uiState.value = _uiState.value.copy(isRefreshingRuntime = false)
+                }
             }
         }
     }
@@ -179,6 +196,8 @@ class AiSettingsViewModel @Inject constructor(
     }
 
     fun testConnection() {
+        // S11-027: Idempotency guard — prevent double-tap
+        if (_uiState.value.isTestingConnection) return
         viewModelScope.launch {
             try {
                 _uiState.value = _uiState.value.copy(

@@ -243,6 +243,14 @@ fun AiSettingsScreen(
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DEDUPE_JUDGE },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
+                    // S11-008: Receipt item categorization toggle
+                    CapabilityMatrixRow(
+                        label = stringResource(R.string.ai_capability_receipt_item_categorization),
+                        enabled = settings.receiptItemCategorizationEnabled,
+                        onEnabledChange = viewModel::setReceiptItemCategorizationEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_ITEM_CATEGORIZATION },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
+                    )
                 }
             }
 

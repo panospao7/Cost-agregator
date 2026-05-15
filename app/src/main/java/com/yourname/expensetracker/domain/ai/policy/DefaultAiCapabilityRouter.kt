@@ -10,6 +10,8 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,7 +20,8 @@ class DefaultAiCapabilityRouter @Inject constructor(
     private val aiPolicy: AiPolicy,
     private val environmentMonitor: AiEnvironmentMonitor,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
-    private val secureKeyStorage: com.yourname.expensetracker.data.security.SecureKeyStorage
+    private val secureKeyStorage: com.yourname.expensetracker.data.security.SecureKeyStorage,
+    private val privacyGate: PrivacyGate
 ) : AiCapabilityRouter {
 
     override suspend fun decide(
@@ -155,15 +158,14 @@ class DefaultAiCapabilityRouter @Inject constructor(
         }
     }
 
-    private fun canUseCloud(capability: AiCapability, settings: AiSettings): Boolean {
+    private suspend fun canUseCloud(capability: AiCapability, settings: AiSettings): Boolean {
         if (!aiPolicy.canUseCloudFor(settings, capability)) return false
         if (!environmentMonitor.isNetworkAvailable()) return false
         if (settings.wifiOnlyForCloud && !environmentMonitor.isWifiConnected()) return false
-        // PRIVACY FIX: Check API key availability before routing to cloud.
-        // Without a key, cloud calls will fail anyway — but we prevent the
-        // router from choosing CLOUD route, avoiding unnecessary network probes
-        // and potential data leakage from partially-constructed requests.
         if (!secureKeyStorage.hasKey(com.yourname.expensetracker.data.security.SecureKeyStorage.KEY_GEMINI)) return false
+        // S11-001: Check PrivacyGate — privacy policy can block cloud AI independently of AI settings
+        val privacyDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (privacyDecision.blocksExecution()) return false
         return true
     }
 

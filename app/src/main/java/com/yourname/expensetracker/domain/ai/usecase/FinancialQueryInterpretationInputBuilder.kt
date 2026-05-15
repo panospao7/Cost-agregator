@@ -41,7 +41,7 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
         val categoryNames = if (shouldRedact) {
             categories
                 .map { category ->
-                    categoryNameToId[category.name] = category.id
+                    // S11-011: Do NOT insert raw name into categoryNameToId under redaction
                     val alias = sanitizeCategoryContext(category.name, shouldRedact = true)
                     if (alias.isNotBlank()) {
                         categoryAliases[alias] = category.name

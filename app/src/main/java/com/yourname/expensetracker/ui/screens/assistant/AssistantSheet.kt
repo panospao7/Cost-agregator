@@ -96,7 +96,7 @@ fun AssistantSheet(
                         Icon(Icons.Rounded.History, contentDescription = stringResource(R.string.assistant_clear_session_cd))
                     }
                     if (uiState.canPersistHistory) {
-                        IconButton(onClick = { viewModel.clearAllHistory() }) {
+                        IconButton(onClick = { viewModel.requestClearAllHistory() }) {
                             Icon(Icons.Rounded.DeleteSweep, contentDescription = stringResource(R.string.assistant_clear_history_cd))
                         }
                     }
@@ -211,6 +211,29 @@ fun AssistantSheet(
 
                 if (uiState.isLoading) {
                     AiTypingIndicator()
+                    // S11-021: Cancel button while query is in flight
+                    TextButton(onClick = viewModel::cancelCurrentQuery) {
+                        Text(stringResource(R.string.assistant_cancel_query))
+                    }
+                }
+
+                // S11-020: Clear all history confirmation dialog
+                if (uiState.showClearHistoryConfirm) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = viewModel::dismissClearAllHistory,
+                        title = { Text(stringResource(R.string.assistant_clear_history_title)) },
+                        text = { Text(stringResource(R.string.assistant_clear_history_message)) },
+                        confirmButton = {
+                            TextButton(onClick = viewModel::clearAllHistory) {
+                                Text(stringResource(R.string.action_confirm), color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = viewModel::dismissClearAllHistory) {
+                                Text(stringResource(R.string.action_cancel))
+                            }
+                        }
+                    )
                 }
 
                 uiState.errorMessage?.let {

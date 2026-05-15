@@ -1800,6 +1800,10 @@
     <string name="ai_capability_review_prioritization">Review prioritization</string>
     <string name="ai_capability_semantic_dedupe">Semantic duplicate detection</string>
     <string name="ai_capability_receipt_item_cat">Receipt item categorization</string>
+    <string name="ai_capability_receipt_item_categorization">Receipt item categorization</string>
+    <string name="assistant_cancel_query">Cancel</string>
+    <string name="assistant_clear_history_title">Clear all history?</string>
+    <string name="assistant_clear_history_message">This will permanently delete all conversation history. This cannot be undone.</string>
     
     <!-- AI Settings Screen (continued) -->
     <string name="ai_section_privacy">Privacy</string>

@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.domain.ai.usecase
+﻿package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -64,8 +64,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
 
         // Apply amount filter with currency awareness (in-memory after period/type/category narrowing)
         if (intent.filters.minAmount != null || intent.filters.maxAmount != null) {
@@ -142,8 +141,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     ): FinancialQueryResult {
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
         val (filteredExpenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
         val groups = filteredExpenses
             .filter { it.expense.categoryId != null }
             .groupBy { it.expense.categoryId!! }
@@ -211,8 +209,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val (filteredExpenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
         val groups = filteredExpenses
             .groupBy { it.expense.merchantKey ?: it.expense.merchant }
             .values
@@ -281,8 +278,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
 
         // W32: Normalize amounts to home currency before maxByOrNull to avoid
         // comparing raw mixed-currency amounts (e.g. 100 JPY vs 50 USD).
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
 
         var failedConversions = 0
 
@@ -407,8 +403,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): Pair<List<ExpenseWithCategory>, FinancialQueryDataQuality> {
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeCurrency = currencySettingsRepository.homeCurrency().first() // S11-016: no EUR fallback
         var failedConversions = 0
         val warnings = mutableListOf<String>()
 
