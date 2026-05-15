@@ -113,6 +113,18 @@
     <string name="toggle_content_description">Toggle</string>
     <string name="error_merchant_required">Merchant name is required</string>
     <string name="error_unknown">Unknown error</string>
+    <string name="error_amount_too_large">Amount is too large</string>
+    <string name="error_date_future">Date cannot be in the future</string>
+    <string name="error_loading_currency">Loading currency settings…</string>
+    <string name="error_transfer_direction_required">Transfer direction is required for transfer transactions</string>
+    <string name="error_transfer_account_required">Transfer account name is required for transfer transactions</string>
+    <string name="success_transaction_deleted">Transaction deleted</string>
+    <string name="success_category_updated">Category updated</string>
+    <string name="success_merchant_renamed">Merchant renamed</string>
+    <string name="success_type_changed_format">Type changed to %1$s</string>
+    <string name="success_ownership_updated">Ownership updated</string>
+    <string name="success_marked_not_mine">Marked as not mine</string>
+    <string name="success_marked_shared">Marked as shared expense</string>
     <string name="recurring_note_default">Created from manual entry</string>
     
     <!-- Common Placeholders -->
@@ -138,7 +150,6 @@
     <string name="error_invalid_input">Invalid input</string>
     <string name="error_required_field">This field is required</string>
     <string name="error_invalid_amount">Enter a valid positive amount</string>
-    <string name="error_amount_too_large">Amount exceeds limit</string>
     <string name="error_invalid_date">Invalid date</string>
     <string name="error_duplicate">Duplicate entry detected</string>
     <string name="error_not_found">Not found</string>
@@ -208,6 +219,7 @@
     
     <!-- Transactions Screen - Filter Banner -->
     <string name="transactions_filtered_by_prefix">Filtered by:</string>
+    <string name="transactions_mixed_currencies">Mixed currencies</string>
     <string name="transactions_filter_merchant_format">Merchant: %1$s</string>
     <string name="transactions_filter_category_format">Category: %1$s</string>
     <string name="transactions_filter_type_format">Type: %1$s</string>

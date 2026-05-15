@@ -275,11 +275,15 @@ fun TransactionFilterSheet(
                     }
 
                     val newFilter = if (selectedCategoryId != null || selectedType != null || dateRangeToUse != null) {
+                        // S5-006: Preserve route-only fields (minAmount/maxAmount/correlationId) not editable in sheet
                         TransactionFilter(
                             categoryId = selectedCategoryId,
                             transactionType = selectedType,
                             merchantName = currentFilter?.merchantName,
-                            dateRange = dateRangeToUse
+                            dateRange = dateRangeToUse,
+                            minAmount = currentFilter?.minAmount,
+                            maxAmount = currentFilter?.maxAmount,
+                            correlationId = currentFilter?.correlationId ?: 0L
                         )
                     } else {
                         null

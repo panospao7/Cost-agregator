@@ -182,6 +182,13 @@ class TransactionsViewModel @Inject constructor(
                 _isRefreshing.value = false
             }
         }
+        // S5-018: Catch repository/flow errors so UI doesn't silently freeze
+        .catch { e ->
+            if (e is CancellationException) throw e
+            _isRefreshing.value = false // S5-017: Always clear refresh spinner on error
+            _error.emit("Failed to load transactions: ${e.message}")
+            emit(emptyList())
+        }
         .flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
@@ -347,39 +354,34 @@ class TransactionsViewModel @Inject constructor(
     }
 
     fun loadMore() {
-        // Guard conditions - prevent loading if not on ALL tab or already loading
         if (_selectedTab.value != TransactionTab.ALL) return
+        // S5-016: Check flag before launching — prevents race between two rapid calls
         if (_isLoadingMoreState.value) return
         if (_isLoading.value) return
         if (_hasReachedEnd.value) return
 
-        loadMoreJob?.cancel()
-        loadMoreJob = viewModelScope.launch {
-            // Double-check inside coroutine to prevent race conditions
-            if (_isLoadingMoreState.value) return@launch
-            if (_hasReachedEnd.value) return@launch
-            
-            _isLoadingMoreState.value = true
-            try {
-                val nextPage = _currentPage.value + 1
-                val offset = nextPage * PAGE_SIZE
-                
-                val nextItems = loadPagedExpensesPage(limit = PAGE_SIZE, offset = offset)
-                
-                if (nextItems.isNotEmpty()) {
-                    // Use thread-safe list concatenation
-                    _pagedExpenses.update { current ->
-                        current + nextItems.distinctBy { it.expense.id }
+        // Only cancel if not currently loading (don't interrupt an active load)
+        if (loadMoreJob?.isActive != true) {
+            loadMoreJob = viewModelScope.launch {
+                if (_isLoadingMoreState.value || _hasReachedEnd.value) return@launch
+                _isLoadingMoreState.value = true
+                try {
+                    val nextPage = _currentPage.value + 1
+                    val offset = nextPage * PAGE_SIZE
+                    val nextItems = loadPagedExpensesPage(limit = PAGE_SIZE, offset = offset)
+                    if (nextItems.isNotEmpty()) {
+                        _pagedExpenses.update { current ->
+                            current + nextItems.distinctBy { it.expense.id }
+                        }
+                        _currentPage.value = nextPage
                     }
-                    _currentPage.value = nextPage
+                    _hasReachedEnd.value = nextItems.size < PAGE_SIZE
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    _error.emit("Failed to load more transactions: ${e.message}")
+                } finally {
+                    _isLoadingMoreState.value = false
                 }
-
-                _hasReachedEnd.value = nextItems.size < PAGE_SIZE
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                _error.emit("Failed to load more transactions: ${e.message}")
-            } finally {
-                _isLoadingMoreState.value = false
             }
         }
     }
@@ -767,6 +769,10 @@ class TransactionsViewModel @Inject constructor(
         val maxAmount = filter.maxAmount
         if (minAmount == null && maxAmount == null) return expenses
 
+        // S5-008: effectiveAmount is home-currency-normalized (set by transaction lifecycle).
+        // min/max from assistant queries (S11-017) are also home-currency-normalized.
+        // This comparison is correct for current use cases.
+        // TODO: When filter sheet exposes min/max, add explicit currency conversion here.
         return expenses.filter { item ->
             val amount = item.expense.effectiveAmount
             (minAmount == null || amount >= minAmount) &&

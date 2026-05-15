@@ -875,7 +875,7 @@ private fun DateHeader(
                 ) {
                     Text(
                         text = if (totalAmount == null || homeCurrency == null) {
-                            "Mixed currencies"
+                            stringResource(R.string.transactions_mixed_currencies)
                         } else {
                             CurrencyFormatter.formatMoneyWithSign(totalAmount, homeCurrency)
                         },

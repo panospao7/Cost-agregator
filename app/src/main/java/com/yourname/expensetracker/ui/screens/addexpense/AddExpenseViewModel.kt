@@ -465,8 +465,9 @@ class AddExpenseViewModel @Inject constructor(
 
             initialValuesApplied = true
             current.copy(
-                amount = amount ?: current.amount,
-                merchant = merchant ?: current.merchant
+                // S5-020: Sanitize prefilled amount — same path as manual input
+                amount = amount?.let { com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(it) } ?: current.amount,
+                merchant = merchant?.take(100)?.trim() ?: current.merchant
             )
         }
     }
