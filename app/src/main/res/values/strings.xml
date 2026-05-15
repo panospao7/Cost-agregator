@@ -797,6 +797,16 @@
     <string name="financial_weather_planned">Planned</string>
     <string name="dashboard_partial_currency_warning">Some amounts could not be converted — totals may be incomplete</string>
     <string name="home_error_currency_unavailable">Currency settings unavailable</string>
+    <string name="widget_savings_sweep_title">End-of-month savings sweep</string>
+    <string name="widget_savings_sweep_safe_to_sweep">Safe to sweep %s</string>
+    <string name="widget_savings_sweep_detail">Underspend %1$s • Buffer %2$s</string>
+    <string name="widget_savings_sweep_top_allocation">Top allocation: %1$s (%2$s)</string>
+    <string name="widget_savings_sweep_cta">Review sweep</string>
+    <string name="widget_lifestyle_inflation_title">Lifestyle Inflation Detected</string>
+    <string name="widget_lifestyle_inflation_rate">Inflation rate: %s</string>
+    <string name="widget_lifestyle_suggested_boost">Suggested boost: +%s%%</string>
+    <string name="widget_lifestyle_adjust_goals">Adjust Goals</string>
+    <string name="widget_lifestyle_set_goals">Set Goals</string>
     <string name="home_error_unable_to_load_dashboard">Unable to load dashboard. Pull to refresh.</string>
     <string name="home_error_unable_to_load_totals">Unable to load totals. Please try again.</string>
     <string name="home_error_unable_to_load_breakdown">Unable to load breakdown. Please try again.</string>

@@ -347,7 +347,6 @@ fun HomeScreen(
                             is DashboardWidget.SafeToSpend -> {
                                 HeroBentoCard {
                                     if (widget.totalBudget == null || widget.totalBudget <= 0.0) {
-                                        // No budget: show month-to-date spent with CTA
                                         Text(
                                             text = stringResource(R.string.widget_month_spent),
                                             style = MaterialTheme.typography.labelSmall,
@@ -399,6 +398,11 @@ fun HomeScreen(
                                             color = SemanticColors.TextSecondary,
                                             letterSpacing = 0.5.sp
                                         )
+                                    }
+                                    // S4-D914-007: Show partial-conversion warning
+                                    if (widget.isPartial) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        DataQualityWarningChip()
                                     }
                                 }
                             }
@@ -570,6 +574,11 @@ fun HomeScreen(
                     StatLabel(stringResource(R.string.widget_today), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
                     StatLabel(stringResource(R.string.widget_week), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
                     StatLabel(stringResource(R.string.widget_month), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                                    }
+                                    // S4-D914-007: Show partial-conversion warning
+                                    if (widget.isPartial) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        DataQualityWarningChip()
                                     }
                                 }
                             }
@@ -830,10 +839,8 @@ fun HomeScreen(
                         onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
                     )
                 }
-                            else -> {
-                                // Fallback for any unhandled widget types
-                                Box(modifier = Modifier.fillMaxWidth())
-                            }
+                            // S4-D914-013: else logs in debug so new widget types are not silently invisible
+                            else -> { if (com.yourname.expensetracker.BuildConfig.DEBUG) error("Unhandled DashboardWidget type: ${widget::class.simpleName}") }
                         }
                     }
                 }
@@ -1525,26 +1532,26 @@ private fun SavingsSweepPromptCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "End-of-month savings sweep",
+                text = stringResource(R.string.widget_savings_sweep_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.sweepAmount, homeCurrency ?: "")}",
+                text = stringResource(R.string.widget_savings_sweep_safe_to_sweep, com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.sweepAmount, homeCurrency ?: "")),
                 style = MaterialTheme.typography.bodyLarge
             )
             Text(
-                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.underspend, homeCurrency ?: "")} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.riskBuffer, homeCurrency ?: "")}",
+                text = stringResource(R.string.widget_savings_sweep_detail, com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.underspend, homeCurrency ?: ""), com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.riskBuffer, homeCurrency ?: "")),
                 style = MaterialTheme.typography.bodySmall
             )
             widget.goalAllocations.firstOrNull()?.let { topGoal ->
                 Text(
-                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(topGoal.suggestedAmount, homeCurrency ?: "")})",
+                    text = stringResource(R.string.widget_savings_sweep_top_allocation, topGoal.goalName, com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(topGoal.suggestedAmount, homeCurrency ?: "")),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             Button(onClick = onAction) {
-                Text("Review sweep")
+                Text(stringResource(R.string.widget_savings_sweep_cta))
             }
         }
     }
@@ -1666,13 +1673,13 @@ private fun LifestyleSavingsPromptCard(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        text = "Lifestyle Inflation Detected",
+                        text = stringResource(R.string.widget_lifestyle_inflation_title),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = SemanticColors.TextPrimary
                     )
                     Text(
-                        text = "Inflation rate: ${numberFormat.format(inflationRate)}",
+                        text = stringResource(R.string.widget_lifestyle_inflation_rate, numberFormat.format(inflationRate)),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.WarningOrange
                     )
@@ -1691,7 +1698,7 @@ private fun LifestyleSavingsPromptCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Suggested boost: +${String.format("%.1f", suggestedUplift)}%",
+                    text = stringResource(R.string.widget_lifestyle_suggested_boost, String.format("%.1f", suggestedUplift)),
                     style = MaterialTheme.typography.labelMedium,
                     color = SemanticColors.TextSecondary
                 )
@@ -1702,7 +1709,7 @@ private fun LifestyleSavingsPromptCard(
                         containerColor = SemanticColors.WarningOrange
                     )
                 ) {
-                    Text(if (hasExistingGoals) "Adjust Goals" else "Set Goals")
+                    Text(stringResource(if (hasExistingGoals) R.string.widget_lifestyle_adjust_goals else R.string.widget_lifestyle_set_goals))
                 }
             }
         }

@@ -155,17 +155,16 @@ class HomeViewModel @Inject constructor(
     private val isEditMode = MutableStateFlow(false)
     private val dashboardReloadTrigger = MutableStateFlow(0)
     private val _categoryTrends = MutableStateFlow<Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>>(emptyMap())
-    /** S4-004: null until home currency loads — never defaults to "EUR" placeholder */
-    val homeCurrency: StateFlow<String?> = currencySettingsRepository.homeCurrency()
-        .map { it as String? }
-        .catch { emit(null) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
     /** S4-004R: Typed currency loading state for UI loading/error rendering. */
     val homeCurrencyState: StateFlow<HomeCurrencyUiState> = currencySettingsRepository.homeCurrency()
         .map<String, HomeCurrencyUiState> { HomeCurrencyUiState.Ready(it) }
         .catch { emit(HomeCurrencyUiState.Error(UiText.StringResource(R.string.home_error_currency_unavailable))) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeCurrencyUiState.Loading)
+
+    /** S4-D914-004: Derived from homeCurrencyState — cannot diverge. */
+    val homeCurrency: StateFlow<String?> = homeCurrencyState
+        .map { (it as? HomeCurrencyUiState.Ready)?.code }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val dateKeyFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
     private fun dashboardBriefingKeyForToday(): String =
@@ -363,10 +362,14 @@ class HomeViewModel @Inject constructor(
         val sortedWidgets = configList
             .filter { it.isVisible || editMode }
             .mapNotNull { conf ->
-                // S4-001: Use canonical registry instead of local getWidgetId
                 val widget = compiledData.allWidgets.find { w -> DashboardWidgetRegistry.idFor(w) == conf.id }
-                // S4-007R: Log unknown IDs so they are detectable in debug builds
-                if (widget == null) Timber.w("Unknown widget config ID '${conf.id}' — not in computed widgets")
+                when {
+                    // S4-D914-002: Truly unknown ID (not in registry at all)
+                    conf.id !in DashboardWidgetRegistry.allIds ->
+                        Timber.w("Unknown widget config ID '${conf.id}' — not in registry")
+                    // Known widget that is conditionally absent (no data) — silent, not an error
+                    widget == null -> { /* known-unavailable: no log */ }
+                }
                 widget
             }
 
@@ -418,21 +421,16 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             widgetConfigMutex.withLock {
                 val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
-                // S4-002R: In edit mode all widgets (including hidden) are rendered and moveable.
-                // In normal mode only visible widgets participate in ordering.
-                val editMode = isEditMode.value
-                val orderedIds = if (editMode) {
-                    currentConfig.map { it.id }
-                } else {
-                    currentConfig.filter { it.isVisible }.map { it.id }
-                }
-                val orderedIndex = orderedIds.indexOf(widgetId)
+                // S4-D914-003: Move among rendered widget IDs only.
+                // Unavailable (conditionally absent) widgets are skipped so moves are never no-ops.
+                val renderedIds = dashboard.value.widgets.map { DashboardWidgetRegistry.idFor(it) }
+                val orderedIndex = renderedIds.indexOf(widgetId)
                 if (orderedIndex == -1) return@withLock
 
                 val targetOrderedIndex = if (moveUp) orderedIndex - 1 else orderedIndex + 1
-                if (targetOrderedIndex !in orderedIds.indices) return@withLock
+                if (targetOrderedIndex !in renderedIds.indices) return@withLock
 
-                val targetId = orderedIds[targetOrderedIndex]
+                val targetId = renderedIds[targetOrderedIndex]
                 val fromIndex = currentConfig.indexOfFirst { it.id == widgetId }
                 val toIndex = currentConfig.indexOfFirst { it.id == targetId }
                 if (fromIndex == -1 || toIndex == -1) return@withLock
@@ -497,6 +495,8 @@ class HomeViewModel @Inject constructor(
                 )
             }
             Timber.d("Loaded ${_categoryTrends.value.size} category trends for $currency")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e  // S4-D914-010: never swallow cancellation
         } catch (e: Exception) {
             Timber.e(e, "Error loading category trends for $currency")
             // S4-012R: Keep existing trends rather than wiping to emptyMap on transient error

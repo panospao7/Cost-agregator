@@ -307,8 +307,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             allWidgets = widgets,
             totalSpent = ctx.totalSpent,
             txCount = ctx.txCount,
-            // S4-006: Propagate data-quality from SpendingSummary
-            isPartial = ctx.data.summary.isPartial
+            // S4-006/S4-D914-006: Propagate data-quality from summary AND today/week aggregates
+            isPartial = ctx.data.summary.isPartial || ctx.periodIsPartial
         )
     }
 

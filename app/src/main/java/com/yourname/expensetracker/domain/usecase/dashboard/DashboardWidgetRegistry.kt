@@ -1,18 +1,16 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.R
-
 /**
  * S4-001R: Full metadata registry — single source of truth for every widget property.
- * DashboardRepository.getDefaultConfig(), StyledWidgets, and HomeScreen.isFullSpan()
- * all derive from this registry instead of maintaining independent hardcoded lists.
  */
 data class DashboardWidgetMeta(
     val id: String,
     val defaultOrder: Int,
     val defaultVisible: Boolean = true,
     val fullSpan: Boolean = true,
-    val styleable: Boolean = false
+    val styleable: Boolean = false,
+    /** S4-D914-001: Stable test tag for UI automation selectors. */
+    val testTag: String = "widget_$id"
 )
 
 object DashboardWidgetRegistry {
