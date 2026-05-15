@@ -162,6 +162,8 @@ fun EnhancedEmptyState(
                     actions.forEach { action ->
                         ActionChip(
                             action = action,
+                            enabled = onActionClick != null,
+                            canDismiss = onDismissAction != null,
                             onClick = { onActionClick?.invoke(action) },
                             onDismiss = { onDismissAction?.invoke(action.id) }
                         )
@@ -232,21 +234,28 @@ fun EnhancedEmptyState(
 @Composable
 private fun ActionChip(
     action: EmptyStateAction,
+    enabled: Boolean,
+    canDismiss: Boolean,
     onClick: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val title = stringResource(action.titleRes)
+    val description = stringResource(action.descriptionRes)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         ElevatedAssistChip(
             onClick = onClick,
+            enabled = enabled,
             modifier = Modifier
                 .heightIn(min = 48.dp)
-                .minimumInteractiveComponentSize(),
+                .minimumInteractiveComponentSize()
+                // S2-005: expose title + description to accessibility
+                .semantics { contentDescription = "$title. $description" },
             label = {
                 Text(
-                    text = stringResource(action.titleRes),
+                    text = title,
                     style = MaterialTheme.typography.labelMedium
                 )
             },
@@ -267,15 +276,18 @@ private fun ActionChip(
             )
         )
 
-        IconButton(
-            onClick = onDismiss,
-            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = stringResource(R.string.cd_dismiss_action),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        // S2-004: Only render dismiss button when callback exists
+        if (canDismiss) {
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = stringResource(R.string.cd_dismiss_action),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

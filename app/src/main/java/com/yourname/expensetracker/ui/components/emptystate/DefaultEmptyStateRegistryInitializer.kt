@@ -146,7 +146,8 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_track_carbon_title,
                     descriptionRes = R.string.empty_action_track_carbon_desc,
                     icon = Icons.Default.Spa,
-                    action = EmptyStateActionType.ExecuteAction { },
+                    // S2-006: Navigate to AddExpense so user can add transactions for carbon tracking
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.AddExpense),
                     priority = 10
                 ),
                 EmptyStateAction(
@@ -178,7 +179,8 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_analyze_patterns_title,
                     descriptionRes = R.string.empty_action_analyze_patterns_desc,
                     icon = Icons.Default.ShowChart,
-                    action = EmptyStateActionType.ExecuteAction { },
+                    // S2-006: Navigate to Analytics so user can see spending patterns
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.Analytics()),
                     priority = 10
                 ),
                 EmptyStateAction(

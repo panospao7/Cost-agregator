@@ -55,14 +55,14 @@ fun MetricCard(
             Text(
                 text = value,
                 style = MaterialTheme.typography.headlineMedium,
-                color = SemanticColors.TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold
             )
             
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = SemanticColors.TextSecondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -128,7 +128,7 @@ fun SummaryTotalCard(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = SemanticColors.TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold
             )
             
@@ -146,7 +146,7 @@ fun SummaryTotalCard(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = SemanticColors.TextSecondary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -181,7 +181,7 @@ fun AmountComparisonCard(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = SemanticColors.TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold
             )
             
@@ -195,13 +195,13 @@ fun AmountComparisonCard(
                     Text(
                         text = primaryAmount,
                         style = MaterialTheme.typography.headlineSmall,
-                        color = SemanticColors.TextPrimary,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = primaryLabel,
                         style = MaterialTheme.typography.bodySmall,
-                        color = SemanticColors.TextSecondary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 
@@ -215,7 +215,7 @@ fun AmountComparisonCard(
                     Text(
                         text = secondaryLabel,
                         style = MaterialTheme.typography.bodySmall,
-                        color = SemanticColors.TextSecondary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

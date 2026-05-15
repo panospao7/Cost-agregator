@@ -33,13 +33,19 @@ object AmountInputSanitizer {
     fun sanitize(raw: String, maxFractionDigits: Int = MAX_FRACTION_DIGITS): String {
         if (raw.isBlank()) return ""
 
-        // Strip everything except digits and period
         val cleaned = raw.filter { it.isDigit() || it == '.' }
+        if (cleaned.isEmpty()) return ""
 
-        // Only one decimal separator allowed
         val parts = cleaned.split('.')
-        val integerPart = parts[0].take(MAX_INTEGER_DIGITS).trimStart('0').ifEmpty { if (parts.size > 1) "0" else "" }
-        
+
+        // S2-002: Preserve transient "0" and "0." so user can type "0.50"
+        val rawInteger = parts[0].take(MAX_INTEGER_DIGITS)
+        val integerPart = if (rawInteger.all { it == '0' }) {
+            if (rawInteger.isEmpty()) "" else "0"
+        } else {
+            rawInteger.trimStart('0').ifEmpty { "0" }
+        }
+
         return if (parts.size > 1) {
             val fractionPart = parts[1].take(maxFractionDigits)
             "$integerPart.$fractionPart"

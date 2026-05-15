@@ -32,6 +32,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -43,12 +44,19 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
  * A shimmer/skeleton loading effect for indicating content is loading.
+ *
+ * S2-009: Quiet by default — individual boxes do not announce to accessibility.
+ * Parent containers should announce loading once via their own semantics.
+ * S2-011: Uses MaterialTheme colors for dark-mode compatibility.
  */
 @Composable
 fun SkeletonBox(
     modifier: Modifier = Modifier,
-    color: Color = SemanticColors.SurfaceLight.copy(alpha = 0.6f),
-    shimmerColor: Color = SemanticColors.TextSecondary.copy(alpha = 0.3f)
+    // S2-011: Theme-aware defaults instead of SemanticColors
+    color: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+    shimmerColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+    // S2-009: false by default — parent announces loading once
+    announceLoading: Boolean = false
 ) {
     val transition = rememberInfiniteTransition(label = "shimmer")
     val shimmerAnimation by transition.animateFloat(
@@ -75,12 +83,15 @@ fun SkeletonBox(
     )
     
     val loadingContentDescription = stringResource(R.string.a11y_loading_content)
-    
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(Dimens.SkeletonCornerRadius))
             .background(brush)
-            .semantics { contentDescription = loadingContentDescription }
+            .then(
+                if (announceLoading) Modifier.semantics { contentDescription = loadingContentDescription }
+                else Modifier.clearAndSetSemantics { }  // S2-009: decorative — no accessibility noise
+            )
     )
 }
 

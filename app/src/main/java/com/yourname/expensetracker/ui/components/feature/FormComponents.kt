@@ -59,14 +59,9 @@ fun FormAmountField(
 ) {
     OutlinedTextField(
         value = value,
-        onValueChange = { newValue ->
-            // Only allow numeric input with decimal point
-            val filtered = newValue.filter { it.isDigit() || it == '.' }
-            // Ensure only one decimal point
-            val decimalCount = filtered.count { it == '.' }
-            if (decimalCount <= 1) {
-                onValueChange(filtered)
-            }
+        onValueChange = { raw ->
+            // S2-001: Delegate to shared sanitizer — consistent across all money fields
+            onValueChange(com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(raw))
         },
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -92,10 +87,13 @@ fun FormDropdown(
     enabled: Boolean = true
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
+
+    // S2-017: Close menu if enabled becomes false
+    androidx.compose.runtime.LaunchedEffect(enabled) { if (!enabled) expanded = false }
+
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it },
+        onExpandedChange = { if (enabled) expanded = it },
         modifier = modifier
     ) {
         OutlinedTextField(
