@@ -475,9 +475,9 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun updateAmount(value: String) {
-        val filtered = value.filter { it.isDigit() || it == '.' || it == ',' }
-        // S7-012: Track that user manually edited the amount
-        _state.update { it.copy(editAmount = filtered, isAmountEditedByUser = true) }
+        // S7-013: Use shared sanitizer — consistent with Add Expense and other money fields
+        val sanitized = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
+        _state.update { it.copy(editAmount = sanitized, isAmountEditedByUser = true) }
     }
 
     fun updateDate(dateMs: Long) {
@@ -554,8 +554,8 @@ class ReceiptScanViewModel @Inject constructor(
 
     fun requestReceiptAssist(force: Boolean = false) {
         val receiptId = _state.value.receiptId ?: return
-        // S7-016: In-flight guard — prevent duplicate AI calls
-        val key = "receipt_assist"
+        // S7-004: Scope key by receiptId so Receipt A result cannot overwrite Receipt B
+        val key = "receipt_assist:$receiptId"
         if (!inFlightAssist.add(key)) return
 
         viewModelScope.launch {
@@ -574,8 +574,10 @@ class ReceiptScanViewModel @Inject constructor(
                             targetKey = "scanned_receipt:$receiptId",
                             capability = AiCapability.RECEIPT_EXTRACTION
                         )
-                        _state.update {
-                            it.copy(
+                        // S7-004: Guard — only update if still on the same receipt
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(
                                 receiptAssistState = AiLoadState.Ready(result.suggestion),
                                 receiptAssistDiagnostics = diagnostics,
                                 receiptAssistMessage = when {
@@ -587,13 +589,15 @@ class ReceiptScanViewModel @Inject constructor(
                         }
                     }
                     is ReceiptAssistGenerationResult.Disabled -> {
-                        _state.update {
-                            it.copy(receiptAssistState = AiLoadState.Disabled, receiptAssistDiagnostics = null, receiptAssistMessage = result.reason)
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(receiptAssistState = AiLoadState.Disabled, receiptAssistDiagnostics = null, receiptAssistMessage = result.reason)
                         }
                     }
                     is ReceiptAssistGenerationResult.NotNeeded -> {
-                        _state.update {
-                            it.copy(receiptAssistState = AiLoadState.Idle, receiptAssistDiagnostics = null, receiptAssistMessage = result.reason)
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(receiptAssistState = AiLoadState.Idle, receiptAssistDiagnostics = null, receiptAssistMessage = result.reason)
                         }
                     }
                     is ReceiptAssistGenerationResult.Error -> {
@@ -602,8 +606,9 @@ class ReceiptScanViewModel @Inject constructor(
                             capability = AiCapability.RECEIPT_EXTRACTION,
                             expectedStatus = AiArtifactStatus.FAILED
                         )
-                        _state.update {
-                            it.copy(receiptAssistState = AiLoadState.Error(result.reason), receiptAssistDiagnostics = diagnostics, receiptAssistMessage = result.reason)
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(receiptAssistState = AiLoadState.Error(result.reason), receiptAssistDiagnostics = diagnostics, receiptAssistMessage = result.reason)
                         }
                     }
                 }
@@ -611,7 +616,10 @@ class ReceiptScanViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Timber.e(e, "Receipt assist failed for receipt $receiptId")
-                _state.update { it.copy(receiptAssistState = AiLoadState.Error(e.message ?: "AI assist failed")) }
+                _state.update { current ->
+                    if (current.receiptId != receiptId) current
+                    else current.copy(receiptAssistState = AiLoadState.Error(e.message ?: "AI assist failed"))
+                }
             } finally {
                 inFlightAssist.remove(key)
             }
@@ -723,9 +731,15 @@ class ReceiptScanViewModel @Inject constructor(
 
     fun applyCategoryAssist() {
         val readyState = _state.value.categoryAssistState as? AiLoadState.Ready ?: return
+        // S7-016: Validate category still exists before applying
+        val categoryId = readyState.value.categoryId
+        if (categoryId <= 0 || categories.value.none { it.id == categoryId }) {
+            _state.update { it.copy(categoryAssistMessage = "Suggested category is no longer available.") }
+            return
+        }
         _state.update {
             it.copy(
-                selectedCategoryId = readyState.value.categoryId,
+                selectedCategoryId = categoryId,
                 categoryAssistMessage = "Applied AI category suggestion to the draft."
             )
         }
@@ -889,6 +903,10 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun retry() {
+        // S7-003: Cancel both jobs and increment sequence to invalidate in-flight results
+        scanRequestSeq++
+        scanJob?.cancel()
+        scanJob = null
         itemAnalysisJob?.cancel()
         _state.update {
             ReceiptScanState(
@@ -899,6 +917,10 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun reset() {
+        // S7-003: Cancel both jobs and increment sequence to invalidate in-flight results
+        scanRequestSeq++
+        scanJob?.cancel()
+        scanJob = null
         itemAnalysisJob?.cancel()
         _state.update {
             ReceiptScanState(
@@ -959,6 +981,8 @@ class ReceiptScanViewModel @Inject constructor(
     private fun buildQuickSavePreview(currentState: ReceiptScanState): ReceiptQuickSavePreview? {
         if (!currentState.receiptQuickSaveEnabled || currentState.step != ScanStep.REVIEW) return null
         if (currentState.receiptId == null || currentState.isSaving) return null
+        // S7-014: Quick save unavailable until currency is loaded
+        if (currentState.editCurrency.isNullOrBlank()) return null
 
         // RCP-11: Skip quick-save when OCR confidence is too low — the
         // extracted data is unreliable and requires user review.
@@ -1064,6 +1088,28 @@ class ReceiptScanViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
+                // S7-001/002: Preflight — check receipt is linkable BEFORE creating expense
+                // This prevents orphan expenses when linking would fail after creation.
+                val preflightResult = receiptLinkService.linkReceiptToExpense(
+                    receiptId = request.receiptId,
+                    expenseId = -1L, // sentinel — we only want the pre-checks, not an actual link
+                    linkType = "PREFLIGHT_CHECK",
+                    source = "ReceiptScanViewModel"
+                )
+                // linkReceiptToExpense will fail with "Expense not found: -1" if receipt is linkable
+                // but fail with "already linked" if it is not. We only block on the already-linked case.
+                val alreadyLinked = preflightResult.exceptionOrNull()
+                    ?.message?.contains("already linked", ignoreCase = true) == true
+                if (alreadyLinked) {
+                    _state.update {
+                        it.copy(
+                            isSaving = false,
+                            errorMessage = "This receipt is already linked to a transaction. Use Receipt Matching to view it."
+                        )
+                    }
+                    return@launch
+                }
+
                 // S7-009: Use editCurrency (already loaded from home currency on init); never fall back to "EUR"
                 val resolvedCurrency = _state.value.editCurrency
                     ?.takeIf { it.isNotBlank() }
@@ -1286,7 +1332,9 @@ class ReceiptScanViewModel @Inject constructor(
         // S7-025: Mark item as updating
         _state.update { it.copy(itemCorrectionUpdatingIds = it.itemCorrectionUpdatingIds + item.id, itemCorrectionError = null) }
         viewModelScope.launch {
-            runCatching {
+            // S7-018: Capture receiptId to guard against stale writes after scan change
+            val capturedReceiptId = _state.value.receiptId
+            try {
                 val now = timeProvider.now()
                 receiptItemCategorizationRepository.updateUserCorrection(
                     itemId = item.id,
@@ -1294,14 +1342,19 @@ class ReceiptScanViewModel @Inject constructor(
                     categoryName = category?.name,
                     timestamp = now
                 )
-                val receiptId = _state.value.receiptId ?: return@runCatching
+                val receiptId = capturedReceiptId ?: return@launch
+                // S7-018: Only reload if still on the same receipt
+                if (_state.value.receiptId != receiptId) return@launch
                 val updatedItems = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
                 _state.update { it.copy(itemCategorizations = updatedItems) }
-            }.onFailure { e ->
-                if (e is CancellationException) throw e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 _state.update { it.copy(itemCorrectionError = "Failed to save category: ${e.message}") }
+            } finally {
+                // S7-017: Always clear updating state
+                _state.update { it.copy(itemCorrectionUpdatingIds = it.itemCorrectionUpdatingIds - item.id) }
             }
-            _state.update { it.copy(itemCorrectionUpdatingIds = it.itemCorrectionUpdatingIds - item.id) }
         }
     }
 

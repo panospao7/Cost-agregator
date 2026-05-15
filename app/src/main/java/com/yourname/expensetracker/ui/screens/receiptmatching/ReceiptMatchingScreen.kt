@@ -54,9 +54,21 @@ fun ReceiptMatchingScreen(
         floatingActionButton = {
             if (state.unmatchedReceipts.isNotEmpty()) {
                 ExtendedFloatingActionButton(
-                    onClick = { viewModel.runAutoMatching() },
-                    icon = { Icon(Icons.Default.Search, null) },
-                    text = { Text(stringResource(R.string.receipt_action_auto_match)) }
+                    onClick = { if (!state.isAutoMatching) viewModel.runAutoMatching() },
+                    icon = {
+                        if (state.isAutoMatching)
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                        else Icon(Icons.Default.Search, null)
+                    },
+                    text = {
+                        Text(
+                            if (state.isAutoMatching) stringResource(R.string.receipt_auto_matching_running)
+                            else stringResource(R.string.receipt_action_auto_match)
+                        )
+                    }
                 )
             }
         }
@@ -67,6 +79,31 @@ fun ReceiptMatchingScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
+            // S7-005: Render error state
+            state.error?.let { error ->
+                androidx.compose.material3.Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        androidx.compose.material3.TextButton(onClick = viewModel::clearError) {
+                            Text(stringResource(R.string.action_dismiss))
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
             // Status Cards
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -172,7 +209,7 @@ private fun UnmatchedReceiptCard(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = stringResource(R.string.receipt_receipt_total, String.format("%.2f", receipt.parsedTotal ?: 0.0)),
+                text = stringResource(R.string.receipt_receipt_total, receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "—"),
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -219,7 +256,7 @@ private fun ManualMatchDialog(
                     text = stringResource(
                         R.string.receipt_manual_match_target,
                         receipt.parsedMerchant ?: stringResource(R.string.receipt_label_unknown),
-                        String.format("%.2f", receipt.parsedTotal ?: 0.0)
+                        receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "—"
                     ),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -318,7 +355,7 @@ private fun MatchSuggestionCard(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = stringResource(R.string.receipt_receipt_total, String.format("%.2f", suggestion.receipt.parsedTotal ?: 0.0)),
+                        text = stringResource(R.string.receipt_receipt_total, suggestion.receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "—"),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(

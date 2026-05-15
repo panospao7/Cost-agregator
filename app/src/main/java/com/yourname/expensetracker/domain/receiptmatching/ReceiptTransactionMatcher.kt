@@ -120,13 +120,12 @@ class ReceiptTransactionMatcher @Inject constructor(
         val receiptCurrency = receipt.currency
         val txCurrency = transaction.currency
         val currenciesMatch = receiptCurrency.equals(txCurrency, ignoreCase = true)
-        val comparableReceiptAmount = if (!currenciesMatch && receiptAmount > 0) {
+        // S7-020: Use explicit null check — conversion returning same numeric value still counts as available
+        val conversionResult = if (!currenciesMatch && receiptAmount > 0) {
             currencyConverter.convert(receiptAmount, receiptCurrency, txCurrency)
-                ?.convertedAmount ?: receiptAmount // fall back to raw if conversion unavailable
-        } else {
-            receiptAmount
-        }
-        val conversionAvailable = currenciesMatch || (comparableReceiptAmount != receiptAmount)
+        } else null
+        val conversionAvailable = currenciesMatch || conversionResult != null
+        val comparableReceiptAmount = conversionResult?.convertedAmount ?: receiptAmount
         val amountDiff = abs(comparableReceiptAmount - transaction.effectiveAmount)
         val amountScore = if (transaction.effectiveAmount > 0) {
             val rawScore = 1.0 - (amountDiff / transaction.effectiveAmount).coerceIn(0.0, 1.0)

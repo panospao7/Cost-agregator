@@ -122,17 +122,18 @@ class ReceiptMatchingViewModel @Inject constructor(
                 for (receipt in unmatched) {
                     when (val result = matcher.findBestMatch(receipt)) {
                         is MatchResult.AutoMatch -> {
-                            // S12-027: Only increment if link succeeds
-                            val linkResult = runCatching {
-                                receiptLinkService.linkReceiptToExpense(
-                                    receiptId = receipt.id,
-                                    expenseId = result.transaction.id,
-                                    linkType = "AUTO_MATCH",
-                                    source = "ReceiptMatchingViewModel",
-                                    confidence = result.score.toFloat()
-                                )
-                            }
-                            if (linkResult.isSuccess) autoMatched++
+                            // S7-022: Check Result.failure — linkReceiptToExpense returns Result, not throws
+                            val linkResult = receiptLinkService.linkReceiptToExpense(
+                                receiptId = receipt.id,
+                                expenseId = result.transaction.id,
+                                linkType = "AUTO_MATCH",
+                                source = "ReceiptMatchingViewModel",
+                                confidence = result.score.toFloat()
+                            )
+                            linkResult.fold(
+                                onSuccess = { autoMatched++ },
+                                onFailure = { e -> Timber.w(e, "Auto-match link failed for receipt ${receipt.id}") }
+                            )
                         }
                         is MatchResult.Suggested -> {
                             receiptRepository.saveMatchSuggestion(
@@ -194,9 +195,18 @@ class ReceiptMatchingViewModel @Inject constructor(
     }
 
     fun rejectSuggestion(receiptId: Long) {
+        if (_state.value.mutatingReceiptIds.contains(receiptId)) return
         viewModelScope.launch {
-            receiptRepository.rejectAllSuggestions(receiptId)
-            loadReceipts()
+            _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receiptId, error = null) }
+            try {
+                receiptRepository.rejectAllSuggestions(receiptId)
+                loadReceipts()
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to reject suggestion for receipt $receiptId")
+                _state.update { it.copy(error = "Failed to reject: ${e.message}") }
+            } finally {
+                _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
+            }
         }
     }
 
@@ -222,23 +232,51 @@ class ReceiptMatchingViewModel @Inject constructor(
     }
 
     fun manualMatch(receiptId: Long, expenseId: Long) {
+        if (_state.value.mutatingReceiptIds.contains(receiptId)) return
         viewModelScope.launch {
-            receiptLinkService.linkReceiptToExpense(
-                receiptId = receiptId,
-                expenseId = expenseId,
-                linkType = "MANUAL_MATCH",
-                source = "ReceiptMatchingViewModel",
-                confidence = 1.0f
-            )
-            closeManualMatch()
-            loadReceipts()
+            _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receiptId, error = null) }
+            try {
+                val result = receiptLinkService.linkReceiptToExpense(
+                    receiptId = receiptId,
+                    expenseId = expenseId,
+                    linkType = "MANUAL_MATCH",
+                    source = "ReceiptMatchingViewModel",
+                    confidence = 1.0f
+                )
+                result.fold(
+                    onSuccess = {
+                        // S7-006: Only close dialog on success
+                        closeManualMatch()
+                        loadReceipts()
+                    },
+                    onFailure = { e ->
+                        Timber.e(e, "Manual match failed for receipt $receiptId")
+                        _state.update { it.copy(error = "Failed to match receipt: ${e.message}") }
+                        // Dialog stays open so user can retry or cancel
+                    }
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "Manual match exception for receipt $receiptId")
+                _state.update { it.copy(error = "Failed to match receipt: ${e.message}") }
+            } finally {
+                _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
+            }
         }
     }
 
     fun skipReceipt(receiptId: Long) {
+        if (_state.value.mutatingReceiptIds.contains(receiptId)) return
         viewModelScope.launch {
-            receiptRepository.rejectAllSuggestions(receiptId)
-            loadReceipts()
+            _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receiptId, error = null) }
+            try {
+                receiptRepository.rejectAllSuggestions(receiptId)
+                loadReceipts()
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to skip receipt $receiptId")
+                _state.update { it.copy(error = "Failed to skip: ${e.message}") }
+            } finally {
+                _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
+            }
         }
     }
 

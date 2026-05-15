@@ -27,6 +27,8 @@ fun ReceiptItemBreakdownCard(
     items: List<ReceiptItemCategorizationSnapshot>,
     categories: List<Category>,
     isLoading: Boolean,
+    /** S7-009: Receipt currency for item amount display */
+    currency: String = "",
     /** S7-025: IDs of items currently being updated */
     updatingItemIds: Set<Long> = emptySet(),
     onItemCategoryChanged: (ReceiptItemCategorizationSnapshot, Category?) -> Unit,
@@ -70,6 +72,7 @@ fun ReceiptItemBreakdownCard(
                 CategorizedItemRow(
                     item = item,
                     categories = categories,
+                    currency = currency,
                     isUpdating = item.id in updatingItemIds,
                     onCategoryChanged = { category ->
                         onItemCategoryChanged(item, category)
@@ -92,6 +95,7 @@ fun ReceiptItemBreakdownCard(
 private fun CategorizedItemRow(
     item: ReceiptItemCategorizationSnapshot,
     categories: List<Category>,
+    currency: String = "",
     isUpdating: Boolean = false,
     onCategoryChanged: (Category?) -> Unit,
     onShowRationale: () -> Unit
@@ -123,7 +127,10 @@ private fun CategorizedItemRow(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                            text = stringResource(R.string.currency_eur_format, item.itemAmount),
+                text = if (currency.isNotBlank())
+                    com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(item.itemAmount, currency)
+                else
+                    String.format(java.util.Locale.US, "%.2f", item.itemAmount),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium
             )

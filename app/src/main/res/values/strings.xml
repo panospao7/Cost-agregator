@@ -849,6 +849,8 @@
     <string name="backup_password_hide">Hide password</string>
     <string name="backup_file_select">Select</string>
     <string name="backup_file_change">Change</string>
+    <string name="receipt_auto_matching_running">Matching…</string>
+    <string name="receipt_amount_unavailable">Amount unavailable</string>
     <string name="home_error_unable_to_load_dashboard">Unable to load dashboard. Pull to refresh.</string>
     <string name="home_error_unable_to_load_totals">Unable to load totals. Please try again.</string>
     <string name="home_error_unable_to_load_breakdown">Unable to load breakdown. Please try again.</string>
