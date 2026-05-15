@@ -68,7 +68,10 @@ sealed class DashboardWidget {
     data class SafeToSpend(
         val amount: Double,
         val totalBudget: Double?,
-        val daysRemaining: Int
+        val daysRemaining: Int,
+        /** S4-006: true when conversion failures made this amount partial */
+        val isPartial: Boolean = false,
+        val conversionWarningCount: Int = 0
     ) : DashboardWidget()
 
     data class BudgetBlockParty(
@@ -86,7 +89,9 @@ sealed class DashboardWidget {
     data class PeriodSummary(
         val todaySpent: Double,
         val weekSpent: Double,
-        val monthSpent: Double
+        val monthSpent: Double,
+        /** S4-006: true when any conversion failed for these totals */
+        val isPartial: Boolean = false
     ) : DashboardWidget()
 
     data class TopCategories(
@@ -214,7 +219,9 @@ data class SpendingTrendSeries(
 data class CompiledDashboardData(
     val allWidgets: List<DashboardWidget>,
     val totalSpent: Double,
-    val txCount: Int
+    val txCount: Int,
+    /** S4-006: true when any currency conversion failed for dashboard totals */
+    val isPartial: Boolean = false
 )
 
 // ─── Use Case ─────────────────────────────────────────────────────────────────
@@ -297,7 +304,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         return CompiledDashboardData(
             allWidgets = widgets,
             totalSpent = ctx.totalSpent,
-            txCount = ctx.txCount
+            txCount = ctx.txCount,
+            // S4-006: Propagate data-quality from SpendingSummary
+            isPartial = ctx.data.summary.isPartial
         )
     }
 
@@ -342,7 +351,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             monthSpent = summary.totalSpent,
             txCount = summary.transactionCount,
             previousMonthTotal = summary.previousTotalSpent ?: 0.0,
-            todaySpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(todayStart, now).displayAmount,
+            todaySpent = run {
+                val agg = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(todayStart, now)
+                agg.displayAmount
+            },
             todayTxCount = todayPurchases.size,
             weekSpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(weekStart, now).displayAmount,
             overallBudget = overallBudget,

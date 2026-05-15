@@ -301,7 +301,7 @@ fun FinancialWeatherCard(
                             modifier = Modifier.height(24.dp)
                         ) {
                             Text(
-                                "MANAGE RECURRING", 
+                                stringResource(R.string.financial_weather_manage_recurring),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.PrimaryIndigo
                             )
@@ -340,8 +340,8 @@ fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String) 
     )
     
     val dateLabel = when {
-        daysUntil <= 0 -> "Today"
-        daysUntil == 1 -> "Tomorrow"
+        daysUntil <= 0 -> stringResource(R.string.financial_weather_today)
+        daysUntil == 1 -> stringResource(R.string.financial_weather_tomorrow)
         else -> DateFormatterUtils.formatTimestampJavaTime(item.date, "EEE, MMM d")
     }
 
@@ -359,8 +359,8 @@ fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String) 
             }
             val badgeText = when (item) {
                 is UpcomingItem.Recurring -> item.pattern.frequency.name.lowercase().capitalize()
-                is UpcomingItem.Occurrence -> "Recurring"
-                is UpcomingItem.Planned -> "Planned"
+                is UpcomingItem.Occurrence -> stringResource(R.string.financial_weather_recurring)
+                is UpcomingItem.Planned -> stringResource(R.string.financial_weather_planned)
             }
 
             Box(

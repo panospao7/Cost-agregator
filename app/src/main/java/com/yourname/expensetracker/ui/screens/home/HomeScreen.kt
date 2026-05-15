@@ -68,6 +68,33 @@ import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.FeatureConfig
 
+/**
+ * S4-016: Route entry point — owns Hilt injection and navigation event collection.
+ * HomeScreen can be tested with a fake ViewModel once fully extracted.
+ */
+@Composable
+fun HomeRoute(
+    onNavigateToReview: () -> Unit,
+    onNavigateToRecurring: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit,
+    onNavigateToAnalytics: (String?) -> Unit = {},
+    onNavigateToMap: (String?) -> Unit = {},
+    onNavigateToBudgetDetail: (String) -> Unit = {},
+    onNavigateToFeature: (NavigationDestination) -> Unit = {},
+    viewModel: HomeViewModel = hiltViewModel()
+) {
+    HomeScreen(
+        onNavigateToReview = onNavigateToReview,
+        onNavigateToRecurring = onNavigateToRecurring,
+        onNavigateToTransactions = onNavigateToTransactions,
+        onNavigateToAnalytics = onNavigateToAnalytics,
+        onNavigateToMap = onNavigateToMap,
+        onNavigateToBudgetDetail = onNavigateToBudgetDetail,
+        onNavigateToFeature = onNavigateToFeature,
+        viewModel = viewModel
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(

@@ -44,7 +44,8 @@ fun RecommendationCard(
     BentoCard(
         modifier = Modifier
             .fillMaxWidth()
-            .semantics(mergeDescendants = true) {
+            // S4-014: Do NOT merge descendants — dismiss button needs independent semantics
+            .semantics {
                 contentDescription = cardContentDescription
             },
         onClick = onClick,

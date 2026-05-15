@@ -29,6 +29,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
@@ -92,7 +93,9 @@ data class DashboardState(
     val aiBriefing: AiLoadState<DashboardBriefingUi> = AiLoadState.Disabled,
     val widgetStyles: WidgetStyleConfig = WidgetStyleConfig(),
     val categoryTrends: Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo> = emptyMap(),
-    val referenceNowMillis: Long = 0L
+    val referenceNowMillis: Long = 0L,
+    /** S4-006: true when any currency conversion failed for dashboard totals */
+    val isPartial: Boolean = false
 )
 
 private sealed interface ProcessedDashboardUiState {
@@ -183,6 +186,24 @@ class HomeViewModel @Inject constructor(
 
         // S4-009: Load initial totals in ViewModel using injected TimeProvider — no Calendar.getInstance() fallback
         loadTotalsForYear(com.yourname.expensetracker.domain.util.TimePeriodUtils.getYear(timeProvider.now()))
+
+        // S4-010: Refresh dashboard at local midnight so time-sensitive widgets stay current
+        viewModelScope.launch {
+            while (true) {
+                val now = timeProvider.now()
+                val nextMidnight = java.time.Instant.ofEpochMilli(now)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
+                    .plusDays(1)
+                    .atStartOfDay(java.time.ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+                val delayMs = (nextMidnight - now).coerceAtLeast(60_000L)
+                kotlinx.coroutines.delay(delayMs)
+                // Trigger dashboard reload by bumping the refresh trigger
+                reloadDashboard()
+            }
+        }
 
         // S4-011: Use collectLatest so currency change cancels stale trend load
         viewModelScope.launch {
@@ -329,7 +350,8 @@ class HomeViewModel @Inject constructor(
         val sortedWidgets = configList
             .filter { it.isVisible || editMode }
             .mapNotNull { conf ->
-                compiledData.allWidgets.find { w -> getWidgetId(w) == conf.id }
+                // S4-001: Use canonical registry instead of local getWidgetId
+                compiledData.allWidgets.find { w -> DashboardWidgetRegistry.idFor(w) == conf.id }
             }
 
         DashboardState(
@@ -342,7 +364,8 @@ class HomeViewModel @Inject constructor(
             aiBriefing       = aiBriefing,
             widgetStyles     = widgetStyles,
             categoryTrends   = categoryTrends,
-            referenceNowMillis = referenceNowMillis
+            referenceNowMillis = referenceNowMillis,
+            isPartial        = compiledData.isPartial
         )
     }.catch { e ->
         Timber.e(e, "Error loading dashboard data")
@@ -377,18 +400,24 @@ class HomeViewModel @Inject constructor(
 
     fun moveWidget(widgetId: String, moveUp: Boolean) {
         viewModelScope.launch {
-            // S4-003: Serialize config mutations to prevent read-modify-write races
             widgetConfigMutex.withLock {
                 val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
-                val index = currentConfig.indexOfFirst { it.id == widgetId }
-                if (index == -1) return@withLock
+                // S4-002: Move within visible-only order to prevent swapping with hidden widgets
+                val visibleIds = currentConfig.filter { it.isVisible }.map { it.id }
+                val visibleIndex = visibleIds.indexOf(widgetId)
+                if (visibleIndex == -1) return@withLock
 
-                val newIndex = if (moveUp) index - 1 else index + 1
-                if (newIndex !in currentConfig.indices) return@withLock
+                val targetVisibleIndex = if (moveUp) visibleIndex - 1 else visibleIndex + 1
+                if (targetVisibleIndex !in visibleIds.indices) return@withLock
 
-                val temp = currentConfig[index]
-                currentConfig[index] = currentConfig[newIndex].copy(order = index)
-                currentConfig[newIndex] = temp.copy(order = newIndex)
+                val targetId = visibleIds[targetVisibleIndex]
+                val fromIndex = currentConfig.indexOfFirst { it.id == widgetId }
+                val toIndex = currentConfig.indexOfFirst { it.id == targetId }
+                if (fromIndex == -1 || toIndex == -1) return@withLock
+
+                val temp = currentConfig[fromIndex]
+                currentConfig[fromIndex] = currentConfig[toIndex].copy(order = fromIndex)
+                currentConfig[toIndex] = temp.copy(order = toIndex)
 
                 dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
             }
@@ -453,6 +482,8 @@ class HomeViewModel @Inject constructor(
                 Timber.d("Loaded ${trends.size} category trends")
             } catch (e: Exception) {
                 Timber.e(e, "Error loading category trends")
+                // S4-012: Surface error — empty trends with a log so UI can show degraded state
+                _categoryTrends.value = emptyMap()
             }
         }
     }
@@ -791,28 +822,8 @@ class HomeViewModel @Inject constructor(
     }
 
     companion object {
-        fun getWidgetId(widget: DashboardWidget): String = when (widget) {
-            is DashboardWidget.SafeToSpend          -> "safe_to_spend"
-            is DashboardWidget.SpendingPaceWidget   -> "spending_pace"
-            is DashboardWidget.PendingReviewAlert   -> "review_alert"
-            is DashboardWidget.SpendingTrend        -> "spending_trend"
-            is DashboardWidget.NaturalLanguageInsight -> "insight"
-            is DashboardWidget.PeriodSummary        -> "period_summary"
-            is DashboardWidget.BudgetHealthWidget   -> "budget_health"
-            is DashboardWidget.TopCategories        -> "top_categories"
-            is DashboardWidget.RecentTransactions   -> "recent_transactions"
-            is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
-            is DashboardWidget.BudgetBlockParty     -> "budget_block_party"
-            is DashboardWidget.FinancialRunway      -> "financial_runway"
-            is DashboardWidget.TotalsDashboard      -> "totals_dashboard"
-            is DashboardWidget.MonteCarloForecast   -> "monte_carlo_forecast"
-            is DashboardWidget.NoSpendStreak        -> "no_spend_streak"
-            is DashboardWidget.FinancialHealthScoreWidget -> "financial_health_score"
-            is DashboardWidget.FinancialHealthScoreV2Widget -> "financial_health_score_v2"
-            is DashboardWidget.LifestyleSavingsPrompt -> "lifestyle_savings_prompt"
-            is DashboardWidget.MoneyRadar           -> "money_radar"
-            is DashboardWidget.FinancialStressForecast -> "financial_stress_forecast"
-            is DashboardWidget.SavingsSweepPrompt   -> "savings_sweep_prompt"
-        }
+        /** S4-001: Deprecated — use [DashboardWidgetRegistry.idFor] directly. */
+        @Deprecated("Use DashboardWidgetRegistry.idFor(widget)", ReplaceWith("DashboardWidgetRegistry.idFor(widget)"))
+        fun getWidgetId(widget: DashboardWidget): String = DashboardWidgetRegistry.idFor(widget)
     }
 }
