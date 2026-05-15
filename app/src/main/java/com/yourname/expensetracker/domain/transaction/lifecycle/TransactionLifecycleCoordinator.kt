@@ -1106,6 +1106,85 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * S5-010R: Atomically updates transaction type AND transfer metadata in one
+     * DB transaction with one lifecycle event and one side-effect dispatch.
+     * Replaces the two-call pattern (updateType + updateTransferDetails) that
+     * could leave the row inconsistent if the second call failed.
+     */
+    suspend fun updateTypeAndTransferDetails(
+        expenseId: Long,
+        newType: TransactionType,
+        transferDirection: com.yourname.expensetracker.data.database.entity.TransferDirection?,
+        transferAccountName: String?,
+        source: String = "USER_EDIT"
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
+        val existing = expenseDao.getById(expenseId) ?: return
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+
+        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            existing.amount, existing.merchant, existing.date, existing.currency, newType
+        )
+
+        // Pre-check for duplicate collision only when type changes
+        if (existing.transactionType != newType) {
+            val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+                amount = existing.amount,
+                merchant = existing.merchant,
+                date = existing.date,
+                currency = existing.currency,
+                transactionType = newType.name,
+                merchantKey = existing.merchantKey,
+                dedupeKey = newDedupeKey
+            )
+            if (collidingId != null && collidingId != expenseId) {
+                throw DuplicateUpdateException(
+                    "Cannot update type: would create duplicate of expense $collidingId"
+                )
+            }
+        }
+
+        val updated = existing.copy(
+            transactionType = newType,
+            dedupeKey = newDedupeKey,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName
+        )
+
+        database.withTransaction {
+            expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
+            expenseDao.updateTransferDirection(expenseId, transferDirection?.name)
+            expenseDao.updateTransferAccountName(expenseId, transferAccountName)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = newDedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    metadata = null,
+                    reason = null
+                )
+            )
+        }
+
+        // One side-effect dispatch after commit
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updateTypeAndTransferDetails for expense %d", expenseId)
+        }
+    }
+
+    /**
      * Updates all six ownership fields atomically with [Expense.normalizeOwnership]
      * enforcement, with full lifecycle tracking. Writes a UPDATED TransactionEvent
      * with before/after snapshots.

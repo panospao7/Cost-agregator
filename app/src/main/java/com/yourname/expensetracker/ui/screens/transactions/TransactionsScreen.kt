@@ -60,6 +60,8 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.ui.components.asString
+import androidx.compose.ui.platform.LocalContext
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -77,6 +79,30 @@ private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expenset
         OwnershipFilter.SHARED -> com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED
         OwnershipFilter.TRANSFER -> com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER
     }
+}
+
+// ============================================================
+// ROUTE — owns Hilt injection; delegates to TransactionsScreen
+// S5-025: Separated for testability; TransactionsScreen can be tested with fake ViewModel
+// ============================================================
+
+@Composable
+fun TransactionsRoute(
+    initialFilter: TransactionFilter? = null,
+    highlightedExpenseId: Long? = null,
+    onNavigateToAnalytics: () -> Unit = {},
+    onAddExpense: () -> Unit = {},
+    onOpenVisualSplit: (Expense) -> Unit = {},
+    viewModel: TransactionsViewModel = hiltViewModel()
+) {
+    TransactionsScreen(
+        viewModel = viewModel,
+        initialFilter = initialFilter,
+        highlightedExpenseId = highlightedExpenseId,
+        onNavigateToAnalytics = onNavigateToAnalytics,
+        onAddExpense = onAddExpense,
+        onOpenVisualSplit = onOpenVisualSplit
+    )
 }
 
 // ============================================================
@@ -141,11 +167,13 @@ fun TransactionsScreen(
     // Error handling
     val snackbarHostState = remember { SnackbarHostState() }
     
+    val context = LocalContext.current
+
     // Collect error messages
     LaunchedEffect(Unit) {
         viewModel.error.collect { message ->
             snackbarHostState.showSnackbar(
-                message = message,
+                message = message.asString(context),
                 duration = SnackbarDuration.Short
             )
         }
@@ -157,7 +185,7 @@ fun TransactionsScreen(
             // S5-012: Close pending dialogs on success
             expenseToDelete = null
             snackbarHostState.showSnackbar(
-                message = message,
+                message = message.asString(context),
                 duration = SnackbarDuration.Short,
                 actionLabel = "OK"
             )
@@ -488,13 +516,22 @@ fun TransactionsScreen(
                             // Date header
                             stickyHeader {
                                 // S5-007: Use the group's own currency, not homeCurrency
+                                // S5-024: For mixed-currency groups, sum baseAmount (home-currency-normalized)
                                 val currencies = items.map { it.expense.currency.uppercase() }.toSet()
                                 val groupCurrency = currencies.singleOrNull() // null = mixed
+                                val totalAmount = when {
+                                    groupCurrency != null -> items.sumOf { it.expense.signedEffectiveAmount() }
+                                    // Mixed: use baseAmount if available (> 0), else null
+                                    items.all { it.expense.baseAmount > 0 } ->
+                                        items.sumOf { if (it.expense.isNotMine) 0.0 else it.expense.baseAmount }
+                                    else -> null
+                                }
+                                val displayCurrency = groupCurrency ?: homeCurrency?.takeIf { items.all { e -> e.expense.baseAmount > 0 } }
                                 DateHeader(
                                     date = dateString,
-                                    totalAmount = if (groupCurrency == null) null else items.sumOf { it.expense.signedEffectiveAmount() },
+                                    totalAmount = totalAmount,
                                     itemCount = items.size,
-                                    homeCurrency = groupCurrency // null shows "Mixed currencies"
+                                    homeCurrency = displayCurrency
                                 )
                             }
                             

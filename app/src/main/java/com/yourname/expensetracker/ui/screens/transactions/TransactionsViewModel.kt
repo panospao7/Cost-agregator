@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.transactions
+﻿package com.yourname.expensetracker.ui.screens.transactions
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -107,6 +107,17 @@ class TransactionsViewModel @Inject constructor(
     // Loading states - using StateFlow for thread-safe observable loading state
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    /** S5-015: Per-row mutation tracking — avoids blocking entire screen for row operations */
+    private val _mutatingExpenseIds = MutableStateFlow<Set<Long>>(emptySet())
+    val mutatingExpenseIds: StateFlow<Set<Long>> = _mutatingExpenseIds.asStateFlow()
+
+    private fun beginRowMutation(expenseId: Long) {
+        _mutatingExpenseIds.update { it + expenseId }
+    }
+    private fun endRowMutation(expenseId: Long) {
+        _mutatingExpenseIds.update { it - expenseId }
+    }
     
     private val _isLoadingMoreState = MutableStateFlow(false)
     val isLoadingMoreState: StateFlow<Boolean> = _isLoadingMoreState.asStateFlow()
@@ -115,12 +126,12 @@ class TransactionsViewModel @Inject constructor(
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     // Error state for UI feedback
-    private val _error = MutableSharedFlow<String>()
-    val error: SharedFlow<String> = _error.asSharedFlow()
+    private val _error = MutableSharedFlow<com.yourname.expensetracker.domain.model.UiText>()
+    val error: SharedFlow<com.yourname.expensetracker.domain.model.UiText> = _error.asSharedFlow()
 
     // Success feedback
-    private val _successMessage = MutableSharedFlow<String>()
-    val successMessage: SharedFlow<String> = _successMessage.asSharedFlow()
+    private val _successMessage = MutableSharedFlow<com.yourname.expensetracker.domain.model.UiText>()
+    val successMessage: SharedFlow<com.yourname.expensetracker.domain.model.UiText> = _successMessage.asSharedFlow()
 
     /** S5-014/S5-026: Emitted after category update succeeds — carries expenseId for dialog matching */
     private val _categoryUpdateSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
@@ -198,12 +209,12 @@ class TransactionsViewModel @Inject constructor(
                 _isRefreshing.value = false
             }
         }
-        // S5-018: Catch repository/flow errors so UI doesn't silently freeze
+        // S5-018: Catch repository/flow errors — preserve stale data, show error
         .catch { e ->
             if (e is CancellationException) throw e
             _isRefreshing.value = false // S5-017: Always clear refresh spinner on error
-            _error.emit("Failed to load transactions: ${e.message}")
-            emit(emptyList())
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions: ${e.message}"))
+            // Do NOT emit emptyList() — preserve whatever the StateFlow currently holds
         }
         .flowOn(Dispatchers.Default)
         .stateIn(
@@ -398,7 +409,7 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = nextItems.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit("Failed to load more transactions: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load more transactions: ${e.message}"))
             } finally {
                 _isLoadingMoreState.value = false
                 loadMoreMutex.unlock()
@@ -411,10 +422,10 @@ class TransactionsViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 expenseRepository.deleteExpense(expense)
-                _successMessage.emit("Transaction deleted")
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transaction deleted"))
                 refresh()
             } catch (e: Exception) {
-                _error.emit("Failed to delete transaction: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to delete transaction: ${e.message}"))
             } finally {
                 _isLoading.value = false
             }
@@ -423,22 +434,22 @@ class TransactionsViewModel @Inject constructor(
 
     fun updateCategory(expense: Expense, categoryId: Long, applyToAll: Boolean = false) {
         viewModelScope.launch {
-            _isLoading.value = true
+            beginRowMutation(expense.id) // S5-015
             try {
                 if (applyToAll) {
                     expenseRepository.updateExpenseCategoryBulk(expense.merchant, categoryId)
-                    _successMessage.emit("Category updated for all ${expense.merchant} transactions")
+                    _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Category updated for all ${expense.merchant} transactions"))
                 } else {
                     expenseRepository.updateExpenseCategory(expense, categoryId)
-                    _successMessage.emit("Category updated")
+                    _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Category updated"))
                 }
                 // S5-014/S5-026: Signal success with expenseId for dialog matching
                 _categoryUpdateSuccess.tryEmit(expense.id)
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit("Failed to update category: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update category: ${e.message}"))
             } finally {
-                _isLoading.value = false
+                endRowMutation(expense.id) // S5-015
             }
         }
     }
@@ -446,22 +457,22 @@ class TransactionsViewModel @Inject constructor(
     fun updateMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
     val trimmedName = newMerchant.trim()
     if (trimmedName.isBlank()) {
-        viewModelScope.launch { _error.emit("Merchant name cannot be empty") }
+        viewModelScope.launch { _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Merchant name cannot be empty")) }
         return
     }
     
     viewModelScope.launch {
-        _isLoading.value = true
+        beginRowMutation(expense.id) // S5-015
         try {
             expenseRepository.updateExpenseMerchant(expense, trimmedName, applyToAll)
             val message = if (applyToAll) "Merchant renamed to $trimmedName globally" else "Merchant renamed to $trimmedName"
-            _successMessage.emit(message)
+            _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString(message))
             _renameSuccess.tryEmit(expense.id) // S5-014R
             refreshPagedExpensesAfterMutation()
         } catch (e: Exception) {
-            _error.emit("Failed to update merchant: ${e.message}")
+            _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update merchant: ${e.message}"))
         } finally {
-            _isLoading.value = false
+            endRowMutation(expense.id) // S5-015
         }
     }
 }
@@ -475,16 +486,15 @@ class TransactionsViewModel @Inject constructor(
         if (newType == TransactionType.TRANSFER) {
             if (transferDirection == null || normalizedTransferAccountName.isBlank()) {
                 viewModelScope.launch {
-                    _error.emit("Transfer direction and account name are required for transfer transactions")
+                    _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer direction and account name are required for transfer transactions"))
                 }
                 return
             }
         }
 
         viewModelScope.launch {
-            _isLoading.value = true
+            beginRowMutation(expense.id) // S5-015
             try {
-                // S5-010: Use atomic method — type + transfer metadata in one transaction
                 val effectiveDirection = if (newType == TransactionType.TRANSFER) transferDirection else null
                 val effectiveAccount = if (newType == TransactionType.TRANSFER) normalizedTransferAccountName else ""
 
@@ -494,13 +504,13 @@ class TransactionsViewModel @Inject constructor(
                     transferDirection = effectiveDirection,
                     transferAccountName = effectiveAccount.takeIf { it.isNotBlank() }
                 )
-                _successMessage.emit("Type changed to ${newType.name}")
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Type changed to ${newType.name}"))
                 _typeChangeSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit("Failed to update type: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update type: ${e.message}"))
             } finally {
-                _isLoading.value = false
+                endRowMutation(expense.id) // S5-015
             }
         }
     }
@@ -513,10 +523,10 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 expenseRepository.updateTransferDetails(expense, transferDirection, transferAccountName.takeIf { it.isNotBlank() })
-                _successMessage.emit("Transfer details updated")
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer details updated"))
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit("Failed to update: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update: ${e.message}"))
             }
         }
     }
@@ -558,7 +568,7 @@ class TransactionsViewModel @Inject constructor(
             shareAmountText = myShareAmount.trim()
         )
         if (validationResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
-            viewModelScope.launch { _error.emit(validationResult.message) }
+            viewModelScope.launch { _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString(validationResult.message)) }
             return
         }
 
@@ -581,11 +591,11 @@ class TransactionsViewModel @Inject constructor(
                     isSharedExpense -> "Marked as shared expense"
                     else -> "Ownership updated"
                 }
-                _successMessage.emit(message)
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString(message))
                 _ownershipSuccess.tryEmit(expense.id) // S5-014R
                 refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
-                _error.emit("Failed to update: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to update: ${e.message}"))
             }
         }
     }
@@ -627,10 +637,10 @@ class TransactionsViewModel @Inject constructor(
                     displayAddress = address
                 )
                 merchantLocationRepository.saveCorrection(correction)
-                _successMessage.emit("Location saved")
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Location saved"))
                 refresh()
             } catch (e: Exception) {
-                _error.emit("Failed to save location: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to save location: ${e.message}"))
             }
         }
     }
@@ -639,10 +649,10 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 expenseRepository.clearExpenseLocation(expense.id)
-                _successMessage.emit("Location cleared")
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Location cleared"))
                 refresh()
             } catch (e: Exception) {
-                _error.emit("Failed to clear location: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to clear location: ${e.message}"))
             }
         }
     }
@@ -661,9 +671,8 @@ class TransactionsViewModel @Inject constructor(
                     lastDate = timeProvider.now(),
                     currency = expense.currency
                 )
-                _successMessage.emit("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})")
-            } catch (e: Exception) {
-                _error.emit("Failed to mark as recurring: ${e.message}")
+                _successMessage.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})"))            } catch (e: Exception) {
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to mark as recurring: ${e.message}"))
             } finally {
                 _isLoading.value = false
             }
@@ -689,7 +698,7 @@ class TransactionsViewModel @Inject constructor(
                 _hasReachedEnd.value = initial.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _error.emit("Failed to load transactions: ${e.message}")
+                _error.emit(com.yourname.expensetracker.domain.model.UiText.DynamicString("Failed to load transactions: ${e.message}"))
             } finally {
                 if (requestId == loadInitialAllRequestId) {
                     _isLoading.value = false

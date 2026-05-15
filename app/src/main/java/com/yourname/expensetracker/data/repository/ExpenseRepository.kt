@@ -47,11 +47,11 @@ import javax.inject.Singleton
 enum class SortOrder(val sql: String, val displayName: String) {
     DATE_DESC("e.date DESC", "Newest First"),
     DATE_ASC("e.date ASC", "Oldest First"),
-    // Amount sorts use the effective (ownership-adjusted) expression so that shared/not-mine
-    // rows are ordered by what the user actually owes, not the gross posted amount.
-    // The expression is inlined at query-build time from ExpenseDao.EFFECTIVE_AMOUNT_E_SQL.
-    AMOUNT_DESC("($EFFECTIVE_AMOUNT_E_SQL) DESC", "Amount High to Low"),
-    AMOUNT_ASC("($EFFECTIVE_AMOUNT_E_SQL) ASC", "Amount Low to High")
+    // S5-008R: Amount sorts use baseAmount (home-currency-normalized at save time) when available,
+    // falling back to effectiveAmount for legacy rows where baseAmount = 0.
+    // This ensures mixed-currency lists sort by comparable home-currency values.
+    AMOUNT_DESC("(CASE WHEN e.baseAmount > 0 THEN e.baseAmount ELSE ($EFFECTIVE_AMOUNT_E_SQL) END) DESC", "Amount High to Low"),
+    AMOUNT_ASC("(CASE WHEN e.baseAmount > 0 THEN e.baseAmount ELSE ($EFFECTIVE_AMOUNT_E_SQL) END) ASC", "Amount Low to High")
 }
 
 enum class OwnershipFilter {
@@ -550,9 +550,9 @@ class ExpenseRepository @Inject constructor(
     }
 
     /**
-     * S5-010: Atomically update transaction type AND transfer metadata in one operation.
-     * Prevents the inconsistency where type changes to TRANSFER but direction/account
-     * fails to update (or vice versa).
+     * S5-010R: Atomically update transaction type AND transfer metadata in one operation.
+     * Delegates to [TransactionLifecycleCoordinator.updateTypeAndTransferDetails] which
+     * uses one DB transaction, one lifecycle event, and one side-effect dispatch.
      */
     suspend fun updateExpenseTypeAndTransfer(
         expense: Expense,
@@ -560,29 +560,13 @@ class ExpenseRepository @Inject constructor(
         transferDirection: TransferDirection?,
         transferAccountName: String?
     ) {
-        database.withTransaction {
-            transactionLifecycleCoordinator.updateType(
-                expenseId = expense.id,
-                newType = newType,
-                source = "USER_EDIT"
-            )
-            transactionLifecycleCoordinator.updateTransferDetails(
-                expenseId = expense.id,
-                transferDirection = transferDirection,
-                transferAccountName = transferAccountName,
-                source = "USER_EDIT"
-            )
-        }
-        // Best-effort analytics side effect outside transaction
-        if (transferDirection != null && newType == TransactionType.TRANSFER) {
-            runCatching {
-                transferDirectionAnalytics.recordUserCorrection(
-                    transferId = expense.id,
-                    fromDirection = expense.transferDirection?.toDomainTransferDirection(),
-                    toDirection = transferDirection.toDomainTransferDirection()
-                )
-            }
-        }
+        transactionLifecycleCoordinator.updateTypeAndTransferDetails(
+            expenseId = expense.id,
+            newType = newType,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
+            source = "USER_EDIT"
+        )
     }
 
     @Deprecated("Use TransactionLifecycleCoordinator.updateOwnership() instead for proper lifecycle tracking.")
