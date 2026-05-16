@@ -549,6 +549,8 @@ fun MainScreen(
                     3 -> BudgetScreen(
                         initialCategoryId = (currentDestination as? NavigationDestination.BudgetDetail)?.categoryId,
                         initialCategoryName = (currentDestination as? NavigationDestination.BudgetDetail)?.categoryName,
+                        // S8-007: BudgetCreate opens the add dialog immediately
+                        initialOpenCreateDialog = currentDestination is NavigationDestination.BudgetCreate,
                         onNavigateToForecast = { budget: BudgetEntity ->
                             navigation.navigateTo(NavigationDestination.BudgetForecasting(budget))
                         }

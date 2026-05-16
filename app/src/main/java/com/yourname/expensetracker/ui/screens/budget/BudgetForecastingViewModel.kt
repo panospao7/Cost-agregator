@@ -71,12 +71,8 @@ class BudgetForecastingViewModel @Inject constructor(
                 // S8-014: Discard stale result
                 if (requestId != forecastRequestId) return@launch
 
-                // S8-015: Derive spentToDate from forecast fields
-                // spentToDate = normalizedBudgetAmount - predictedRemaining - predictedSpending
-                // Since we don't have normalizedBudgetAmount, use budget.amount as approximation
-                // (correct when budget currency == home currency)
-                val currentSpending = (budget.amount - forecast.predictedRemaining - forecast.predictedSpending)
-                    .coerceAtLeast(0.0)
+                // S8-003: Use engine-provided spentToDate — correct for all currencies
+                val currentSpending = forecast.spentToDate.coerceAtLeast(0.0)
 
                 val recommendations = recommendationEngine.generateRecommendations(
                     budget = BudgetRecommendationBudget(amount = budget.amount),

@@ -60,6 +60,7 @@ import java.util.*
 fun BudgetScreen(
     initialCategoryId: Long? = null,
     initialCategoryName: String? = null,
+    initialOpenCreateDialog: Boolean = false,
     onNavigateToForecast: ((Budget) -> Unit)? = null,
     viewModel: BudgetViewModel = hiltViewModel()
 ) {
@@ -68,6 +69,11 @@ fun BudgetScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     
     var showAddDialog by remember { mutableStateOf(false) }
+
+    // S8-007: One-shot open from BudgetCreate route
+    LaunchedEffect(initialOpenCreateDialog) {
+        if (initialOpenCreateDialog) showAddDialog = true
+    }
     var editingBudget by remember { mutableStateOf<BudgetStatus?>(null) }
     var preselectedCategoryIdForAdd by remember { mutableStateOf<Long?>(null) }
     var hasHandledInitialCategoryContext by rememberSaveable(initialCategoryId, initialCategoryName) {
@@ -445,19 +451,11 @@ fun BudgetCard(
     val budgetInactiveString = stringResource(R.string.budget_status_inactive)
     val adjustedSpend = status.adjustedSpendBreakdown
     val displaySpend = adjustedSpend?.effectiveSpend ?: status.spentAmount
-    val displayPercentUsed = if (status.effectiveLimit > 0.0) {
-        (displaySpend / status.effectiveLimit).toFloat()
-    } else {
-        0f
-    }
+    // S8-001: Use repository-provided percent/health — never recompute from potentially mixed currencies
+    val displayPercentUsed = status.percentUsed
     val displayRemainingAmount = status.effectiveLimit - displaySpend
     val hasPendingReimbursements = adjustedSpend?.pendingReimbursements?.let { it > 0.01 } == true
-    val displayHealthStatus = when {
-        displayPercentUsed >= 1.0f -> BudgetHealthStatus.EXCEEDED
-        displayPercentUsed >= status.budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
-        displayPercentUsed >= status.budget.notifyAtWarning -> BudgetHealthStatus.WARNING
-        else -> BudgetHealthStatus.ON_TRACK
-    }
+    val displayHealthStatus = status.healthStatus
     
     // Remember expensive calculations
     val progressColor = remember(displayHealthStatus) {
@@ -643,6 +641,15 @@ fun BudgetCard(
             if (adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01) {
                 Spacer(Modifier.height(8.dp))
                 AdjustedSpendBreakdownRow(adjustedSpend)
+            }
+
+            // S8-002: Show partial/conversion warning when repository marks data unreliable
+            if (status.isPartial) {
+                Spacer(Modifier.height(8.dp))
+                com.yourname.expensetracker.ui.components.DataQualityWarningChip(
+                    message = status.conversionWarning
+                        ?: stringResource(R.string.budget_partial_currency_warning)
+                )
             }
 
             if (displayPercentUsed > 1f) {
@@ -858,10 +865,8 @@ fun AddEditBudgetDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { newValue ->
-                        // Only allow valid decimal numbers
-                        if (newValue.isEmpty() || newValue.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
-                            amount = newValue
-                        }
+                        // S8-008: Use shared sanitizer — consistent with Add Expense and receipt scan
+                        amount = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(newValue)
                     },
                     label = { Text(stringResource(R.string.budget_amount_label)) },
                     modifier = Modifier.fillMaxWidth(),
@@ -988,7 +993,7 @@ fun AutopilotBanner(
     onApplyAll: () -> Unit,
     onDismiss: () -> Unit,
     /** Placeholder default. Production callers should pass explicit currency. */
-    homeCurrency: String = "EUR"
+    homeCurrency: String = ""
 ) {
     var expanded by remember { mutableStateOf(false) }
     val hasRecommendations = recommendations.isNotEmpty()
@@ -1136,7 +1141,7 @@ fun AutopilotRecommendationItem(
     recommendation: CategoryBudgetRecommendation,
     onApply: () -> Unit,
     /** Placeholder default. Production callers should pass explicit currency. */
-    homeCurrency: String = "EUR"
+    homeCurrency: String = ""
 ) {
     val trendColor = when (recommendation.trend) {
         BudgetTrend.INCREASING -> SemanticColors.DangerRed

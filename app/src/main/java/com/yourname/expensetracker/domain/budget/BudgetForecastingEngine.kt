@@ -77,7 +77,7 @@ class BudgetForecastingEngine @Inject constructor(
         writeBarrier.checkWritesAllowed("BudgetForecastingEngine.generateForecast")
         val now = timeProvider.now()
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable for forecast: ${it.message}") }
 
         // Calculate active budget period window first — we need periodEnd for the
         // rate-as-of lookup so the budget limit is converted at the same
@@ -150,7 +150,11 @@ class BudgetForecastingEngine @Inject constructor(
         // budget+period so only the newest forecast remains active.
         val persistedId = budgetForecastDao.insertWithDeactivation(forecast)
 
-        forecast.copy(id = persistedId)
+        forecast.copy(id = persistedId).also { f ->
+            // S8-003: Expose computed values for ViewModel use (not persisted)
+            f.spentToDate = spentToDate
+            f.normalizedBudgetAmount = normalizedBudgetAmount
+        }
     }
     
     /**
@@ -172,7 +176,7 @@ class BudgetForecastingEngine @Inject constructor(
         val now = timeProvider.now()
         val threeMonthsAgo = TimePeriodUtils.addMonths(now, -3)
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable for forecast: ${it.message}") }
 
         // ── Fetch raw snapshots and normalise to home currency ──────────────
         val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(threeMonthsAgo, now)

@@ -121,7 +121,11 @@ data class BudgetForecast(
     @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val createdAt: Long = 0L
-)
+) {
+    /** S8-003: Not persisted — set by engine after generation for ViewModel use. */
+    @androidx.room.Ignore var spentToDate: Double = 0.0
+    @androidx.room.Ignore var normalizedBudgetAmount: Double = 0.0
+}
 
 enum class ForecastRiskLevel {
     LOW,      // Predicted to stay well under budget
