@@ -423,7 +423,8 @@ class ReviewViewModel @Inject constructor(
         finalLatitude: Double? = null,
         finalLongitude: Double? = null,
         finalAddress: String? = null,
-        finalPlaceId: String? = null
+        finalPlaceId: String? = null,
+        finalCurrency: String? = null
     ) {
         viewModelScope.launch {
             if (!beginMutation(reviewId, "edit")) return@launch // S6-003: idempotency guard
@@ -438,6 +439,7 @@ class ReviewViewModel @Inject constructor(
                     finalCategoryId = finalCategoryId,
                     finalDate = finalDate,
                     finalType = finalType,
+                    finalCurrency = finalCurrency,
                     finalTransferDirection = finalTransferDirection,
                     finalTransferAccountName = finalTransferAccountName,
                     locationCleared = locationCleared,
@@ -474,10 +476,13 @@ class ReviewViewModel @Inject constructor(
                         }
                     } catch (e: Exception) {
                         Timber.e(e, "Failed to apply bulk category update")
+                        // S6-D5-006: Surface bulk failure — primary succeeded but bulk partially failed
+                        _errorMessage.value = "Primary review approved, but bulk category update failed."
                     }
                 }
 
                 if (approveAllPending) {
+                    var bulkFailed = 0
                     try {
                         val originalMerchant = originalReview?.suggestedMerchant
                         val searchMerchant = finalMerchant ?: originalMerchant
@@ -485,7 +490,7 @@ class ReviewViewModel @Inject constructor(
                         val identicalPending = reviewQueueRepository.getPendingReviewsByMerchant(searchMerchant)
                         for (pending in identicalPending) {
                             if (pending.id != reviewId) {
-                                 reviewQueueRepository.approveReview(
+                                val bulkResult = reviewQueueRepository.approveReview(
                                      reviewId = pending.id,
                                      finalAmount = null, // Keep original amounts for identical transactions
                                      finalMerchant = finalMerchant,
@@ -501,13 +506,19 @@ class ReviewViewModel @Inject constructor(
                                      finalAddress = finalAddress,
                                      finalPlaceId = finalPlaceId
                                  )
+                                if (bulkResult !is Result.Success) bulkFailed++
                              }
                          }
                     }
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to apply bulk approval")
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to apply bulk approval")
+                        bulkFailed++
+                    }
+                    // S6-D5-006: Surface partial bulk failure
+                    if (bulkFailed > 0) {
+                        _errorMessage.value = "Primary review approved, but $bulkFailed related review(s) could not be approved."
+                    }
                 }
-            }
             } finally {
                 endMutation(reviewId)
             }

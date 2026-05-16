@@ -484,7 +484,7 @@ fun ReviewScreen(
                         editPrefillCategoryId = null
                         editPrefillReceipt = null
                     },
-                    onSave = { amount, merchant, categoryId, date, type, transferDir, transferAcct, applyToAll, approveAllPending, lat, lon, address, osmId ->
+                    onSave = { amount, merchant, categoryId, date, type, transferDir, transferAcct, applyToAll, approveAllPending, lat, lon, address, osmId, currency ->
                         viewModel.approveReviewWithEdits(
                             reviewId = item.review.id,
                             finalAmount = amount,
@@ -500,7 +500,8 @@ fun ReviewScreen(
                             finalLatitude = lat,
                             finalLongitude = lon,
                             finalAddress = address,
-                            finalPlaceId = osmId
+                            finalPlaceId = osmId,
+                            finalCurrency = currency
                         )
                         // S6-005: Dialog closes via editApproveSuccess LaunchedEffect, not here
                     },
@@ -1575,7 +1576,7 @@ fun EditReviewDialog(
     receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt? = null,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?, Long?, TransactionType?, TransferDirection?, String?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
+    onSave: (Double?, String?, Long?, Long?, TransactionType?, TransferDirection?, String?, Boolean, Boolean, Double?, Double?, String?, String?, String?) -> Unit,
     initialCategoryIdOverride: Long? = null,
     initialReceiptPrefill: ReviewReceiptPrefill? = null,
     locationEditState: ReviewLocationEditState = ReviewLocationEditState(),
@@ -1587,6 +1588,8 @@ fun EditReviewDialog(
         mutableStateOf(String.format("%.2f", initialReceiptPrefill?.amount ?: review.suggestedAmount ?: 0.0))
     }
     var merchant by remember { mutableStateOf(initialReceiptPrefill?.merchant ?: review.suggestedMerchant) }
+    // S6-D5-003: Currency is editable — null means user must select before approval
+    var selectedCurrency by remember { mutableStateOf(review.suggestedCurrency ?: "") }
     var selectedDateMs by remember { mutableStateOf(initialReceiptPrefill?.date ?: review.suggestedDate ?: review.createdAt) }
     var selectedCategoryId by remember { mutableStateOf(initialCategoryIdOverride ?: review.suggestedCategoryId) }
     var selectedType by remember { 
@@ -1733,13 +1736,25 @@ fun EditReviewDialog(
                 onValueChange = { amount = it },
                 label = { Text(
                     // S6-016: Show actual currency from review, not hardcoded EUR
-                    if (review.suggestedCurrency != null) "Amount (${review.suggestedCurrency})"
+                    if (selectedCurrency.isNotBlank()) "Amount ($selectedCurrency)"
                     else stringResource(R.string.review_amount_label_generic)
                 ) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
+            )
+
+            // S6-D5-003: Currency picker — required for synthetic placeholders
+            OutlinedTextField(
+                value = selectedCurrency,
+                onValueChange = { selectedCurrency = it.uppercase().take(3) },
+                label = { Text(stringResource(R.string.review_currency_label)) },
+                singleLine = true,
+                placeholder = { Text("USD") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                isError = selectedCurrency.isBlank()
             )
 
             DateSelector(
@@ -1973,7 +1988,9 @@ fun EditReviewDialog(
                             locLat.takeIf { it != review.suggestedLatitude },
                             locLon.takeIf { it != review.suggestedLongitude },
                             locAddress.takeIf { locLat != review.suggestedLatitude || locLon != review.suggestedLongitude },
-                            locPlaceId
+                            locPlaceId,
+                            // S6-D5-003: Pass selected currency
+                            selectedCurrency.takeIf { it.isNotBlank() }
                         )
                     },
                     shape = RoundedCornerShape(12.dp)

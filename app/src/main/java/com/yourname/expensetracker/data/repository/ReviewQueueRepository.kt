@@ -141,9 +141,10 @@ class ReviewQueueRepository @Inject constructor(
             type == TransactionType.TRANSFER || type == TransactionType.DEPOSIT
         val transferDirection = if (transferMetadataAllowed) {
             // S6-004: Prefer user-edited direction, fall back to review suggestion
-            finalTransferDirection ?: runCatching {
-                review.suggestedDirection?.let(TransferDirection::valueOf)
-            }.getOrNull()
+            // S6-D5-010: Case-insensitive lookup — valueOf is exact/case-sensitive
+            finalTransferDirection ?: review.suggestedDirection?.let { raw ->
+                TransferDirection.entries.firstOrNull { it.name.equals(raw.trim(), ignoreCase = true) }
+            }
         } else {
             null
         }
@@ -536,7 +537,7 @@ class ReviewQueueRepository @Inject constructor(
             PendingReview(
                 rawNotificationId = id,
                 suggestedAmount = null,
-                suggestedCurrency = "EUR",
+                suggestedCurrency = "",  // S6-D5-003: empty — user must select currency before approval
                 suggestedMerchant = "Unknown",
                 suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),
                 suggestedType = TransactionType.PURCHASE.name,
