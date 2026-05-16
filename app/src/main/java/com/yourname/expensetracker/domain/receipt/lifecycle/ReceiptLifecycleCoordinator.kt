@@ -999,4 +999,55 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             }
         }
     }
+
+    /**
+     * S7-F583-001: Atomic create-expense-and-link-receipt operation.
+     *
+     * Both the expense creation and the receipt link are performed inside a single
+     * database transaction. If the link fails, the expense is rolled back — no orphan
+     * expenses can be created.
+     *
+     * @return [Result.success] with the created expense ID, or [Result.failure] with
+     *         a descriptive exception. Callers should NOT fall back to a two-step path.
+     */
+    suspend fun createExpenseAndLinkReceipt(
+        request: com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+    ): Result<Long> {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
+        val receiptId = request.scannedReceiptId
+            ?: return Result.failure(IllegalArgumentException("scannedReceiptId is required for atomic create+link"))
+
+        return try {
+            database.withTransaction {
+                when (val result = transactionLifecycleCoordinator.createExpenseStandalone(request)) {
+                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
+                        val linkResult = receiptLinkService.linkReceiptToExpense(
+                            receiptId = receiptId,
+                            expenseId = result.expenseId,
+                            linkType = "DIRECT_SAVE",
+                            source = com.yourname.expensetracker.domain.transaction.ExpenseSource.RECEIPT_SCAN.name
+                        )
+                        if (linkResult.isFailure) {
+                            // Throw inside transaction — rolls back the expense creation
+                            throw IllegalStateException(
+                                "Receipt link failed — rolling back expense: ${linkResult.exceptionOrNull()?.message}",
+                                linkResult.exceptionOrNull()
+                            )
+                        }
+                        Result.success(result.expenseId)
+                    }
+                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped ->
+                        Result.failure(IllegalStateException("Duplicate transaction detected"))
+                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed ->
+                        Result.failure(IllegalArgumentException("Validation failed: ${result.errors.joinToString()}"))
+                    else ->
+                        Result.failure(IllegalStateException("Expense creation failed"))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

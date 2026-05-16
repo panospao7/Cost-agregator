@@ -295,6 +295,25 @@ class ReceiptScanViewModel @Inject constructor(
                 // S7-003: Discard result if a newer scan has started
                 if (requestId != scanRequestSeq) return@launch
 
+                // S7-F583-002: If the returned receipt is already linked to an expense,
+                // it is a duplicate — show duplicate state instead of normal review.
+                val linkedExpenseId = receipt.expenseId
+                if (linkedExpenseId != null) {
+                    _state.update {
+                        it.copy(
+                            step = ScanStep.REVIEW,
+                            receiptId = receipt.id,
+                            saveResult = SaveReceiptResult.DuplicateReceipt(
+                                existingReceiptId = receipt.id,
+                                linkedExpenseId = linkedExpenseId
+                            ),
+                            errorMessage = "This receipt was already scanned and is linked to an existing transaction.",
+                            isSaving = false
+                        )
+                    }
+                    return@launch
+                }
+
                 val isOcrFailure = receipt.processingStatus == ReceiptProcessingStatus.OCR_FAILED.name
 
                 if (isOcrFailure) {
@@ -1198,21 +1217,11 @@ class ReceiptScanViewModel @Inject constructor(
                     scannedReceiptId = request.receiptId
                 )
 
-                // S7-006: Use non-deprecated createExpenseStandalone()
-                val result = transactionLifecycleCoordinator.createExpenseStandalone(createRequest)
+                // S7-F583-001: Atomic create+link — if link fails, expense is rolled back
+                val atomicResult = receiptLifecycleCoordinator.createExpenseAndLinkReceipt(createRequest)
 
-                when (result) {
-                    is CreateExpenseResult.Created -> {
-                        // S7-005: Catch link failure explicitly — partial success instead of silent failure
-                        val linkFailed = runCatching {
-                            receiptLinkService.linkReceiptToExpense(
-                                receiptId = request.receiptId,
-                                expenseId = result.expenseId,
-                                linkType = "DIRECT_SAVE",
-                                source = ExpenseSource.RECEIPT_SCAN.name
-                            )
-                        }.exceptionOrNull()
-
+                atomicResult.fold(
+                    onSuccess = { expenseId ->
                         if (finalCategoryId != null) {
                             runCatching {
                                 hybridClassifier.learnFromCorrection(
@@ -1222,53 +1231,32 @@ class ReceiptScanViewModel @Inject constructor(
                                 )
                             }.onFailure { e -> Timber.w(e, "Classifier learning failed after receipt save") }
                         }
-
-                        if (linkFailed != null) {
-                            // S7-005: Partial success — expense created but receipt not linked
-                            Timber.e(linkFailed, "Receipt link failed after expense creation (expenseId=${result.expenseId})")
-                            _state.update {
-                                it.copy(
-                                    isSaving = false,
-                                    quickSavePreview = null,
-                                    saveResult = SaveReceiptResult.PartialLinkFailure(
-                                        expenseId = result.expenseId,
-                                        message = "Expense saved but receipt could not be linked: ${linkFailed.message}"
-                                    )
-                                )
-                            }
-                        } else {
-                            // S7-007: Mark AI artifacts applied only after successful save
-                            request.appliedAiCapabilities.forEach { capability ->
-                                markLatestArtifactApplied(capability)
-                            }
-                            // S7-008/S7-022: Clear preview on success; include expenseId
-                            _state.update {
-                                it.copy(isSaving = false, step = ScanStep.DONE, saveResult = SaveReceiptResult.Success(result.expenseId), quickSavePreview = null)
-                            }
+                        // S7-007: Mark AI artifacts applied only after successful save
+                        request.appliedAiCapabilities.forEach { capability ->
+                            markLatestArtifactApplied(capability)
                         }
-                    }
-                    is CreateExpenseResult.DuplicateSkipped -> {
-                        // S7-014: Typed duplicate — transaction duplicate
                         _state.update {
-                            it.copy(isSaving = false, quickSavePreview = null, saveResult = SaveReceiptResult.DuplicateTransaction)
+                            it.copy(
+                                isSaving = false,
+                                step = ScanStep.DONE,
+                                saveResult = SaveReceiptResult.Success(expenseId),
+                                quickSavePreview = null,
+                                pendingAppliedAiCapabilities = emptySet()
+                            )
                         }
-                    }
-                    is CreateExpenseResult.ValidationFailed -> {
+                    },
+                    onFailure = { e ->
+                        Timber.e(e, "Atomic receipt save failed for receipt ${request.receiptId}")
+                        val isDuplicate = e.message?.contains("Duplicate", ignoreCase = true) == true
                         _state.update {
-                            it.copy(isSaving = false, saveResult = SaveReceiptResult.Error(result.errors.joinToString(", ")))
+                            it.copy(
+                                isSaving = false,
+                                saveResult = if (isDuplicate) SaveReceiptResult.DuplicateTransaction
+                                             else SaveReceiptResult.Error(e.message ?: "Save failed")
+                            )
                         }
                     }
-                    is CreateExpenseResult.InsertConflict -> {
-                        _state.update {
-                            it.copy(isSaving = false, saveResult = SaveReceiptResult.Error("Insert conflict: ${result.dedupeKey}"))
-                        }
-                    }
-                    is CreateExpenseResult.Error -> {
-                        _state.update {
-                            it.copy(isSaving = false, saveResult = SaveReceiptResult.Error(result.exception.message ?: "Unknown error"))
-                        }
-                    }
-                }
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
