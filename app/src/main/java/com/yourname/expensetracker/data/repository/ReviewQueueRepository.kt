@@ -94,6 +94,9 @@ class ReviewQueueRepository @Inject constructor(
         finalCategoryId: Long? = null,
         finalDate: Long? = null,
         finalType: TransactionType? = null,
+        finalTransferDirection: TransferDirection? = null,
+        finalTransferAccountName: String? = null,
+        locationCleared: Boolean = false,
         finalLatitude: Double? = null,
         finalLongitude: Double? = null,
         finalAddress: String? = null,
@@ -137,21 +140,30 @@ class ReviewQueueRepository @Inject constructor(
         val transferMetadataAllowed =
             type == TransactionType.TRANSFER || type == TransactionType.DEPOSIT
         val transferDirection = if (transferMetadataAllowed) {
-            runCatching {
+            // S6-004: Prefer user-edited direction, fall back to review suggestion
+            finalTransferDirection ?: runCatching {
                 review.suggestedDirection?.let(TransferDirection::valueOf)
             }.getOrNull()
         } else {
             null
         }
         val transferAccountName = if (transferMetadataAllowed) {
-            review.suggestedAccountName
+            finalTransferAccountName ?: review.suggestedAccountName
         } else {
             null
         }
 
         val expense = Expense(
             amount = amount,
-            currency = finalCurrency ?: review.suggestedCurrency,
+            currency = run {
+                // S6-007: Reject blank/null currency — never persist fake "EUR" placeholder
+                val resolved = finalCurrency?.takeIf { it.isNotBlank() }
+                    ?: review.suggestedCurrency?.takeIf { it.isNotBlank() }
+                if (resolved.isNullOrBlank()) {
+                    return Result.Error(message = "Currency is required. Please edit the review and select a currency.")
+                }
+                resolved
+            },
             merchant = merchant,
             merchantKey = MerchantKeyGenerator.generate(normalizedMerchantForKeys),
             transactionType = type,
@@ -171,16 +183,17 @@ class ReviewQueueRepository @Inject constructor(
             ),
             transferDirection = transferDirection,
             transferAccountName = transferAccountName,
-            // Prefer user-provided location, fall back to review-captured GPS
-            latitude = finalLatitude ?: review.suggestedLatitude,
-            longitude = finalLongitude ?: review.suggestedLongitude,
+            // S6-005: locationCleared=true means explicit clear — null lat/lon means CLEAR, not unchanged
+            latitude = if (locationCleared) null else finalLatitude ?: review.suggestedLatitude,
+            longitude = if (locationCleared) null else finalLongitude ?: review.suggestedLongitude,
             locationSource = when {
+                locationCleared -> AppConfig.Location.SOURCE_UNKNOWN
                 finalLatitude != null && finalLongitude != null -> AppConfig.Location.SOURCE_USER_MANUAL
                 review.suggestedLatitude != null && review.suggestedLongitude != null -> AppConfig.Location.SOURCE_DEVICE_GPS
                 else -> AppConfig.Location.SOURCE_UNKNOWN
             },
-            placeId = finalPlaceId,
-            resolvedAddress = finalAddress
+            placeId = if (locationCleared) null else finalPlaceId,
+            resolvedAddress = if (locationCleared) null else finalAddress
         )
 
         val txAlreadyProcessed = -2L
@@ -297,8 +310,8 @@ class ReviewQueueRepository @Inject constructor(
                     txDuplicate
                 }
                 is CreateExpenseResult.ValidationFailed -> {
-                    validationError = result.errors.joinToString(", ")
-                    txAlreadyProcessed
+                    // S6-001: Throw inside transaction — rolls back PROCESSING status to PENDING
+                    throw IllegalArgumentException("Validation failed: ${result.errors.joinToString(", ")}")
                 }
                 is CreateExpenseResult.Error -> throw result.exception
             }

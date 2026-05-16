@@ -99,7 +99,9 @@ data class ReviewLocationEditState(
     val selectedLon: Double? = null,
     val selectedAddress: String? = null,
     val selectedPlaceId: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    /** S6-005: true when user explicitly cleared location — null lat/lon means CLEAR, not unchanged */
+    val locationCleared: Boolean = false
 )
 
 sealed interface ReviewEvent {
@@ -365,8 +367,11 @@ class ReviewViewModel @Inject constructor(
         finalCategoryId: Long?,
         finalDate: Long?,
         finalType: TransactionType?,
+        finalTransferDirection: com.yourname.expensetracker.data.database.entity.TransferDirection? = null,
+        finalTransferAccountName: String? = null,
         applyToAll: Boolean = false,
         approveAllPending: Boolean = false,
+        locationCleared: Boolean = false,
         finalLatitude: Double? = null,
         finalLongitude: Double? = null,
         finalAddress: String? = null,
@@ -385,6 +390,9 @@ class ReviewViewModel @Inject constructor(
                     finalCategoryId = finalCategoryId,
                     finalDate = finalDate,
                     finalType = finalType,
+                    finalTransferDirection = finalTransferDirection,
+                    finalTransferAccountName = finalTransferAccountName,
+                    locationCleared = locationCleared,
                     finalLatitude = finalLatitude,
                     finalLongitude = finalLongitude,
                     finalAddress = finalAddress,
@@ -622,8 +630,14 @@ class ReviewViewModel @Inject constructor(
     fun applyCategorySuggestion(reviewId: Long) {
         val suggestion = (_reviewCaptureAssistStates.value[reviewId]?.categorySuggestion as? AiLoadState.Ready)?.value
             ?: return
+        // S6-009: Validate category exists before applying
+        val categoryId = suggestion.categoryId
+        if (categoryId <= 0L || categories.value.none { it.id == categoryId }) {
+            _errorMessage.value = "Suggested category is no longer available."
+            return
+        }
         // S6-014: Emit one-shot event instead of writing to prefill map
-        _uiEvents.tryEmit(ReviewUiEvent.OpenEditWithPrefill(reviewId = reviewId, categoryId = suggestion.categoryId))
+        _uiEvents.tryEmit(ReviewUiEvent.OpenEditWithPrefill(reviewId = reviewId, categoryId = categoryId))
         viewModelScope.launch {
             markCategoryArtifactApplied(reviewId)
         }
@@ -657,7 +671,14 @@ class ReviewViewModel @Inject constructor(
         if (categoryReady.value.categoryId <= 0L) return false
         // S6-010: Require explicit LIKELY_DISTINCT — no dedupe state = no quick approve
         val dedupeReady = state.dedupeSuggestion as? AiLoadState.Ready ?: return false
-        return dedupeReady.value.verdict == com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.LIKELY_DISTINCT
+        if (dedupeReady.value.verdict != com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.LIKELY_DISTINCT) return false
+        // S6-008: Require valid review data — block synthetic/invalid reviews
+        val review = pendingReviews.value.firstOrNull { it.review.id == reviewId }?.review ?: return false
+        if (review.suggestedAmount == null || review.suggestedAmount <= 0.0) return false
+        if (review.suggestedMerchant.isBlank() || review.suggestedMerchant == "Unknown") return false
+        if (review.suggestedCurrency.isNullOrBlank()) return false
+        if (categories.value.none { it.id == categoryReady.value.categoryId }) return false
+        return true
     }
 
     fun requestQuickApprovePreview(reviewId: Long) {
@@ -770,7 +791,8 @@ class ReviewViewModel @Inject constructor(
             it.copy(
                 selectedLat = null, selectedLon = null,
                 selectedAddress = null, selectedPlaceId = null,
-                query = "", results = emptyList()
+                query = "", results = emptyList(),
+                locationCleared = true  // S6-005: explicit clear sentinel
             )
         }
     }

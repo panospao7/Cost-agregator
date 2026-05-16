@@ -473,7 +473,8 @@ fun ReviewScreen(
         }
 
         editingReview?.let { item ->
-            key(editPrefillCategoryId, editPrefillReceipt) {
+            // S6-003: Key by review ID so Compose resets remembered state when switching reviews
+            key(item.review.id, editPrefillCategoryId, editPrefillReceipt) {
                 EditReviewDialog(
                     review = item.review,
                     receipt = item.receipt,
@@ -483,7 +484,7 @@ fun ReviewScreen(
                         editPrefillCategoryId = null
                         editPrefillReceipt = null
                     },
-                    onSave = { amount, merchant, categoryId, date, type, applyToAll, approveAllPending, lat, lon, address, osmId ->
+                    onSave = { amount, merchant, categoryId, date, type, transferDir, transferAcct, applyToAll, approveAllPending, lat, lon, address, osmId ->
                         viewModel.approveReviewWithEdits(
                             reviewId = item.review.id,
                             finalAmount = amount,
@@ -491,8 +492,11 @@ fun ReviewScreen(
                             finalCategoryId = categoryId,
                             finalDate = date,
                             finalType = type,
+                            finalTransferDirection = transferDir,
+                            finalTransferAccountName = transferAcct,
                             applyToAll = applyToAll,
                             approveAllPending = approveAllPending,
+                            locationCleared = viewModel.locationEditState.value.locationCleared,
                             finalLatitude = lat,
                             finalLongitude = lon,
                             finalAddress = address,
@@ -893,11 +897,20 @@ fun ReviewCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        AmountText(
-                            amount = review.suggestedAmount ?: 0.0,
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = SemanticColors.TextPrimary
-                        )
+                        // S6-006: Show unavailable label instead of misleading 0.0
+                        if (review.suggestedAmount != null) {
+                            AmountText(
+                                amount = review.suggestedAmount,
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = SemanticColors.TextPrimary
+                            )
+                        } else {
+                            Text(
+                                text = stringResource(R.string.review_amount_required),
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         
                         // Category icon if available
                         if (suggestedCategory != null) {
@@ -1549,7 +1562,7 @@ fun EditReviewDialog(
     receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt? = null,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
+    onSave: (Double?, String?, Long?, Long?, TransactionType?, TransferDirection?, String?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
     initialCategoryIdOverride: Long? = null,
     initialReceiptPrefill: ReviewReceiptPrefill? = null,
     locationEditState: ReviewLocationEditState = ReviewLocationEditState(),
@@ -1940,6 +1953,9 @@ fun EditReviewDialog(
                         val locPlaceId = locationEditState.selectedPlaceId
                         onSave(
                             editedAmount, editedMerchant, editedCategory, editedDate, editedType,
+                            // S6-004: Pass transfer direction/account
+                            transferDirection.takeIf { editedType == TransactionType.TRANSFER || editedType == TransactionType.DEPOSIT },
+                            transferAccount.takeIf { (editedType == TransactionType.TRANSFER || editedType == TransactionType.DEPOSIT) && transferAccount.isNotBlank() },
                             applyToAll, approveAllPending,
                             locLat.takeIf { it != review.suggestedLatitude },
                             locLon.takeIf { it != review.suggestedLongitude },

@@ -340,12 +340,14 @@ class ReviewViewModelStressTest {
 
     @Test
     fun `stress - batch processing initially false`() = runTest {
-        assertFalse(viewModel.isBatchProcessing.value)
+        // S6-002: isBatchProcessing removed — operationState replaces it
+        assertNull(viewModel.operationState.value)
     }
 
     @Test
     fun `stress - batch progress initially null`() = runTest {
-        assertNull(viewModel.batchProgress.value)
+        // S6-002: batchProgress removed — operationState.current/total replaces it
+        assertNull(viewModel.operationState.value)
     }
 
     // ============================================================================
