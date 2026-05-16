@@ -180,8 +180,9 @@ fun BudgetScreen(
             )
         }
     ) { padding ->
-        // Error banner - shows when ViewModel has an error
-        if (uiState.error != null) {
+        // S8-010: ErrorBanner only for mutation errors — load errors are handled by loadableState.Error
+        // Mutation error = error present but budgets list is non-empty (data already loaded)
+        if (uiState.error != null && uiState.budgets.isNotEmpty()) {
             ErrorBanner(
                 message = uiState.error!!,
                 onDismiss = { viewModel.clearError() },
@@ -284,6 +285,7 @@ fun BudgetScreen(
                 initialCategoryId = preselectedCategoryIdForAdd,
                 referenceNowMillis = uiState.referenceNowMillis,
                 homeCurrency = uiState.homeCurrency,
+                isSubmitting = uiState.isLoading,
                 onDismiss = {
                     showAddDialog = false
                     preselectedCategoryIdForAdd = null
@@ -301,6 +303,7 @@ fun BudgetScreen(
                 initialBudget = status.budget,
                 referenceNowMillis = uiState.referenceNowMillis,
                 homeCurrency = uiState.homeCurrency,
+                isSubmitting = uiState.isLoading,
                 onDismiss = { editingBudget = null },
                 onConfirm = { viewModel.updateBudget(it) },
                 categories = categories
@@ -399,9 +402,11 @@ fun ErrorBanner(
 
 @Composable
 fun BudgetSummaryCard(budgets: List<BudgetStatus>) {
-    val onTrack = budgets.count { it.healthStatus == BudgetHealthStatus.ON_TRACK }
+    // S8-011: Partial budgets are not counted as confidently on-track
+    val onTrack = budgets.count { it.healthStatus == BudgetHealthStatus.ON_TRACK && !it.isPartial }
     val warning = budgets.count { it.healthStatus == BudgetHealthStatus.WARNING || it.healthStatus == BudgetHealthStatus.CRITICAL }
     val exceeded = budgets.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
+    val partial = budgets.count { it.isPartial }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -414,6 +419,9 @@ fun BudgetSummaryCard(budgets: List<BudgetStatus>) {
             SummaryItem(stringResource(R.string.budget_summary_on_track), onTrack, SemanticColors.SuccessGreen)
             SummaryItem(stringResource(R.string.budget_summary_warning), warning, SemanticColors.WarningOrange)
             SummaryItem(stringResource(R.string.budget_summary_exceeded), exceeded, SemanticColors.DangerRed)
+            if (partial > 0) {
+                SummaryItem(stringResource(R.string.budget_summary_partial), partial, MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -843,6 +851,8 @@ fun AddEditBudgetDialog(
     referenceNowMillis: Long,
     /** S8-002: null until home currency loads — Save is disabled until set */
     homeCurrency: String? = null,
+    /** S8-009: true while save is in progress — prevents double-submit */
+    isSubmitting: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: (Budget) -> Unit
 ) {
@@ -944,9 +954,18 @@ fun AddEditBudgetDialog(
                     }
                 },
                 // S8-002: Disable Save until currency is loaded
-                enabled = homeCurrency != null
+                // S8-009: Also disable while submitting to prevent double-tap
+                enabled = homeCurrency != null && !isSubmitting
             ) {
-                Text(stringResource(R.string.action_save))
+                if (isSubmitting) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Text(stringResource(R.string.action_save))
+                }
             }
         },
         dismissButton = {

@@ -112,6 +112,7 @@ fun BudgetForecastingScreen(
                         forecast = uiState.forecast!!,
                         recommendations = uiState.recommendations,
                         homeCurrency = homeCurrency ?: "",
+                        normalizedBudgetAmount = uiState.normalizedBudgetAmount,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -129,6 +130,7 @@ private fun ForecastContent(
     forecast: BudgetForecast,
     recommendations: List<BudgetRecommendation>,
     homeCurrency: String,
+    normalizedBudgetAmount: Double? = null,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -142,7 +144,7 @@ private fun ForecastContent(
         
         // Forecast Details Card
         item {
-            ForecastDetailsCard(budget = budget, forecast = forecast, homeCurrency = homeCurrency ?: "")
+            ForecastDetailsCard(budget = budget, forecast = forecast, homeCurrency = homeCurrency ?: "", normalizedBudgetAmount = normalizedBudgetAmount)
         }
         
         // Confidence Score Card
@@ -235,7 +237,7 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
 }
 
 @Composable
-private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCurrency: String) {
+private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCurrency: String, normalizedBudgetAmount: Double? = null) {
     val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore) {
         calculateForecastBounds(
             predictedSpending = forecast.predictedSpending,
@@ -264,10 +266,10 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
             
             Spacer(modifier = Modifier.height(16.dp))
             
-            // Budget Amount
+            // Budget Amount — S8-013: use normalized amount (home currency), not raw budget.amount
             DetailRow(
                 label = stringResource(R.string.budget_forecast_limit_label),
-                value = CurrencyFormatter.formatMoney(budget.amount, homeCurrency ?: ""),
+                value = CurrencyFormatter.formatMoney(normalizedBudgetAmount ?: budget.amount, homeCurrency ?: ""),
                 icon = Icons.Default.AccountBalanceWallet
             )
             
@@ -278,7 +280,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
                 label = stringResource(R.string.budget_forecast_predicted_spending),
                 value = CurrencyFormatter.formatMoney(forecast.predictedSpending, homeCurrency ?: ""),
                 icon = Icons.Default.TrendingUp,
-                valueColor = if (forecast.predictedSpending > budget.amount) 
+                valueColor = if (forecast.predictedSpending > (normalizedBudgetAmount ?: budget.amount))
                     SemanticColors.DangerRed else SemanticColors.TextPrimary
             )
             
@@ -292,7 +294,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
                     Icons.Default.Savings else Icons.Default.Warning,
                 valueColor = when {
                     forecast.predictedRemaining < 0 -> SemanticColors.DangerRed
-                    forecast.predictedRemaining < budget.amount * 0.2 -> SemanticColors.StatusYellow
+                    forecast.predictedRemaining < (normalizedBudgetAmount ?: budget.amount) * 0.2 -> SemanticColors.StatusYellow
                     else -> SemanticColors.StatusGreen
                 }
             )
@@ -300,7 +302,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCu
             Spacer(modifier = Modifier.height(16.dp))
 
             ConfidenceIntervalSection(
-                budgetAmount = budget.amount,
+                budgetAmount = normalizedBudgetAmount ?: budget.amount,
                 lowForecast = lowForecast,
                 baseForecast = baseForecast,
                 highForecast = highForecast,
@@ -586,7 +588,12 @@ private fun RecommendationCard(recommendation: BudgetRecommendation, homeCurrenc
                     )
                     
                     Text(
-                        text = recommendation.priority.name,
+                        text = when (recommendation.priority) {
+                            RecommendationPriority.CRITICAL -> stringResource(R.string.budget_priority_critical)
+                            RecommendationPriority.HIGH -> stringResource(R.string.budget_priority_high)
+                            RecommendationPriority.MEDIUM -> stringResource(R.string.budget_priority_medium)
+                            RecommendationPriority.LOW -> stringResource(R.string.budget_priority_low)
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = priorityColor
                     )

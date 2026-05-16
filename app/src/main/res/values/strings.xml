@@ -867,6 +867,11 @@
     <string name="review_edit_required_button">Edit Required</string>
     <string name="review_currency_label">Currency (e.g. USD)</string>
     <string name="budget_partial_currency_warning">Budget data may be incomplete due to currency conversion issues</string>
+    <string name="budget_summary_partial">Incomplete</string>
+    <string name="budget_priority_critical">Critical</string>
+    <string name="budget_priority_high">High</string>
+    <string name="budget_priority_medium">Medium</string>
+    <string name="budget_priority_low">Low</string>
     <string name="home_error_unable_to_load_dashboard">Unable to load dashboard. Pull to refresh.</string>
     <string name="home_error_unable_to_load_totals">Unable to load totals. Please try again.</string>
     <string name="home_error_unable_to_load_breakdown">Unable to load breakdown. Please try again.</string>

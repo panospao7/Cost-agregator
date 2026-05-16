@@ -29,6 +29,8 @@ data class BudgetForecastUiState(
     val recommendations: List<BudgetRecommendation> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    /** S8-013: Normalized budget amount in home currency — use this for display, not budget.amount */
+    val normalizedBudgetAmount: Double? = null,
     /** S8-013: null until loaded — never empty string */
     val homeCurrency: String? = null
 )
@@ -97,7 +99,9 @@ class BudgetForecastingViewModel @Inject constructor(
                         forecast = forecast,
                         recommendations = recommendations,
                         isLoading = false,
-                        error = null
+                        error = null,
+                        // S8-013: Use engine-provided normalized amount for display
+                        normalizedBudgetAmount = forecast.normalizedBudgetAmount.takeIf { it > 0.0 } ?: budget.amount
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
