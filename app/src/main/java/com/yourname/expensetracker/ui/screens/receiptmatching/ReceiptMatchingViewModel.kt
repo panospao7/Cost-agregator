@@ -330,17 +330,17 @@ class ReceiptMatchingViewModel @Inject constructor(
                 }
                 when (val result = matcher.findBestMatch(receipt)) {
                     is MatchResult.AutoMatch -> {
-                        val linkResult = runCatching {
-                            receiptLinkService.linkReceiptToExpense(
-                                receiptId = receipt.id,
-                                expenseId = result.transaction.id,
-                                linkType = "AUTO_MATCH",
-                                source = "ReceiptMatchingViewModel",
-                                confidence = result.score.toFloat()
-                            )
-                        }
-                        if (linkResult.isFailure) {
-                            _state.update { it.copy(error = "Rerun link failed: ${linkResult.exceptionOrNull()?.message}") }
+                        // S7-66F-008: Fold over Result — runCatching wrapping a Result is incorrect
+                        val linkResult = receiptLinkService.linkReceiptToExpense(
+                            receiptId = receipt.id,
+                            expenseId = result.transaction.id,
+                            linkType = "AUTO_MATCH",
+                            source = "ReceiptMatchingViewModel",
+                            confidence = result.score.toFloat()
+                        )
+                        linkResult.onFailure { e ->
+                            _state.update { it.copy(error = "Rerun link failed. Please try again.") }
+                            Timber.e(e, "Rerun link failed for receipt ${receipt.id}")
                         }
                     }
                     is MatchResult.Suggested -> {

@@ -1019,9 +1019,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val receiptId = request.scannedReceiptId
             ?: return Result.failure(IllegalArgumentException("scannedReceiptId is required for atomic create+link"))
 
-        return try {
+        // S7-66F-001: Use DEFER so side effects are NOT dispatched inside the transaction.
+        // If linking fails and the transaction rolls back, no side effects will have run.
+        val expenseIdResult: Result<Long> = try {
             database.withTransaction {
-                when (val result = transactionLifecycleCoordinator.createExpenseStandalone(request)) {
+                @Suppress("DEPRECATION_ERROR")
+                when (val result = transactionLifecycleCoordinator.createExpense(
+                    request,
+                    com.yourname.expensetracker.domain.transaction.SideEffectMode.DEFER
+                )) {
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
                         val linkResult = receiptLinkService.linkReceiptToExpense(
                             receiptId = receiptId,
@@ -1030,7 +1036,6 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             source = com.yourname.expensetracker.domain.transaction.ExpenseSource.RECEIPT_SCAN.name
                         )
                         if (linkResult.isFailure) {
-                            // Throw inside transaction — rolls back the expense creation
                             throw IllegalStateException(
                                 "Receipt link failed — rolling back expense: ${linkResult.exceptionOrNull()?.message}",
                                 linkResult.exceptionOrNull()
@@ -1046,8 +1051,24 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         Result.failure(IllegalStateException("Expense creation failed"))
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e  // S7-66F-005: never swallow cancellation
         } catch (e: Exception) {
             Result.failure(e)
         }
+
+        // S7-66F-001: Dispatch side effects only after successful commit
+        expenseIdResult.onSuccess { expenseId ->
+            try {
+                transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
+                    expenseId,
+                    com.yourname.expensetracker.domain.transaction.ExpenseSource.RECEIPT_SCAN
+                )
+            } catch (e: Exception) {
+                Timber.w(e, "Post-creation side effects failed for receipt expense %d", expenseId)
+            }
+        }
+
+        return expenseIdResult
     }
 }

@@ -61,6 +61,7 @@ enum class ScanStep {
     CAPTURE,
     PROCESSING,
     REVIEW,
+    DUPLICATE,  // S7-66F-004: receipt already scanned/linked — show duplicate card, hide direct Save
     DONE,
     ERROR
 }
@@ -295,19 +296,24 @@ class ReceiptScanViewModel @Inject constructor(
                 // S7-003: Discard result if a newer scan has started
                 if (requestId != scanRequestSeq) return@launch
 
-                // S7-F583-002: If the returned receipt is already linked to an expense,
-                // it is a duplicate — show duplicate state instead of normal review.
+                // S7-F583-002/S7-66F-003: If the receipt is already linked or is a known duplicate,
+                // show DUPLICATE state instead of normal review — block direct save.
                 val linkedExpenseId = receipt.expenseId
-                if (linkedExpenseId != null) {
+                val isAlreadyLinked = linkedExpenseId != null ||
+                    !receiptLinkService.checkCanLinkReceipt(receipt.id)
+                if (isAlreadyLinked) {
                     _state.update {
                         it.copy(
-                            step = ScanStep.REVIEW,
+                            step = ScanStep.DUPLICATE,
                             receiptId = receipt.id,
                             saveResult = SaveReceiptResult.DuplicateReceipt(
                                 existingReceiptId = receipt.id,
                                 linkedExpenseId = linkedExpenseId
                             ),
-                            errorMessage = "This receipt was already scanned and is linked to an existing transaction.",
+                            errorMessage = if (linkedExpenseId != null)
+                                "This receipt is already linked to an existing transaction."
+                            else
+                                "This receipt was already scanned. Use Receipt Matching to link it.",
                             isSaving = false
                         )
                     }
@@ -736,7 +742,11 @@ class ReceiptScanViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Timber.e(e, "Category assist failed for receipt $receiptId")
-                _state.update { it.copy(categoryAssistState = AiLoadState.Error(e.message ?: "AI assist failed")) }
+                // S7-66F-010: Guard catch path by receiptId
+                _state.update { current ->
+                    if (current.receiptId != receiptId) current
+                    else current.copy(categoryAssistState = AiLoadState.Error(e.message ?: "AI assist failed"))
+                }
             } finally {
                 inFlightAssist.remove(key)
             }
@@ -937,6 +947,10 @@ class ReceiptScanViewModel @Inject constructor(
 
     private fun markLatestArtifactApplied(capability: AiCapability) {
         val receiptId = _state.value.receiptId ?: return
+        markLatestArtifactApplied(receiptId, capability)
+    }
+
+    private fun markLatestArtifactApplied(receiptId: Long, capability: AiCapability) {
         viewModelScope.launch {
             aiArtifactRepository.getLatest("scanned_receipt:$receiptId", capability)
                 ?.let { artifact ->
@@ -1149,19 +1163,9 @@ class ReceiptScanViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                // S7-001/002: Preflight — check receipt is linkable BEFORE creating expense
-                // This prevents orphan expenses when linking would fail after creation.
-                val preflightResult = receiptLinkService.linkReceiptToExpense(
-                    receiptId = request.receiptId,
-                    expenseId = -1L, // sentinel — we only want the pre-checks, not an actual link
-                    linkType = "PREFLIGHT_CHECK",
-                    source = "ReceiptScanViewModel"
-                )
-                // linkReceiptToExpense will fail with "Expense not found: -1" if receipt is linkable
-                // but fail with "already linked" if it is not. We only block on the already-linked case.
-                val alreadyLinked = preflightResult.exceptionOrNull()
-                    ?.message?.contains("already linked", ignoreCase = true) == true
-                if (alreadyLinked) {
+                // S7-66F-002: Real linkability check — no sentinel expense ID
+                val canLink = receiptLinkService.checkCanLinkReceipt(request.receiptId)
+                if (!canLink) {
                     _state.update {
                         it.copy(
                             isSaving = false,
@@ -1231,9 +1235,9 @@ class ReceiptScanViewModel @Inject constructor(
                                 )
                             }.onFailure { e -> Timber.w(e, "Classifier learning failed after receipt save") }
                         }
-                        // S7-007: Mark AI artifacts applied only after successful save
+                        // S7-007/S7-66F-011: Mark AI artifacts applied using request receipt ID — not live state
                         request.appliedAiCapabilities.forEach { capability ->
-                            markLatestArtifactApplied(capability)
+                            markLatestArtifactApplied(request.receiptId, capability)
                         }
                         _state.update {
                             it.copy(

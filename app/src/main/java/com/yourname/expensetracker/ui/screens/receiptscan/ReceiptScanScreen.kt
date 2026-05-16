@@ -152,6 +152,7 @@ fun ReceiptScanScreen(
                             ScanStep.REVIEW -> stringResource(R.string.receipt_review_title)
                             ScanStep.DONE -> stringResource(R.string.receipt_saved_title)
                             ScanStep.ERROR -> stringResource(R.string.receipt_error_title)
+                            ScanStep.DUPLICATE -> stringResource(R.string.receipt_duplicate_title)
                         },
                         color = SemanticColors.TextPrimary
                     )
@@ -242,6 +243,52 @@ fun ReceiptScanScreen(
                     errorMessage = state.errorMessage ?: stringResource(R.string.error_unknown),
                     onRetry = { viewModel.retry() }
                 )
+
+                // S7-66F-004: Dedicated duplicate state — hides direct Save
+                ScanStep.DUPLICATE -> {
+                    val dupResult = state.saveResult as? SaveReceiptResult.DuplicateReceipt
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        androidx.compose.material3.Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                            )
+                        ) {
+                            androidx.compose.foundation.layout.Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = stringResource(R.string.receipt_duplicate_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = state.errorMessage ?: stringResource(R.string.receipt_duplicate_message),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                        if (dupResult?.linkedExpenseId != null) {
+                            Button(onClick = { /* navigate to transaction — host handles */ }) {
+                                Text(stringResource(R.string.receipt_duplicate_view_transaction))
+                            }
+                        } else {
+                            Button(onClick = { /* navigate to receipt matching */ }) {
+                                Text(stringResource(R.string.receipt_duplicate_match_existing))
+                            }
+                        }
+                        OutlinedButton(onClick = { viewModel.reset() }) {
+                            Text(stringResource(R.string.receipt_duplicate_scan_new))
+                        }
+                    }
+                }
             }
         }
     }

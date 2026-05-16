@@ -438,6 +438,7 @@ private fun MatchSuggestionCard(
                 
                 OutlinedButton(
                     onClick = onReject,
+                    enabled = !isMutating,
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Default.Close, null)

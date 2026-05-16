@@ -412,4 +412,26 @@ class ReceiptLinkService @Inject constructor(
     suspend fun getLinksForExpense(expenseId: Long): List<ReceiptExpenseLink> {
         return receiptExpenseLinkDao.getLinksForExpense(expenseId)
     }
+
+    /**
+     * S7-66F-006: Non-mutating linkability check — performs no writes.
+     *
+     * Checks both the join table and the legacy [ScannedReceipt.expenseId] field.
+     * Use this before creating an expense to avoid orphan expenses.
+     *
+     * @return true if the receipt can be linked (not already linked), false otherwise.
+     *         Returns false if the receipt does not exist.
+     */
+    suspend fun checkCanLinkReceipt(receiptId: Long, allowRelink: Boolean = false): Boolean {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return false
+        if (!allowRelink) {
+            // Check join table
+            val existingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
+            if (existingLinks.isNotEmpty()) return false
+            // Check legacy expenseId
+            val isBankStatement = receipt.documentType == com.yourname.expensetracker.domain.receipt.ReceiptDocumentType.BANK_STATEMENT.name
+            if (!isBankStatement && receipt.expenseId != null) return false
+        }
+        return true
+    }
 }
