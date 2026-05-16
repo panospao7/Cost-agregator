@@ -79,7 +79,7 @@ fun AnalyticsScreen(
     viewModel: AnalyticsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
-    // S9-003: Use empty string as display fallback when currency not yet loaded
+    // S9-002: currency is only used inside the content block where homeCurrency is guaranteed non-null
     val currency = state.homeCurrency ?: ""
 
     LaunchedEffect(initialPeriod) {
@@ -130,6 +130,28 @@ fun AnalyticsScreen(
                 Spacer(modifier = Modifier.height(16.dp))
                 // Analytics cards skeleton
                 ListSkeleton(itemCount = 6)
+            }
+        } else if (state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Error || state.homeCurrency == null) {
+            // S9-001/002: Show error when analytics failed or currency is unavailable
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = state.error ?: stringResource(R.string.analytics_currency_unavailable),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    androidx.compose.material3.TextButton(onClick = { viewModel.selectPeriod(state.selectedPeriod) }) {
+                        Text(stringResource(R.string.action_retry))
+                    }
+                }
             }
         } else {
             LazyColumn(
@@ -249,6 +271,13 @@ fun AnalyticsScreen(
                     items(state.categoryBreakdown) { CategoryItem(it, homeCurrency = currency) }
                 }
 
+                // S9-006: Show section error if category engine failed and no data
+                if (state.enhancedCategories.isEmpty() && state.categoryBreakdown.isEmpty()) {
+                    state.advancedSectionErrors["categories"]?.let {
+                        item { AnalyticsSectionErrorCard(stringResource(R.string.analytics_section_category_breakdown), it) }
+                    }
+                }
+
                 // 6b. Budget vs Actual
                 if (state.budgetVsActual.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_budget_vs_actual)) }
@@ -291,6 +320,13 @@ fun AnalyticsScreen(
                 } else if (state.merchantBreakdown.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_top_merchants)) }
                     items(state.merchantBreakdown.take(8)) { MerchantItem(it, homeCurrency = currency) }
+                }
+
+                // S9-006: Show section error if merchant engine failed and no data
+                if (state.enhancedMerchants.isEmpty() && state.merchantBreakdown.isEmpty()) {
+                    state.advancedSectionErrors["merchants"]?.let {
+                        item { AnalyticsSectionErrorCard(stringResource(R.string.analytics_section_merchant_intelligence), it) }
+                    }
                 }
 
                 // 8.5. Top Spending Places (B5 — LocationInsightsEngine)
@@ -682,7 +718,7 @@ fun SpendingPatternsCard(analysis: SpendingPatternAnalysis) {
  * @param currency ISO-4217 currency code. Default "EUR" is a placeholder;
  *                 callers should pass the actual home currency from settings.
  */
-fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>, currency: String = "EUR") {
+fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>, currency: String) {
     BentoCard {
         Column {
             Text(
@@ -1804,5 +1840,30 @@ private fun parseTimePeriodOrNull(value: String): TimePeriod? {
         "year" -> TimePeriod.YEAR
         "all" -> TimePeriod.ALL
         else -> null
+    }
+}
+
+/** S9-006: Reusable section-unavailable card for analytics section failures. */
+@Composable
+private fun AnalyticsSectionErrorCard(sectionName: String, errorMessage: String) {
+    androidx.compose.material3.Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
+        )
+    ) {
+        androidx.compose.foundation.layout.Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "$sectionName unavailable",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = stringResource(R.string.analytics_section_error_generic),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+            )
+        }
     }
 }

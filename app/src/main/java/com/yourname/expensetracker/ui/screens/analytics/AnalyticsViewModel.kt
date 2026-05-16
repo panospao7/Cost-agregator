@@ -109,6 +109,9 @@ data class AnalyticsState(
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<AnalyticsState>
         get() = when {
             isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            error != null -> com.yourname.expensetracker.ui.model.LoadableUiState.Error(
+                com.yourname.expensetracker.domain.model.UiText.DynamicString(error)
+            )
             else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(this)
         }
 }
@@ -300,9 +303,23 @@ class AnalyticsViewModel @Inject constructor(
                 return@flow
             }
 
-            val result = computeAnalyticsInternal(categories, period, currentStart, currentEnd, now, cacheKey, homeCurrency, rateTimestamp)
-            analyticsCache[cacheKey] = result
-            emit(result)
+            // S9-008: Top-level catch around compute
+            try {
+                val result = computeAnalyticsInternal(categories, period, currentStart, currentEnd, now, cacheKey, homeCurrency, rateTimestamp)
+                analyticsCache[cacheKey] = result
+                emit(result)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // S9-008: never swallow cancellation
+            } catch (e: Exception) {
+                // S9-008: Top-level catch — surface compute failures as visible error state
+                Timber.e(e, "Analytics compute failed for period $period")
+                emit(AnalyticsState(
+                    isLoading = false,
+                    selectedPeriod = period,
+                    homeCurrency = homeCurrency,
+                    error = "Analytics failed to load. Please try again."
+                ))
+            }
         }
     }
     .flowOn(Dispatchers.Default)
@@ -573,16 +590,16 @@ class AnalyticsViewModel @Inject constructor(
             // Spending patterns and statistical insights still use the old API (not yet migrated)
             val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
             val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
-            val (cats, catWarnings) = try { catDeferred.await() } catch (e: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
-            val (merchs, merchWarnings) = try { merchDeferred.await() } catch (e: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
-            val (patterns, patternWarnings) = try { patternsDeferred.await() } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
-            val (stats, statWarnings) = try { statsDeferred.await() } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
+            val (cats, catWarnings) = try { catDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
+            val (merchs, merchWarnings) = try { merchDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
+            val (patterns, patternWarnings) = try { patternsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
+            val (stats, statWarnings) = try { statsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
             // S9-012: Collect per-section errors so UI can show "section unavailable" instead of silent empty
             val sectionErrors = buildMap<String, String> {
-                try { catDeferred.await() } catch (e: Exception) { put("categories", e.message ?: "Category analytics failed") }
-                try { merchDeferred.await() } catch (e: Exception) { put("merchants", e.message ?: "Merchant analytics failed") }
-                try { patternsDeferred.await() } catch (e: Exception) { put("patterns", e.message ?: "Spending patterns failed") }
-                try { statsDeferred.await() } catch (e: Exception) { put("statistics", e.message ?: "Statistical insights failed") }
+                try { catDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("categories", e.message ?: "Category analytics failed") }
+                try { merchDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("merchants", e.message ?: "Merchant analytics failed") }
+                try { patternsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("patterns", e.message ?: "Spending patterns failed") }
+                try { statsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { put("statistics", e.message ?: "Statistical insights failed") }
             }
             AdvResult(
                 cats = cats,
