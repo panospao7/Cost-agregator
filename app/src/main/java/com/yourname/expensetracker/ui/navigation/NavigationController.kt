@@ -110,6 +110,7 @@ internal fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.Assistant -> "assistant"
     is NavigationDestination.Review -> "review"
     is NavigationDestination.Budget -> "budget"
+    is NavigationDestination.BudgetCreate -> "budget_create"
     is NavigationDestination.BudgetDetail -> buildSaveToken(
         base = "budget_detail",
         params = mapOf(
@@ -191,6 +192,7 @@ internal fun destinationFromSaveToken(token: String): NavigationDestination? {
         baseToken == "assistant" -> NavigationDestination.Assistant
         baseToken == "review" -> NavigationDestination.Review
         baseToken == "budget" -> NavigationDestination.Budget
+        baseToken == "budget_create" -> NavigationDestination.BudgetCreate
         baseToken == "budget_detail" -> NavigationDestination.BudgetDetail(
             categoryId = params["categoryId"]?.toLongOrNull(),
             categoryName = params["categoryName"]?.takeIf { it.isNotBlank() }
@@ -379,6 +381,7 @@ class NavigationController(
             is NavigationDestination.Transactions,
             is NavigationDestination.Review,
             is NavigationDestination.Budget,
+            is NavigationDestination.BudgetCreate,
             is NavigationDestination.BudgetDetail,
             is NavigationDestination.Analytics,
             is NavigationDestination.SpendingMap -> true
@@ -395,6 +398,7 @@ class NavigationController(
             is NavigationDestination.Transactions -> 1
             is NavigationDestination.Review -> 2
             is NavigationDestination.Budget -> 3
+            is NavigationDestination.BudgetCreate -> 3
             is NavigationDestination.BudgetDetail -> 3
             is NavigationDestination.Analytics -> 4
             is NavigationDestination.SpendingMap -> 5

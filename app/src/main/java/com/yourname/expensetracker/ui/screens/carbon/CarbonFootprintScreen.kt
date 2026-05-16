@@ -36,6 +36,7 @@ import com.yourname.expensetracker.ui.components.common.InlineErrorBanner
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateFeatureAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import kotlin.math.abs
@@ -260,7 +261,8 @@ fun CarbonFootprintScreen(
                                 is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
                                 is EmptyStateActionType.OpenFeature -> {
                                     when (actionType.feature) {
-                                        "carbon_offset" -> onViewOffsetOptions()
+                                        EmptyStateFeatureAction.CarbonOffset -> onViewOffsetOptions()
+                                        else -> {}
                                     }
                                 }
                             }

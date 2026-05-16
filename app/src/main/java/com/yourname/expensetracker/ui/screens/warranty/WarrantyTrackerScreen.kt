@@ -29,6 +29,7 @@ import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateFeatureAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import java.time.Instant
@@ -276,7 +277,10 @@ fun WarrantyTrackerScreen(
                             }
                             is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
                             is EmptyStateActionType.OpenFeature -> {
-                                // Handle opening feature
+                                when (actionType.feature) {
+                                    EmptyStateFeatureAction.AddWarranty -> { /* handled by primary button */ }
+                                    else -> { /* other features not handled here */ }
+                                }
                             }
                         }
                     },

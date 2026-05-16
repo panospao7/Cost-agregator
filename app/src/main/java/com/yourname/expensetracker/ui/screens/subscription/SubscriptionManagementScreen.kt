@@ -32,6 +32,7 @@ import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateFeatureAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -141,8 +142,9 @@ fun SubscriptionManagementScreen(
                                 is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
                                 is EmptyStateActionType.OpenFeature -> {
                                     when (actionType.feature) {
-                                        "notification_settings" -> onOpenNotificationSettings()
-                                        "add_subscription" -> showAddDialog = true
+                                        EmptyStateFeatureAction.NotificationSettings -> onOpenNotificationSettings()
+                                        EmptyStateFeatureAction.AddSubscription -> showAddDialog = true
+                                        else -> {}
                                     }
                                 }
                             }

@@ -32,6 +32,7 @@ import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateFeatureAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -158,10 +159,9 @@ fun SpendingChallengesScreen(
                                 is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
                                 is EmptyStateActionType.OpenFeature -> {
                                     when (actionType.feature) {
-                                        "create_challenge" -> onCreateChallenge()
-                                        "no_spend_streak" -> {
-                                            // Handle no spend streak
-                                        }
+                                        EmptyStateFeatureAction.CreateChallenge -> onCreateChallenge()
+                                        EmptyStateFeatureAction.NoSpendStreak -> { /* no-spend streak handled by home dashboard */ }
+                                        else -> {}
                                     }
                                 }
                             }

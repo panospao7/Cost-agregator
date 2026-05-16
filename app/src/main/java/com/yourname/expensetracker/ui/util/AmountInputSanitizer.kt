@@ -36,9 +36,11 @@ object AmountInputSanitizer {
         val cleaned = raw.filter { it.isDigit() || it == '.' }
         if (cleaned.isEmpty()) return ""
 
-        val parts = cleaned.split('.')
+        // S2-002: Leading decimal → prepend "0" so ".5" becomes "0.5"
+        val normalized = if (cleaned.startsWith('.')) "0$cleaned" else cleaned
 
-        // S2-002: Preserve transient "0" and "0." so user can type "0.50"
+        val parts = normalized.split('.')
+
         val rawInteger = parts[0].take(MAX_INTEGER_DIGITS)
         val integerPart = if (rawInteger.all { it == '0' }) {
             if (rawInteger.isEmpty()) "" else "0"

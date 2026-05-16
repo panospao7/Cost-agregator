@@ -837,6 +837,7 @@ fun MainScreen(
                 is NavigationDestination.Transactions,
                 is NavigationDestination.Review,
                 is NavigationDestination.Budget,
+                is NavigationDestination.BudgetCreate,
                 is NavigationDestination.BudgetDetail,
                 is NavigationDestination.Analytics,
                 is NavigationDestination.SpendingMap -> { /* Handled by AnimatedContent */ }

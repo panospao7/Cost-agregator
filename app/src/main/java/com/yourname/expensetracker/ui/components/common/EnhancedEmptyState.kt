@@ -346,7 +346,7 @@ private fun EnhancedEmptyStateWithActionsPreview() {
                     titleRes = R.string.empty_action_scan_receipt_title,
                     descriptionRes = R.string.empty_action_scan_receipt_desc,
                     icon = Icons.Default.Check,
-                    action = EmptyStateActionType.OpenFeature("scan_receipt"),
+                    action = EmptyStateActionType.NavigateToDestination(com.yourname.expensetracker.ui.navigation.NavigationDestination.ScanReceipt),
                     priority = 10
                 ),
                 EmptyStateAction(
@@ -354,7 +354,7 @@ private fun EnhancedEmptyStateWithActionsPreview() {
                     titleRes = R.string.empty_action_add_manually_title,
                     descriptionRes = R.string.empty_action_add_expense_desc,
                     icon = Icons.Default.Check,
-                    action = EmptyStateActionType.OpenFeature("add_expense"),
+                    action = EmptyStateActionType.NavigateToDestination(com.yourname.expensetracker.ui.navigation.NavigationDestination.AddExpense),
                     priority = 5
                 )
             ),

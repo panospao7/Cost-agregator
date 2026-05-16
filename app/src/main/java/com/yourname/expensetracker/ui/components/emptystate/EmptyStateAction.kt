@@ -24,22 +24,28 @@ data class EmptyStateAction(
 )
 
 /**
+ * S2-007R: Typed feature action enum — replaces raw string IDs in OpenFeature.
+ * Adding a new value here requires updating the executor (compile-time enforcement).
+ */
+enum class EmptyStateFeatureAction {
+    AddWarranty,
+    NotificationSettings,
+    AddSubscription,
+    CreateSavingsGoal,
+    SavingsRecommendations,
+    CreateChallenge,
+    NoSpendStreak,
+    CarbonOffset,
+    IncomeSettings
+}
+
+/**
  * Sealed class representing different types of actions that can be performed
  * from an empty state.
  */
 sealed class EmptyStateActionType {
-    /**
-     * Navigate to a specific destination in the app.
-     */
     data class NavigateToDestination(val destination: NavigationDestination) : EmptyStateActionType()
-
-    /**
-     * Execute an arbitrary action (lambda).
-     */
     data class ExecuteAction(val action: () -> Unit) : EmptyStateActionType()
-
-    /**
-     * Open a specific feature by its identifier.
-     */
-    data class OpenFeature(val feature: String) : EmptyStateActionType()
+    /** S2-007R: Typed — no raw strings. Executor must handle every enum value. */
+    data class OpenFeature(val feature: EmptyStateFeatureAction) : EmptyStateActionType()
 }

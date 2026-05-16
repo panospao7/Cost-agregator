@@ -189,6 +189,7 @@ fun FormDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
     confirmEnabled: Boolean = true,
+    isSubmitting: Boolean = false,
     confirmText: String = "",
     dismissText: String = "",
     content: @Composable ColumnScope.() -> Unit
@@ -208,13 +209,22 @@ fun FormDialog(
         confirmButton = {
             Button(
                 onClick = onConfirm,
-                enabled = confirmEnabled
+                // S2-018R: Prevent double-submit
+                enabled = confirmEnabled && !isSubmitting
             ) {
-                Text(resolvedConfirm)
+                if (isSubmitting) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = androidx.compose.ui.graphics.Color.White
+                    )
+                } else {
+                    Text(resolvedConfirm)
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = onDismiss, enabled = !isSubmitting) {
                 Text(resolvedDismiss)
             }
         }

@@ -50,7 +50,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_add_manually_title,
                     descriptionRes = R.string.empty_action_add_warranty_desc,
                     icon = Icons.Default.Add,
-                    action = EmptyStateActionType.OpenFeature("add_warranty"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.AddWarranty),
                     priority = 5
                 )
             )
@@ -66,7 +66,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_connect_notifications_title,
                     descriptionRes = R.string.empty_action_connect_notifications_desc,
                     icon = Icons.Default.Notifications,
-                    action = EmptyStateActionType.OpenFeature("notification_settings"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.NotificationSettings),
                     priority = 10
                 ),
                 EmptyStateAction(
@@ -74,7 +74,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_add_subscription_title,
                     descriptionRes = R.string.empty_action_add_subscription_desc,
                     icon = Icons.Default.Add,
-                    action = EmptyStateActionType.OpenFeature("add_subscription"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.AddSubscription),
                     priority = 8
                 ),
                 EmptyStateAction(
@@ -98,7 +98,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_create_goal_title,
                     descriptionRes = R.string.empty_action_create_goal_desc,
                     icon = Icons.Default.Savings,
-                    action = EmptyStateActionType.OpenFeature("create_savings_goal"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.CreateSavingsGoal),
                     priority = 10
                 ),
                 EmptyStateAction(
@@ -106,7 +106,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_view_recommendations_title,
                     descriptionRes = R.string.empty_action_view_recommendations_desc,
                     icon = Icons.Default.ShowChart,
-                    action = EmptyStateActionType.OpenFeature("savings_recommendations"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.SavingsRecommendations),
                     priority = 7
                 )
             )
@@ -122,7 +122,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_start_challenge_title,
                     descriptionRes = R.string.empty_action_start_challenge_desc,
                     icon = Icons.Default.EmojiEvents,
-                    action = EmptyStateActionType.OpenFeature("create_challenge"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.CreateChallenge),
                     priority = 10
                 ),
                 EmptyStateAction(
@@ -130,7 +130,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_no_spend_streak_title,
                     descriptionRes = R.string.empty_action_no_spend_streak_desc,
                     icon = Icons.Default.TrendingUp,
-                    action = EmptyStateActionType.OpenFeature("no_spend_streak"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.NoSpendStreak),
                     priority = 5
                 )
             )
@@ -155,7 +155,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_offset_options_title,
                     descriptionRes = R.string.empty_action_offset_options_desc,
                     icon = Icons.Default.Forest,
-                    action = EmptyStateActionType.OpenFeature("carbon_offset"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.CarbonOffset),
                     priority = 7
                 ),
                 EmptyStateAction(
@@ -188,7 +188,7 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_set_income_title,
                     descriptionRes = R.string.empty_action_set_income_desc,
                     icon = Icons.Default.TrendingUp,
-                    action = EmptyStateActionType.OpenFeature("income_settings"),
+                    action = EmptyStateActionType.OpenFeature(EmptyStateFeatureAction.IncomeSettings),
                     priority = 8
                 ),
                 EmptyStateAction(
@@ -268,7 +268,8 @@ class DefaultEmptyStateRegistryInitializer @Inject constructor() : EmptyStateReg
                     titleRes = R.string.empty_action_create_budget_title,
                     descriptionRes = R.string.empty_action_create_budget_desc,
                     icon = Icons.Default.Add,
-                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.Budget),
+                    // S2-008R: BudgetCreate opens the create dialog, not just the Budget list
+                    action = EmptyStateActionType.NavigateToDestination(NavigationDestination.BudgetCreate),
                     priority = 10
                 )
             )

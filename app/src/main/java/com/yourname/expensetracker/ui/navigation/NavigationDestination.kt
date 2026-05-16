@@ -24,6 +24,8 @@ sealed class NavigationDestination {
     data object Assistant : NavigationDestination()
     data object Review : NavigationDestination()
     data object Budget : NavigationDestination()
+    /** S2-008R: Opens Budget screen with create dialog pre-opened */
+    data object BudgetCreate : NavigationDestination()
     data class BudgetDetail(
         val categoryId: Long? = null,
         val categoryName: String? = null

@@ -120,7 +120,7 @@ fun TransactionItemSkeleton(
             // Icon placeholder
             SkeletonBox(
                 modifier = Modifier.size(40.dp),
-                color = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f)
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
             )
             
             Spacer(modifier = Modifier.width(Dimens.Space16))
@@ -159,8 +159,12 @@ fun TransactionItemSkeleton(
 fun DashboardCardSkeleton(
     modifier: Modifier = Modifier
 ) {
+    val loadingDescription = stringResource(R.string.a11y_loading_content)
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            // S2-009R: Parent announces loading once
+            .semantics { contentDescription = loadingDescription },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
@@ -177,7 +181,7 @@ fun DashboardCardSkeleton(
             ) {
                 SkeletonBox(
                     modifier = Modifier.size(Dimens.IconMedium),
-                    color = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f)
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                 )
                 Spacer(modifier = Modifier.width(Dimens.Space12))
                 SkeletonBox(
@@ -216,8 +220,11 @@ fun ChartSkeleton(
     modifier: Modifier = Modifier,
     bars: Int = 7
 ) {
+    val loadingDescription = stringResource(R.string.a11y_loading_content)
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = loadingDescription },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
@@ -252,7 +259,7 @@ fun ChartSkeleton(
                             .width(24.dp)
                             .fillMaxHeight(heightFraction)
                             .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)),
-                        color = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f)
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                     )
                 }
             }
