@@ -654,22 +654,24 @@ class ReceiptScanViewModel @Inject constructor(
     fun requestCategoryAssist(force: Boolean = false) {
         val currentState = _state.value
         val receiptId = currentState.receiptId ?: return
-        // S7-016: In-flight guard
-        val key = "category_assist"
+        // S7-F583-003: Scope key by receiptId — same as receipt assist
+        val key = "category_assist:$receiptId"
         if (!inFlightAssist.add(key)) return
 
         viewModelScope.launch {
             val receipt = receiptRepository.getReceiptById(receiptId)
             if (receipt == null) {
                 inFlightAssist.remove(key)
-                _state.update {
-                    it.copy(categoryAssistState = AiLoadState.Error("Receipt not found"), categoryAssistDiagnostics = null, categoryAssistMessage = "Receipt not found")
+                _state.update { current ->
+                    if (current.receiptId != receiptId) current
+                    else current.copy(categoryAssistState = AiLoadState.Error("Receipt not found"), categoryAssistDiagnostics = null, categoryAssistMessage = "Receipt not found")
                 }
                 return@launch
             }
 
-            _state.update {
-                it.copy(categoryAssistState = AiLoadState.Loading, categoryAssistMessage = null, categoryAssistDiagnostics = null, errorMessage = null)
+            _state.update { current ->
+                if (current.receiptId != receiptId) current
+                else current.copy(categoryAssistState = AiLoadState.Loading, categoryAssistMessage = null, categoryAssistDiagnostics = null, errorMessage = null)
             }
             try {
                 when (val result = suggestCategoryFallbackUseCase(
@@ -682,8 +684,9 @@ class ReceiptScanViewModel @Inject constructor(
                 )) {
                     is CategoryAssistGenerationResult.Success -> {
                         val diagnostics = latestArtifactDiagnostics("scanned_receipt:$receiptId", AiCapability.CATEGORIZATION_FALLBACK)
-                        _state.update {
-                            it.copy(
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(
                                 categoryAssistState = AiLoadState.Ready(result.suggestion),
                                 categoryAssistDiagnostics = diagnostics,
                                 categoryAssistMessage = if (result.fromCache) "Showing cached AI category suggestion." else "AI suggested a category to review."
@@ -691,14 +694,23 @@ class ReceiptScanViewModel @Inject constructor(
                         }
                     }
                     is CategoryAssistGenerationResult.Disabled -> {
-                        _state.update { it.copy(categoryAssistState = AiLoadState.Disabled, categoryAssistDiagnostics = null, categoryAssistMessage = result.reason) }
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(categoryAssistState = AiLoadState.Disabled, categoryAssistDiagnostics = null, categoryAssistMessage = result.reason)
+                        }
                     }
                     is CategoryAssistGenerationResult.NotNeeded -> {
-                        _state.update { it.copy(categoryAssistState = AiLoadState.Idle, categoryAssistDiagnostics = null, categoryAssistMessage = result.reason) }
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(categoryAssistState = AiLoadState.Idle, categoryAssistDiagnostics = null, categoryAssistMessage = result.reason)
+                        }
                     }
                     is CategoryAssistGenerationResult.Error -> {
                         val diagnostics = latestArtifactDiagnostics("scanned_receipt:$receiptId", AiCapability.CATEGORIZATION_FALLBACK, AiArtifactStatus.FAILED)
-                        _state.update { it.copy(categoryAssistState = AiLoadState.Error(result.reason), categoryAssistDiagnostics = diagnostics, categoryAssistMessage = result.reason) }
+                        _state.update { current ->
+                            if (current.receiptId != receiptId) current
+                            else current.copy(categoryAssistState = AiLoadState.Error(result.reason), categoryAssistDiagnostics = diagnostics, categoryAssistMessage = result.reason)
+                        }
                     }
                 }
             } catch (e: CancellationException) {
@@ -860,12 +872,19 @@ class ReceiptScanViewModel @Inject constructor(
             receiptId = currentState.receiptId ?: return,
             merchant = preview.merchant,
             amount = preview.amount,
-            currency = currentState.editCurrency ?: "",
+            currency = run {
+                // S7-F583-006: Re-check currency at confirm time — preview can be stale
+                val cur = currentState.editCurrency?.takeIf { it.isNotBlank() }
+                if (cur == null) {
+                    _state.update { it.copy(errorMessage = "Currency is not loaded yet. Please wait and retry.") }
+                    return
+                }
+                cur
+            },
             date = preview.date,
             categoryId = preview.categoryId,
             paymentMethod = currentState.paymentMethod,
             notes = currentState.notes.takeIf { it.isNotBlank() },
-            // S7-007: Pass capabilities so they can be marked applied only after save succeeds
             appliedAiCapabilities = preview.usedCapabilities
         )
 
@@ -916,11 +935,7 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun retry() {
-        // S7-003: Cancel both jobs and increment sequence to invalidate in-flight results
-        scanRequestSeq++
-        scanJob?.cancel()
-        scanJob = null
-        itemAnalysisJob?.cancel()
+        cancelActiveWork()
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
@@ -930,17 +945,28 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun reset() {
-        // S7-003: Cancel both jobs and increment sequence to invalidate in-flight results
-        scanRequestSeq++
-        scanJob?.cancel()
-        scanJob = null
-        itemAnalysisJob?.cancel()
+        cancelActiveWork()
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
                 receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
             )
         }
+    }
+
+    /** S7-F583-006: Centralized cleanup — cancels all in-flight work and clears assist state. */
+    private fun cancelActiveWork() {
+        scanRequestSeq++
+        scanJob?.cancel()
+        scanJob = null
+        itemAnalysisJob?.cancel()
+        itemAnalysisJob = null
+        inFlightAssist.clear()
+    }
+
+    override fun onCleared() {
+        cancelActiveWork()
+        super.onCleared()
     }
 
     private fun buildManualSaveRequest(currentState: ReceiptScanState): ReceiptSaveRequest? {

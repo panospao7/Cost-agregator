@@ -162,6 +162,7 @@ fun ReceiptMatchingScreen(
                             MatchSuggestionCard(
                                 suggestion = suggestion,
                                 dateFormat = dateFormat,
+                                isMutating = suggestion.receipt.id in state.mutatingReceiptIds,
                                 onApprove = { viewModel.approveSuggestion(suggestion.receipt.id) },
                                 onReject = { viewModel.rejectSuggestion(suggestion.receipt.id) }
                             )
@@ -180,6 +181,7 @@ fun ReceiptMatchingScreen(
                             UnmatchedReceiptCard(
                                 receipt = receipt,
                                 dateFormat = dateFormat,
+                                isMutating = receipt.id in state.mutatingReceiptIds,
                                 onManualMatch = { viewModel.openManualMatch(receipt) },
                                 onSkip = { viewModel.skipReceipt(receipt.id) },
                                 onRerun = { viewModel.rerunForReceipt(receipt) }
@@ -206,6 +208,7 @@ fun ReceiptMatchingScreen(
 private fun UnmatchedReceiptCard(
     receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt,
     dateFormat: DateTimeFormatter,
+    isMutating: Boolean = false,
     onManualMatch: () -> Unit,
     onSkip: () -> Unit,
     onRerun: () -> Unit
@@ -218,7 +221,7 @@ private fun UnmatchedReceiptCard(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = stringResource(R.string.receipt_receipt_total, receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "�"),
+                text = stringResource(R.string.receipt_receipt_total, receipt.parsedTotal?.let { com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(it, receipt.currency) } ?: stringResource(R.string.receipt_amount_unavailable)),
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -228,17 +231,17 @@ private fun UnmatchedReceiptCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onManualMatch, modifier = Modifier.weight(1f)) {
+                Button(onClick = onManualMatch, enabled = !isMutating, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Link, null)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(stringResource(R.string.receipt_action_manual_match))
                 }
-                OutlinedButton(onClick = onSkip, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onSkip, enabled = !isMutating, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.SkipNext, null)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(stringResource(R.string.receipt_action_skip))
                 }
-                OutlinedButton(onClick = onRerun, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onRerun, enabled = !isMutating, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Refresh, null)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(stringResource(R.string.receipt_action_rerun))
@@ -265,7 +268,7 @@ private fun ManualMatchDialog(
                     text = stringResource(
                         R.string.receipt_manual_match_target,
                         receipt.parsedMerchant ?: stringResource(R.string.receipt_label_unknown),
-                        receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "�"
+                        receipt.parsedTotal?.let { com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(it, receipt.currency) } ?: stringResource(R.string.receipt_amount_unavailable)
                     ),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -343,6 +346,7 @@ private fun StatCard(
 private fun MatchSuggestionCard(
     suggestion: MatchSuggestion,
     dateFormat: DateTimeFormatter,
+    isMutating: Boolean = false,
     onApprove: () -> Unit,
     onReject: () -> Unit
 ) {
@@ -364,7 +368,7 @@ private fun MatchSuggestionCard(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = stringResource(R.string.receipt_receipt_total, suggestion.receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "�"),
+                        text = stringResource(R.string.receipt_receipt_total, suggestion.receipt.parsedTotal?.let { com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(it, suggestion.receipt.currency) } ?: stringResource(R.string.receipt_amount_unavailable)),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -425,11 +429,11 @@ private fun MatchSuggestionCard(
             ) {
                 Button(
                     onClick = onApprove,
+                    enabled = !isMutating,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Default.Check, null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.receipt_action_approve))
+                    if (isMutating) androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else { Icon(Icons.Default.Check, null); Spacer(modifier = Modifier.width(4.dp)); Text(stringResource(R.string.receipt_action_approve)) }
                 }
                 
                 OutlinedButton(

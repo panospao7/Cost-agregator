@@ -920,6 +920,7 @@ private fun ReviewStep(
             items = itemCategorizations,
             categories = categories,
             isLoading = state.isAnalyzingItems,
+            currency = state.editCurrency ?: state.parsedReceipt?.currency ?: "",
             updatingItemIds = state.itemCorrectionUpdatingIds,
             onItemCategoryChanged = { item, category ->
                 viewModel.updateItemCategory(item, category)

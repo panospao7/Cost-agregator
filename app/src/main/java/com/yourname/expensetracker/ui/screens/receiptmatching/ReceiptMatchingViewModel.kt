@@ -95,12 +95,15 @@ class ReceiptMatchingViewModel @Inject constructor(
 
     // S7-021: Cancel previous load before starting a new one to prevent stale-write races
     private var loadJob: kotlinx.coroutines.Job? = null
+    // S7-F583-014: Generation counter — stale loads check before writing state
+    private var loadSeq = 0L
 
     init {
         loadReceipts()
     }
 
     private fun loadReceipts() {
+        val seq = ++loadSeq
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
@@ -119,6 +122,8 @@ class ReceiptMatchingViewModel @Inject constructor(
                         expenseCurrency = expense?.currency
                     )
                 }
+                // S7-F583-014: Only write if this is still the latest load
+                if (seq != loadSeq) return@launch
                 _state.update {
                     it.copy(
                         unmatchedReceipts = unmatched,
@@ -127,9 +132,11 @@ class ReceiptMatchingViewModel @Inject constructor(
                         pendingSuggestionCount = suggestions.size
                     )
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e  // never swallow cancellation
             } catch (e: Exception) {
                 Timber.e(e, "ReceiptMatchingViewModel: loadReceipts failed")
-                _state.update { it.copy(isLoading = false, error = "Failed to load receipts: ${e.message}") }
+                if (seq == loadSeq) _state.update { it.copy(isLoading = false, error = "Failed to load receipts.") }
             }
         }
     }
@@ -210,7 +217,8 @@ class ReceiptMatchingViewModel @Inject constructor(
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
             }
-            loadReceipts()
+            // S7-F583-007: Only reload on success — reload clears error, hiding failure from user
+            if (_state.value.error == null) loadReceipts()
         }
     }
 
