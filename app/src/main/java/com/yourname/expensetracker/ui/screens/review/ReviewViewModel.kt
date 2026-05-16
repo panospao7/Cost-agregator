@@ -40,6 +40,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
@@ -118,6 +121,7 @@ class ReviewViewModel @Inject constructor(
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage,
     private val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
+    private val privacyGate: com.yourname.expensetracker.domain.privacy.PrivacyGate,
     private val explainPendingReviewUseCase: ExplainPendingReviewUseCase,
     private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
     private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
@@ -150,6 +154,9 @@ class ReviewViewModel @Inject constructor(
     // S6-018: Location search state owned by ViewModel
     private val _locationEditState = MutableStateFlow(ReviewLocationEditState())
     val locationEditState: StateFlow<ReviewLocationEditState> = _locationEditState.asStateFlow()
+
+    // S6-D5-007: Debounced location query flow — prevents geocoding spam and stale-result races
+    private val _locationQueryFlow = MutableStateFlow("")
 
     private val _debugData = MutableStateFlow<com.yourname.expensetracker.ui.screens.debug.DebugData?>(null)
     val debugData = _debugData.asStateFlow()
@@ -222,6 +229,45 @@ class ReviewViewModel @Inject constructor(
                 }
             }
         }
+
+        // S6-D5-007: Debounced, privacy-gated, stale-result-safe location search
+        viewModelScope.launch {
+            _locationQueryFlow
+                .debounce(300L)
+                .distinctUntilChanged()
+                .flatMapLatest { query ->
+                    kotlinx.coroutines.flow.flow {
+                        if (query.length < 3) {
+                            emit(emptyList<com.yourname.expensetracker.domain.location.GeocodingResult>())
+                            return@flow
+                        }
+                        val decision = privacyGate.check(
+                            com.yourname.expensetracker.domain.privacy.PrivacyCapability.EXTERNAL_GEOCODING
+                        )
+                        if (decision.blocksExecution()) {
+                            _locationEditState.update { it.copy(isSearching = false, results = emptyList(), error = "Location search is disabled by privacy settings.") }
+                            return@flow
+                        }
+                        _locationEditState.update { it.copy(isSearching = true, error = null) }
+                        try {
+                            val batchResult = geocodingService.searchMultiple(query)
+                            val results = when (batchResult) {
+                                is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Success -> batchResult.results
+                                is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Failure -> emptyList()
+                            }
+                            emit(results)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.e(e, "Location search failed")
+                            emit(emptyList())
+                        }
+                    }
+                }
+                .collect { results ->
+                    _locationEditState.update { it.copy(results = results, isSearching = false) }
+                }
+        }
     }
 
     private var batchJob: Job? = null
@@ -240,17 +286,19 @@ class ReviewViewModel @Inject constructor(
      */
     fun loadAiExplanation(reviewId: Long) {
         if (_inFlightExplanations.contains(reviewId)) return
+        // S6-D5-008: Add before launch — prevents two synchronous calls from both passing the check
+        _inFlightExplanations.add(reviewId)
 
         viewModelScope.launch {
             // Settings gate — check before touching UI state
             val settings = aiSettingsRepository.settings().first()
             if (!settings.aiEnabled || !settings.reviewExplanationEnabled) {
                 _aiExplanationStates.update { it + (reviewId to AiLoadState.Disabled) }
+                _inFlightExplanations.remove(reviewId)
                 return@launch
             }
 
-            // Mark in-flight and show loading
-            _inFlightExplanations.add(reviewId)
+            // Show loading
             _aiExplanationStates.update { it + (reviewId to AiLoadState.Loading) }
 
             try {
@@ -404,6 +452,11 @@ class ReviewViewModel @Inject constructor(
                 // S6-005: Emit success so screen can close dialog
                 _editApproveSuccess.tryEmit(reviewId)
 
+                // S6-D5-011: Mark category artifact applied only after successful save
+                if (finalCategoryId != null) {
+                    markCategoryArtifactApplied(reviewId)
+                }
+
                 if (applyToAll && (finalCategoryId != null || finalMerchant != null)) {
                     try {
                         val originalMerchant = originalReview?.suggestedMerchant
@@ -439,6 +492,10 @@ class ReviewViewModel @Inject constructor(
                                      finalCategoryId = finalCategoryId,
                                      finalDate = finalDate,
                                      finalType = finalType,
+                                     // S6-D5-005: Pass transfer metadata and location-clear to bulk approvals
+                                     finalTransferDirection = finalTransferDirection,
+                                     finalTransferAccountName = finalTransferAccountName,
+                                     locationCleared = locationCleared,
                                      finalLatitude = finalLatitude,
                                      finalLongitude = finalLongitude,
                                      finalAddress = finalAddress,
@@ -638,9 +695,7 @@ class ReviewViewModel @Inject constructor(
         }
         // S6-014: Emit one-shot event instead of writing to prefill map
         _uiEvents.tryEmit(ReviewUiEvent.OpenEditWithPrefill(reviewId = reviewId, categoryId = categoryId))
-        viewModelScope.launch {
-            markCategoryArtifactApplied(reviewId)
-        }
+        // S6-D5-011: Do NOT mark artifact applied here — mark only after successful save
     }
 
     /** S6-013: Which field(s) to apply from receipt suggestion. */
@@ -714,6 +769,12 @@ class ReviewViewModel @Inject constructor(
             _errorMessage.value = "Review quick approve is turned off."
             return
         }
+        // S6-D5-012: Revalidate eligibility at confirm time — review/category may have changed
+        if (!canOfferQuickApprove(preview.reviewId)) {
+            _quickApprovePreview.value = null
+            _errorMessage.value = "Review changed since preview. Please review it again."
+            return
+        }
         // S6-011: Don't clear preview yet — keep it open until we know the result
         if (!beginMutation(preview.reviewId)) return
 
@@ -754,22 +815,10 @@ class ReviewViewModel @Inject constructor(
     // S6-018: Location search actions — UI calls these instead of accessing geocodingService directly
     fun onLocationQueryChanged(query: String) {
         _locationEditState.update { it.copy(query = query, error = null) }
+        // S6-D5-007: Emit to debounced flow — pipeline handles privacy gate, debounce, stale results
+        _locationQueryFlow.value = query
         if (query.length < 3) {
             _locationEditState.update { it.copy(results = emptyList(), isSearching = false) }
-            return
-        }
-        viewModelScope.launch {
-            _locationEditState.update { it.copy(isSearching = true) }
-            try {
-                val batchResult = geocodingService.searchMultiple(query)
-                val results = when (batchResult) {
-                    is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Success -> batchResult.results
-                    is com.yourname.expensetracker.domain.location.GeocodingBatchResult.Failure -> emptyList()
-                }
-                _locationEditState.update { it.copy(results = results, isSearching = false) }
-            } catch (e: Exception) {
-                _locationEditState.update { it.copy(isSearching = false, error = e.message, results = emptyList()) }
-            }
         }
     }
 

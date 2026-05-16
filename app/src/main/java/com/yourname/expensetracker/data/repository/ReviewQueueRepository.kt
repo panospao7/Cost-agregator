@@ -198,9 +198,10 @@ class ReviewQueueRepository @Inject constructor(
 
         val txAlreadyProcessed = -2L
         val txDuplicate = -1L
-        var validationError: String? = null
+        // S6-D5-009: validationError removed — ValidationFailed now throws inside transaction
 
-        val txnResult = database.withTransaction {
+        val txnResult: Long = try {
+            database.withTransaction {
             val rowsUpdated = pendingReviewDao.transitionStatus(
                 id = reviewId,
                 expectedStatus = PendingReviewStatus.PENDING,
@@ -315,11 +316,14 @@ class ReviewQueueRepository @Inject constructor(
                 }
                 is CreateExpenseResult.Error -> throw result.exception
             }
-        }
-
-        // If the coordinator returned validation errors, surface them.
-        if (validationError != null) {
-            return Result.Error(message = validationError!!)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e  // S6-D5-001: never swallow cancellation
+        } catch (e: Exception) {
+            // S6-D5-001/002: Thrown exceptions (ValidationFailed, link failure) roll back the
+            // transaction and surface as Result.Error — review stays PENDING
+            Timber.e(e, "Review approval failed for reviewId=$reviewId")
+            return Result.Error(message = e.message ?: "Approval failed")
         }
 
         if (txnResult == txAlreadyProcessed) {

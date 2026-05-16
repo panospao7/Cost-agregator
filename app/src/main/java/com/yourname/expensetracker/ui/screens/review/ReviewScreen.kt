@@ -1123,10 +1123,21 @@ fun ReviewCard(
                     }
                 }
 
+                // S6-D5-004: Missing required fields — disable approve, show edit CTA
+                val review = item.review
+                val canDirectApprove = review.suggestedAmount != null &&
+                    review.suggestedAmount > 0.0 &&
+                    review.suggestedMerchant.isNotBlank() &&
+                    review.suggestedMerchant != "Unknown"
+
                 Button(
                     onClick = {
-                        haptic(HapticType.Success)
-                        onApprove()
+                        if (canDirectApprove) {
+                            haptic(HapticType.Success)
+                            onApprove()
+                        } else {
+                            onEdit()
+                        }
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
@@ -1138,6 +1149,8 @@ fun ReviewCard(
                 ) {
                     if (isApproving) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    } else if (!canDirectApprove) {
+                        Text(stringResource(R.string.review_edit_required_button), fontWeight = FontWeight.Bold)
                     } else {
                         Text(stringResource(R.string.review_approve_button), fontWeight = FontWeight.Bold)
                     }
