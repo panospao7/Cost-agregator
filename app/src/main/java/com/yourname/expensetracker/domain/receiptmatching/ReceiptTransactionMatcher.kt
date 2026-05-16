@@ -88,6 +88,7 @@ class ReceiptTransactionMatcher @Inject constructor(
         
         val candidates = expenseRepository.getExpensesBetween(startDate, endDate)
             .filter(::isReceiptCompatibleTransaction)
+            .filter { !it.isNotMine }  // S7-019: receipts represent full transaction amounts; not-mine excluded
         
         if (candidates.isEmpty()) {
             return@withContext MatchResult.NoMatch
@@ -126,10 +127,11 @@ class ReceiptTransactionMatcher @Inject constructor(
         } else null
         val conversionAvailable = currenciesMatch || conversionResult != null
         val comparableReceiptAmount = conversionResult?.convertedAmount ?: receiptAmount
-        val amountDiff = abs(comparableReceiptAmount - transaction.effectiveAmount)
-        val amountScore = if (transaction.effectiveAmount > 0) {
-            val rawScore = 1.0 - (amountDiff / transaction.effectiveAmount).coerceIn(0.0, 1.0)
-            // Apply penalty only when currencies differ AND conversion was unavailable
+        // S7-019: Compare against original amount — receipt represents full transaction, not ownership share
+        val txAmount = transaction.amount
+        val amountDiff = abs(comparableReceiptAmount - txAmount)
+        val amountScore = if (txAmount > 0) {
+            val rawScore = 1.0 - (amountDiff / txAmount).coerceIn(0.0, 1.0)
             if (!currenciesMatch && !conversionAvailable) rawScore * 0.5 else rawScore
         } else {
             0.0
@@ -169,8 +171,8 @@ class ReceiptTransactionMatcher @Inject constructor(
     }
 
     private fun isReceiptCompatibleTransaction(transaction: Expense): Boolean {
-        if (transaction.effectiveAmount <= 0.0) return false
-
+        // S7-019: Use original amount — receipt represents full transaction value
+        if (transaction.amount <= 0.0) return false
         return transaction.transactionType.name == ExpenseDao.SPENDING_TYPE &&
             transaction.transactionType == TransactionType.PURCHASE
     }

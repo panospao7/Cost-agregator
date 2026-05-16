@@ -55,7 +55,7 @@ import com.yourname.expensetracker.ui.screens.map.SpendingMapScreen
 import com.yourname.expensetracker.ui.screens.negotiation.BillNegotiationScreen
 import com.yourname.expensetracker.ui.screens.naturallanguage.NaturalLanguageSearchScreen
 import com.yourname.expensetracker.ui.screens.price.PriceProtectionScreen
-import com.yourname.expensetracker.ui.screens.receiptmatching.ReceiptMatchingScreen
+import com.yourname.expensetracker.ui.screens.receiptmatching.ReceiptMatchingRoute
 import com.yourname.expensetracker.ui.screens.reminder.BillRemindersScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
 import com.yourname.expensetracker.ui.screens.savings.SavingsGoalsScreen
@@ -583,7 +583,7 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.ScanReceipt -> {
-                    com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
+                    com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanRoute(
                         onDismiss = { navigation.navigateBack() }
                     )
                 }
@@ -674,7 +674,7 @@ fun MainScreen(
                     )
                 }
                 is NavigationDestination.ReceiptMatching -> {
-                    ReceiptMatchingScreen(
+                    ReceiptMatchingRoute(
                         onNavigateBack = { navigation.navigateBack() }
                     )
                 }

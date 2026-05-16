@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.receiptmatching
+ï»¿package com.yourname.expensetracker.ui.screens.receiptmatching
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,6 +25,15 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
+
+/** S7-028: Route entry point â€” owns Hilt injection. */
+@Composable
+fun ReceiptMatchingRoute(
+    onNavigateBack: () -> Unit,
+    viewModel: ReceiptMatchingViewModel = hiltViewModel()
+) {
+    ReceiptMatchingScreen(onNavigateBack = onNavigateBack, viewModel = viewModel)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,7 +139,7 @@ fun ReceiptMatchingScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Suggestions List
-            if (state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Loading) {
+            if (state.contentState is ReceiptMatchingContentState.Loading) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -209,7 +218,7 @@ private fun UnmatchedReceiptCard(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = stringResource(R.string.receipt_receipt_total, receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "—"),
+                text = stringResource(R.string.receipt_receipt_total, receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "ï¿½"),
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -256,7 +265,7 @@ private fun ManualMatchDialog(
                     text = stringResource(
                         R.string.receipt_manual_match_target,
                         receipt.parsedMerchant ?: stringResource(R.string.receipt_label_unknown),
-                        receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "—"
+                        receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "ï¿½"
                     ),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -355,7 +364,7 @@ private fun MatchSuggestionCard(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = stringResource(R.string.receipt_receipt_total, suggestion.receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "—"),
+                        text = stringResource(R.string.receipt_receipt_total, suggestion.receipt.parsedTotal?.let { String.format("%.2f", it) } ?: "ï¿½"),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(

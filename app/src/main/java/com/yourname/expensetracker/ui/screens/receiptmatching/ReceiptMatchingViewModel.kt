@@ -15,6 +15,16 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
+/** S7-025: Typed content state replacing the misleading loadableState. */
+sealed interface ReceiptMatchingContentState {
+    data object Loading : ReceiptMatchingContentState
+    data object Empty : ReceiptMatchingContentState
+    data class Data(
+        val unmatched: List<ScannedReceipt>,
+        val suggestions: List<MatchSuggestion>
+    ) : ReceiptMatchingContentState
+}
+
 data class ReceiptMatchingState(
     val unmatchedReceipts: List<ScannedReceipt> = emptyList(),
     val suggestedMatches: List<MatchSuggestion> = emptyList(),
@@ -30,6 +40,16 @@ data class ReceiptMatchingState(
     /** S12-029: true while auto-match is running globally */
     val isAutoMatching: Boolean = false
 ) {
+    // S7-025: Typed content state — includes both unmatched receipts and suggestions
+    val contentState: ReceiptMatchingContentState
+        get() = when {
+            isLoading -> ReceiptMatchingContentState.Loading
+            unmatchedReceipts.isEmpty() && suggestedMatches.isEmpty() ->
+                ReceiptMatchingContentState.Empty
+            else -> ReceiptMatchingContentState.Data(unmatchedReceipts, suggestedMatches)
+        }
+
+    @Deprecated("Use contentState", ReplaceWith("contentState"))
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<ScannedReceipt>>
         get() = when {
             isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
@@ -73,12 +93,16 @@ class ReceiptMatchingViewModel @Inject constructor(
     private val _state = MutableStateFlow(ReceiptMatchingState())
     val state: StateFlow<ReceiptMatchingState> = _state.asStateFlow()
 
+    // S7-021: Cancel previous load before starting a new one to prevent stale-write races
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     init {
         loadReceipts()
     }
 
     private fun loadReceipts() {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
             try {
                 val unmatched = receiptRepository.getUnmatchedReceipts()
@@ -164,7 +188,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                 val receipt = receiptRepository.getReceiptById(receiptId)
                 val suggestedExpenseId = receipt?.suggestedExpenseId
                 if (receipt == null || suggestedExpenseId == null) {
-                    _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId, error = "Receipt not found or has no suggestion") }
+                    _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId, error = "Receipt not found or has no suggestion.") }
                     return@launch
                 }
                 val result = receiptLinkService.linkReceiptToExpense(
@@ -178,11 +202,11 @@ class ReceiptMatchingViewModel @Inject constructor(
                     onSuccess = { Timber.d("Approved match for receipt $receiptId -> expense $suggestedExpenseId") },
                     onFailure = { e ->
                         Timber.e(e, "Failed to approve match for receipt $receiptId")
-                        _state.update { it.copy(error = "Failed to approve: ${e.message}") }
+                        _state.update { it.copy(error = "Failed to approve match. Please try again.") }
                     }
                 )
             } catch (e: Exception) {
-                _state.update { it.copy(error = "Failed to approve: ${e.message}") }
+                _state.update { it.copy(error = "Failed to approve match. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
             }
@@ -203,7 +227,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                 loadReceipts()
             } catch (e: Exception) {
                 Timber.e(e, "Failed to reject suggestion for receipt $receiptId")
-                _state.update { it.copy(error = "Failed to reject: ${e.message}") }
+                _state.update { it.copy(error = "Failed to reject suggestion. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
             }
@@ -251,13 +275,13 @@ class ReceiptMatchingViewModel @Inject constructor(
                     },
                     onFailure = { e ->
                         Timber.e(e, "Manual match failed for receipt $receiptId")
-                        _state.update { it.copy(error = "Failed to match receipt: ${e.message}") }
+                        _state.update { it.copy(error = "Failed to link receipt. Please try again.") }
                         // Dialog stays open so user can retry or cancel
                     }
                 )
             } catch (e: Exception) {
                 Timber.e(e, "Manual match exception for receipt $receiptId")
-                _state.update { it.copy(error = "Failed to match receipt: ${e.message}") }
+                _state.update { it.copy(error = "Failed to link receipt. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
             }
@@ -273,7 +297,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                 loadReceipts()
             } catch (e: Exception) {
                 Timber.e(e, "Failed to skip receipt $receiptId")
-                _state.update { it.copy(error = "Failed to skip: ${e.message}") }
+                _state.update { it.copy(error = "Failed to skip receipt. Please try again.") }
             } finally {
                 _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds - receiptId) }
             }

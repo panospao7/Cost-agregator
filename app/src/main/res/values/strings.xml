@@ -851,6 +851,13 @@
     <string name="backup_file_change">Change</string>
     <string name="receipt_auto_matching_running">Matching…</string>
     <string name="receipt_amount_unavailable">Amount unavailable</string>
+    <string name="receipt_error_approve_failed">Failed to approve match. Please try again.</string>
+    <string name="receipt_error_manual_match_failed">Failed to link receipt. Please try again.</string>
+    <string name="receipt_error_reject_failed">Failed to reject suggestion. Please try again.</string>
+    <string name="receipt_error_skip_failed">Failed to skip receipt. Please try again.</string>
+    <string name="receipt_error_not_found">Receipt not found or has no suggestion.</string>
+    <string name="receipt_error_save_currency">Currency is not loaded yet. Please wait.</string>
+    <string name="receipt_error_already_linked">This receipt is already linked to a transaction. Use Receipt Matching to view it.</string>
     <string name="home_error_unable_to_load_dashboard">Unable to load dashboard. Pull to refresh.</string>
     <string name="home_error_unable_to_load_totals">Unable to load totals. Please try again.</string>
     <string name="home_error_unable_to_load_breakdown">Unable to load breakdown. Please try again.</string>

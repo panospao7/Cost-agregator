@@ -101,6 +101,9 @@ data class ReceiptScanState(
     // S7-012: track whether user manually edited the amount
     val isAmountEditedByUser: Boolean = false,
 
+    // S7-015: AI capabilities applied to draft — marked in artifact repo only after successful save
+    val pendingAppliedAiCapabilities: Set<AiCapability> = emptySet(),
+
     // Item categorization
     val itemCategorizations: List<ReceiptItemCategorizationSnapshot> = emptyList(),
     val isAnalyzingItems: Boolean = false,
@@ -141,6 +144,7 @@ private data class ReceiptSaveRequest(
     val receiptId: Long,
     val merchant: String,
     val amount: Double,
+    val currency: String,  // S7-012: captured at validation time — not re-read from live state
     val date: Long,
     val categoryId: Long?,
     val paymentMethod: PaymentMethod,
@@ -740,10 +744,11 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update {
             it.copy(
                 selectedCategoryId = categoryId,
-                categoryAssistMessage = "Applied AI category suggestion to the draft."
+                categoryAssistMessage = "Applied AI category suggestion to the draft.",
+                // S7-015: Accumulate — mark applied only after successful save
+                pendingAppliedAiCapabilities = it.pendingAppliedAiCapabilities + AiCapability.CATEGORIZATION_FALLBACK
             )
         }
-        markLatestArtifactApplied(AiCapability.CATEGORIZATION_FALLBACK)
     }
 
     fun clearCategoryAssistMessage() {
@@ -753,10 +758,13 @@ class ReceiptScanViewModel @Inject constructor(
     fun applyReceiptAssistMerchant() {
         applySuggestedValue(_state.value.receiptAssistState) { state, suggestion ->
             suggestion.merchant?.value?.takeIf { it.isNotBlank() }?.let { merchant ->
-                state.copy(editMerchant = merchant, receiptAssistMessage = "Applied AI merchant suggestion.")
+                state.copy(
+                    editMerchant = merchant,
+                    receiptAssistMessage = "Applied AI merchant suggestion.",
+                    pendingAppliedAiCapabilities = state.pendingAppliedAiCapabilities + AiCapability.RECEIPT_EXTRACTION
+                )
             } ?: state
         }
-        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun applyReceiptAssistTotal() {
@@ -764,20 +772,23 @@ class ReceiptScanViewModel @Inject constructor(
             suggestion.total?.value?.let { total ->
                 state.copy(
                     editAmount = String.format(java.util.Locale.US, "%.2f", total),
-                    receiptAssistMessage = "Applied AI total suggestion."
+                    receiptAssistMessage = "Applied AI total suggestion.",
+                    pendingAppliedAiCapabilities = state.pendingAppliedAiCapabilities + AiCapability.RECEIPT_EXTRACTION
                 )
             } ?: state
         }
-        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun applyReceiptAssistDate() {
         applySuggestedValue(_state.value.receiptAssistState) { state, suggestion ->
             suggestion.date?.value?.let { date ->
-                state.copy(editDate = date, receiptAssistMessage = "Applied AI date suggestion.")
+                state.copy(
+                    editDate = date,
+                    receiptAssistMessage = "Applied AI date suggestion.",
+                    pendingAppliedAiCapabilities = state.pendingAppliedAiCapabilities + AiCapability.RECEIPT_EXTRACTION
+                )
             } ?: state
         }
-        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun applyAllReceiptAssist() {
@@ -788,10 +799,11 @@ class ReceiptScanViewModel @Inject constructor(
                 editMerchant = suggestion.merchant?.value?.takeIf { it.isNotBlank() } ?: state.editMerchant,
                 editAmount = suggestion.total?.value?.let { String.format(java.util.Locale.US, "%.2f", it) } ?: state.editAmount,
                 editDate = suggestion.date?.value ?: state.editDate,
-                receiptAssistMessage = "Applied all AI receipt suggestions to the draft."
+                receiptAssistMessage = "Applied all AI receipt suggestions to the draft.",
+                // S7-015: Accumulate — mark applied only after successful save
+                pendingAppliedAiCapabilities = state.pendingAppliedAiCapabilities + AiCapability.RECEIPT_EXTRACTION
             )
         }
-        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun clearReceiptAssistMessage() {
@@ -848,6 +860,7 @@ class ReceiptScanViewModel @Inject constructor(
             receiptId = currentState.receiptId ?: return,
             merchant = preview.merchant,
             amount = preview.amount,
+            currency = currentState.editCurrency ?: "",
             date = preview.date,
             categoryId = preview.categoryId,
             paymentMethod = currentState.paymentMethod,
@@ -964,10 +977,13 @@ class ReceiptScanViewModel @Inject constructor(
             receiptId = receiptId,
             merchant = merchant,
             amount = amount,
+            currency = currency,  // S7-012: captured at validation time
             date = currentState.editDate,
             categoryId = currentState.selectedCategoryId,
             paymentMethod = currentState.paymentMethod,
-            notes = currentState.notes.takeIf { it.isNotBlank() }
+            notes = currentState.notes.takeIf { it.isNotBlank() },
+            // S7-015: Include pending manual-apply capabilities
+            appliedAiCapabilities = currentState.pendingAppliedAiCapabilities
         )
     }
 
@@ -1110,10 +1126,8 @@ class ReceiptScanViewModel @Inject constructor(
                     return@launch
                 }
 
-                // S7-009: Use editCurrency (already loaded from home currency on init); never fall back to "EUR"
-                val resolvedCurrency = _state.value.editCurrency
-                    ?.takeIf { it.isNotBlank() }
-                    ?: _state.value.parsedReceipt?.currency?.takeIf { it.isNotBlank() }
+                // S7-012: Use currency captured at request-build time — not re-read from live state
+                val resolvedCurrency = request.currency.takeIf { it.isNotBlank() }
                     ?: run {
                         _state.update { it.copy(isSaving = false, errorMessage = "Currency not loaded. Please wait and retry.") }
                         return@launch

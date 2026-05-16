@@ -75,6 +75,15 @@ private fun getCurrencySymbol(currencyCode: String?): String {
     return CurrencyFormatter.getCurrencySymbol(currencyCode)
 }
 
+/** S7-027: Route entry point — owns Hilt injection. ReceiptScanScreen keeps ViewModel for now. */
+@Composable
+fun ReceiptScanRoute(
+    onDismiss: () -> Unit,
+    viewModel: ReceiptScanViewModel = hiltViewModel()
+) {
+    ReceiptScanScreen(onDismiss = onDismiss, viewModel = viewModel)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiptScanScreen(
@@ -451,8 +460,12 @@ private fun ReviewStep(
                     HorizontalDivider()
                     preview.fieldSummaries.forEach { field ->
                         val renderedValue = when (field.label) {
-                            // S7-009: Use editCurrency, not parsed?.currency ?: "EUR"
-                            "Amount" -> CurrencyFormatter.formatMoney(preview.amount, state.editCurrency ?: "")
+                            // S7-011: Only format with currency when it is loaded
+                            "Amount" -> {
+                                val cur = state.editCurrency
+                                if (cur.isNullOrBlank()) String.format(java.util.Locale.US, "%.2f", preview.amount)
+                                else CurrencyFormatter.formatMoney(preview.amount, cur)
+                            }
                             "Date" -> DateFormatterUtils.formatTimestampJavaTime(preview.date, "dd/MM/yyyy")
                             else -> field.value
                         }
