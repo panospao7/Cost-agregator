@@ -1209,7 +1209,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
 
                     restoreJournal.failJournal(journalEntry, importError.message ?: "Import failed after swap")
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    // If rollback succeeded, safe to return to NORMAL.
+                    // If rollback failed, DB state is unknown — keep writes blocked.
+                    restoreMaintenanceMode.exit(forceRestartRequired = !rollbackResult.isSuccess)
 
                     return@withContext if (rollbackResult.isSuccess) {
                         Result.failure(

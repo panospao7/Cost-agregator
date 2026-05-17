@@ -103,10 +103,17 @@ class WorkerExecutionGuard @Inject constructor(
     }
 
     /**
-     * Checkpoint for long-running workers — delegates to the lease so the
-     * registry's stop-requested flag is also checked.
+     * Checkpoint for long-running workers — checks write barrier and stop flag.
+     * Call before each DB mutation inside a long-running worker loop.
      */
     suspend fun checkpoint(operation: String) {
+        // Check stop flag via registry (same check as WorkerLease.checkpoint)
+        if ((leaseRegistry as? com.yourname.expensetracker.domain.workers.WorkerLeaseRegistryImpl)
+                ?.isStopRequested() == true) {
+            throw kotlinx.coroutines.CancellationException(
+                "Worker cancelled at checkpoint '$operation' — maintenance stop requested"
+            )
+        }
         writeBarrier.checkWritesAllowed(operation)
         yield()
     }

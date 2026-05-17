@@ -256,6 +256,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // writes its own lifecycle events (RECEIPT_SAVED, PROCESSING_COMPLETE) and
             // bank statements don't need OCR/dedup/warranty side effects that the
             // coordinator provides.
+            // Re-check barrier here — OCR/AI/parsing may have taken time and restore
+            // could have started while we were processing.
+            restoreMaintenanceMode.checkWritesAllowed(
+                "BankStatementLifecycleProcessor.writeResults"
+            )
             val receiptId = receiptRepository.insertReceipt(statementReceipt)
             if (receiptId <= 0) {
                 return Result.failure(

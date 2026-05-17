@@ -538,6 +538,13 @@ class BudgetRepository @Inject constructor(
     }
 
     suspend fun restoreDebugSnapshot(snapshot: DebugBudgetSnapshot): com.yourname.expensetracker.domain.model.Result<Unit> {
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            return com.yourname.expensetracker.domain.model.Result.Error(
+                UnsupportedOperationException("restoreDebugSnapshot is debug-only"),
+                "Debug-only operation"
+            )
+        }
+        writeBarrier.checkWritesAllowed("BudgetRepository.restoreDebugSnapshot")
         return try {
             if (snapshot.budgets.isNotEmpty()) {
                 budgetDao.replaceAllAndEnforceActiveScopes(snapshot.budgets)
@@ -619,14 +626,17 @@ class BudgetRepository @Inject constructor(
     }
 
     suspend fun updateExceededNotification(id: Long, timestamp: Long) {
+        writeBarrier.checkWritesAllowed("BudgetRepository.updateExceededNotification")
         budgetDao.updateExceededNotification(id, timestamp)
     }
 
     suspend fun updateCriticalNotification(id: Long, timestamp: Long) {
+        writeBarrier.checkWritesAllowed("BudgetRepository.updateCriticalNotification")
         budgetDao.updateCriticalNotification(id, timestamp)
     }
 
     suspend fun updateWarningNotification(id: Long, timestamp: Long) {
+        writeBarrier.checkWritesAllowed("BudgetRepository.updateWarningNotification")
         budgetDao.updateWarningNotification(id, timestamp)
     }
 }

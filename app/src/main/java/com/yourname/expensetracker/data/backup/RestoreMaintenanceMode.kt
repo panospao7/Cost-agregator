@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,7 +24,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class RestoreMaintenanceMode @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val workerLeaseRegistry: dagger.Lazy<WorkerLeaseRegistry>
 ) {
 
     private val prefs: SharedPreferences =
@@ -105,6 +107,9 @@ class RestoreMaintenanceMode @Inject constructor(
             // waiting for next app start, so that critical jobs (data retention,
             // receipt matching, etc.) resume without delay after restore.
             scheduleAllWorkers()
+            // Reset the worker stop flag so future workers can run normally
+            (workerLeaseRegistry.get() as? com.yourname.expensetracker.domain.workers.WorkerLeaseRegistryImpl)
+                ?.resetStopFlag()
             Timber.d("Maintenance mode: workers rescheduled")
         } else {
             Timber.d("Maintenance mode: writes remain blocked until app restart")

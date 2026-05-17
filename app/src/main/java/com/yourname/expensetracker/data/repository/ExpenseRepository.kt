@@ -844,8 +844,10 @@ class ExpenseRepository @Inject constructor(
     suspend fun getUnlocatedExpensesForBackfill(limit: Int = 500) =
         expenseDao.getUnlocatedExpensesForBackfill(limit)
 
-    suspend fun incrementBackfillAttempts(expenseId: Long) =
+    suspend fun incrementBackfillAttempts(expenseId: Long) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.incrementBackfillAttempts")
         expenseDao.incrementBackfillAttempts(expenseId)
+    }
 
     suspend fun countLocatedExpenses() = expenseDao.countLocated()
 
@@ -889,6 +891,7 @@ class ExpenseRepository @Inject constructor(
     ): Int {
         require(latitude in -90.0..90.0) { "Latitude out of range: $latitude" }
         require(longitude in -180.0..180.0) { "Longitude out of range: $longitude" }
+        writeBarrier.checkWritesAllowed("ExpenseRepository.conditionallySetLocation")
         return expenseDao.conditionallySetLocation(
         expenseId = expenseId,
         latitude = latitude,
@@ -899,7 +902,10 @@ class ExpenseRepository @Inject constructor(
     )
     }
 
-    suspend fun clearExpenseLocation(expenseId: Long) = expenseDao.clearLocation(expenseId)
+    suspend fun clearExpenseLocation(expenseId: Long) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.clearExpenseLocation")
+        expenseDao.clearLocation(expenseId)
+    }
 
     /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */
     fun getUnlocatedExpensesFlow(limit: Int = 100) = expenseDao.getUnlocatedExpensesFlow(limit)
@@ -926,8 +932,10 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpensesWithNullMerchantKey(limit: Int = 500) =
         expenseDao.getExpensesWithNullMerchantKey(limit)
 
-    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) =
+    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.updateMerchantKey")
         expenseDao.updateMerchantKey(expenseId, merchantKey)
+    }
 
     // === Monthly/Weekly Totals Dashboard Methods ===
 

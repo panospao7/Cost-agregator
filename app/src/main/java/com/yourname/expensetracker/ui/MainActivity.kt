@@ -414,7 +414,16 @@ fun MainScreen(
             )
             return
         }
-        else -> { /* Normal / BackupExporting / RestoreInProgress — app continues */ }
+        is AppOperationalState.RestoreInProgress -> {
+            AppOperationalLockScreen(
+                title = "Restore In Progress",
+                message = "A database restore is in progress (${state.mode.label}). Please wait…",
+                actionLabel = "Please Wait",
+                onAction = { /* non-dismissable */ }
+            )
+            return
+        }
+        else -> { /* Normal / BackupExporting — app continues */ }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
