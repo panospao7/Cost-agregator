@@ -26,14 +26,6 @@ class AppStartupCoordinator @Inject constructor(
     fun initialize(application: Application) {
         configureDebugTools()
 
-        // Check if a restore completed and the app needs a restart.
-        // Must run BEFORE checkRestoreJournal() which resets the mode to NORMAL.
-        if (restoreMaintenanceMode.currentMode() == RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED) {
-            val prefs = application.getSharedPreferences(PREFS_RESTART_CHECK, Application.MODE_PRIVATE)
-            prefs.edit().putBoolean(KEY_RESTART_REQUIRED, true).apply()
-            Timber.w("Restore complete — restart required flag set")
-        }
-
         checkRestoreJournal()
         registerLifecycleObserver()
 
@@ -46,8 +38,7 @@ class AppStartupCoordinator @Inject constructor(
     }
 
     companion object {
-        private const val PREFS_RESTART_CHECK = "app_restart_check"
-        private const val KEY_RESTART_REQUIRED = "restore_complete_restart_required"
+        // Kept for reference; SharedPreferences restart flag removed — operationalStateFlow drives the lock.
     }
 
     /**
@@ -160,7 +151,7 @@ class AppStartupCoordinator @Inject constructor(
 
             is RestoreJournal.RecoveryResult.CriticalRecoveryRequired -> {
                 Timber.e("Startup: CRITICAL — safety backup and live DB are both corrupt")
-                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
+                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED)
                 Timber.e("Startup: maintenance mode blocks writes until manual recovery and app restart")
                 return
             }

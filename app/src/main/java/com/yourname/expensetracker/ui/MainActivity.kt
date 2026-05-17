@@ -34,6 +34,7 @@ import com.google.gson.Gson
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.backup.AppOperationalState
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.SplitShare
@@ -392,31 +393,28 @@ fun MainScreen(
         }
     }
     
-    // ── Restart-required check (after restore) ──────────────────────
-    val restartPrefs = remember {
-        context.getSharedPreferences("app_restart_check", Context.MODE_PRIVATE)
-    }
-    var showRestartRequiredDialog by remember {
-        mutableStateOf(restartPrefs.getBoolean("restore_complete_restart_required", false))
-    }
-    // P7-P1-08: Non-dismissable dialog. The app MUST restart after a restore
-    // because the injected Room instance is stale and maintenance mode blocks writes.
-    if (showRestartRequiredDialog) {
-        AlertDialog(
-            onDismissRequest = { /* P7-P1-08: intentionally non-dismissable */ },
-            title = { Text("Restart Required") },
-            text = {
-                Text("A database restore was completed. The app must restart to load the restored data correctly.")
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    restartPrefs.edit().remove("restore_complete_restart_required").apply()
-                    Runtime.getRuntime().exit(0)
-                }) {
-                    Text("Restart Now")
-                }
-            }
-        )
+    // ── Global operational lock (restore / critical recovery) ───────
+    val operationalState by mainViewModel.operationalState.collectAsState()
+    when (val state = operationalState) {
+        is AppOperationalState.RestartRequiredAfterRestore -> {
+            AppOperationalLockScreen(
+                title = "Restart Required",
+                message = "A database restore completed. The app must restart to load the restored data.",
+                actionLabel = "Restart Now",
+                onAction = { Runtime.getRuntime().exit(0) }
+            )
+            return
+        }
+        is AppOperationalState.CriticalRecoveryRequired -> {
+            AppOperationalLockScreen(
+                title = "Critical Recovery Required",
+                message = "The database is in an unrecoverable state. Please export logs and contact support.",
+                actionLabel = "OK",
+                onAction = { /* no-op: user must intervene */ }
+            )
+            return
+        }
+        else -> { /* Normal / BackupExporting / RestoreInProgress — app continues */ }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -989,6 +987,28 @@ fun SmartFAB(
             },
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+    }
+}
+
+@Composable
+private fun AppOperationalLockScreen(
+    title: String,
+    message: String,
+    actionLabel: String,
+    onAction: () -> Unit
+) {
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        AlertDialog(
+            onDismissRequest = { /* intentionally non-dismissable */ },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = onAction) { Text(actionLabel) }
+            }
         )
     }
 }

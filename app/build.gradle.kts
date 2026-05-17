@@ -523,3 +523,33 @@ tasks.named("check") {
 
 // TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
 // calls outside approved TimeProvider implementations
+
+// PR 10 — DB access boundary guard in CI failure mode.
+tasks.register("verifyDbAccessBoundaries") {
+    group = "verification"
+    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer allowlist"
+    doLast {
+        val script = file("$rootDir/scripts/verify_db_access_boundaries.py")
+        if (!script.exists()) {
+            logger.warn("verifyDbAccessBoundaries: script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        val result = exec {
+            workingDir = rootDir
+            commandLine("python3", script.absolutePath, "--fail-on-violation")
+            isIgnoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            throw GradleException(
+                "DB access boundary violations found. " +
+                "Add the class to config/db_access_allowlist.yml with a reason, " +
+                "or route the write through the approved lifecycle coordinator. " +
+                "See docs/DB_WRITE_OWNERSHIP.md."
+            )
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn("verifyDbAccessBoundaries")
+}

@@ -2,6 +2,8 @@ package com.yourname.expensetracker.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.backup.AppOperationalState
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
@@ -37,7 +39,8 @@ sealed interface MainNavigationRequest {
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    private val reviewQueueRepository: ReviewQueueRepository
+    private val reviewQueueRepository: ReviewQueueRepository,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : ViewModel() {
 
     private val _navigationRequest = kotlinx.coroutines.channels.Channel<MainNavigationRequest>(
@@ -48,6 +51,10 @@ class MainViewModel @Inject constructor(
     val pendingReviewCount: StateFlow<Int> = reviewQueueRepository
         .getPendingReviewCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val operationalState: StateFlow<AppOperationalState> =
+        restoreMaintenanceMode.operationalStateFlow
+            .stateIn(viewModelScope, SharingStarted.Eagerly, restoreMaintenanceMode.operationalStateFlow.value)
 
     /**
      * Navigate to a specific tab by index (0-5).

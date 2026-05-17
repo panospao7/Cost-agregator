@@ -4,11 +4,12 @@ import androidx.work.ListenableWorker
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import kotlinx.coroutines.yield
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.yield
 
 data class WorkerGuardRequest(
     val workerName: String,
@@ -24,13 +25,11 @@ sealed interface WorkerGuardResult<out T> {
     data class Failed(val reason: String, val error: Throwable? = null) : WorkerGuardResult<Nothing>
 }
 
-fun <T> WorkerGuardResult<T>.toWorkerResult(): ListenableWorker.Result {
-    return when (this) {
-        is WorkerGuardResult.Success -> ListenableWorker.Result.success()
-        is WorkerGuardResult.Skipped -> ListenableWorker.Result.success()
-        is WorkerGuardResult.Retry -> ListenableWorker.Result.retry()
-        is WorkerGuardResult.Failed -> ListenableWorker.Result.failure()
-    }
+fun <T> WorkerGuardResult<T>.toWorkerResult(): ListenableWorker.Result = when (this) {
+    is WorkerGuardResult.Success -> ListenableWorker.Result.success()
+    is WorkerGuardResult.Skipped -> ListenableWorker.Result.success()
+    is WorkerGuardResult.Retry -> ListenableWorker.Result.retry()
+    is WorkerGuardResult.Failed -> ListenableWorker.Result.failure()
 }
 
 @Singleton
@@ -38,13 +37,14 @@ class WorkerExecutionGuard @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val workerRunLogger: WorkerRunLogger,
-    private val privacyGate: com.yourname.expensetracker.domain.privacy.PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val leaseRegistry: WorkerLeaseRegistry
 ) {
     suspend fun <T> runGuarded(
         request: WorkerGuardRequest,
         block: suspend () -> T
     ): WorkerGuardResult<T> {
-        // P9-CURRENT-001: Check write barrier BEFORE logging a run record
+        // Check write barrier BEFORE acquiring a lease or logging a run record
         try {
             writeBarrier.checkWritesAllowed(request.workerName)
         } catch (e: Exception) {
@@ -52,6 +52,8 @@ class WorkerExecutionGuard @Inject constructor(
             return WorkerGuardResult.Skipped("Write barrier denied: ${e.message}")
         }
 
+        // Acquire lease — held for the entire worker execution lifetime
+        val lease = leaseRegistry.acquire(request.workerName)
         val run = workerRunLogger.start(request.workerName)
         try {
             if (!request.allowDuringBackupExport &&
@@ -68,13 +70,12 @@ class WorkerExecutionGuard @Inject constructor(
             }
 
             for (capability in request.requiredCapabilities) {
-                val decision = privacyGate.check(capability)
-                when (decision) {
-                    is com.yourname.expensetracker.domain.privacy.PrivacyDecision.Denied -> {
+                when (val decision = privacyGate.check(capability)) {
+                    is PrivacyDecision.Denied -> {
                         run.skipped("PRIVACY_$capability")
                         return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
                     }
-                    is com.yourname.expensetracker.domain.privacy.PrivacyDecision.FailClosed -> {
+                    is PrivacyDecision.FailClosed -> {
                         run.skipped("PRIVACY_FAIL_CLOSED_$capability")
                         return WorkerGuardResult.Skipped("Privacy check failed (fail-closed): $capability - ${decision.reason}")
                     }
@@ -89,32 +90,30 @@ class WorkerExecutionGuard @Inject constructor(
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "Worker ${request.workerName} failed")
             val isTransient = classifyTransient(e)
-            if (isTransient) {
+            return if (isTransient) {
                 run.retry(e.message ?: "Transient error", e)
-                return WorkerGuardResult.Retry(e.message ?: "Transient error", e)
+                WorkerGuardResult.Retry(e.message ?: "Transient error", e)
             } else {
                 run.failure(e.message ?: "Permanent error", e)
-                return WorkerGuardResult.Failed(e.message ?: "Permanent error", e)
+                WorkerGuardResult.Failed(e.message ?: "Permanent error", e)
             }
+        } finally {
+            lease.close()
         }
     }
 
     /**
-     * Checkpoint that long-running workers should call before each database write.
-     *
-     * Verifies that writes are still allowed (i.e. no restore/maintenance mode is
-     * active) and that the worker has not been cancelled. This is a lightweight
-     * check — call it periodically in long-running worker loops.
+     * Checkpoint for long-running workers — delegates to the lease so the
+     * registry's stop-requested flag is also checked.
      */
     suspend fun checkpoint(operation: String) {
         writeBarrier.checkWritesAllowed(operation)
-        yield()  // check for coroutine cancellation
+        yield()
     }
 
     private fun classifyTransient(e: Exception): Boolean {
         val message = e.message ?: ""
         return when {
-            message.contains("Timeout") -> true
             message.contains("timeout", ignoreCase = true) -> true
             message.contains("interrupted", ignoreCase = true) -> true
             message.contains("deadlock", ignoreCase = true) -> true

@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.domain.workers.WorkerDrainController
+import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
+import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistryImpl
 import com.yourname.expensetracker.domain.workers.WorkerRunLogger
 import com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
 import dagger.Binds
@@ -14,4 +17,12 @@ abstract class WorkerModule {
     @Binds
     @Singleton
     abstract fun bindWorkerRunLogger(impl: WorkerRunLoggerImpl): WorkerRunLogger
+
+    @Binds
+    @Singleton
+    abstract fun bindWorkerLeaseRegistry(impl: WorkerLeaseRegistryImpl): WorkerLeaseRegistry
+
+    @Binds
+    @Singleton
+    abstract fun bindWorkerDrainController(impl: WorkerLeaseRegistryImpl): WorkerDrainController
 }

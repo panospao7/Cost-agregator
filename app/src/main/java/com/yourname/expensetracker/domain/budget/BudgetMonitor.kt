@@ -32,7 +32,9 @@ class BudgetMonitor @Inject constructor(
     private val notificationService: NotificationService,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     /** P2-20: Durable diagnostic ledger for budget alert decisions. */
-    private val diagnosticEventDao: PipelineDiagnosticEventDao
+    private val diagnosticEventDao: PipelineDiagnosticEventDao,
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
+    private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 ) {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + ioDispatcher)
@@ -159,6 +161,7 @@ class BudgetMonitor @Inject constructor(
             // P2-20: Durable record of failed budget check
             serviceScope.launch(ioDispatcher) {
                 try {
+                    writeBarrier.checkWritesAllowed("BudgetMonitor.checkBudgets.diagnostic")
                     diagnosticEventDao.insert(
                         PipelineDiagnosticEvent(
                             pipeline = "budget_monitor",
@@ -215,16 +218,26 @@ class BudgetMonitor @Inject constructor(
 
         // P2-20: Durable diagnostic — record that a budget check started.
         withContext(ioDispatcher) {
-            diagnosticEventDao.insert(
-                PipelineDiagnosticEvent(
-                    pipeline = "budget_monitor",
-                    stage = "CHECK_STARTED",
-                    outcome = "OK",
-                    entityType = "Budget",
-                    entityId = budget.id,
-                    timestamp = now
+            try {
+                writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                diagnosticEventDao.insert(
+                    PipelineDiagnosticEvent(
+                        pipeline = "budget_monitor",
+                        stage = "CHECK_STARTED",
+                        outcome = "OK",
+                        entityType = "Budget",
+                        entityId = budget.id,
+                        timestamp = now
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                                } else {
+                                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                                }
+            }
         }
 
         // P6-P1-2: Use adjustedSpendBreakdown.effectiveSpend when available (shared-expense offset),
@@ -248,19 +261,29 @@ class BudgetMonitor @Inject constructor(
         // P2-20: Write a diagnostic event recording the budget check attempt.
         // Writes on ioDispatcher to avoid blocking the monitor coroutine.
         withContext(ioDispatcher) {
-            diagnosticEventDao.insert(
-                PipelineDiagnosticEvent(
-                    pipeline = "budget_monitor",
-                    stage = "STATUS_COMPUTED",
-                    outcome = "OK",
-                    entityType = "BudgetStatus",
-                    entityId = budget.id,
-                    confidence = adjustedPercent.toDouble().coerceIn(0.0, 2.0).toFloat(),
-                    message = "spent=%.2f limit=%.2f percent=%.2f partial=%b"
-                        .format(spent, effectiveLimit, adjustedPercent, status.isPartial),
-                    timestamp = now
+            try {
+                writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                diagnosticEventDao.insert(
+                    PipelineDiagnosticEvent(
+                        pipeline = "budget_monitor",
+                        stage = "STATUS_COMPUTED",
+                        outcome = "OK",
+                        entityType = "BudgetStatus",
+                        entityId = budget.id,
+                        confidence = adjustedPercent.toDouble().coerceIn(0.0, 2.0).toFloat(),
+                        message = "spent=%.2f limit=%.2f percent=%.2f partial=%b"
+                            .format(spent, effectiveLimit, adjustedPercent, status.isPartial),
+                        timestamp = now
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                                } else {
+                                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                                }
+            }
         }
 
         // BUD-3: Only update notification timestamp if the notification was
@@ -317,6 +340,7 @@ class BudgetMonitor @Inject constructor(
     ) {
         serviceScope.launch(ioDispatcher) {
             try {
+                writeBarrier.checkWritesAllowed("BudgetMonitor.writeAlertDiagnostic")
                 diagnosticEventDao.insert(
                     PipelineDiagnosticEvent(
                         pipeline = "budget_monitor",

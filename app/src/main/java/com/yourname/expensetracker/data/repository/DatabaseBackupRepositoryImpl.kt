@@ -1906,12 +1906,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     
     override suspend fun resetDatabase(): Result<Unit> = withContext(ioDispatcher) {
         try {
-            // Create safety backup first
+            // Enter maintenance mode — blocks all writes for the duration of the reset
+            restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESETTING_DATABASE)
+            Timber.w("Reset: entered RESETTING_DATABASE maintenance mode")
+
+            val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
+
+            // Create safety backup before touching anything
             val safetyBackupResult = createSafetyBackup()
             if (safetyBackupResult.isFailure) {
-                val reason = safetyBackupResult.exceptionOrNull()?.message
-                    ?: "Unknown backup error"
+                val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown backup error"
                 Timber.e("Database reset aborted: safety backup failed: $reason")
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
                     Exception(
                         "Reset cancelled because safety backup failed. " +
@@ -1919,23 +1925,40 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
                 )
             }
-            
-            // Close database
-            database.close()
-            
-            val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
-            val dbWalFile = File(dbFile.parent, "${AppDatabase.DATABASE_NAME}-wal")
-            val dbShmFile = File(dbFile.parent, "${AppDatabase.DATABASE_NAME}-shm")
-            
-            // Delete all database files
-            dbFile.delete()
-            dbWalFile.delete()
-            dbShmFile.delete()
-            
-            Timber.d("Database reset successfully")
-            Result.success(Unit)
+
+            // Journal the operation for crash-safe tracking
+            val journalEntry = restoreJournal.beginJournal(
+                sourceBackupPath = safetyBackupResult.getOrNull()?.absolutePath ?: "",
+                stagedDbPath = "",
+                liveDbPath = liveDbFile.absolutePath
+            )
+
+            try {
+                closeLiveDatabaseForFileSwap()
+
+                val dbWalFile = File(liveDbFile.parent, "${AppDatabase.DATABASE_NAME}-wal")
+                val dbShmFile = File(liveDbFile.parent, "${AppDatabase.DATABASE_NAME}-shm")
+
+                liveDbFile.delete()
+                dbWalFile.delete()
+                dbShmFile.delete()
+
+                restoreJournal.commitJournal(journalEntry)
+
+                // Reset requires restart — Room singleton is stale after DB deletion
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
+
+                Timber.w("Database reset successfully. Restart required.")
+                Result.success(Unit)
+            } catch (e: Exception) {
+                restoreJournal.failJournal(journalEntry, e.message ?: "Reset failed")
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
+                Timber.e(e, "Database reset failed")
+                Result.failure(e)
+            }
         } catch (e: Exception) {
             Timber.e(e, "Failed to reset database")
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
             Result.failure(e)
         }
     }

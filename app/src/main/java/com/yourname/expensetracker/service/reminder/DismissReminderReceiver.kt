@@ -3,7 +3,7 @@ package com.yourname.expensetracker.service.reminder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
 import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
@@ -32,7 +32,7 @@ class DismissReminderReceiver : BroadcastReceiver() {
 
     @Inject lateinit var reminderDeliveryDao: RecurringReminderDeliveryDao
     @Inject lateinit var timeProvider: TimeProvider
-    @Inject lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
+    @Inject lateinit var writeBarrier: DatabaseWriteBarrier
     @Inject lateinit var lifecycleEventDao: RecurringLifecycleEventDao
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -42,8 +42,10 @@ class DismissReminderReceiver : BroadcastReceiver() {
             return
         }
 
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            Timber.w("DismissReminderReceiver: writes blocked during restore mode")
+        try {
+            writeBarrier.checkWritesAllowed("DismissReminderReceiver")
+        } catch (e: Exception) {
+            Timber.w("DismissReminderReceiver: writes blocked — %s", e.message)
             return
         }
 

@@ -46,7 +46,8 @@ class FinancialHealthScoreV2 @Inject constructor(
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
     /** @suppress Injected for AIML-25: upcoming-bill-aware runway calculation. */
-    private val cashFlowCalculator: CashFlowCalculator
+    private val cashFlowCalculator: CashFlowCalculator,
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 ) {
     companion object {
         // Component weights (must sum to 1.0)
@@ -637,6 +638,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         recommendation: String?
     ) {
         try {
+            writeBarrier.checkWritesAllowed("FinancialHealthScoreV2.saveToHistory")
             val existing = healthScoreHistoryDao.getHistoryForPeriod(periodStart, periodEnd).firstOrNull()
 
             if (existing != null) {

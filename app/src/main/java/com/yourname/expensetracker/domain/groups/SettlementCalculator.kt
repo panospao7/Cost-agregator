@@ -40,6 +40,7 @@ data class Settlement(
 @Singleton
 class SettlementCalculator @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
     /** Time budget for the DFS solver in nanoseconds (default 500ms). */
     private val dfsTimeBudgetNs: Long = 500_000_000L,
     /** Maximum iterations before falling back to greedy solver. */
@@ -173,6 +174,7 @@ class SettlementCalculator @Inject constructor(
     ): Long {
         require(amount > 0) { "Settlement amount must be positive" }
         require(fromMemberId != toMemberId) { "Cannot settle to self" }
+        writeBarrier.checkWritesAllowed("SettlementCalculator.recordSettlement")
         val now = timeProvider.now()
         return settlementDao.insert(GroupSettlementEntity(
             groupId = groupId, fromMemberId = fromMemberId, toMemberId = toMemberId,

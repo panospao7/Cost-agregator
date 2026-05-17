@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.data.repository
 
 import android.content.Context
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -15,7 +18,8 @@ class ExportDataRepository @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val deterministicExpenseExportPager: DeterministicExpenseExportPager,
-    private val backupEncryptionService: BackupEncryptionService
+    private val backupEncryptionService: BackupEncryptionService,
+    private val readBarrier: DatabaseReadBarrier
 ) {
     /**
      * ## BAK-13: Export no snapshot consistency
@@ -29,22 +33,26 @@ class ExportDataRepository @Inject constructor(
      * Get expenses in a date range using stable ID snapshot for consistency.
      * Delegates to [getExpensesBetweenForExport] which uses the deterministic pager.
      */
-    suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> =
-        deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
+    private val exportOp = DatabaseAccessOperation(
+        name = "ExportDataRepository.export",
+        pipeline = "P12",
+        entity = "Expense"
+    )
 
-    /**
-     * Get expenses using deterministic paging for stable snapshot consistency.
-     * This is the primary export method — use this instead of [getExpensesBetween].
-     */
-    suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long): List<Expense> =
-        deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
+    suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> {
+        readBarrier.checkReadAllowed(exportOp, DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
+        return deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
+    }
 
-    /**
-     * Count expenses between dates using the same snapshot-based approach.
-     * Uses the deterministic pager to ensure count is consistent with fetched data.
-     */
-    suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int =
-        deterministicExpenseExportPager.countBetween(startDate, endDate)
+    suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long): List<Expense> {
+        readBarrier.checkReadAllowed(exportOp, DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
+        return deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
+    }
+
+    suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int {
+        readBarrier.checkReadAllowed(exportOp, DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
+        return deterministicExpenseExportPager.countBetween(startDate, endDate)
+    }
 
     /**
      * ## SRH-29: Export file encryption (planned)
@@ -92,16 +100,21 @@ class ExportDataRepository @Inject constructor(
         pageSize: Int,
         lastDate: Long?,
         lastId: Long?
-    ): List<Expense> = deterministicExpenseExportPager.fetchPage(
+    ): List<Expense> {
+        readBarrier.checkReadAllowed(exportOp, DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
+        return deterministicExpenseExportPager.fetchPage(
         startDate = startDate,
         endDate = endDate,
         pageSize = pageSize,
         lastDate = lastDate,
         lastId = lastId
-    )
+        )
+    }
 
-    suspend fun getCategoryNameMap(): Map<Long, String> =
-        categoryRepository.getAll().associate { it.id to it.name }
+    suspend fun getCategoryNameMap(): Map<Long, String> {
+        readBarrier.checkReadAllowed(exportOp, DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
+        return categoryRepository.getAll().associate { it.id to it.name }
+    }
 
     /**
      * ## SRH-29: Export file encryption

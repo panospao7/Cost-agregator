@@ -6,6 +6,9 @@ import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -36,8 +39,20 @@ class RestoreMaintenanceMode @Inject constructor(
         RESTORE_SWAPPING("restore_swapping"),
         RESTORE_VERIFYING("restore_verifying"),
         RESTORE_ROLLING_BACK("restore_rolling_back"),
-        RESTORE_COMPLETE_RESTART_REQUIRED("restore_complete_restart_required")
+        ASSETS_RESTORING("assets_restoring"),
+        RESETTING_DATABASE("resetting_database"),
+        RESTORE_COMPLETE_RESTART_REQUIRED("restore_complete_restart_required"),
+        CRITICAL_RECOVERY_REQUIRED("critical_recovery_required")
     }
+
+    // ── Observable mode flow ──────────────────────────────────────
+
+    private val _modeFlow = MutableStateFlow(readMode())
+    val modeFlow: StateFlow<Mode> = _modeFlow.asStateFlow()
+
+    /** Derived operational state for the app shell to observe. */
+    val operationalStateFlow: StateFlow<AppOperationalState> get() = _operationalStateFlow
+    private val _operationalStateFlow = kotlinx.coroutines.flow.MutableStateFlow(toOperationalState(readMode()))
 
     // ── State tracking ────────────────────────────────────────────
 
@@ -150,6 +165,16 @@ class RestoreMaintenanceMode @Inject constructor(
         // mode persists to disk before any subsequent restore operations.
         // This prevents the mode from reverting on process death.
         prefs.edit().putString(KEY_MAINTENANCE_MODE, mode.name).commit()
+        _modeFlow.value = mode
+        _operationalStateFlow.value = toOperationalState(mode)
+    }
+
+    private fun toOperationalState(mode: Mode): AppOperationalState = when (mode) {
+        Mode.NORMAL -> AppOperationalState.Normal
+        Mode.BACKUP_EXPORTING -> AppOperationalState.BackupExporting
+        Mode.RESTORE_COMPLETE_RESTART_REQUIRED -> AppOperationalState.RestartRequiredAfterRestore
+        Mode.CRITICAL_RECOVERY_REQUIRED -> AppOperationalState.CriticalRecoveryRequired
+        else -> AppOperationalState.RestoreInProgress(mode)
     }
 
     companion object {

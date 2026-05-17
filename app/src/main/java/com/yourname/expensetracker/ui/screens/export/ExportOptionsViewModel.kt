@@ -10,8 +10,9 @@ import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -67,7 +68,6 @@ class ExportOptionsViewModel @Inject constructor(
     private val xeroExporter: XeroCSVExporter,
     private val quickBooksExporter: QuickBooksIIFExporter,
     private val freshBooksExporter: FreshBooksExporter,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val readBarrier: DatabaseReadBarrier,
     private val privacyGate: PrivacyGate
 ) : ViewModel() {
@@ -172,19 +172,15 @@ class ExportOptionsViewModel @Inject constructor(
                 return@launch
             }
 
-            if (!restoreMaintenanceMode.isWritesAllowed()) {
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = "A restore operation is in progress. Export is unavailable until the app is restarted."
-                )
-                return@launch
-            }
             try {
-                readBarrier.checkReadAllowed("export_generate")
-            } catch (e: IllegalStateException) {
+                readBarrier.checkReadAllowed(
+                    DatabaseAccessOperation("ExportOptionsViewModel.generateExport", pipeline = "P12"),
+                    DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
+                )
+            } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Reads are blocked during restart-required maintenance mode."
+                    error = "Export unavailable: ${e.message}"
                 )
                 return@launch
             }

@@ -24,7 +24,7 @@ import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -99,7 +99,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val assetStore: ReceiptAssetStore,
     private val transactionValidator: ValidateBankStatementTransactionsUseCase,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val restoreMaintenanceMode: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
@@ -114,8 +114,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
      * 6. Writes lifecycle events and returns the result.
      */
     suspend fun processBankStatement(uri: Uri): Result<BankStatementResult> {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            restoreMaintenanceMode.checkWritesAllowed("BankStatementLifecycleProcessor.processBankStatement")
+        } catch (e: Exception) {
+            return Result.failure(e)
         }
         val startTime = timeProvider.now()
         val parsingLogs = mutableListOf<String>()

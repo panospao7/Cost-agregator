@@ -3,6 +3,9 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
 import com.yourname.expensetracker.domain.export.*
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +41,7 @@ class AccountingExportRepository @Inject constructor(
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val deterministicExpenseExportPager: DeterministicExpenseExportPager,
     private val accountingExportPolicy: AccountingExportPolicy,
+    private val readBarrier: DatabaseReadBarrier,
     private val quickBooksExporter: QuickBooksIIFExporter,
     private val xeroExporter: XeroCSVExporter,
     private val freshBooksExporter: FreshBooksExporter,
@@ -67,6 +71,10 @@ class AccountingExportRepository @Inject constructor(
         format: ExportFormat
     ): ExportResult = withContext(Dispatchers.IO) {
         try {
+            readBarrier.checkReadAllowed(
+                DatabaseAccessOperation("AccountingExportRepository.exportExpenses", pipeline = "P12"),
+                DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
+            )
             // BAK-15: Validate date range — reject non-positive, zero-width, or inverted ranges
             require(startDate > 0L) { "startDate must be positive" }
             require(endDate > startDate) { "endDate must be after startDate" }

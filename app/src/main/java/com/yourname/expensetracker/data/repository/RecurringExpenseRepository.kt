@@ -167,6 +167,7 @@ class RecurringExpenseRepository @Inject constructor(
         metadata: String?
     ) {
         if (ruleId <= 0) return
+        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.writeLifecycleEvent")
         try {
             lifecycleEventDao.insert(
                 com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
