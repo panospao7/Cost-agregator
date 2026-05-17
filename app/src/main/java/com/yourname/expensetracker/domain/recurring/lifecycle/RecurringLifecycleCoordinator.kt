@@ -426,6 +426,59 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Dismisses a reminder delivery. Called from [DismissReminderReceiver] via goAsync.
+     * Checks write barrier inside the transaction.
+     */
+    suspend fun dismissReminderDelivery(deliveryId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.dismissReminderDelivery")
+        val now = timeProvider.now()
+        database.withTransaction {
+            writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.dismissReminderDelivery.tx")
+            val delivery = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction
+            reminderDeliveryDao.update(delivery.copy(status = "DISMISSED", dismissedAt = now))
+            runCatching {
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = delivery.occurrenceId,
+                        eventType = "REMINDER_DISMISSED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = null,
+                        metadata = """{"deliveryId":$deliveryId}"""
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Snoozes a reminder delivery for [snoozeMs] milliseconds. Called from [SnoozeReminderReceiver] via goAsync.
+     * Checks write barrier inside the transaction.
+     */
+    suspend fun snoozeReminderDelivery(deliveryId: Long, snoozeMs: Long = 24L * 60L * 60L * 1000L) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.snoozeReminderDelivery")
+        val now = timeProvider.now()
+        val snoozedUntil = now + snoozeMs
+        database.withTransaction {
+            writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.snoozeReminderDelivery.tx")
+            val delivery = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction
+            reminderDeliveryDao.update(delivery.copy(status = "SNOOZED", snoozedUntil = snoozedUntil))
+            runCatching {
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = delivery.occurrenceId,
+                        eventType = "REMINDER_SNOOZED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = null,
+                        metadata = """{"deliveryId":$deliveryId,"snoozedUntil":$snoozedUntil}"""
+                    )
+                )
+            }
+        }
+    }
+
+    /**
      * Planned-vs-Actual reconciliation report for a recurring rule.
      *
      * @param totalPlanned Sum of expected amounts for all generated occurrences.

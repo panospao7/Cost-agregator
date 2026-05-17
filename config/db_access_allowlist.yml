@@ -17,27 +17,25 @@ allowed_writers:
     daos:
       - expenseDao
       - transactionEventDao
-    reason: "canonical transaction lifecycle writer"
+    requires_write_barrier: false
+    reason: "canonical transaction lifecycle writer — guards at entry via withTransaction"
 
   - class: ExpenseWriteStore
     daos:
       - expenseDao
-    reason: "write facade — enforces DatabaseWriteBarrier on every method; used by coordinators instead of direct DAO access"
+    requires_write_barrier: false
+    reason: "write facade — calls check() inline before every DAO mutation"
 
   - class: ExpenseRepository
     daos:
       - expenseDao
-    methods_only:
-      - conditionallySetLocation
-      - clearExpenseLocation
-      - incrementBackfillAttempts
-      - updateMerchantKey
-    reason: "approved maintenance/backfill methods — each must call writeBarrier"
+    reason: "approved maintenance/backfill methods — each calls writeBarrier"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
   # ── Notifications ───────────────────────────────────────────────
 
   - class: NotificationRepository
+    requires_write_barrier: false
     daos:
       - rawNotificationDao
       - pendingReviewDao
@@ -45,6 +43,7 @@ allowed_writers:
     reason: "canonical notification writer"
 
   - class: DataRetentionWorker
+    requires_write_barrier: false
     daos:
       - rawNotificationDao
       - pendingReviewDao
@@ -55,6 +54,7 @@ allowed_writers:
   # ── Receipts / OCR / Email ──────────────────────────────────────
 
   - class: ReceiptLifecycleCoordinator
+    requires_write_barrier: false
     daos:
       - scannedReceiptDao
       - receiptEventDao
@@ -64,6 +64,7 @@ allowed_writers:
     reason: "canonical receipt lifecycle writer"
 
   - class: ReceiptLinkService
+    requires_write_barrier: false
     daos:
       - receiptExpenseLinkDao
       - scannedReceiptDao
@@ -71,6 +72,7 @@ allowed_writers:
     allowed_until: "refactor to use writeBarrier (PR 7)"
 
   - class: ReceiptRepository
+    requires_write_barrier: false
     daos:
       - scannedReceiptDao
     reason: "receipt status updates — must call writeBarrier"
@@ -99,6 +101,7 @@ allowed_writers:
     reason: "canonical recurring occurrence writer"
 
   - class: RecurringOccurrenceMaterializer
+    requires_write_barrier: false
     daos:
       - recurringOccurrenceDao
       - expenseDao
@@ -194,6 +197,7 @@ allowed_writers:
     reason: "worker run logging — write barrier checked by WorkerExecutionGuard before entry"
 
   - class: BillReminderWorker
+    requires_write_barrier: false
     daos:
       - pipelineDiagnosticEventDao
     reason: "diagnostic insert inside WorkerExecutionGuard.runGuarded — barrier already checked at entry"
@@ -236,6 +240,7 @@ allowed_writers:
     reason: "bank statement processing — writeBarrier checked at processBankStatement entry (PR 7)"
 
   - class: ReceiptSideEffectDispatcher
+    requires_write_barrier: false
     daos:
       - scannedReceiptDao
       - receiptEventDao
@@ -248,6 +253,7 @@ allowed_writers:
     reason: "settlement recording — writeBarrier checked at recordSettlement (PR 7)"
 
   - class: FinancialHealthScoreV2
+    requires_write_barrier: false
     daos:
       - healthScoreHistoryDao
     reason: "health score history — writeBarrier checked at saveToHistory (PR 7)"
@@ -288,14 +294,17 @@ allowed_writers:
   - class: LegacyDataMigrationService
     daos:
       - categoryDao
+    requires_write_barrier: false
     reason: "debug-only legacy data migration"
 
   - class: CsvExpenseImporter
+    requires_write_barrier: false
     daos:
       - categoryDao
     reason: "CSV import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
 
   - class: JsonExpenseImporter
+    requires_write_barrier: false
     daos:
       - categoryDao
     reason: "JSON import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
@@ -316,6 +325,7 @@ allowed_writers:
     reason: "AI artifact persistence — read-heavy; writes must call writeBarrier"
 
   - class: AiChatRepositoryImpl
+    requires_write_barrier: false
     daos:
       - aiChatSessionDao
       - aiChatMessageDao
@@ -377,6 +387,7 @@ allowed_writers:
     reason: "canonical group lifecycle writer"
 
   - class: GroupTransactionCoordinator
+    requires_write_barrier: false
     daos:
       - expenseGroupDao
       - groupMemberDao
@@ -385,6 +396,7 @@ allowed_writers:
     reason: "atomic group-expense creation within outer transaction"
 
   - class: GroupsRepositoryImpl
+    requires_write_barrier: false
     daos:
       - expenseGroupDao
       - groupMemberDao
@@ -430,8 +442,7 @@ debug_only_writers:
     reason: "debug-only data management"
 
   - class: BudgetRepository
-    methods_only:
-      - restoreDebugSnapshot
+    debug_only: true
     reason: "debug-only budget snapshot restore"
 
   - class: DatabaseBackupRepositoryImpl

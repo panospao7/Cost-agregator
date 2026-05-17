@@ -56,7 +56,7 @@ def test_allowlisted_class_does_not_trigger_violation(tmp_path):
     _write_kt(src, "TransactionLifecycleCoordinator.kt",
               "class TransactionLifecycleCoordinator { fun save() { expenseDao.insert(e) } }")
     approved = load_allowlist(_allowlist(tmp_path,
-        "allowed_writers:\n  - class: TransactionLifecycleCoordinator\n    daos: [expenseDao]\n    reason: canonical\n"
+        "allowed_writers:\n  - class: TransactionLifecycleCoordinator\n    requires_write_barrier: false\n    daos: [expenseDao]\n    reason: canonical\n"
     ))
     violations = scan(str(src), approved)
     assert len(violations) == 0, f"Allowlisted class should not be flagged: {violations}"

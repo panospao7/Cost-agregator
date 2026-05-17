@@ -1,7 +1,11 @@
 package com.yourname.expensetracker.domain.workers
 
 import androidx.work.ListenableWorker
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -15,6 +19,9 @@ data class WorkerGuardRequest(
     val workerName: String,
     val requiredCapabilities: List<PrivacyCapability> = emptyList(),
     val requiresNotificationPermission: Boolean = false,
+    /** If true, this worker writes to the DB and must be blocked in all non-NORMAL modes. */
+    val requiresDatabaseWrite: Boolean = true,
+    /** If true AND requiresDatabaseWrite=false, allow read-only work during BACKUP_EXPORTING. */
     val allowDuringBackupExport: Boolean = false
 )
 
@@ -35,34 +42,54 @@ fun <T> WorkerGuardResult<T>.toWorkerResult(): ListenableWorker.Result = when (t
 @Singleton
 class WorkerExecutionGuard @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
+    private val readBarrier: DatabaseReadBarrier,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val workerRunLogger: WorkerRunLogger,
     private val privacyGate: PrivacyGate,
-    private val leaseRegistry: WorkerLeaseRegistry
+    private val leaseRegistry: WorkerLeaseRegistry,
+    private val diagnosticSink: MaintenanceSafeDiagnosticSink
 ) {
     suspend fun <T> runGuarded(
         request: WorkerGuardRequest,
         block: suspend () -> T
     ): WorkerGuardResult<T> {
-        // Check write barrier BEFORE acquiring a lease or logging a run record
-        try {
-            writeBarrier.checkWritesAllowed(request.workerName)
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            return WorkerGuardResult.Skipped("Write barrier denied: ${e.message}")
+        val mode = restoreMaintenanceMode.currentMode()
+
+        // Barrier check — before acquiring lease or logging a run
+        if (mode != RestoreMaintenanceMode.Mode.NORMAL) {
+            val allowedReadOnly = !request.requiresDatabaseWrite &&
+                request.allowDuringBackupExport &&
+                mode == RestoreMaintenanceMode.Mode.BACKUP_EXPORTING
+
+            if (allowedReadOnly) {
+                try {
+                    readBarrier.checkReadAllowed(
+                        DatabaseAccessOperation(request.workerName, pipeline = "P9"),
+                        DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
+                    )
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9")
+                    return WorkerGuardResult.Skipped("Read barrier denied during backup: ${e.message}")
+                }
+            } else {
+                // Write worker or non-backup mode — skip and record to safe sink
+                diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9")
+                return WorkerGuardResult.Skipped("Blocked in mode $mode")
+            }
+        } else if (request.requiresDatabaseWrite) {
+            try {
+                writeBarrier.checkWritesAllowed(request.workerName)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9")
+                return WorkerGuardResult.Skipped("Write barrier denied: ${e.message}")
+            }
         }
 
-        // Acquire lease — held for the entire worker execution lifetime
         val lease = leaseRegistry.acquire(request.workerName)
         val run = workerRunLogger.start(request.workerName)
         try {
-            if (!request.allowDuringBackupExport &&
-                restoreMaintenanceMode.currentMode() == RestoreMaintenanceMode.Mode.BACKUP_EXPORTING
-            ) {
-                run.skipped("RESTORE_BLOCKED")
-                return WorkerGuardResult.Skipped("Backup exporting")
-            }
-
             val spec = WorkerSpec.DEFAULTS[request.workerName]
             if (spec != null && !spec.enabled) {
                 run.skipped("DISABLED")
@@ -87,10 +114,13 @@ class WorkerExecutionGuard @Inject constructor(
             run.success()
             return WorkerGuardResult.Success(result)
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is kotlinx.coroutines.CancellationException) {
+                // Finalize run as CANCELLED before rethrowing
+                run.cancelled("coroutine_cancelled_or_maintenance_stop")
+                throw e
+            }
             Timber.w(e, "Worker ${request.workerName} failed")
-            val isTransient = classifyTransient(e)
-            return if (isTransient) {
+            return if (classifyTransient(e)) {
                 run.retry(e.message ?: "Transient error", e)
                 WorkerGuardResult.Retry(e.message ?: "Transient error", e)
             } else {
@@ -102,10 +132,6 @@ class WorkerExecutionGuard @Inject constructor(
         }
     }
 
-    /**
-     * Checkpoint for long-running workers — checks write barrier and stop flag.
-     * Call before each DB mutation inside a long-running worker loop.
-     */
     suspend fun checkpoint(operation: String) {
         if (leaseRegistry.isStopRequested()) {
             throw kotlinx.coroutines.CancellationException(

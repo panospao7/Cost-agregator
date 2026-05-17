@@ -15,6 +15,7 @@ interface WorkerRunHandle {
     suspend fun skipped(reason: String)
     suspend fun retry(reason: String, error: Throwable? = null)
     suspend fun failure(reason: String, error: Throwable? = null)
+    suspend fun cancelled(reason: String)
 }
 
 @Singleton
@@ -106,6 +107,23 @@ class WorkerRunLoggerImpl @Inject constructor(
                     notificationsSent = 0,
                     retryReason = null,
                     errorMessage = error?.let { "$reason: ${it.message}" } ?: reason
+                )
+            )
+        }
+
+        override suspend fun cancelled(reason: String) {
+            dao.update(
+                BackgroundJobRun(
+                    id = runId,
+                    workerName = workerName,
+                    startedAt = startedAt,
+                    finishedAt = timeProvider.now(),
+                    status = "CANCELLED",
+                    rowsScanned = 0,
+                    rowsUpdated = 0,
+                    notificationsSent = 0,
+                    retryReason = reason,
+                    errorMessage = null
                 )
             )
         }

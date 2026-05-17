@@ -7,6 +7,7 @@ import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import kotlinx.coroutines.launch
@@ -20,7 +21,8 @@ class AppStartupCoordinator @Inject constructor(
     private val backgroundLifecycleObserver: AppBackgroundLifecycleObserver,
     private val syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase,
     private val restoreJournal: RestoreJournal,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val restoreDatabaseOpener: RestoreDatabaseOpener
 ) {
 
     fun initialize(application: Application) {
@@ -144,7 +146,19 @@ class AppStartupCoordinator @Inject constructor(
                     return
                 }
 
-                // Recovery succeeded — clean up staging files and journal.
+                // Recovery succeeded — verify the restored DB before returning to NORMAL
+                val verificationPassed = entry.liveDbPath?.let { verifySafetyRestoredDb(File(it)) } ?: false
+                if (!verificationPassed) {
+                    restoreJournal.failJournal(
+                        entry,
+                        "Startup crash recovery: safety backup copy succeeded but DB verification failed"
+                    )
+                    restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED)
+                    Timber.e("Startup: CRITICAL — safety-restored DB failed verification; blocking app")
+                    return
+                }
+
+                // Verification passed — clean up staging files and journal.
                 restoreJournal.cleanStagingFiles(entry)
                 restoreJournal.deleteJournal()
             }
@@ -161,6 +175,47 @@ class AppStartupCoordinator @Inject constructor(
             Timber.w("Startup: resetting maintenance mode from %s to NORMAL", restoreMaintenanceMode.currentMode())
             restoreMaintenanceMode.reset()
         }
+    }
+
+    /**
+     * Verifies the safety-restored DB with PRAGMA integrity_check and a Room open attempt.
+     * @return true if the DB is healthy, false if it should be treated as corrupt.
+     */
+    private fun verifySafetyRestoredDb(liveDbFile: File): Boolean {
+        if (!liveDbFile.exists()) {
+            Timber.e("Startup: verifySafetyRestoredDb — live DB file missing")
+            return false
+        }
+        // 1. SQLite integrity_check
+        try {
+            val db = android.database.sqlite.SQLiteDatabase.openDatabase(
+                liveDbFile.absolutePath, null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            val integrity = db.rawQuery("PRAGMA integrity_check", null).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else "unknown"
+            }
+            db.close()
+            if (!integrity.equals("ok", ignoreCase = true)) {
+                Timber.e("Startup: safety-restored DB integrity_check failed: %s", integrity)
+                return false
+            }
+            Timber.d("Startup: safety-restored DB integrity_check passed")
+        } catch (e: Exception) {
+            Timber.e(e, "Startup: safety-restored DB integrity_check threw exception")
+            return false
+        }
+        // 2. Room open attempt (triggers migration validation)
+        try {
+            val freshDb = restoreDatabaseOpener.openFreshDatabase()
+            freshDb.openHelper.writableDatabase
+            runCatching { freshDb.close() }
+            Timber.d("Startup: safety-restored DB Room open passed")
+        } catch (e: Exception) {
+            Timber.e(e, "Startup: safety-restored DB Room open failed")
+            return false
+        }
+        return true
     }
 
     /**
