@@ -1,383 +1,83 @@
-﻿# Pipeline 12 Debugging Report — Import / Export / Accounting Roundtrip
+# Pipeline 12 Debug Report — Import / Export / Accounting
 
-Target commit: `53c915f09cbc92137b5b84d5839bdbf1cd321c16`  
-Review type: static GitHub code review, not local execution.
+Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`  
+Mode: static GitHub/code review, not local Gradle/device execution.
 
-## 1. Executive summary
+## Verdict
 
-Pipeline 12 is intended to be:
+Pipeline 12 is **not clean/stable yet**.
 
-```text
-ExportOptionsScreen / accounting export
-→ ExportOptionsViewModel or AccountingExportRepository
-→ ExportDataRepository / DeterministicExpenseExportPager
-→ ExpenseDao deterministic range query
-→ CSV / JSON / Xero / QuickBooks / FreshBooks / PDF output
+The export side has improved:
 
-CSV import
-→ CsvExpenseImporter
-→ parse CSV
-→ category lookup/create
-→ TransactionLifecycleCoordinator
-→ Expense / TransactionEvent
-→ dashboard / analytics / budget
-```
+- generic CSV export is streamed;
+- JSON export is versioned;
+- export uses keyset pagination;
+- temporary-file writing is used;
+- generic CSV has proper quoting/formula neutralization;
+- accounting exporters exist for Xero, QuickBooks, FreshBooks;
+- accounting exports have some single-currency/purchase-only validation;
+- export preview is generated from the same stream;
+- export file encryption helper exists.
 
-The codebase has useful improvements:
+But the full pipeline is still **orange/red** because it is mostly **export-only** and not a true roundtrip/import pipeline.
 
-- CSV escaping and formula-injection mitigation exist.
-- Accounting exports validate single-currency + purchase-only datasets.
-- Deterministic export paging exists.
-- `AccountingExportRepository` writes through temp file + rename.
-- CSV import now routes rows through `TransactionLifecycleCoordinator`.
-- Export mapper uses `effectiveAmount` for accounting exports.
-- PDF report groups by currency instead of raw mixed-currency totals.
+Main blockers:
 
-But Pipeline 12 has major correctness gaps.
+1. no app-level CSV/JSON import into a fresh DB;
+2. no roundtrip contract;
+3. accounting CSV escaping is broken for commas/quotes;
+4. accounting validation is per-page, not global;
+5. exported multi-currency fields are incomplete/wrongly populated;
+6. many app fields are silently dropped;
+7. normal exports are plaintext and not privacy-gated;
+8. export snapshot consistency is not real despite comments claiming it;
+9. receipt links/business/tax/source metadata are not exported;
+10. accountant PDF still has raw mixed-currency combined total caveat.
 
-Highest-risk findings:
-
-1. **The app’s own generic CSV export cannot be imported by `CsvExpenseImporter`.**
-2. **Export and import schemas are not versioned against each other.**
-3. **There are two export paths with different behavior: `ExportOptionsViewModel` and `AccountingExportRepository`.**
-4. **`ExportOptionsViewModel` writes final files directly, without atomic temp-file rename.**
-5. **Generic CSV/JSON exports lose important fields: transaction type, ownership/shared fields, original/home conversion fields, payment method, source, receipt links, tax/business fields.**
-6. **CSV import cannot parse the app’s exported currency column, ISO currency codes, comma decimals, thousands separators, deposits, transfers, refunds, or ownership fields.**
-7. **Export paging is deterministic but offset-based and not snapshot-isolated, so concurrent changes can skip/duplicate rows.**
-8. **Several tests are stale relative to the current exporter headers and coordinator-based importer.**
-9. **Accounting exporters materialize full strings and can still OOM on large datasets.**
-10. **Privacy/redaction behavior for export is inconsistent or absent outside backup redaction.**
-
-Main recommendation:
-
-> Define a versioned canonical app export schema and make import consume that same schema. Treat accounting exports as one-way external reports, not roundtrip backups.
+Best current label: **usable beta export utility, not production-grade import/export/accounting pipeline**.
 
 ---
 
-# 2. Intended architecture contract
+# Severity scale
 
-A safe export/import architecture should have three distinct modes:
-
-## A. App roundtrip export
-
-Purpose:
-
-```text
-app → file → same app/fresh DB
-```
-
-Must preserve:
-
-```text
-expense identity/source
-transaction type
-amount/currency
-effective amount
-ownership/shared fields
-category
-merchant/merchantKey
-date/timestamp
-notes
-receipt links
-recurring links
-tax/business fields
-conversion metadata
-schema version
-unsupported-field warnings
-```
-
-## B. Accounting export
-
-Purpose:
-
-```text
-app → external accounting system
-```
-
-Should be intentionally lossy but explicit:
-
-```text
-purchase-only
-single-currency or converted-home-currency
-account/category mapping
-vendor/merchant
-reference
-tax/business fields where supported
-```
-
-## C. Privacy/anonymized export
-
-Purpose:
-
-```text
-shareable report
-```
-
-Should redact:
-
-```text
-raw notification text
-raw OCR/email text
-sensitive notes
-merchant/person/location fields depending policy
-receipt image references
-AI artifacts
-```
-
-Current code mixes these concepts.
+- **P0 / Critical:** required pipeline capability missing or impossible to verify.
+- **P1 / High:** common export/import data loss, wrong accounting output, privacy risk, or broken financial semantics.
+- **P2 / Medium:** edge correctness, diagnostics, UX, consistency, maintainability.
+- **P3 / Low:** cleanup/polish.
 
 ---
 
-# 3. Actual code path summary
+# Pipeline checklist status
 
-## 3.1 ExportOptionsViewModel path
-
-`ExportOptionsViewModel.generateExport()`:
-
-```text
-load categories
-create export file in cache/exports
-fetch all expenses via ExportDataRepository.getExpensesBetweenForExport()
-if accounting format, validate AccountingExportPolicy
-write selected format:
-  csv
-  json
-  xero
-  quickbooks
-  freshbooks
-set exportPreview + exportFilePath
-```
-
-Important details:
-
-- UI formats: CSV, JSON, Xero, QuickBooks, FreshBooks.
-- No PDF option in this ViewModel, even though `AccountingExportRepository` supports PDF.
-- Generic CSV/JSON are written directly in the ViewModel.
-- Accounting formats call exporter `writeHeader()` / `writeExpense()` row-by-row.
-- Output file is created directly; no temp-file + atomic rename.
-- Preview headers for accounting formats are hardcoded separately from actual exporter headers.
-
-Sources:
-
-- `ExportOptionsViewModel.kt`
-- `ExportDataRepository.kt`
-- `AccountingExporters.kt`
+| Checklist item | Status |
+|---|---|
+| CSV escaping safe | Partial. Generic CSV is mostly safe; Xero/FreshBooks CSV are not fully escaped. |
+| Special characters roundtrip | Partial. Generic CSV quotes commas/quotes/newlines; accounting CSV does not. |
+| Multi-currency fields exported | Partial/weak. Xero/FreshBooks include columns but mapper does not populate real home/base conversion data. Generic CSV lacks them. |
+| Tax/business fields exported | Mostly missing. Business fields exist on `Expense`, but normal exports omit them. |
+| Receipt links represented | Missing. No receipt link IDs/status/link type in CSV/JSON/accounting exports. |
+| Private raw text redacted | Partial. Raw OCR/notification DB export redaction exists; normal expense export has no privacy mode and exports notes/merchant raw. |
+| Import into fresh DB works | Missing for CSV/JSON/app export. Backup restore exists but that is Pipeline 7, not app import/export. |
+| Totals match after roundtrip | Not provable because no import/roundtrip pipeline exists. |
+| Unsupported fields reported | Missing. Export silently drops many fields; no unsupported-field manifest/report. |
 
 ---
 
-## 3.2 AccountingExportRepository path
+# Positive findings to preserve
 
-`AccountingExportRepository.exportExpenses()`:
+## PF-01 — Generic CSV escaping is mostly correct
 
-```text
-validate date range
-fetch deterministic paged expenses
-map accounting transactions
-validate accounting policy if needed
-load categories
-create timestamped filename
-write to temp file
-rename temp → final file
-return FileProvider URI + file path
-```
+`ExportOptionsViewModel.escapeCsv()`:
 
-Supported formats:
+- quotes fields containing comma, quote, newline, carriage return;
+- doubles embedded quotes;
+- neutralizes formula-leading `=`, `+`, `-`, `@`.
 
-```text
-QUICKBOOKS_IIF
-XERO_CSV
-FRESHBOOKS_CSV
-ACCOUNTANT_REPORT_PDF
-```
+This is the correct base for generic CSV.
 
-Good:
+## PF-02 — JSON export has a schema wrapper
 
-- date range validation,
-- temp file + rename,
-- FileProvider URI,
-- accounting policy,
-- PDF report support.
-
-Risk:
-
-- separate from UI export path,
-- accounting exporters still often build full output strings before writing,
-- PDF has its own semantics,
-- no privacy gate/redaction.
-
-Source:
-
-- `AccountingExportRepository.kt`
-
----
-
-## 3.3 Export data retrieval
-
-`ExportDataRepository.getExpensesBetweenForExport()` calls:
-
-```text
-DeterministicExpenseExportPager.fetchAllBetween()
-```
-
-The pager repeatedly calls:
-
-```text
-ExpenseRepository.getExpensesBetweenPagedForDeterministicExport()
-→ ExpenseDao.getExpensesBetweenForExport()
-```
-
-DAO ordering:
-
-```sql
-ORDER BY date ASC, id ASC, merchant COLLATE NOCASE ASC
-LIMIT :limit OFFSET :offset
-```
-
-Good:
-
-- deterministic order,
-- exhaustive paging,
-- avoids old fixed row limit.
-
-Risk:
-
-- offset paging,
-- no snapshot isolation,
-- all rows collected into a `List`,
-- export count can diverge from actual rows if data changes between count and export.
-
-Sources:
-
-- `DeterministicExpenseExportPager.kt`
-- `ExpenseRepository.kt`
-- `ExpenseDao.kt`
-
----
-
-## 3.4 CSV import path
-
-`CsvExpenseImporter.importFromContent()` expects old format:
-
-```csv
-date,amount,merchant,category,description
-2024-01-15,25.50,Starbucks,Coffee,Morning coffee
-```
-
-It does:
-
-```text
-split rows
-skip header if first line contains date/amount
-parse columns:
-  0 date
-  1 amount
-  2 merchant
-  3 category
-  4 description
-detect currency from amount symbol only
-fallback to home currency
-get or create category via CategoryDao
-CreateExpenseRequest(...)
-TransactionLifecycleCoordinator.createExpense()
-return per-row result
-```
-
-Good:
-
-- routes through lifecycle coordinator,
-- handles quoted commas,
-- detects €/$/£/¥ symbols,
-- reports per-row result.
-
-Risk:
-
-- does not import current app export CSV,
-- no schema/version support,
-- no transaction type support,
-- no ISO currency column support,
-- weak amount parsing,
-- no idempotency from exported ID/source,
-- direct deprecated `CategoryDao.insert()`.
-
-Source:
-
-- `CsvExpenseImporter.kt`
-
----
-
-# 4. Major findings
-
-### Post-evaluation fixes (2026-05-06):
-- **FIXED — PR E-1**: Accounting policy now validates ALL pages during export streaming,
-  not just the first 2000 rows. Per-page validation added inside streamExpensesToWriter().
-- **FIXED — PR E-2**: Export preview headers no longer use hardcoded stale strings.
-  Headers are now captured from the actual exporter via writeHeader(StringBuilder)
-  and that same output is used for both file and preview.
-- **FIXED — PR E-3**: DeterministicExpenseExportPager KDoc corrected — removed false
-  'atomic snapshot' claim. Now accurately describes keyset pagination limitations
-  (rows behind cursor missed, count not snapshot-anchored).
-
-## Finding P0-1 — The app’s CSV export cannot be imported by its CSV importer
-
-Current generic CSV export header:
-
-```csv
-Date,Merchant,Amount,Currency,Category,Notes,ID
-```
-
-Current importer expects:
-
-```csv
-date,amount,merchant,category,description
-```
-
-So if the app exports:
-
-```csv
-2026-05-01,Amazon,29.99,EUR,Shopping,Order,123
-```
-
-the importer reads:
-
-```text
-date = 2026-05-01
-amountStr = Amazon
-merchant = 29.99
-categoryName = EUR
-description = Shopping
-```
-
-Result:
-
-```text
-Invalid amount: Amazon
-```
-
-This means the app’s own CSV export/import roundtrip is broken.
-
-### Fix
-
-Create a versioned canonical app CSV format:
-
-```csv
-schemaVersion,id,timestamp,date,merchant,amount,currency,transactionType,category,categoryId,notes,paymentMethod,source,originalAmount,originalCurrency,homeAmount,homeCurrency,conversionRate,isSharedExpense,myShareAmount,mySharePercentage,isNotMine,receiptIds
-```
-
-Then update importer to detect schema:
-
-```text
-v1 old CSV: date,amount,merchant,category,description
-v2 app CSV: schemaVersion,...
-accounting CSV: import not supported unless explicitly mapped
-```
-
-Priority: highest.
-
----
-
-## Finding P0-2 — There is no true roundtrip export schema
-
-Generic JSON export has:
+JSON export writes:
 
 ```text
 schemaVersion
@@ -385,1444 +85,1445 @@ exportType
 generatedAt
 dateRange
 rowCount
-rows: id/date/timestamp/merchant/amount/currency/category/notes
+rows
 ```
 
-This is better than CSV, but still loses:
+This is a good start for a future roundtrip contract.
+
+## PF-03 — Export streams pages instead of loading everything
+
+`ExportOptionsViewModel.streamExpensesToWriter()` uses `ExportDataRepository.getExpensesPage()`, which delegates to `DeterministicExpenseExportPager.fetchPage()`.
+
+This reduces memory risk for large exports.
+
+## PF-04 — Temporary-file writing exists
+
+The ViewModel writes to:
+
+```text
+.tmp_{finalName}
+```
+
+then renames/copies to final file. This is better than writing directly to the final export path.
+
+## PF-05 — Accounting export policy exists
+
+`AccountingExportPolicy` validates:
+
+```text
+single currency
+purchase transactions only
+```
+
+This is the right concept for QuickBooks/Xero/FreshBooks-style exports.
+
+## PF-06 — Export mapper guards NaN/Infinity
+
+`ExpenseExportMapper` replaces non-finite amounts with `0.0` before serialization.
+
+That prevents obvious corrupted CSV/JSON values.
+
+## PF-07 — Raw database backup anonymizer exists
+
+`ExportAnonymizer` strips:
+
+```text
+scanned_receipts.rawOcrText
+raw_notifications title/text/bigText/subText/extrasJson/parseResult
+```
+
+from temporary DB export copies.
+
+This should be extended rather than removed.
+
+---
+
+# Issue P0-01 — No app-level CSV/JSON import or roundtrip pipeline
+
+## Severity
+
+P0 / Critical
+
+## Evidence
+
+The codebase has export UI and database backup/restore, but no discovered app-level importer for the app’s own exported CSV/JSON rows.
+
+The export UI supports:
+
+```text
+CSV
+JSON
+Xero
+QuickBooks
+FreshBooks
+```
+
+but there is no corresponding:
+
+```text
+ImportOptionsScreen
+ExpenseImportRepository
+CsvExpenseImporter
+JsonExpenseImporter
+ImportPreview
+ImportResult
+```
+
+for these app export formats.
+
+## Impact
+
+Pipeline 12 cannot satisfy:
+
+```text
+import into fresh DB works
+totals match after roundtrip
+unsupported fields reported
+```
+
+Backup/restore is not a substitute for CSV/JSON app import. It restores a whole DB; it does not validate a portable transaction export/import contract.
+
+## Fixing strategy
+
+Create a first-class app import lifecycle.
+
+## Implementation plan
+
+1. Define canonical app export schema:
+
+```kotlin
+data class ExpenseExportRowV2(
+    val schemaVersion: Int,
+    val exportedAt: String,
+    val sourceExpenseId: Long?,
+    val date: Long,
+    val transactionType: String,
+    val amount: Double,
+    val currency: String,
+    val effectiveAmount: Double,
+    val baseAmount: Double?,
+    val baseCurrency: String?,
+    val exchangeRateUsed: Double?,
+    val merchant: String,
+    val merchantKey: String?,
+    val categoryName: String?,
+    val notes: String?,
+    val source: String?,
+    val paymentMethod: String?,
+    val isBusinessExpense: Boolean,
+    val businessPurpose: String?,
+    val businessCategory: String?,
+    val businessProject: String?,
+    val requiresReceipt: Boolean,
+    val receiptLinks: List<ReceiptLinkExportRef>,
+    val unsupportedFields: Map<String, String> = emptyMap()
+)
+```
+
+2. Add import components:
+
+```text
+ExpenseImportParser
+ExpenseImportPreviewBuilder
+ExpenseImportCoordinator
+ExpenseImportResult
+ExpenseImportError
+```
+
+3. Import should route accepted rows through:
+
+```text
+TransactionLifecycleCoordinator.createExpense()
+```
+
+not direct `ExpenseDao.insert`.
+
+4. Add category resolver:
+
+```text
+category name exact
+case-insensitive match
+create category if policy allows
+or mark row as needs mapping
+```
+
+5. Add duplicate/idempotency policy:
+
+```text
+source export id
+dedupe key
+merchant/date/amount/currency/type
+```
+
+6. Add tests:
+
+```text
+export_json_then_import_fresh_db_preserves_totals
+export_csv_then_import_fresh_db_preserves_totals
+import_preview_reports_unsupported_columns
+import_rejects_invalid_currency
+import_duplicate_rows_are_skipped_or_linked
+```
+
+---
+
+# Issue P1-02 — Xero/FreshBooks CSV exporters do not do real CSV escaping
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`XeroCSVExporter` and `FreshBooksExporter` use `CsvCellSanitizer.sanitize()`.
+
+That sanitizer:
+
+```text
+strips tab/newline/carriage return
+neutralizes formula-leading = + - @
+```
+
+but it does **not** quote fields containing:
+
+```text
+comma
+double quote
+delimiter-like characters
+```
+
+Then exporters concatenate fields with commas manually.
+
+## Impact
+
+A merchant/category/note like:
+
+```text
+"Coffee, Snacks"
+ACME "North"
+```
+
+can break column alignment in Xero/FreshBooks CSV.
+
+This violates:
+
+```text
+CSV escaping safe
+special characters roundtrip
+```
+
+## Fixing strategy
+
+Use one RFC-4180-safe CSV writer for all CSV-like exports.
+
+## Implementation plan
+
+1. Replace `CsvCellSanitizer` with:
+
+```kotlin
+object CsvCellWriter {
+    fun encode(field: String, formulaSafe: Boolean = true): String
+}
+```
+
+Rules:
+
+```text
+- neutralize formula-leading chars after leading whitespace check
+- quote if field contains comma, quote, CR, LF
+- double embedded quotes
+- preserve user text where possible
+```
+
+2. Apply to:
+
+```text
+generic CSV
+Xero CSV
+FreshBooks CSV
+any future tax/accounting CSV
+```
+
+3. Keep IIF tab escaping separate.
+
+4. Tests:
+
+```text
+xero_merchant_with_comma_stays_one_column
+freshbooks_category_with_quote_escapes_correctly
+formula_injection_neutralized_in_all_csv_exporters
+newlines_do_not_break_row_count
+```
+
+---
+
+# Issue P1-03 — Accounting validation is per-page, not global
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`ExportOptionsViewModel.generateExport()` validates the first page for accounting formats.
+
+`streamExpensesToWriter()` then validates pages 2+ individually.
+
+But this only proves:
+
+```text
+each page is internally single-currency and purchase-only
+```
+
+It does not prove:
+
+```text
+the whole export is single-currency
+```
+
+Example:
+
+```text
+page 1 = EUR purchases
+page 2 = USD purchases
+```
+
+Each page passes, but the final Xero/FreshBooks/QuickBooks file is mixed-currency.
+
+## Impact
+
+Accounting exports can violate their own policy and produce files that accounting software may reject or import incorrectly.
+
+## Fixing strategy
+
+Validate the entire dataset before streaming rows.
+
+## Implementation plan
+
+1. Add repository-level aggregate validation:
+
+```kotlin
+data class ExportDatasetValidation(
+    val rowCount: Int,
+    val distinctCurrencies: Set<String>,
+    val transactionTypes: Set<TransactionType>,
+    val unsupportedRowCount: Int
+)
+```
+
+2. Query with SQL:
+
+```sql
+SELECT DISTINCT currency FROM expenses WHERE date >= ? AND date < ?
+SELECT DISTINCT transactionType FROM expenses WHERE date >= ? AND date < ?
+```
+
+3. For accounting formats, fail before file creation if:
+
+```text
+distinctCurrencies.size > 1
+transactionTypes contains non-PURCHASE
+```
+
+4. Tests:
+
+```text
+xero_export_fails_when_page1_EUR_page2_USD
+quickbooks_export_fails_when_any_transfer_exists
+freshbooks_export_validation_runs_before_streaming
+```
+
+---
+
+# Issue P1-04 — Multi-currency export fields are incomplete or incorrectly populated
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`ExportTransaction` supports:
+
+```text
+originalCurrency
+homeCurrency
+conversionRateUsed
+originalAmount
+```
+
+But `ExpenseExportMapper.map()` sets:
+
+```text
+currency = expense.currency
+originalCurrency = expense.currency
+originalAmount = expense.amount
+```
+
+and does not populate:
+
+```text
+homeCurrency from CurrencySettingsRepository
+baseAmount
+baseCurrency
+exchangeRateUsed
+```
+
+Generic CSV exports only:
+
+```text
+Date, Merchant, Amount, Currency, Category, Notes, ID
+```
+
+JSON exports similarly omit conversion fields.
+
+## Impact
+
+The exported file cannot answer:
+
+```text
+what was the original transaction amount?
+what is the home/reporting amount?
+what conversion rate was used?
+was conversion partial/missing/stale?
+```
+
+For multi-currency users, exported accounting data is not audit-ready.
+
+## Fixing strategy
+
+Make export rows currency-complete.
+
+## Implementation plan
+
+1. Replace `ExpenseExportMapper.map(expense)` with an injected mapper:
+
+```kotlin
+class ExpenseExportMapper @Inject constructor(
+    private val currencySettingsRepository: CurrencySettingsRepository
+)
+```
+
+2. Map:
+
+```text
+originalAmount = expense.amount
+originalCurrency = expense.currency
+effectiveOriginalAmount = expense.effectiveAmount
+homeAmount = expense.baseAmount
+homeCurrency = expense.baseCurrency
+conversionRateUsed = expense.exchangeRateUsed
+conversionStatus = OK / IDENTITY / MISSING / STALE
+```
+
+3. Add fields to generic CSV and JSON.
+
+4. Tests:
+
+```text
+generic_csv_exports_original_and_home_currency_fields
+json_exports_exchangeRateUsed_and_baseAmount
+usd_expense_home_eur_exports_both_amounts
+identity_currency_exports_rate_1_or_identity_status
+```
+
+---
+
+# Issue P1-05 — Export snapshot consistency is not real
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`ExportDataRepository` comments say the pager anchors on a fixed set of IDs.
+
+But `DeterministicExpenseExportPager` explicitly says:
+
+```text
+rows inserted with higher cursor can be seen
+rows inserted behind cursor can be missed
+count is not snapshot anchored
+```
+
+`ExportOptionsViewModel` also computes `rowCount` separately before streaming.
+
+## Impact
+
+During export, concurrent expense edits/inserts/deletes can cause:
+
+```text
+rowCount in JSON does not match actual rows
+totals differ from exported rows
+new rows appear mid-export
+rows deleted mid-export disappear
+```
+
+This breaks auditability and roundtrip testing.
+
+## Fixing strategy
+
+Create an actual export snapshot.
+
+## Implementation plan
+
+1. Add temporary/persistent export snapshot table:
+
+```sql
+export_snapshot_rows(
+  operationId TEXT,
+  ordinal INTEGER,
+  expenseId INTEGER,
+  PRIMARY KEY(operationId, ordinal)
+)
+```
+
+2. At export start, inside DB transaction:
+
+```sql
+INSERT INTO export_snapshot_rows(operationId, ordinal, expenseId)
+SELECT :operationId, ROW_NUMBER()..., id
+FROM expenses
+WHERE date >= :start AND date < :end
+ORDER BY date ASC, id ASC
+```
+
+3. Stream by joining snapshot IDs:
+
+```sql
+SELECT e.*
+FROM export_snapshot_rows s
+JOIN expenses e ON e.id = s.expenseId
+WHERE s.operationId = :operationId
+ORDER BY s.ordinal
+LIMIT :limit OFFSET/keyset
+```
+
+4. Write manifest:
+
+```text
+operationId
+snapshotRowCount
+schemaVersion
+filters
+checksum
+```
+
+5. Cleanup snapshot rows after success/failure.
+
+6. Tests:
+
+```text
+insert_during_export_not_included
+delete_during_export_does_not_change_snapshot_policy
+json_rowCount_matches_rows
+export_checksum_stable_for_same_snapshot
+```
+
+---
+
+# Issue P1-06 — Normal exports are plaintext and not privacy-gated
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`ExportDataRepository.createExportFile()` writes export files under:
+
+```text
+files/exports/expenses_timestamp.csv/json/iif
+```
+
+`encryptExportFile()` exists, but `ExportOptionsViewModel.generateExport()` does not call it.
+
+The normal export flow does not check:
+
+```text
+PrivacyGate
+BackupPrivacyGate
+raw export policy
+redaction policy
+```
+
+## Impact
+
+Expense exports can contain:
+
+```text
+merchant names
+notes
+business purpose/project
+category names
+transaction dates
+amounts
+```
+
+and are written in plaintext.
+
+Even if app-private storage is safer than public Downloads, these files can be exposed by device backup, debug extraction, compromised device, or later sharing.
+
+## Fixing strategy
+
+Add explicit export privacy policy.
+
+## Implementation plan
+
+1. Define:
+
+```kotlin
+enum class ExpenseExportPrivacyMode {
+    FULL_PLAINTEXT,
+    REDACT_NOTES_AND_MERCHANTS,
+    METADATA_ONLY,
+    ENCRYPTED
+}
+```
+
+2. Before generating export:
+
+```kotlin
+privacyGate.check(PrivacyCapability.RAWBACKUP_EXPORT or new EXPENSE_EXPORT)
+```
+
+3. If encrypted mode:
+
+```kotlin
+exportDataRepository.encryptExportFile(file, password)
+```
+
+4. If redacted mode:
+   - hash/redact merchant;
+   - remove notes;
+   - remove business purpose/project;
+   - optionally bucket dates/months.
+
+5. Tests:
+
+```text
+export_denied_when_privacy_gate_denies
+encrypted_export_deletes_plaintext
+redacted_export_contains_no_notes
+metadata_only_export_contains_no_merchant_names
+```
+
+---
+
+# Issue P1-07 — Export silently drops many app fields
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`Expense` contains many important fields:
 
 ```text
 transactionType
-paymentMethod
-categoryId
-merchantKey
 source
-dedupe/idempotency
-ownership/shared fields
-transferDirection/account
-original vs effective amount
-home currency conversion
-tax/business fields
-receipt links
-recurring links
-group links
-privacy/redaction flags
+paymentMethod
+createdAt
+rawNotificationId
+transferDirection
+transferAccountName
+ownership fields
+location fields
+business fields
+split fields
+baseAmount/baseCurrency/exchangeRateUsed
 ```
 
-So even JSON cannot restore the same user state.
-
-### Fix
-
-Define:
+Generic CSV and JSON export only include:
 
 ```text
-AppExportSchema v2
+id
+date/timestamp
+merchant
+amount
+currency
+category
+notes
 ```
 
-Sections:
+Accounting exports include even fewer app-specific fields.
+
+## Impact
+
+The export looks complete but silently loses data needed for:
+
+```text
+fresh DB import
+auditing
+tax reports
+receipt matching
+ownership/shared expenses
+transfers/deposits
+business deductions
+currency conversion audit
+```
+
+## Fixing strategy
+
+Make export format explicit about supported and unsupported fields.
+
+## Implementation plan
+
+1. Add export manifest:
 
 ```json
 {
   "schemaVersion": 2,
-  "appDatabaseVersion": 113,
-  "exportMode": "APP_ROUNDTRIP",
-  "generatedAt": "...",
-  "homeCurrency": "EUR",
-  "dateRange": {...},
-  "expenses": [...],
-  "categories": [...],
-  "receiptLinks": [...],
-  "recurringLinks": [...],
-  "groups": [...],
-  "unsupported": [...]
+  "exportType": "expenses",
+  "includedFields": [...],
+  "excludedFields": [
+    {"field": "rawNotificationId", "reason": "privacy"},
+    {"field": "latitude", "reason": "location privacy"}
+  ],
+  "privacyMode": "FULL_PLAINTEXT",
+  "rowCount": 123
 }
 ```
 
-Roundtrip import should report:
+2. For app JSON, include all non-raw app fields by default.
+
+3. For CSV, include a wider canonical column set.
+
+4. For accounting formats, keep accounting-specific fields but write a sidecar manifest.
+
+5. Tests:
 
 ```text
-created
-updated
-duplicates
-unsupported fields
-warnings
+json_export_includes_transactionType_source_paymentMethod
+json_export_includes_business_fields
+csv_export_includes_base_currency_fields
+export_manifest_reports_excluded_location_fields
 ```
-
-Priority: highest.
 
 ---
 
-## Finding P0-3 — Two export paths can diverge
+# Issue P1-08 — Receipt links are not represented
 
-There are two export owners:
+## Severity
+
+P1 / High
+
+## Evidence
+
+Pipeline 12 checklist requires receipt links represented.
+
+No inspected export row includes:
 
 ```text
-ExportOptionsViewModel
-AccountingExportRepository
+receiptId
+receipt link type
+match status
+receipt image path/reference
+receipt source
 ```
 
-They differ:
+`ReceiptExpenseLink` is not used by the export flow.
 
-| Concern | ExportOptionsViewModel | AccountingExportRepository |
-|---|---|---|
-| generic CSV/JSON | yes | no |
-| PDF | no | yes |
-| temp-file atomic write | no | yes |
-| FileProvider URI | no | yes |
-| date range validation | weak | yes |
-| accounting policy | yes | yes |
-| preview support | yes | no |
-| direct file path | yes | yes |
-| output schema | separate code | separate code |
+## Impact
 
-This creates inconsistent behavior and future bugs.
+After export/import, the app cannot reconstruct:
 
-### Example
+```text
+which receipt proves this expense
+whether the receipt was auto-matched/manual
+warranty/return-window evidence
+receipt audit trail
+```
 
-`AccountingExportRepository` fixed atomic temp-file write.  
-`ExportOptionsViewModel` still writes directly to final file.
+## Fixing strategy
 
-### Fix
+Export receipt link metadata separately from receipt image binaries.
 
-Create one use case:
+## Implementation plan
+
+1. Add row fields:
+
+```text
+receiptIds
+primaryReceiptId
+receiptMatchStatus
+receiptLinkTypes
+```
+
+2. For JSON:
 
 ```kotlin
-ExportExpensesUseCase
+data class ReceiptLinkExportRef(
+    val receiptId: Long,
+    val linkType: String,
+    val confidence: Double?,
+    val source: String?
+)
 ```
 
-It should own:
+3. If export privacy mode allows assets, include:
+   - receipt metadata;
+   - optional asset reference;
+   - never raw OCR unless policy allows.
+
+4. Import should:
+   - create receipt rows if present;
+   - link using `ReceiptLinkService`;
+   - report missing receipt assets as warnings.
+
+5. Tests:
 
 ```text
-date validation
-query snapshot/paging
-format selection
-privacy/redaction policy
-atomic temp-file output
-preview collection
-FileProvider URI
-result metadata
+json_export_includes_receipt_links
+import_recreates_receipt_expense_links
+redacted_export_includes_link_metadata_but_no_raw_ocr
+missing_receipt_asset_reported_not_silently_lost
 ```
-
-UI should call the use case, not write export files directly.
-
-Priority: highest.
 
 ---
 
-## Finding P0-4 — ExportOptionsViewModel writes non-atomically
+# Issue P1-09 — Business/tax fields are not exported in normal transaction exports
 
-`ExportOptionsViewModel.generateExport()` does:
+## Severity
 
-```kotlin
-val exportFile = exportDataRepository.createExportFile(...)
-exportFile.writer().use { writer -> ... }
-```
+P1 / High
 
-If the app is killed mid-write, the final export file can be partial/corrupt.
+## Evidence
 
-`AccountingExportRepository` already has the safer pattern:
+`Expense` has business/tax-relevant fields:
 
 ```text
-write temp file
-rename temp → final
+isBusinessExpense
+businessPurpose
+businessCategory
+businessProject
+requiresReceipt
 ```
 
-### Fix
+`TaxEstimator` can compute tax summaries, and `AccountantReportPdfExporter` can produce a PDF report.
 
-Move `ExportOptionsViewModel` to the repository/use-case atomic writer.
+But normal CSV/JSON/accounting transaction exports do not include these fields.
 
-Priority: highest.
+## Impact
+
+Accounting/tax workflows lose:
+
+```text
+deductibility
+business purpose
+project/client attribution
+receipt-required flag
+business category
+```
+
+This weakens accountant handoff and makes import roundtrip lossy.
+
+## Fixing strategy
+
+Add business/tax columns to app export and optional accounting sidecar.
+
+## Implementation plan
+
+1. Add columns:
+
+```text
+IsBusinessExpense
+BusinessPurpose
+BusinessCategory
+BusinessProject
+RequiresReceipt
+TaxCategory
+FilingCurrency
+```
+
+2. For Xero/FreshBooks/QuickBooks:
+   - include business category as tracking class/tag if supported;
+   - otherwise write a sidecar CSV/JSON.
+
+3. Tests:
+
+```text
+csv_export_preserves_business_fields
+json_export_preserves_business_fields
+accounting_export_sidecar_contains_business_fields
+import_restores_business_fields
+```
 
 ---
 
-## Finding P0-5 — Import tests are stale relative to production code
+# Issue P1-10 — Accountant PDF still has raw mixed-currency combined total
 
-`CsvExpenseImporter` constructor accepts:
+## Severity
 
-```text
-CategoryDao
-TransactionLifecycleCoordinator
-CurrencySettingsRepository
-```
+P1 / High for accountant-facing reports
 
-The importer creates expenses via:
+## Evidence
 
-```text
-coordinator.createExpense(request)
-```
+`AccountantReportPdfExporter.export()` groups expenses by currency and displays per-currency totals, which is good.
 
-But `CsvExpenseImporterTest` still:
-
-- declares `ExpenseDao`,
-- stubs `expenseDao.insert(any())`,
-- verifies `expenseDao.insert(any())`,
-- captures `Expense` inserted through `ExpenseDao`.
-
-That is no longer the production path.
-
-These tests either fail or do not protect the current importer behavior.
-
-### Fix
-
-Rewrite tests to verify:
-
-```text
-coordinator.createExpense(CreateExpenseRequest(...))
-```
-
-and add DB-backed tests proving:
-
-```text
-expense row inserted
-TransactionEvent.CREATED inserted
-duplicate row skipped
-category created/used correctly
-```
-
-Priority: highest.
-
-Sources:
-
-- `CsvExpenseImporter.kt`
-- `CsvExpenseImporterTest.kt`
-
----
-
-## Finding P1-1 — Accounting/export tests appear stale against current headers
-
-Current `XeroCSVExporter.writeHeader()` writes:
-
-```csv
-Date,Description,Amount,Currency,Account,Reference,OriginalCurrency,HomeCurrency,ConversionRate,OriginalAmount
-```
-
-But `CsvEscapingTest` expects old header shape:
-
-```csv
-Date,Description,Amount,Account,Reference
-```
-
-Current `FreshBooksExporter.writeHeader()` writes:
-
-```csv
-date,description,amount,currency,category,vendor,originalCurrency,homeCurrency,conversionRate,originalAmount
-```
-
-But tests expect:
-
-```csv
-date,description,amount,category,vendor
-```
-
-`AccountingExportRepositoryTest` also checks a header-only FreshBooks file against the old 5-column header.
-
-### Why this matters
-
-The tests may fail, or if ignored/relaxed, they are no longer proving the real export schema.
-
-### Fix
-
-Update tests to the current headers, or better: centralize each exporter’s header contract in one place and test against that source of truth.
-
-Priority: high.
-
----
-
-## Finding P1-2 — Generic CSV/JSON export uses raw `expense.amount`, not `effectiveAmount`
-
-Generic CSV:
-
-```kotlin
-Amount = expense.amount
-```
-
-Generic JSON:
-
-```kotlin
-"amount": expense.amount
-```
-
-Accounting exports use:
-
-```text
-ExpenseExportMapper.map()
-→ amount = expense.effectiveAmount
-→ originalAmount = expense.amount
-```
-
-So exports disagree.
-
-For shared expenses:
-
-```text
-gross amount = 100
-my share = 50
-```
-
-Generic CSV/JSON exports `100`; accounting exports `50`.
-
-For roundtrip import, the ownership/share fields are missing, so importing the generic CSV creates a full 100 expense and corrupts user totals.
-
-### Fix
-
-Canonical app export should include both:
-
-```text
-grossAmount
-effectiveAmount
-ownership model
-myShareAmount
-mySharePercentage
-isNotMine
-isSharedExpense
-```
-
-Generic “human report” CSV should clearly label:
-
-```text
-GrossAmount
-EffectiveAmount
-```
-
-Priority: high.
-
----
-
-## Finding P1-3 — Importer cannot parse current currency/export fields
-
-Importer currency detection:
-
-```text
-symbol in amount string:
-  € → EUR
-  $ → USD
-  £ → GBP
-  ¥ → JPY
-else home currency
-```
-
-It ignores a CSV `Currency` column because the expected old schema has no currency column.
-
-It also cannot parse:
-
-```text
-"1,234.56"
-"1.234,56"
-"12,50"
-"USD 12.50"
-"12.50 USD"
-negative amounts
-parentheses accounting amounts
-```
-
-### Fix
-
-Use a robust amount parser:
-
-```text
-amount column
-currency column
-locale
-decimal separator
-thousands separator
-accounting negative
-```
-
-If currency is missing:
-
-```text
-fallback home currency + warning
-```
-
-Priority: high.
-
----
-
-## Finding P1-4 — Importer only imports PURCHASE transactions
-
-Every row becomes:
-
-```kotlin
-transactionType = TransactionType.PURCHASE
-```
-
-So roundtrip loses:
-
-```text
-DEPOSIT
-TRANSFER
-WITHDRAWAL
-UNKNOWN
-refunds
-income
-```
-
-For transfers, required fields:
-
-```text
-transferDirection
-transferAccountName
-```
-
-are not supported.
-
-### Fix
-
-Versioned import schema must include:
-
-```text
-transactionType
-transferDirection
-transferAccountName
-paymentMethod
-source
-```
-
-Low-confidence or unsupported types should go to review, not be imported as purchases.
-
-Priority: high.
-
----
-
-## Finding P1-5 — Importer does not use exported ID/source as idempotency key
-
-Importer builds `CreateExpenseRequest` without:
-
-```text
-idempotencyKey
-externalFingerprint
-STRICT_EXTERNAL_ID
-```
-
-So re-import relies on fuzzy lifecycle duplicate detection.
-
-That is unsafe for roundtrip.
-
-### Fix
-
-For canonical app export:
-
-```text
-sourceExportId = original app + original expense id
-exportBatchId
-rowHash
-```
-
-Importer:
-
-```kotlin
-deduplicationMode = STRICT_EXTERNAL_ID
-idempotencyKey = "app-export:$exportBatchId:$sourceExpenseId"
-externalFingerprint = rowHash
-```
-
-For old CSV without ID, keep fuzzy dedupe.
-
-Priority: high.
-
----
-
-## Finding P1-6 — Category import bypasses CategoryRepository normalization
-
-`CsvExpenseImporter.getOrCreateCategory()` calls:
-
-```text
-CategoryDao.getByName()
-CategoryDao.insert(Category(...))
-```
-
-But `CategoryDao.insert()` is deprecated because it bypasses category name normalization.
-
-Also, if `insert()` returns `-1` due to unique constraint race, importer can return `-1` as category ID.
-
-Blank category name can also throw due `Category` invariant.
-
-### Fix
-
-Inject `CategoryRepository` and call:
-
-```text
-normalizeAndInsert()
-getOrCreateNormalized()
-```
-
-Handle blank category:
-
-```text
-Uncategorized
-```
-
-Handle insert conflict:
-
-```text
-re-query by normalized name
-```
-
-Priority: high.
-
----
-
-## Finding P1-7 — Export paging is deterministic but not snapshot-stable
-
-Pager uses:
-
-```text
-LIMIT/OFFSET
-```
-
-If rows are inserted/deleted/updated during export:
-
-```text
-page 1 reads rows 1..2000
-row inserted near top
-page 2 offset 2000 now starts at old row 2000 again or skips one
-```
-
-So an export can skip or duplicate rows.
-
-Also, count shown in UI can differ from actual exported rows.
-
-### Fix
-
-Best:
-
-```text
-read inside one DB transaction/snapshot
-```
-
-or keyset pagination:
-
-```sql
-WHERE (date > :lastDate)
-   OR (date = :lastDate AND id > :lastId)
-ORDER BY date ASC, id ASC
-LIMIT :limit
-```
-
-Also freeze an export manifest:
-
-```text
-rowCount
-firstRowKey
-lastRowKey
-queryHash
-```
-
-Priority: high.
-
----
-
-## Finding P1-8 — Accounting exporters still materialize full strings
-
-`QuickBooksIIFExporter.export()`, `XeroCSVExporter.export()`, and `FreshBooksExporter.export()` return a full `String`.
-
-`AccountingExportRepository` writes:
-
-```kotlin
-writer.write(xeroExporter.export(exportTransactions, categories))
-```
-
-So for large exports, memory usage is:
-
-```text
-List<Expense>
-List<ExportTransaction>
-full CSV String
-file buffer
-```
-
-`ExportOptionsViewModel` is more streaming for accounting row output, but still holds the full expense list.
-
-### Fix
-
-Make exporter interface streaming-only:
-
-```kotlin
-interface AccountingExporter {
-    fun writeHeader(writer: Appendable)
-    fun writeRow(writer: Appendable, tx: ExportTransaction, categories: Map<Long,String>)
-}
-```
-
-Remove full-string `export()` from production path or keep only for tests/small previews.
-
-Priority: medium-high.
-
----
-
-## Finding P1-9 — PDF “Combined Total (base)” is misleading
-
-`AccountantReportPdfExporter` groups by currency, which is good.
-
-But if multiple currencies exist, it writes:
+But if multiple currencies exist, it also writes:
 
 ```text
 Combined Total (base)
 ```
 
-computed by raw-summing `effectiveAmount` across currencies and using the first currency key.
+by raw-summing all `effectiveAmount` values and formatting it using the first currency key.
 
-Even labeled “base”, this can be misunderstood as a real converted total.
+The code comment calls this intentional, but mathematically it is not a converted total.
 
-Example:
+## Impact
 
-```text
-EUR 100 + JPY 10000 = “EUR 10100”
-```
-
-### Fix
-
-Do not show raw combined total.
-
-Options:
+An accountant/user can misread:
 
 ```text
-show per-currency only
+100 EUR + 100 USD = 200 EUR
 ```
 
-or:
+even though no conversion happened.
+
+The label “base” is not strong enough for financial reporting.
+
+## Fixing strategy
+
+Remove raw mixed-currency combined total or replace it with `MoneyAggregate`.
+
+## Implementation plan
+
+1. For multi-currency PDF:
+   - show per-currency totals only, or
+   - show converted home-currency total using `MoneyAggregate`.
+
+2. If conversion is partial:
+   - display warning;
+   - list failed currency buckets.
+
+3. Tests:
 
 ```text
-show converted home-currency total using MoneyAggregate and display partial warning
+pdf_multi_currency_does_not_raw_sum_combined_total
+pdf_moneyaggregate_total_has_home_currency
+pdf_shows_partial_conversion_warning
 ```
-
-Priority: medium-high.
 
 ---
 
-## Finding P1-10 — Export privacy/redaction is not centralized
+# Issue P1-11 — Export can run during restore/restart-required state
 
-Backup has `ExportAnonymizer`, but normal exports do not visibly check:
+## Severity
+
+P1 / High
+
+## Evidence
+
+`ExportOptionsViewModel` and `ExportDataRepository` do not visibly check `RestoreMaintenanceMode`.
+
+If the user starts an export while a restore is preparing, swapping, verifying, or restart-required, the export may read from a stale or changing Room instance.
+
+## Impact
+
+Possible outcomes:
 
 ```text
+corrupt/truncated export
+export from old DB while restore succeeds
+export from restored DB with stale DAO references
+plaintext export during maintenance state
+```
+
+## Fixing strategy
+
+Use a read/export barrier.
+
+## Implementation plan
+
+1. Add:
+
+```kotlin
+DatabaseReadBarrier.checkReadsAllowed("expense_export")
+```
+
+2. Block export when:
+
+```text
+RESTORE_PREPARING
+RESTORE_SWAPPING
+RESTORE_VERIFYING
+RESTORE_COMPLETE_RESTART_REQUIRED
+```
+
+3. Optionally allow export during normal mode only.
+
+4. Tests:
+
+```text
+restore_mode_blocks_expense_export
+restart_required_blocks_expense_export
+export_after_restart_reads_restored_db
+```
+
+---
+
+# Issue P2-12 — Date/time policy is inconsistent and not deterministic
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+Export code uses `ZoneId.systemDefault()` for:
+
+```text
+generic CSV date
+JSON dateRange dates
+Xero date
+FreshBooks date
+QuickBooks IIF date
+PDF report dates
+```
+
+Some comments mention UTC export policy, but implementation uses local system time zone.
+
+## Impact
+
+The same DB exported on two devices/time zones can produce different date strings for transactions near midnight.
+
+That breaks deterministic golden tests and roundtrip comparisons.
+
+## Fixing strategy
+
+Define export time-zone policy.
+
+## Implementation plan
+
+1. Choose one:
+   - UTC for portable machine-readable export;
+   - user-configured local zone for human/accounting export.
+
+2. Store it in manifest:
+
+```json
+"timeZone": "UTC"
+```
+
+3. For JSON, always include raw epoch timestamp.
+
+4. Tests:
+
+```text
+json_export_same_in_UTC_and_Athens_for_timestamp_field
+csv_export_uses_configured_export_timezone
+date_range_manifest_records_timezone
+```
+
+---
+
+# Issue P2-13 — Export has no durable operation ledger/checksum
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+Export success is only UI state:
+
+```text
+exportFilePath
+exportPreview
+exportSuccess
+```
+
+No durable `export_events` / `export_runs` table exists.
+
+No checksum is written for exported files.
+
+## Impact
+
+Debugging and audit are weak:
+
+```text
+when was export generated?
+which filters?
+how many rows?
+which privacy mode?
+did file checksum match?
+was it cancelled?
+```
+
+## Fixing strategy
+
+Add export operation metadata.
+
+## Implementation plan
+
+1. Add entity:
+
+```kotlin
+ExportRun(
+    id,
+    format,
+    startDate,
+    endDate,
+    rowCount,
+    privacyMode,
+    fileName,
+    checksumSha256,
+    status,
+    error,
+    createdAt,
+    finishedAt
+)
+```
+
+2. Write:
+
+```text
+STARTED
+SNAPSHOT_CREATED
+FILE_WRITTEN
+ENCRYPTED
+COMPLETED
+FAILED
+CANCELLED
+```
+
+3. Tests:
+
+```text
+successful_export_writes_completed_run
+cancelled_export_writes_cancelled_run
+failed_export_deletes_temp_and_writes_failed_run
+checksum_matches_file_bytes
+```
+
+---
+
+# Issue P2-14 — Redacted DB export does not cover all sensitive tables
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`ExportAnonymizer` strips raw OCR and raw notification fields.
+
+It does not cover all sensitive artifacts discussed in Pipeline 8, such as:
+
+```text
+email receipt source subject/sender/body-derived fields
+AI artifacts/prompts
+chat messages
+debug diagnostics
+location/address fields
+business purpose/project notes
+bank token/source metadata
+```
+
+## Impact
+
+Redacted backup/export can still expose sensitive non-raw fields.
+
+## Fixing strategy
+
+Move redaction to a registry-based anonymizer.
+
+## Implementation plan
+
+1. Add:
+
+```kotlin
+interface ExportRedactionTarget {
+    val tableName: String
+    fun redact(db: SQLiteDatabase): RedactionResult
+}
+```
+
+2. Register targets:
+
+```text
+RawNotificationRedactor
+ReceiptOcrRedactor
+EmailReceiptSourceRedactor
+AiArtifactRedactor
+LocationRedactor
+DebugDiagnosticsRedactor
+BankTokenRedactor
+BusinessNotesRedactor optional
+```
+
+3. Include redaction summary in manifest.
+
+4. Tests:
+
+```text
+redacted_export_removes_email_subject
+redacted_export_removes_ai_prompts
+redacted_export_removes_location_addresses_when_policy_requires
+redacted_export_manifest_lists_redacted_tables
+```
+
+---
+
+# Recommended fixing order
+
+## PR 1 — CSV writer hardening
+
+Files:
+
+```text
+CsvCellSanitizer.kt
+AccountingExporters.kt
+ExportOptionsViewModel.kt
+```
+
+Fix:
+
+```text
+- one RFC-4180 CSV encoder
+- formula neutralization
+- commas/quotes/newlines preserved safely
+```
+
+## PR 2 — Global accounting dataset validation
+
+Files:
+
+```text
+ExportDataRepository.kt
+ExpenseDao.kt
+AccountingExportPolicy.kt
+ExportOptionsViewModel.kt
+```
+
+Fix:
+
+```text
+- global distinct currency/type checks before streaming
+- fail before file creation for invalid accounting exports
+```
+
+## PR 3 — Canonical export schema v2
+
+Files:
+
+```text
+ExpenseExportMapper.kt
+ExportTransaction.kt
+ExportOptionsViewModel.kt
+new ExpenseExportRowV2.kt
+```
+
+Fix:
+
+```text
+- transactionType/source/paymentMethod
+- original/effective/base amounts
+- business/tax fields
+- receipt link refs
+- schema manifest
+```
+
+## PR 4 — Real export snapshot
+
+Files:
+
+```text
+DeterministicExpenseExportPager.kt
+ExportDataRepository.kt
+ExpenseDao.kt
+new ExportSnapshotDao.kt/entity
+```
+
+Fix:
+
+```text
+- stable operation snapshot IDs
+- rowCount matches rows
+- concurrent inserts do not affect active export
+```
+
+## PR 5 — Privacy/encryption for normal exports
+
+Files:
+
+```text
+ExportOptionsViewModel.kt
+ExportDataRepository.kt
 PrivacyGate
-redaction settings
-raw notes policy
-location privacy
-AI artifact privacy
-receipt image/link privacy
+PrivacySettings
 ```
 
-Generic CSV/JSON exports raw:
+Fix:
 
 ```text
-merchant
-notes
-category
-IDs
+- export privacy mode
+- plaintext/export gate
+- encrypted export option actually used
 ```
 
-This is user-initiated, but the app should still have explicit modes:
+## PR 6 — App import pipeline
+
+Files:
 
 ```text
-full private export
-redacted export
-accountant export
+new ImportOptionsScreen.kt
+new ExpenseImportCoordinator.kt
+new CsvExpenseImporter.kt
+new JsonExpenseImporter.kt
+TransactionLifecycleCoordinator.kt
+ReceiptLinkService.kt
 ```
 
-### Fix
-
-Add `ExportPrivacyPolicy`:
+Fix:
 
 ```text
-includeNotes
-includeMerchant
-includeLocation
-includeReceiptLinks
-includeRawText
-redactMerchant
-hashIds
+- preview
+- validation
+- import summary
+- row-level errors
+- lifecycle create
+- receipt link restore
 ```
 
-Audit export decisions through privacy audit.
+## PR 7 — Accountant PDF mixed-currency fix
 
-Priority: medium-high.
-
----
-
-## Finding P2-1 — ExportOptionsViewModel preview headers are wrong
-
-For Xero:
-
-```kotlin
-val header = "Date,Description,Amount,Account,Reference\n"
-xeroExporter.writeHeader(writer)
-preview.append(header)
-```
-
-But actual exporter header includes currency/original/home/conversion fields.
-
-QuickBooks and FreshBooks preview headers also omit current columns.
-
-So preview can show a different schema from the actual file.
-
-### Fix
-
-Capture header from exporter itself:
-
-```kotlin
-val header = buildString { xeroExporter.writeHeader(this) }
-writer.append(header)
-preview.append(header)
-```
-
-Priority: medium.
-
----
-
-## Finding P2-2 — Export UI does not expose PDF/accountant repository path
-
-`AccountingExportRepository` supports:
+Files:
 
 ```text
-ACCOUNTANT_REPORT_PDF
+AccountantReportPdfExporter.kt
+MoneyAggregateBuilder.kt
 ```
 
-`ExportOptionsViewModel` formats do not include PDF.
-
-So either:
-
-- PDF is used elsewhere,
-- or it is an orphaned feature.
-
-### Fix
-
-Either expose PDF in export UI or document repository-only usage.
-
-Priority: medium.
-
----
-
-## Finding P2-3 — File retention/cleanup unclear
-
-Exports are written to:
+Fix:
 
 ```text
-cacheDir/exports
+- remove raw mixed-currency combined total
+- show MoneyAggregate total + partial warnings
 ```
 
-There is no visible cleanup policy.
+## PR 8 — Export diagnostics
 
-If users export often, cache can grow until Android clears it. That may be acceptable, but the UI should communicate file lifetime or provide cleanup.
-
-### Fix
-
-Add:
+Files:
 
 ```text
-ExportCleanupWorker or cache retention policy
+new ExportRun.kt
+new ExportRunDao.kt
+ExportOptionsViewModel.kt
+ExportDataRepository.kt
 ```
 
-Priority: low-medium.
-
----
-
-# 5. Debugging checklist for Pipeline 12
-
-## Export mode selection
-
-Check:
-
-- [ ] app roundtrip export,
-- [ ] accounting export,
-- [ ] PDF/report export,
-- [ ] redacted export,
-- [ ] selected mode shown clearly to user.
-
-## Export schema
-
-Check:
-
-- [ ] schema version,
-- [ ] app DB version,
-- [ ] export mode,
-- [ ] generatedAt,
-- [ ] home currency,
-- [ ] date range,
-- [ ] row count,
-- [ ] unsupported fields,
-- [ ] stable row order.
-
-## Expense fields
-
-Check exported/importable support for:
-
-- [ ] id/source id,
-- [ ] timestamp and local date,
-- [ ] merchant,
-- [ ] merchantKey,
-- [ ] gross amount,
-- [ ] effective amount,
-- [ ] currency,
-- [ ] original currency,
-- [ ] home currency,
-- [ ] conversion rate,
-- [ ] transaction type,
-- [ ] payment method,
-- [ ] category ID/name,
-- [ ] notes,
-- [ ] transfer direction/account,
-- [ ] ownership/shared fields,
-- [ ] tax/business fields,
-- [ ] receipt links,
-- [ ] group links,
-- [ ] recurring links.
-
-## CSV safety
-
-Check:
-
-- [ ] comma/quote/newline escaping,
-- [ ] formula injection mitigation,
-- [ ] leading whitespace before formula chars,
-- [ ] UTF-8 output,
-- [ ] CRLF vs LF policy,
-- [ ] huge field behavior,
-- [ ] field count stable.
-
-## Import parsing
-
-Check:
-
-- [ ] old CSV schema,
-- [ ] new app CSV schema,
-- [ ] currency column,
-- [ ] decimal comma,
-- [ ] thousands separators,
-- [ ] negative/accounting amounts,
-- [ ] blank categories,
-- [ ] duplicate categories,
-- [ ] invalid rows produce per-row error,
-- [ ] row numbers in errors,
-- [ ] progress total excludes blank lines.
-
-## Roundtrip
-
-Check:
-
-- [ ] export → import fresh DB,
-- [ ] dashboard totals match,
-- [ ] analytics category totals match,
-- [ ] budget spend matches,
-- [ ] shared expense effective amount preserved,
-- [ ] multi-currency fields preserved,
-- [ ] transaction types preserved,
-- [ ] receipt links preserved or reported unsupported,
-- [ ] duplicates skipped on second import.
-
----
-
-# 6. Recommended fix plan
-
-## PR 1 — Create canonical export/import schema
-
-Add:
+Fix:
 
 ```text
-AppExpenseExportSchema v2
-```
-
-Support:
-
-```text
-CSV v2
-JSON v2
-```
-
-Importer must detect:
-
-```text
-legacy CSV
-app CSV v2
-app JSON v2
-unsupported accounting CSV
-```
-
-Acceptance:
-
-```text
-generic app CSV export imports successfully into a fresh DB.
-```
-
-Priority: P0.
-
----
-
-## PR 2 — Unify export execution path
-
-Create:
-
-```kotlin
-ExportExpensesUseCase
-```
-
-Responsibilities:
-
-```text
-date validation
-schema selection
-privacy policy
-snapshot/paging
-atomic temp file write
-preview generation
-FileProvider URI
-export result
-```
-
-`ExportOptionsViewModel` and `AccountingExportRepository` should call this shared path or one should replace the other.
-
-Acceptance:
-
-```text
-all export formats use atomic temp-file write and one row/query contract.
-```
-
-Priority: P0.
-
----
-
-## PR 3 — Fix CSV importer for current app exports
-
-Add column mapping by header name:
-
-```text
-Date / date
-Amount / amount / GrossAmount / EffectiveAmount
-Currency
-Merchant
-Category
-Notes
-TransactionType
-```
-
-Do not rely on fixed old column order when a header exists.
-
-Acceptance:
-
-```text
-Date,Merchant,Amount,Currency,Category,Notes,ID imports correctly.
-```
-
-Priority: P0.
-
----
-
-## PR 4 — Fix stale tests
-
-Rewrite:
-
-```text
-CsvExpenseImporterTest
-CsvEscapingTest
-AccountingExportRepositoryTest
-ExportOptionsViewModelTest
-```
-
-against current headers and coordinator path.
-
-Acceptance:
-
-```text
-tests verify TransactionLifecycleCoordinator calls or DB-backed lifecycle rows, not ExpenseDao.insert.
-```
-
-Priority: P0/P1.
-
----
-
-## PR 5 — Add roundtrip scenario
-
-Create:
-
-```text
-csv_json_export_import_roundtrip_contract
-```
-
-Acceptance:
-
-```text
-seed DB → export → import into fresh DB → dashboard/analytics/budget match.
-```
-
-Priority: P1.
-
----
-
-## PR 6 — Snapshot-safe paging
-
-Move from offset paging to:
-
-```text
-keyset pagination
-or transaction snapshot
-```
-
-Acceptance:
-
-```text
-concurrent insert during export cannot skip/duplicate rows.
-```
-
-Priority: P1.
-
----
-
-## PR 7 — Streaming exporter interface
-
-Refactor accounting exporters to stream rows.
-
-Acceptance:
-
-```text
-large exports do not materialize full output string.
-```
-
-Priority: P1/P2.
-
----
-
-## PR 8 — Export privacy policy
-
-Add modes:
-
-```text
-Full private export
-Redacted export
-Accountant export
-App roundtrip export
-```
-
-Acceptance:
-
-```text
-redacted export strips notes/location/raw identifiers according to policy.
-```
-
-Priority: P1/P2.
-
----
-
-# 7. Tests to add
-
-## `AppCsvExportImportRoundtripTest`
-
-Seed:
-
-```text
-purchase 50 EUR
-deposit 1000 EUR
-transfer 200 EUR outgoing
-shared expense gross 100, my share 40
-USD purchase with conversion metadata
-notes with commas/newlines/formula prefix
-```
-
-Run:
-
-```text
-export app CSV v2
-import into fresh DB
-```
-
-Assert:
-
-```text
-transaction count matches
-transaction types preserved
-dashboard spend matches
-income/deposit preserved
-shared effective amount preserved
-notes escaped/restored
-currency preserved
-second import creates no duplicates
+- durable run ledger
+- checksums
+- failure/cancel events
 ```
 
 ---
 
-## `AppJsonExportImportRoundtripTest`
-
-Same as CSV but checks richer JSON schema.
-
-Assert:
+# Golden tests to add
 
 ```text
-schemaVersion = 2
-dbVersion = 113
-unsupported fields listed
-receipt/group/recurring links preserved or explicitly reported unsupported
+generic_csv_escapes_comma_quote_newline
+xero_csv_escapes_comma_quote_newline
+freshbooks_csv_escapes_comma_quote_newline
+all_csv_exports_neutralize_formula_injection
+accounting_export_rejects_mixed_currency_across_pages
+accounting_export_rejects_non_purchase_anywhere_in_dataset
+json_export_includes_transactionType_source_paymentMethod
+json_export_includes_original_and_base_money_fields
+csv_export_includes_business_tax_fields
+json_export_includes_receipt_link_refs
+export_snapshot_rowCount_matches_rows_under_concurrent_insert
+export_denied_during_restore_mode
+plaintext_export_denied_when_privacy_policy_disallows
+encrypted_export_deletes_plaintext_file
+pdf_multi_currency_does_not_raw_sum_combined_total
+json_export_then_import_fresh_db_preserves_count_and_totals
+csv_export_then_import_fresh_db_preserves_count_and_totals
+import_reports_unsupported_columns
+import_routes_created_rows_through_transaction_lifecycle
+import_duplicate_rows_are_skipped_with_summary
 ```
 
 ---
 
-## `LegacyCsvImportContractTest`
+# AI implementation checklist
 
-Input old format:
+Before coding, run:
 
-```csv
-date,amount,merchant,category,description
-2024-01-15,25.50,Starbucks,Coffee,Morning coffee
+```bash
+grep -R "escapeCsv" app/src/main/java
+grep -R "CsvCellSanitizer" app/src/main/java
+grep -R "toExportTransaction" app/src/main/java
+grep -R "ExportTransaction(" app/src/main/java
+grep -R "createExportFile" app/src/main/java
+grep -R "encryptExportFile" app/src/main/java
+grep -R "getExpensesPage" app/src/main/java
+grep -R "Combined Total (base)" app/src/main/java
+grep -R "ImportOptions" app/src/main/java
+grep -R "CsvImporter" app/src/main/java
 ```
 
-Assert:
+Definition of done:
 
 ```text
-still imports as PURCHASE
-home currency fallback warning if no symbol/currency column
+- All CSV exporters use one safe CSV writer.
+- Accounting exports validate the whole dataset, not each page independently.
+- Export schema includes original/effective/base money fields.
+- Export schema includes transaction type, source, payment method, business/tax fields, and receipt link refs.
+- Export snapshot is stable under concurrent writes.
+- Normal exports respect privacy gate and can be encrypted.
+- Export is blocked during restore/restart-required states.
+- Accountant PDF never raw-sums mixed currencies.
+- App CSV/JSON import exists with preview, row errors, unsupported-field report, and lifecycle creation.
+- JSON/CSV export → fresh DB import golden tests pass.
 ```
 
 ---
 
-## `CurrentCsvImportRegressionTest`
+# Source files inspected
 
-Input current generic export:
+- Commit baseline:  
+  https://github.com/panospao7/Cost-agregator/commit/71fbbf9aed221a7446f99967b49b6e9ebeb51946
 
-```csv
-Date,Merchant,Amount,Currency,Category,Notes,ID
-2026-05-01,Amazon,29.99,EUR,Shopping,Order,123
-```
+- `ExportOptionsViewModel.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsViewModel.kt
 
-Assert:
+- `ExportDataRepository.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/ExportDataRepository.kt
 
-```text
-amount = 29.99
-merchant = Amazon
-currency = EUR
-category = Shopping
-source idempotency key uses ID
-```
+- `DeterministicExpenseExportPager.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/DeterministicExpenseExportPager.kt
 
----
+- `AccountingExporters.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/export/AccountingExporters.kt
 
-## `CsvFormulaInjectionContractTest`
+- `CsvCellSanitizer.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/export/CsvCellSanitizer.kt
 
-Cases:
+- `ExpenseExportMapper.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/export/ExpenseExportMapper.kt
 
-```text
-=cmd
-+SUM(...)
--10+cmd
-@HYPERLINK(...)
-leading whitespace + formula char
-quoted formula field
-```
+- `ExportTransaction.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/export/ExportTransaction.kt
 
-Assert:
+- `AccountingExportPolicy.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/export/AccountingExportPolicy.kt
 
-```text
-exported CSV cell is neutralized
-field count remains stable
-```
+- `AccountantReportPdfExporter.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/export/AccountantReportPdfExporter.kt
 
-OWASP identifies CSV/formula injection as a risk when untrusted input is embedded in CSV cells, so this stays important.
+- `Expense.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/database/entity/Expense.kt
 
----
+- `ExportAnonymizer.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
 
-## `ExportSnapshotStabilityTest`
-
-Simulate:
-
-```text
-page 1 read
-concurrent insert/delete/update
-page 2 read
-```
-
-Assert chosen contract:
-
-```text
-snapshot export stable
-```
-
-or:
-
-```text
-export detects concurrent modification and retries/fails
-```
-
----
-
-## `AccountingExportPolicyContractTest`
-
-Cases:
-
-```text
-single currency purchase dataset → allowed
-mixed currency purchase dataset → rejected
-deposit/transfer dataset → rejected
-empty dataset → allowed for header-only accounting export
-```
-
----
-
-## `ExportPrivacyRedactionContractTest`
-
-Seed:
-
-```text
-merchant
-notes with sensitive text
-location
-receipt link
-raw source IDs
-```
-
-Run redacted export.
-
-Assert:
-
-```text
-sensitive fields redacted
-safe fields preserved
-audit event written
-```
-
----
-
-# 8. Suggested canonical scenario
-
-## `csv_accounting_export_import_roundtrip`
-
-Seed:
-
-```text
-home currency EUR
-
-categories:
-  Groceries
-  Salary
-  Transfer
-  Dining
-
-expenses:
-  purchase:
-    merchant = SKLAVENITIS
-    amount = 45.50 EUR
-    category = Groceries
-    notes = "formula =HYPERLINK(...)"
-
-  deposit:
-    merchant = Employer
-    amount = 1250 EUR
-    transactionType = DEPOSIT
-
-  transfer:
-    merchant = Savings
-    amount = 200 EUR
-    transactionType = TRANSFER
-    transferDirection = OUTGOING
-    transferAccountName = Savings Account
-
-  shared purchase:
-    merchant = Restaurant
-    gross amount = 100 EUR
-    myShareAmount = 40 EUR
-
-  foreign purchase:
-    merchant = Amazon
-    amount = 10 USD
-    home amount = 9 EUR
-    conversionRate = 0.90
-```
-
-Run:
-
-```text
-1. export app JSON v2
-2. export app CSV v2
-3. import each into fresh DB
-4. run dashboard/analytics/budget
-5. export Xero/FreshBooks/QuickBooks accounting report
-```
-
-Expected:
-
-```text
-app JSON/CSV imports preserve transaction types
-shared expense effective amount preserved
-foreign currency metadata preserved
-dashboard monthly spend matches original
-income/deposit not counted as spending
-transfer semantics preserved
-formula notes neutralized in CSV
-second import creates zero new duplicates
-accounting export rejects mixed-currency unless user filters/converts
-accounting export rejects non-PURCHASE rows
-```
-
-This should become the Pipeline 12 fed-DB acceptance test.
-
----
-
-# 9. Most likely real instability sources
-
-Ranked:
-
-1. **Current CSV export schema does not match CSV importer schema.**
-2. **No versioned roundtrip schema.**
-3. **Split export ownership between ViewModel and repository.**
-4. **Non-atomic file write in ViewModel export path.**
-5. **Importer tests are stale and still expect ExpenseDao insert.**
-6. **Generic export loses transaction type / shared / currency conversion metadata.**
-7. **Importer cannot parse ISO currency columns or non-simple amounts.**
-8. **Offset paging can skip/duplicate rows under concurrent changes.**
-9. **Accounting/PDF exports still have raw/misleading multi-currency semantics.**
-10. **Export privacy/redaction not centralized.**
-
----
-
-# 10. Final recommendation
-
-Stabilize Pipeline 12 in this order:
-
-```text
-1. Define canonical AppExportSchema v2.
-2. Make app CSV/JSON export and import use the same schema.
-3. Unify export execution behind one use case/repository.
-4. Make all export writes atomic.
-5. Rewrite importer tests to current coordinator architecture.
-6. Add DB-backed export/import roundtrip scenario.
-7. Fix amount/currency/type/category import parsing.
-8. Move from offset paging to snapshot/keyset export.
-9. Add export privacy/redaction modes.
-10. Keep accounting exports one-way and explicitly policy-validated.
-```
-
-Guiding rule:
-
-> Accounting exports are reports. App exports are roundtrip data. Do not use the same loose CSV shape for both.
-
-Second guiding rule:
-
-> A user should be able to export from the app and import into a fresh database without losing spending totals, transaction types, ownership shares, currency metadata, or duplicate safety.
-
----
-
-# 11. Verification & Fix Log (2026-05-06)
-
-## Finding P0-1 — App's own CSV export cannot be imported by CsvExpenseImporter
-**STATUS: CONFIRMED — NOT FIXED (requires versioned roundtrip schema)**
-
-## Finding P0-2 — Export and import schemas not versioned
-**STATUS: CONFIRMED — NOT FIXED (requires schema versioning)**
-
-## Finding P0-3 — Two export paths with different behavior
-**STATUS: CONFIRMED — NOT FIXED (ExportOptionsViewModel vs AccountingExportRepository)**
-
-## Finding P0-4 — ExportOptionsViewModel writes directly without atomic rename
-**STATUS: CONFIRMED — FIXED**
-- Export now writes to a temporary file (`.tmp_` prefix) and renames to the final path on success.
-- On failure, the temp file is deleted, preventing partial/corrupt export files from being visible.
-
-## Finding P0-5 — Generic exports lose important fields
-**STATUS: CONFIRMED — NOT FIXED (requires export schema expansion)**
-
-## Finding P0-6 — CSV import cannot parse many valid formats
-**STATUS: CONFIRMED — NOT FIXED (requires import parser expansion)**
-
-## Finding P0-7 — Export paging not snapshot-isolated
-**STATUS: CONFIRMED — NOT FIXED (requires cursor-based snapshot isolation)**
-
-## Finding P1-1 — Stale tests
-**STATUS: CONFIRMED — NOT FIXED (testing strategy being refactored separately)**
-
-## Finding P1-2 — Generic CSV/JSON export uses raw expense.amount, not effectiveAmount
-**STATUS: CONFIRMED — FIXED**
-- All 4 generic export code paths (CSV preview, CSV streaming, JSON preview, JSON streaming) now use `expense.effectiveAmount` instead of `expense.amount`.
-- `effectiveAmount` correctly handles shared expenses (`myShareAmount`/`mySharePercentage`) and not-mine expenses (`0.0`).
-
-## Finding P1-2b — Accounting exporters can OOM on large datasets
-**STATUS: CONFIRMED — NOT FIXED (requires streaming for accounting exporters)**
-
-## Finding P1-3 — Privacy/redaction absent from export
-**STATUS: CONFIRMED — NOT FIXED (requires PrivacyGate integration in export paths)**
-
----
-
-# 12. New issues discovered
-
-No additional issues beyond those in the original report were found during code verification.
-
----
-
-# 13. Applied fixes summary
-
-| Fix | File(s) | Finding |
-|-----|---------|---------|
-| Atomic temp-file + rename for export | `ExportOptionsViewModel.kt` | P0-4 |
-| Use effectiveAmount in generic CSV/JSON export | `ExportOptionsViewModel.kt` | P1-2 |
-
----
-
-# 14. Remaining work priority
-
-1. **P0-1**: Define versioned canonical app export schema that matches import format
-2. **P0-5**: Expand generic CSV/JSON export to include transaction type, ownership, conversion fields
-3. **P0-6**: Expand CSV import to parse ISO currency codes, comma decimals, etc.
-4. **P0-7**: Implement snapshot isolation for export paging
-5. **P1-2**: Stream accounting export output instead of materializing full strings
-6. **P1-3**: Integrate PrivacyGate in export paths for redaction
-
----
-
-# Sources
-
-Repository sources:
-
-- Dependency map:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
-
-- `ExportOptionsViewModel.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsViewModel.kt
-
-- `ExportOptionsScreen.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsScreen.kt
-
-- `ExportDataRepository.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ExportDataRepository.kt
-
-- `AccountingExportRepository.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/AccountingExportRepository.kt
-
-- `DeterministicExpenseExportPager.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/DeterministicExpenseExportPager.kt
-
-- `ExpenseRepository.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
-
-- `ExpenseDao.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
-
-- `AccountingExporters.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/export/AccountingExporters.kt
-
-- `AccountingExportPolicy.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/export/AccountingExportPolicy.kt
-
-- `ExpenseExportMapper.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/export/ExpenseExportMapper.kt
-
-- `ExportTransaction.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/export/ExportTransaction.kt
-
-- `AccountantReportPdfExporter.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/export/AccountantReportPdfExporter.kt
-
-- `CsvExpenseImporter.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/util/CsvExpenseImporter.kt
-
-- `CategoryDao.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/CategoryDao.kt
-
-- `Category.kt`:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/Category.kt
-
-- Existing tests:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/test/java/com/yourname/expensetracker/data/repository/AccountingExportRepositoryTest.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/test/java/com/yourname/expensetracker/util/CsvExpenseImporterTest.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/test/java/com/yourname/expensetracker/domain/export/CsvEscapingTest.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/test/java/com/yourname/expensetracker/domain/export/AccountingExportPolicyTest.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/test/java/com/yourname/expensetracker/domain/export/ExpenseExportMapperTest.kt
-
-External reference:
-
-- OWASP CSV Injection / Formula Injection:  
-  https://owasp.org/www-community/attacks/CSV_Injection
+- `DatabaseBackupRepositoryImpl.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt

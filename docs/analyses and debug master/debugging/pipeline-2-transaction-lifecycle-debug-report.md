@@ -1,1370 +1,1153 @@
-# Pipeline 2 Debugging Report — Transaction Lifecycle
+# Pipeline 2 Debug Report — Transaction Lifecycle
 
-Target commit: `53c915f09cbc92137b5b84d5839bdbf1cd321c16`  
-Review type: static code review, not local/device execution.
+Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`  
+Mode: static GitHub/code review, not local Gradle/device execution.
 
-## 1. Executive summary
+## Verdict
 
-Pipeline 2 is the central expense lifecycle:
+Pipeline 2 is now **substantially cleaner than the older `53c915f` report**.
+
+The core lifecycle contract is mostly in place:
 
 ```text
-manual / notification / review / receipt / group / bank / email / import
+create/update/delete
 → TransactionLifecycleCoordinator
 → ExpenseDao
 → TransactionEventDao
-→ side effects
-→ budget / anomaly / merchant learning / recurring link
-→ dashboard / analytics / forecast
+→ post-commit side effects
+→ budget/anomaly/merchant/recurring/dashboard/analytics
 ```
 
-The design is good: there is a single lifecycle coordinator, source tracking, dedupe modes, event logging, restore-mode write blocking, and post-create side effects.
+Old critical issues that now look mostly fixed:
 
-But the implementation currently has several high-risk seams.
+- Outer transaction side effects: major callers now use `SideEffectMode.DEFER`.
+- Many update paths are now routed through `TransactionLifecycleCoordinator`.
+- Duplicate ID lookup now mirrors duplicate detection more closely.
+- Create/update conversion now uses `CurrencySettingsRepository.homeCurrency()`.
+- Update/delete side effects exist via `TransactionSideEffectDispatcher`.
 
-The most important issue:
+Current state: **green/yellow, not red**.  
+I would call this **core-stable but not fully hardened**.
 
-> Several callers wrap `TransactionLifecycleCoordinator.createExpense()` inside their own `database.withTransaction { ... }`. The coordinator then runs “post-commit” side effects after its inner transaction, but if the caller’s outer transaction is still active, those side effects are **not truly post-commit**.
+Remaining risk is concentrated in:
 
-This can cause budget/anomaly/merchant-learning/recurring side effects to run for data that may later roll back.
-
-Second big issue:
-
-> Many update paths still mutate `ExpenseDao` directly and do not write `TransactionEvent.UPDATED`.
-
-So the create path is mostly centralized, but the update lifecycle is still partially bypassed.
+1. failed-create observability,
+2. idempotent insert conflicts,
+3. direct debug/backfill/bulk DAO mutation paths,
+4. one restore-barrier hole,
+5. bulk-update side effects,
+6. hard-delete / no soft-delete contract,
+7. stale/legacy APIs still present.
 
 ---
 
-# 2. Intended architecture contract
+# Severity scale
 
-From the dependency map, the transaction lifecycle is supposed to be:
-
-```text
-ALL expense creation paths
-→ TransactionLifecycleCoordinator
-→ validate
-→ normalize
-→ dedupe
-→ insert atomic
-→ transaction event
-→ side effects
-```
-
-Main consumers:
-
-- `ManualExpenseRepository`
-- `ReviewQueueRepository`
-- `ReceiptRepository`
-- `ExpenseRepository`
-- `GroupTransactionCoordinator`
-- `EmailReceiptIngestionService`
-- `BankApiIntegration`
-
-This is the correct architecture. The coordinator should be the only place where expense CUD writes become official business transactions.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
+- **P0 / Critical:** data loss, duplicate money rows, privacy/security break, restore corruption.
+- **P1 / High:** lifecycle bypass, missing audit for meaningful user action, broken idempotency, restore/write-barrier hole.
+- **P2 / Medium:** edge correctness, weak diagnostics, bulk/cache inconsistency, architectural regression risk.
+- **P3 / Low:** cleanup, deprecation, maintainability.
 
 ---
 
-# 3. Actual code path
+# Current checklist status
 
-## 3.1 Create flow
+## Creation paths
 
-`TransactionLifecycleCoordinator.createExpense()` currently does:
+| Path | Current status |
+|---|---|
+| Manual expense create | Mostly good. Uses coordinator with `SideEffectMode.DEFER`, then dispatches after outer transaction. |
+| Notification auto-accept | Good direction from Pipeline 1. Uses coordinator and deferred side effects in outer transaction paths. |
+| Review approval | Mostly good. Uses review status transition, coordinator with `DEFER`, receipt link inside transaction, then post-commit side effects. |
+| Receipt-created expense | Mostly migrated by docs/KDoc. Legacy `ReceiptRepository.createExpenseFromReceipt()` still exists and is deprecated. |
+| Bank/email/import | Not fully re-inspected in this pass. Repository KDoc says migrated, but AI should verify with grep before closing. |
+| Group expense | Improved. Uses coordinator with `DEFER`; group link happens in outer transaction; side effects are intended post-commit. |
+
+## Update paths
+
+Mostly improved:
+
+- `updateExpense()`
+- `updateCategory()`
+- `updateMerchant()`
+- `updateType()`
+- `updateTransferDetails()`
+- `updateOwnership()`
+- `updateLocation()`
+- bulk category/merchant wrappers
+
+now route through coordinator or are explicitly documented.
+
+Still concerning:
+
+- backfill/debug paths still write directly,
+- group hard-delete cleanup clears shared flags directly,
+- business/tax update path has a restore guard gap and no-op parameters.
+
+## Delete path
+
+Coordinator delete exists and writes `DELETED`, but deletion is hard-delete only and some direct delete/debug methods bypass lifecycle.
+
+## Side effects
+
+Creation/update/delete side effects exist.  
+Bulk updates and some cleanup paths still intentionally skip/fold side effects.
+
+---
+
+# Positive findings to preserve
+
+## PF-01 — Coordinator is now real central infrastructure
+
+`TransactionLifecycleCoordinator.createExpense()` performs:
 
 ```text
 restore write guard
-→ validate request
-→ generate merchantKey
-→ generate dedupeKey
-→ build Expense
+→ validate
+→ merchantKey/dedupeKey
 → normalize ownership
-→ optionally convert non-EUR into baseAmount/baseCurrency/exchangeRateUsed
-→ dedupe according to mode
-→ database.withTransaction {
-      expenseDao.insertAtomic(expense)
-      transactionEventDao.insert(CREATED)
-  }
-→ sideEffectDispatcher.dispatchOnCreated()
-→ recurringLifecycleCoordinator.linkExpenseToOccurrence()
-→ return Created
+→ home-currency conversion snapshot
+→ duplicate check
+→ insert expense + CREATED event in Room transaction
+→ optional post-commit side effects
 ```
 
-Strengths:
+This is the right architecture.
 
-- central coordinator exists,
-- restore mode blocks writes,
-- validation exists,
-- unique `dedupeKey` index exists,
-- insert + created event are inside one Room transaction,
-- side effects are best-effort and do not break the caller,
-- recurring matching is attempted.
+## PF-02 — Outer transaction issue mostly fixed
 
-Relevant source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+Examples:
 
----
+- `ManualExpenseRepository.addManualExpense()` uses `createExpense(request, SideEffectMode.DEFER)` inside `database.withTransaction`, then dispatches after commit.
+- `ReviewQueueRepository.approveReview()` uses `DEFER` inside the review transaction, then dispatches after commit.
+- `GroupTransactionCoordinator` uses `DEFER` when creating the system expense inside its group transaction.
 
-## 3.2 Event table
+This closes the biggest old P0 from the previous report.
 
-`TransactionEvent` records:
+## PF-03 — Update APIs are much stronger
+
+`ExpenseRepository` now documents that most user-facing update paths are routed through the coordinator and write lifecycle events.
+
+The coordinator has specialized APIs:
 
 ```text
-expenseId
-eventType
-source
-actor
-occurredAt
-dedupeKey
-duplicateExpenseId
-beforeSnapshot
-afterSnapshot
-metadata
-reason
-```
-
-This is a good audit/event model.
-
-But currently, event usage is incomplete:
-
-- `CREATED` is written.
-- `UPDATED` is written only if `TransactionLifecycleCoordinator.updateExpense()` is used.
-- `DELETED` is written only if `TransactionLifecycleCoordinator.deleteExpense()` is used.
-- `CREATE_DUPLICATE_SKIPPED` can be written.
-- `CREATE_VALIDATION_FAILED`, `CREATE_INSERT_CONFLICT`, `CREATE_ATTEMPTED`, `SIDE_EFFECT_FAILED`, `BULK_UPDATED` are defined but not consistently used.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/TransactionEvent.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/LifecycleEventType.kt
-
----
-
-# 4. Major findings
-
-## Finding P0-1 — “Post-commit” side effects are not always post-commit
-
-The coordinator says side effects are post-commit. That is true only when `createExpense()` is called directly.
-
-But some callers do this:
-
-```kotlin
-database.withTransaction {
-    transactionLifecycleCoordinator.createExpense(request)
-    // more writes
-}
-```
-
-Visible examples:
-
-- `ManualExpenseRepository.addManualExpense()`
-- `ReviewQueueRepository.approveReview()` / mark relevant path
-- `GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup()`
-
-Problem:
-
-`TransactionLifecycleCoordinator.createExpense()` internally does:
-
-```kotlin
-database.withTransaction {
-    insert expense
-    insert CREATED event
-}
-
-sideEffectDispatcher.dispatchOnCreated(...)
-recurringLifecycleCoordinator.linkExpenseToOccurrence(...)
-```
-
-If the caller already has an outer Room transaction, the inner transaction block is not a true global commit boundary. The standard side effects can run while the caller’s outer transaction is still active.
-
-## Why this is dangerous
-
-Example: group expense creation.
-
-```text
-outer transaction starts
-→ coordinator inserts expense + event
-→ coordinator runs budget/anomaly/merchant/recurring side effects
-→ group link insert fails
-→ outer transaction rolls back expense/event
-```
-
-Now side effects may have run for an expense that no longer exists.
-
-Possible symptoms:
-
-- budget alerts for rolled-back expenses,
-- merchant-category learning from rolled-back expense,
-- anomaly alerts for data that did not commit,
-- recurring occurrence linked to a rolled-back or not-yet-committed row,
-- dashboard/budget briefly inconsistent,
-- hard-to-reproduce bugs because behavior depends on nested transaction timing.
-
-## Recommendation
-
-Create a lifecycle API that supports outer atomic flows.
-
-Suggested model:
-
-```kotlin
-data class LifecycleCreateTxResult(
-    val result: CreateExpenseResult,
-    val postCommitActions: List<PostCommitAction>
-)
-```
-
-Then:
-
-```kotlin
-database.withTransaction {
-    val create = coordinator.createExpenseDbOnly(request)
-    // caller-specific DB writes: review status, group link, receipt link, stats
-    create
-}
-
-coordinator.dispatchPostCommitActions(create)
-```
-
-Or simpler:
-
-```kotlin
-coordinator.createExpense(
-    request,
-    sideEffectMode = SideEffectMode.DEFER
-)
-```
-
-Then caller executes deferred side effects after its own outer transaction commits.
-
-Priority: highest.
-
-Relevant files:
-
-- `TransactionLifecycleCoordinator.kt`
-- `ManualExpenseRepository.kt`
-- `ReviewQueueRepository.kt`
-- `GroupTransactionCoordinator.kt`
-- `NotificationProcessingPipeline.kt`
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ManualExpenseRepository.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
-
----
-
-## Finding P0-2 — Several update paths bypass lifecycle event logging
-
-`ExpenseRepository.updateExpense()` uses the coordinator.
-
-But many specific update methods still call `ExpenseDao` directly:
-
-```text
-updateExpenseCategory
-updateExpenseCategoryBulk
-updateExpenseMerchant
-updateExpenseMerchantBulk
-updateExpenseType
+updateCategory
+updateLocation
+updateBusinessTaxFields
+updateMerchant
+updateType
 updateTransferDetails
-updateNotMineDetails
-updateSharedExpenseDetails
 updateOwnership
+bulkUpdateCategory
+bulkUpdateMerchant
+deleteExpense
 ```
 
-These update real expense rows but do not write `TransactionEvent.UPDATED` or `BULK_UPDATED`.
+## PF-04 — Side effects exist for update/delete
 
-Also, `GroupTransactionCoordinator.normalizeLinkedSystemExpense()` directly mutates:
+`TransactionSideEffectDispatcher` now has:
 
 ```text
-isNotMine
-isSharedExpense
-mySharePercentage
-myShareAmount
+dispatchOnUpdated()
+dispatchOnDeleted()
 ```
 
-without lifecycle event logging.
+Update side effects check budgets, re-run anomaly evaluation, and learn merchant-category patterns. Delete side effects check budgets.
 
-## Why this matters
+## PF-05 — Duplicate lookup is improved
 
-A user can edit:
-
-- category,
-- merchant,
-- transaction type,
-- ownership,
-- transfer details,
-- shared-expense fields,
-
-and the audit trail will not show it.
-
-This violates the architecture contract:
+`ExpenseDao.findDuplicateIdCurrencyAware()` now mirrors `isDuplicateCurrencyAware()` with:
 
 ```text
-all expense create/update/delete should route through lifecycle coordinator
+merchantKey exact
+→ merchantKey prefix containment
+→ raw merchant
+→ date/amount/currency/type window
 ```
 
-## Recommendation
-
-Add specialized lifecycle update APIs:
-
-```kotlin
-updateCategory(expenseId, categoryId, source, reason)
-updateMerchant(expenseId, merchant, applyToAll, source, reason)
-updateType(expenseId, type, source, reason)
-updateOwnership(expenseId, ownershipPatch, source, reason)
-updateTransferDetails(expenseId, transferPatch, source, reason)
-bulkUpdateMerchant(...)
-bulkUpdateCategory(...)
-```
-
-Each should:
-
-```text
-load beforeSnapshot
-normalize fields
-persist update
-write UPDATED or BULK_UPDATED event
-dispatch relevant post-commit side effects
-```
-
-Priority: highest.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+This fixes the old “duplicate detected but existing ID unknown” problem.
 
 ---
 
-## Finding P1-1 — Strict external ID idempotency returns `InsertConflict`, not useful duplicate identity
+# Issue P1-01 — `updateBusinessTaxFields()` bypasses restore maintenance guard
 
-In `STRICT_EXTERNAL_ID`, the coordinator sets:
+## Severity
+
+P1 / High
+
+## Evidence
+
+Most coordinator update methods start with:
+
+```kotlin
+if (!restoreMaintenanceMode.isWritesAllowed()) {
+    throw IllegalStateException("Database writes blocked during restore")
+}
+```
+
+But `updateBusinessTaxFields()` currently loads the expense and writes an update without that guard.
+
+It also accepts fields that do not exist on `Expense` as no-op parameters:
+
+```text
+businessUsePercent
+taxCategory
+vatEligible
+```
+
+The method only maps:
+
+```text
+isBusinessExpense
+receiptRequired → requiresReceipt
+```
+
+## Impact
+
+During unsafe restore mode, this path can still mutate expenses.
+
+Also, callers may think business/tax fields were persisted when some accepted parameters are silently ignored.
+
+## Fixing strategy
+
+Make business/tax update obey the same write-barrier and explicit-field contract as other lifecycle updates.
+
+## Implementation plan
+
+1. Add restore guard at the top:
+
+```kotlin
+if (!restoreMaintenanceMode.isWritesAllowed()) {
+    throw IllegalStateException("Database writes blocked during restore")
+}
+```
+
+2. Replace silent no-op parameters with one of these:
+   - remove unsupported params from API, or
+   - add metadata warning to `TransactionEvent`, or
+   - return a sealed result:
+
+```kotlin
+sealed interface BusinessTaxUpdateResult {
+    data object Updated : BusinessTaxUpdateResult
+    data class UnsupportedFields(val fields: List<String>) : BusinessTaxUpdateResult
+    data class NotFound(val expenseId: Long) : BusinessTaxUpdateResult
+}
+```
+
+3. Add tests:
+
+```text
+updateBusinessTaxFields_blocks_during_restore
+updateBusinessTaxFields_writes_UPDATED_event
+updateBusinessTaxFields_does_not_silently_drop_unsupported_fields
+```
+
+---
+
+# Issue P1-02 — Failed creates are still invisible in `transaction_events`
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`TransactionLifecycleCoordinator.createExpense()` returns early for:
+
+```text
+ValidationFailed
+DuplicateSkipped
+InsertConflict
+Error
+```
+
+Only successful creates definitely write `CREATED`. Duplicates attempt to write `CREATE_DUPLICATE_SKIPPED`, but validation failures and insert conflicts do not appear to write durable lifecycle events.
+
+The old model already defines lifecycle event types for failed/attempted creates, but the coordinator does not consistently use them.
+
+## Impact
+
+When a user asks “why didn’t this expense appear?”, the lifecycle audit cannot always answer:
+
+```text
+Was create attempted?
+Was validation rejected?
+Was it duplicate?
+Was it an insert race conflict?
+Was restore blocking writes?
+```
+
+This overlaps with Pipeline 1 diagnostics.
+
+## Fixing strategy
+
+Make create lifecycle observable even when no expense row is created.
+
+## Implementation plan
+
+1. At start of `createExpense()`, write:
+
+```text
+CREATE_ATTEMPTED
+```
+
+with `expenseId = null`, source, dedupe key if known, and request metadata.
+
+2. On validation failure, write:
+
+```text
+CREATE_VALIDATION_FAILED
+```
+
+with validation errors in metadata.
+
+3. On insert conflict, write:
+
+```text
+CREATE_INSERT_CONFLICT
+```
+
+with dedupe key and source.
+
+4. On restore-blocked write, either:
+   - write a diagnostic event to a separate diagnostics table, or
+   - return a structured blocked result if transaction events are not safe during restore.
+
+5. Add tests:
+
+```text
+validation_failure_writes_transaction_event
+insert_conflict_writes_transaction_event
+duplicate_skipped_writes_transaction_event
+restore_block_returns_structured_result
+```
+
+---
+
+# Issue P1-03 — `STRICT_EXTERNAL_ID` idempotency still returns weak `InsertConflict`
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+In `STRICT_EXTERNAL_ID`, coordinator sets:
 
 ```text
 dedupeKey = idem:{source}:{idempotencyKey}
 ```
 
-and relies on the unique `dedupeKey` index.
+and relies on the unique index. If `insertAtomic()` returns `<= 0`, coordinator returns:
 
-If insert conflicts, current result is:
-
-```kotlin
+```text
 CreateExpenseResult.InsertConflict(dedupeKey)
 ```
 
-But for idempotent systems like:
+It does not retrieve the existing expense ID.
 
-- bank sync,
-- notification retry,
-- email receipt retry,
-- import retry,
+## Impact
 
-a duplicate idempotency key should usually return:
+For idempotent systems:
 
 ```text
-Already exists / DuplicateSkipped(existingExpenseId)
+bank sync
+email receipt retry
+notification retry
+CSV/import retry
+worker retry
 ```
 
-not a generic insert conflict.
+a repeat of the same external transaction should return:
 
-## Recommendation
+```text
+AlreadyCreated(existingExpenseId)
+```
 
-On insert conflict in `STRICT_EXTERNAL_ID` mode:
+or at least:
+
+```text
+DuplicateSkipped(existingExpenseId)
+```
+
+A generic conflict loses the idempotency contract.
+
+## Fixing strategy
+
+Treat idempotent unique-key conflicts as successful duplicate resolution.
+
+## Implementation plan
+
+1. Add DAO:
 
 ```kotlin
-val existingId = expenseDao.findIdByDedupeKey(expense.dedupeKey)
-return DuplicateSkipped(existingId, "Idempotent duplicate")
+@Query("SELECT id FROM expenses WHERE dedupeKey = :dedupeKey LIMIT 1")
+suspend fun findIdByDedupeKey(dedupeKey: String): Long?
 ```
 
-or introduce:
+2. In `createExpense()` after `insertAtomic()` conflict:
 
 ```kotlin
-CreateExpenseResult.AlreadyCreated(existingExpenseId)
-```
-
-Priority: high.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/DeduplicationMode.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
-
----
-
-## Finding P1-2 — Duplicate lookup does not mirror duplicate detection
-
-The duplicate check uses:
-
-```kotlin
-expenseDao.isDuplicateCurrencyAware(...)
-```
-
-This checks:
-
-- merchant key,
-- merchant-key prefix containment,
-- raw merchant,
-- date/amount tolerance,
-- currency,
-- compatible transaction type including `UNKNOWN`.
-
-But duplicate ID retrieval uses:
-
-```kotlin
-findDuplicateId(...)
-```
-
-That query is narrower:
-
-- exact merchant key,
-- exact-ish amount/date,
-- exact currency,
-- exact transaction type.
-
-So the app can detect a duplicate but fail to identify the duplicate ID.
-
-Current behavior:
-
-```text
-DuplicateSkipped(existingExpenseId = -1)
-```
-
-or a duplicate event with `duplicateExpenseId = null`.
-
-## Recommendation
-
-Create one policy-consistent method:
-
-```kotlin
-findDuplicateCandidateCurrencyAware(...)
-```
-
-or reuse `getDuplicateCandidateForImportCurrencyAware(...)` with the same window/tolerance/type logic.
-
-Then `DuplicateSkipped` should normally include the real existing ID.
-
-Priority: high.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
-
----
-
-## Finding P1-3 — Duplicate event writing is best-effort and outside atomic create flow
-
-When duplicate is detected, coordinator writes duplicate event using `writeDuplicateEvent()`.
-
-But that method catches errors and only logs warning.
-
-So a duplicate can be skipped with no audit record.
-
-This may be acceptable for robustness, but it weakens debugging and lifecycle auditability.
-
-## Recommendation
-
-Return event-writing status in the result:
-
-```kotlin
-DuplicateSkipped(
-    existingExpenseId,
-    reason,
-    eventLogged: Boolean
-)
-```
-
-Or, if audit is required, fail loudly in debug/release-candidate builds.
-
-Priority: medium-high.
-
----
-
-## Finding P1-4 — Failed creates are invisible in `transaction_events`
-
-`LifecycleEventType` includes:
-
-```text
-CREATE_ATTEMPTED
-CREATE_VALIDATION_FAILED
-CREATE_INSERT_CONFLICT
-```
-
-But `createExpense()` currently returns validation failures and conflicts without writing those events.
-
-Because `TransactionEvent.expenseId` is nullable, the model clearly supports attempted-but-failed creates.
-
-## Recommendation
-
-Write events for:
-
-```text
-CREATE_ATTEMPTED
-CREATE_VALIDATION_FAILED
-CREATE_INSERT_CONFLICT
-CREATE_DUPLICATE_SKIPPED
-```
-
-Use `expenseId = null` when no expense exists.
-
-This will massively improve debugging because you can answer:
-
-```text
-Did creation fail before insert?
-Was it validation?
-Was it dedupe?
-Was it unique-index conflict?
-```
-
-Priority: high.
-
----
-
-## Finding P1-5 — Currency snapshot always assumes EUR, not user home currency
-
-Coordinator uses:
-
-```kotlin
-val homeCurrency = CurrencyConverter.DEFAULT_BASE_CURRENCY
-```
-
-and comments imply EUR.
-
-But the app has a currency settings system and multi-currency repository.
-
-If the user’s home currency is not EUR, `baseAmount`, `baseCurrency`, and `exchangeRateUsed` can be misleading.
-
-## Recommendation
-
-Inject `CurrencySettingsRepository` or a lifecycle currency policy:
-
-```kotlin
-val homeCurrency = currencySettingsRepository.homeCurrency().first()
-```
-
-Then snapshot conversion should use the user’s home currency at creation time.
-
-Priority: high for non-EUR users.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-
----
-
-## Finding P1-6 — Update path may leave `merchantKey` stale
-
-`updateExpense()` recomputes `dedupeKey` if key fields changed.
-
-But if merchant changed, it does not generate a new `merchantKey`. It trusts the `Expense` object passed by the caller.
-
-So this can happen:
-
-```text
-expense.merchant = "New Merchant"
-expense.merchantKey = old key
-dedupeKey = generated for New Merchant
-```
-
-Then:
-
-- duplicate checks use stale merchant key,
-- merchant grouping may be wrong,
-- dashboard/analytics by merchant can drift,
-- future dedupe becomes unreliable.
-
-Some repository-specific merchant update methods do update merchant key, but those bypass lifecycle events.
-
-## Recommendation
-
-Coordinator update should normalize:
-
-```text
-merchantKey
-dedupeKey
-ownership fields
-base currency snapshot if amount/currency changed
-```
-
-Do not trust callers to keep derived fields synced.
-
-Priority: high.
-
----
-
-## Finding P1-7 — Update/delete do not dispatch lifecycle side effects
-
-Create dispatches:
-
-```text
-budget monitor
-anomaly alert
-merchant-category learning
-recurring link
-```
-
-But update/delete do not appear to dispatch equivalent recalculation hooks.
-
-Dashboard/analytics may update through Flow/queries, but side-effect systems can remain stale:
-
-- budget alert state,
-- anomaly state,
-- merchant-category learning,
-- recurring link/unlink,
-- recommendation refresh.
-
-## Recommendation
-
-Add:
-
-```kotlin
-dispatchOnUpdated(expenseId, before, after, source)
-dispatchOnDeleted(expenseId, before, source)
-```
-
-At minimum:
-
-```text
-budget monitor after amount/category/date/type/ownership changes
-recurring relink after date/merchant/amount changes
-merchant learning after merchant/category changes
-```
-
-Priority: medium-high.
-
----
-
-## Finding P2-1 — Delete source is hardcoded
-
-`deleteExpense(expense)` writes event with:
-
-```text
-source = "USER_ACTION"
-```
-
-There is no way for callers to pass:
-
-- `REVIEW_REJECTION`
-- `DEBUG_TOOL`
-- `RESTORE`
-- `GROUP_DELETE`
-- `BANK_SYNC_REVERSAL`
-- `USER_ACTION`
-
-## Recommendation
-
-Change delete API to:
-
-```kotlin
-deleteExpense(
-    expenseId: Long,
-    source: String,
-    reason: String?,
-    actor: String?
-)
-```
-
-Priority: medium.
-
----
-
-## Finding P2-2 — TransactionEventDao is too minimal
-
-`TransactionEventDao` only has:
-
-```text
-insert
-getEventsForExpense
-```
-
-For debugging and audit screens, you need:
-
-```text
-getRecentEvents(limit)
-getEventsByType(type)
-getEventsBySource(source)
-getEventsBetween(start,end)
-getDuplicateEvents()
-getFailedCreateEvents()
-countEventsForExpense(id)
-```
-
-Priority: medium.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/TransactionEventDao.kt
-
----
-
-## Finding P2-3 — Existing lifecycle tests are mock-only
-
-`TransactionLifecycleCoordinatorTest` exists, but it mocks:
-
-- `AppDatabase`
-- `ExpenseDao`
-- `TransactionEventDao`
-- side effects
-- recurring coordinator
-
-It tests a few cases:
-
-- valid create returns `Created`
-- negative amount validation
-- blank merchant validation
-- invalid currency validation
-
-This is useful smoke coverage, but it does not prove:
-
-- real Room insert works,
-- `transaction_events` row persists,
-- unique `dedupeKey` blocks duplicates,
-- duplicate candidate ID is correct,
-- rollback behavior works,
-- side effects run only after commit,
-- dashboard/analytics observe the created row,
-- restore mode blocks real DB writes,
-- update/delete event snapshots are correct.
-
-## Recommendation
-
-Keep the mock tests, but add DB-backed contract tests.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/test/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinatorTest.kt
-
----
-
-# 5. Debugging checklist for Pipeline 2
-
-## For every expense creation path
-
-Check:
-
-- [ ] request source is correct,
-- [ ] restore mode allows write,
-- [ ] validation passes/fails with visible event,
-- [ ] merchant key generated correctly,
-- [ ] dedupe key generated correctly,
-- [ ] duplicate check result correct,
-- [ ] insert result > 0,
-- [ ] `CREATED` event exists,
-- [ ] source-specific links/stats written,
-- [ ] side effects run after final transaction commit,
-- [ ] recurring link attempted only after commit,
-- [ ] dashboard total changes,
-- [ ] analytics category total changes,
-- [ ] budget status changes.
-
-## Creation sources to verify
-
-- [ ] manual entry
-- [ ] notification auto-accept
-- [ ] review approval
-- [ ] receipt scan
-- [ ] email receipt
-- [ ] bank API sync
-- [ ] bank statement review
-- [ ] CSV import
-- [ ] group expense
-- [ ] recurring generated
-- [ ] debug/restore
-
-## For updates
-
-Check:
-
-- [ ] category edit writes event,
-- [ ] merchant edit writes event,
-- [ ] amount edit writes event,
-- [ ] date edit writes event,
-- [ ] transaction type edit writes event,
-- [ ] ownership/shared edit writes event,
-- [ ] transfer details edit writes event,
-- [ ] bulk category/merchant edit writes `BULK_UPDATED`,
-- [ ] derived fields are regenerated,
-- [ ] budget/analytics/dedupe behavior remains correct.
-
-## For deletion
-
-Check:
-
-- [ ] delete writes `DELETED`,
-- [ ] source/reason/actor recorded,
-- [ ] linked receipt/group/recurring behavior is correct,
-- [ ] dashboard total updates,
-- [ ] no unsafe orphan state.
-
----
-
-# 6. Recommended fix plan
-
-## PR 1 — Observability and tests first
-
-Add transaction lifecycle diagnostics:
-
-```kotlin
-enum class TransactionLifecycleStage {
-    CREATE_ATTEMPTED,
-    DROPPED_RESTORE_MODE,
-    VALIDATION_FAILED,
-    DUPLICATE_SKIPPED,
-    INSERT_ATTEMPTED,
-    INSERT_CONFLICT,
-    CREATED_EVENT_WRITTEN,
-    SIDE_EFFECT_STARTED,
-    SIDE_EFFECT_FAILED,
-    RECURRING_LINK_STARTED,
-    CREATED,
-    UPDATED,
-    DELETED
+if (dedupMode == DeduplicationMode.STRICT_EXTERNAL_ID) {
+    val existingId = expenseDao.findIdByDedupeKey(expense.dedupeKey!!)
+    if (existingId != null) {
+        writeDuplicateEvent(...)
+        return CreateExpenseResult.DuplicateSkipped(
+            existingExpenseId = existingId,
+            reason = "Idempotent duplicate"
+        )
+    }
 }
 ```
 
-Expose in debug screen:
+3. Add tests:
 
 ```text
-last create attempt
-last validation error
-last duplicate skip
-last insert conflict
-last side effect failure
-last update event
-last delete event
+strict_external_id_repeat_returns_existing_id
+strict_external_id_repeat_writes_duplicate_event
+strict_external_id_missing_key_validation_fails
 ```
-
-Add DB-backed test skeleton.
 
 ---
 
-## PR 2 — Fix nested transaction side-effect boundary
+# Issue P1-04 — Debug restore/snapshot methods bypass lifecycle completely
 
-Introduce:
+## Severity
+
+P1 / High if available outside debug builds, otherwise P2
+
+## Evidence
+
+`ExpenseRepository` still exposes:
 
 ```kotlin
-createExpenseDbOnly()
-dispatchPostCommit()
+deleteAllExpenses() = expenseDao.deleteAll()
+
+restoreDebugSnapshot(snapshot) {
+    database.withTransaction {
+        expenseDao.deleteAll()
+        expenseDao.insertAll(snapshot.expenses)
+    }
+}
+```
+
+These bypass:
+
+```text
+restoreMaintenanceMode
+TransactionLifecycleCoordinator
+TransactionEventDao
+dedupe policy
+side effects
+```
+
+## Impact
+
+If reachable from UI/tools/release builds, these can wipe or restore expenses without audit events or lifecycle side effects.
+
+## Fixing strategy
+
+Make debug-only destructive writes explicit and guarded.
+
+## Implementation plan
+
+1. Move debug snapshot methods to a `DebugExpenseRepository`.
+2. Add build/runtime guard:
+
+```kotlin
+if (!BuildConfig.DEBUG) error("Debug snapshots unavailable in release")
+```
+
+3. Add restore/write barrier check.
+4. Either:
+   - write a single `BULK_RESTORED` / `BULK_DELETED` transaction event, or
+   - write to a separate debug audit table.
+5. Add static guard test:
+
+```text
+release_code_does_not_reference_deleteAllExpenses
+debug_snapshot_methods_are_debug_only
+```
+
+---
+
+# Issue P1-05 — Public DAO mutation surface still enables lifecycle bypass
+
+## Severity
+
+P1 / High architectural risk
+
+## Evidence
+
+`ExpenseDao` still exposes many mutation methods:
+
+```text
+insert
+insertAtomic
+insertAll
+delete
+deleteAll
+update
+updateCategory
+updateMerchantAndKey
+updateTransactionType
+updateTransferDirection
+updateOwnership columns
+clearSharedExpenseFlags
+conditionallSetLocation
+updateMerchantKey
+...
+```
+
+Some are necessary internally, but nothing prevents new callers from bypassing the coordinator.
+
+## Impact
+
+The codebase can regress back to mixed old/new behavior.
+
+## Fixing strategy
+
+Add static guard tests and narrow DAO visibility where possible.
+
+## Implementation plan
+
+1. Add a script/test:
+
+```text
+fail if app/src/main/java references ExpenseDao.insert/update/delete
+outside:
+- TransactionLifecycleCoordinator
+- migrations
+- approved backfill/debug allowlist
+```
+
+2. Maintain allowlist:
+
+```text
+LocationBackfillWorker direct location methods
+MerchantKeyBackfillWorker updateMerchantKey
+GroupTransactionCoordinator.clearSharedExpenseFlags
+DebugExpenseRepository snapshot methods
+```
+
+3. Add CI task:
+
+```text
+./gradlew lifecycleBypassGuard
+```
+
+4. Add docs:
+
+```text
+docs/architecture/CONTRACTS.md
+```
+
+with:
+
+```text
+All user-visible expense CUD writes must route through TransactionLifecycleCoordinator.
+```
+
+---
+
+# Issue P2-06 — Group hard-delete cleanup still directly clears shared flags
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`GroupTransactionCoordinator` still calls:
+
+```kotlin
+expenseDao.clearSharedExpenseFlags(expenseId)
+```
+
+during group cleanup. The comment says this is a bulk data-integrity operation, not a user-originated edit.
+
+## Impact
+
+That may be acceptable, but it creates an audit gap:
+
+```text
+shared expense flags changed
+but no UPDATED event exists for each affected expense
+```
+
+This is especially sensitive because group deletion changes dashboard/budget semantics.
+
+## Fixing strategy
+
+Keep cleanup bulk-safe, but make it auditable.
+
+## Implementation plan
+
+Option A — aggregate event:
+
+```text
+TransactionEvent.BULK_UPDATED
+metadata = {
+  operation: "GROUP_DELETE_CLEAR_SHARED_FLAGS",
+  groupId,
+  affectedExpenseIds,
+  affectedCount
+}
+```
+
+Option B — lifecycle per row only for small counts, aggregate for large counts.
+
+Tests:
+
+```text
+delete_group_clears_shared_flags_and_writes_bulk_lifecycle_event
+delete_group_recalculates_budget_once_after_commit
+```
+
+---
+
+# Issue P2-07 — Bulk category/merchant updates skip holistic side effects
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+Coordinator bulk methods write `BULK_UPDATED`, but comments say side effects are intentionally skipped to avoid flooding.
+
+That avoids per-row storms, but there should still be one holistic invalidation/recalculation.
+
+## Impact
+
+After bulk updates, these can lag or remain stale:
+
+```text
+budget monitor state
+anomaly state
+merchant/category learning cache
+analytics cache if any
+dashboard derived warnings if cached
+```
+
+Flows may refresh DB-backed UI automatically, but non-Flow side-effect systems need a signal.
+
+## Fixing strategy
+
+Add aggregate post-commit side effects for bulk operations.
+
+## Implementation plan
+
+1. Add dispatcher methods:
+
+```kotlin
+suspend fun dispatchAfterBulkCategoryUpdate(merchantKey: String, newCategoryId: Long, affectedCount: Int)
+suspend fun dispatchAfterBulkMerchantUpdate(oldMerchantKey: String, newMerchantKey: String, affectedCount: Int)
+```
+
+2. These should do at most:
+
+```text
+budgetMonitor.checkBudgets()
+anomaly cache invalidation/recompute marker
+merchant/category cache invalidation
+dashboard cache invalidation if relevant
+```
+
+3. Return affected count from bulk coordinator methods.
+
+4. Tests:
+
+```text
+bulk_category_update_writes_bulk_event
+bulk_category_update_dispatches_single_budget_recheck
+bulk_merchant_update_does_not_dispatch_per_row_side_effects
+```
+
+---
+
+# Issue P2-08 — Delete loads snapshot outside final transaction
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`deleteExpense(expenseId)` loads:
+
+```kotlin
+val expense = expenseDao.getById(expenseId)
+```
+
+then calls:
+
+```kotlin
+deleteExpense(expense)
+```
+
+The second method writes event + delete inside a transaction using the already-loaded object.
+
+## Impact
+
+A concurrent update between the load and delete can produce a stale `beforeSnapshot`.
+
+The final delete still deletes by entity, but the audit snapshot may not match the row at deletion time.
+
+## Fixing strategy
+
+Load the row inside the same transaction that writes `DELETED` and deletes.
+
+## Implementation plan
+
+1. Replace overloads with:
+
+```kotlin
+suspend fun deleteExpenseById(expenseId: Long, source: String, reason: String?, actor: String?): Result<Unit> {
+    return database.withTransaction {
+        val current = expenseDao.getById(expenseId) ?: return@withTransaction NotFound
+        transactionEventDao.insert(DELETED snapshot from current)
+        expenseDao.delete(current)
+        Deleted(current)
+    }.also {
+        dispatch post-commit side effects
+    }
+}
+```
+
+2. Keep `deleteExpense(expense)` deprecated or internal only.
+
+3. Tests:
+
+```text
+delete_uses_latest_snapshot
+delete_writes_event_and_deletes_atomically
+delete_not_found_returns_failure
+```
+
+---
+
+# Issue P2-09 — No explicit soft-delete/undo contract
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+The current coordinator performs hard delete:
+
+```text
+write DELETED event
+→ expenseDao.delete(expense)
+```
+
+The pipeline checklist asks for delete/soft-delete behavior, but the code appears to have only hard-delete.
+
+## Impact
+
+Hard delete is okay only if the contract is explicit. But it affects:
+
+```text
+receipt links
+group links
+recurring links
+analytics history
+undo support
+audit trails
+exports
+```
+
+The `DELETED` event preserves a snapshot, but downstream links may become orphaned unless FK/cascade rules are correct.
+
+## Fixing strategy
+
+Define delete semantics explicitly.
+
+## Implementation plan
+
+1. Choose one:
+
+```text
+A. Hard delete + event snapshot + FK/cascade guarantees
+B. Soft delete with deletedAt/deletedReason/deletedBy
+C. Hybrid: soft delete for user actions, hard delete for restore/debug
+```
+
+2. If hard delete remains:
+   - add orphan diagnostics for receipt/group/recurring links,
+   - add FK cascade tests,
+   - document that `TransactionEvent.beforeSnapshot` is the audit source.
+
+3. Tests:
+
+```text
+delete_expense_preserves_deleted_snapshot
+delete_expense_does_not_leave_orphan_receipt_link
+delete_expense_unlinks_recurring_occurrence
+delete_expense_group_link_policy_is_explicit
+```
+
+---
+
+# Issue P2-10 — Deferred side-effect contract is caller-enforced, not type-enforced
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+The current fix relies on callers remembering:
+
+```kotlin
+createExpense(request, SideEffectMode.DEFER)
+...
+dispatchPostCreationSideEffects(id, source)
+```
+
+Manual, review, and group currently do this correctly.
+
+But the API still allows this dangerous pattern inside outer transactions:
+
+```kotlin
+database.withTransaction {
+    coordinator.createExpense(request) // default IMMEDIATE
+}
+```
+
+## Impact
+
+A future caller can reintroduce the old bug.
+
+## Fixing strategy
+
+Make nested transaction side effects harder to misuse.
+
+## Implementation plan
+
+Preferred:
+
+```kotlin
+sealed interface LifecycleCreateResult {
+    data class Created(
+        val expenseId: Long,
+        val postCommitAction: suspend () -> Unit
+    )
+}
 ```
 
 or:
 
 ```kotlin
-SideEffectMode.IMMEDIATE / DEFER
+suspend fun createExpenseDbOnly(...): CreateExpenseTxResult
+suspend fun dispatch(result: CreateExpenseTxResult)
 ```
 
-Then change nested callers:
+Minimum:
 
-- `ManualExpenseRepository`
-- `ReviewQueueRepository`
-- `GroupTransactionCoordinator`
-- `NotificationProcessingPipeline`
-
-so side effects run only after the outer transaction commits.
-
-This is the most important behavioral fix.
-
----
-
-## PR 3 — Route update paths through lifecycle
-
-Replace direct update calls in `ExpenseRepository` with lifecycle update methods.
-
-At minimum:
+1. Add KDoc warning.
+2. Add lint/static guard:
 
 ```text
-updateExpenseCategory
-updateExpenseMerchant
-updateExpenseType
-updateOwnership
-updateTransferDetails
+fail if "database.withTransaction" block contains "createExpense(request)" without "SideEffectMode.DEFER"
 ```
 
-should write `UPDATED`.
+3. Tests:
 
-Bulk operations should write `BULK_UPDATED` with metadata.
+```text
+manual_create_dispatches_side_effects_after_outer_commit
+review_approval_dispatches_side_effects_after_outer_commit
+group_expense_dispatches_side_effects_after_outer_commit
+```
 
 ---
 
-## PR 4 — Fix dedupe result identity
+# Issue P2-11 — Duplicate event writing is best-effort and not reflected in result
 
-Make duplicate detection and duplicate ID retrieval use the same policy.
+## Severity
 
-Add:
+P2 / Medium
+
+## Evidence
+
+`writeDuplicateEvent()` catches errors and logs warning instead of surfacing failure.
+
+## Impact
+
+A duplicate can be skipped with no durable audit event.
+
+## Fixing strategy
+
+Expose event logging status.
+
+## Implementation plan
+
+1. Extend result:
 
 ```kotlin
-findDuplicateCandidateCurrencyAware(...)
+data class DuplicateSkipped(
+    val existingExpenseId: Long,
+    val reason: String,
+    val eventLogged: Boolean
+)
 ```
 
-Use it in:
+2. In debug/RC builds, optionally fail if duplicate audit cannot be written.
 
-- `STANDARD`
-- `BULK_IMPORT`
-- update duplicate prevention.
-
----
-
-## PR 5 — Fix idempotent strict mode
-
-For `STRICT_EXTERNAL_ID` insert conflict:
+3. Tests:
 
 ```text
-lookup existing by dedupeKey
-return DuplicateSkipped or AlreadyCreated
+duplicate_skipped_reports_event_logged_true
+duplicate_event_failure_is_visible_in_result
 ```
 
 ---
 
-## PR 6 — Fix currency home snapshot
+# Issue P2-12 — Some post-commit paths may duplicate budget checks
 
-Inject actual home-currency settings instead of hardcoded `CurrencyConverter.DEFAULT_BASE_CURRENCY`.
+## Severity
 
----
+P2 / Medium
 
-# 7. Tests to add
+## Evidence
 
-## 7.1 `TransactionLifecycleCoordinatorDbContractTest`
+`ReviewQueueRepository.markAsRelevant()` dispatches lifecycle post-creation side effects and then separately calls `budgetMonitor.checkBudgets()` when `shouldCheckBudgets` is true.
 
-Use real in-memory Room DB.
+Because lifecycle creation side effects already include budget monitoring, this can double-run budget checks.
 
-Cases:
+## Impact
 
-1. create manual expense
-2. assert expense row exists
-3. assert `CREATED` event exists
-4. duplicate create returns `DuplicateSkipped`
-5. duplicate event exists
-6. strict external ID retry returns existing ID
-7. validation failure creates failed event if enabled
-8. update amount/category writes `UPDATED`
-9. delete writes `DELETED`
-10. restore mode blocks write
-
----
-
-## 7.2 `TransactionLifecyclePostCommitContractTest`
-
-Goal: prove side effects do not run before final commit.
-
-Test:
+Usually harmless, but can cause:
 
 ```text
-outer transaction
-→ createExpense deferred
-→ force failure after expense insert
-→ transaction rolls back
-→ assert side effects not called
+duplicate budget alerts
+extra worker/load
+hard-to-read logs
 ```
 
-Then success case:
+## Fixing strategy
 
-```text
-outer transaction succeeds
-→ side effects run exactly once
+Make the lifecycle dispatcher the single owner of budget side effects.
+
+## Implementation plan
+
+1. Remove manual budget check after successful lifecycle dispatch, or gate it:
+
+```kotlin
+if (!lifecycleSideEffectsDispatched) budgetMonitor.checkBudgets()
 ```
 
-This catches the biggest current risk.
+2. Add idempotency to budget alerts if not already present.
 
----
-
-## 7.3 `ExpenseRepositoryLifecycleBypassTest`
-
-Guard that these methods write events:
-
-- category edit
-- merchant edit
-- type edit
-- ownership edit
-- transfer edit
-- bulk category update
-- bulk merchant update
-
----
-
-## 7.4 `GroupExpenseLifecycleAtomicityTest`
-
-Test:
+3. Tests:
 
 ```text
-create system expense + group link
-→ group link insert fails
-→ no expense row
-→ no transaction event
-→ no side effect
-```
-
-Then success:
-
-```text
-expense row + event + group link + shared amount normalization all persist
+mark_as_relevant_created_expense_runs_budget_check_once
+review_approval_created_expense_runs_budget_check_once
 ```
 
 ---
 
-## 7.5 `NotificationReviewLifecycleScenarioTest`
+# Recommended fixing order
 
-Seed:
+## PR 1 — Restore barrier + failed-create events
+
+Files:
 
 ```text
-category
-budget
-raw notification
-pending review
+TransactionLifecycleCoordinator.kt
+LifecycleEventType.kt
+TransactionEventDao.kt
+TransactionLifecycleCoordinatorTest.kt
 ```
 
-Feed:
+Fix:
 
 ```text
-approve review
+- add restore guard to updateBusinessTaxFields
+- write CREATE_ATTEMPTED / CREATE_VALIDATION_FAILED / CREATE_INSERT_CONFLICT
+- expose structured restore-blocked result if needed
 ```
 
-Assert:
+## PR 2 — Idempotency conflict hardening
+
+Files:
 
 ```text
-expense row
-transaction CREATED event
-raw notification marked relevant
-pending review APPROVED
-source stats accepted
-budget/dashboard/analytics updated
+ExpenseDao.kt
+TransactionLifecycleCoordinator.kt
+CreateExpenseResult.kt
+```
+
+Fix:
+
+```text
+STRICT_EXTERNAL_ID conflict → existing ID / DuplicateSkipped
+```
+
+## PR 3 — Direct mutation guard
+
+Files:
+
+```text
+scripts/lifecycle-bypass-guard.*
+build.gradle.kts
+docs/architecture/CONTRACTS.md
+```
+
+Fix:
+
+```text
+CI fails on unapproved direct ExpenseDao mutation usage.
+```
+
+## PR 4 — Bulk lifecycle side effects
+
+Files:
+
+```text
+TransactionLifecycleCoordinator.kt
+TransactionSideEffectDispatcher.kt
+ExpenseRepository.kt
+```
+
+Fix:
+
+```text
+bulk category/merchant update dispatches one aggregate post-commit recalculation.
+```
+
+## PR 5 — Delete contract hardening
+
+Files:
+
+```text
+TransactionLifecycleCoordinator.kt
+ExpenseDao.kt
+ReceiptExpenseLinkDao.kt
+GroupExpenseDao.kt
+RecurringOccurrenceDao.kt
+```
+
+Fix:
+
+```text
+load delete snapshot inside transaction
+define hard-vs-soft delete contract
+add orphan regression tests
+```
+
+## PR 6 — Remove or isolate legacy receipt creation API
+
+Files:
+
+```text
+ReceiptRepository.kt
+ReceiptLifecycleCoordinator.kt
+ReceiptScanViewModel.kt
+EmailReceiptIngestionService.kt
+BankStatementLifecycleProcessor.kt
+```
+
+Fix:
+
+```text
+verify all callers migrated
+make createExpenseFromReceipt internal/debug-only or remove in v2.0
 ```
 
 ---
 
-## 7.6 `CurrencySnapshotLifecycleTest`
-
-Seed home currency:
+# Golden tests to add
 
 ```text
-USD or GBP
+manual_create_writes_CREATED_event_and_dispatches_after_commit
+review_approval_writes_CREATED_and_marks_review_APPROVED_atomically
+review_approval_receipt_link_failure_rolls_back_expense
+group_expense_link_failure_rolls_back_system_expense_and_no_side_effects
+duplicate_create_writes_CREATE_DUPLICATE_SKIPPED_with_existing_id
+strict_external_id_retry_returns_existing_expense_id
+validation_failed_create_writes_CREATE_VALIDATION_FAILED
+insert_conflict_writes_CREATE_INSERT_CONFLICT
+update_category_writes_UPDATED_event_and_budget_side_effect_once
+update_merchant_recomputes_merchantKey_and_dedupeKey
+delete_expense_writes_DELETED_with_latest_snapshot
+delete_expense_unlinks_recurring_occurrence
+restore_mode_blocks_create_update_delete_business_tax
+bulk_category_update_writes_BULK_UPDATED_and_dispatches_single_recalc
+debug_deleteAll_not_available_in_release
 ```
 
-Create non-home expense.
+---
 
-Assert:
+# AI implementation checklist
+
+Before coding, run:
+
+```bash
+grep -R "expenseDao.insert" app/src/main/java
+grep -R "expenseDao.update" app/src/main/java
+grep -R "expenseDao.delete" app/src/main/java
+grep -R "deleteAllExpenses" app/src/main/java
+grep -R "restoreDebugSnapshot" app/src/main/java
+grep -R "createExpense(request)" app/src/main/java
+grep -R "SideEffectMode.IMMEDIATE" app/src/main/java
+grep -R "updateBusinessTaxFields" app/src/main/java
+```
+
+Allowed direct DAO mutation list should be explicit:
 
 ```text
-baseAmount
-baseCurrency
-exchangeRateUsed
-dashboard total
+TransactionLifecycleCoordinator
+approved Room migrations
+approved debug-only repository
+LocationBackfillWorker limited location writes
+MerchantKeyBackfillWorker limited merchantKey writes
+Group hard-delete cleanup, if aggregate audit event is added
 ```
 
----
-
-# 8. Suggested scenario test
-
-## `transaction_lifecycle_db_contract`
-
-Seed:
+Definition of done:
 
 ```text
-home currency EUR
-categories: Food, Transport
-budget: Food €100/month
-fixed time: 2026-05-01
+- No user-visible create/update/delete bypasses TransactionLifecycleCoordinator.
+- updateBusinessTaxFields obeys restore maintenance mode.
+- Failed creates are visible in TransactionEvent or diagnostics.
+- STRICT_EXTERNAL_ID retry returns existing expense ID.
+- Bulk updates write aggregate audit + run one aggregate recalculation.
+- Delete snapshot is loaded inside delete transaction.
+- Debug destructive methods are debug-only and audited.
+- Static guard prevents new lifecycle bypasses.
 ```
 
-Steps:
-
-```text
-1. create manual grocery expense €20
-2. create duplicate grocery expense
-3. update grocery amount to €25
-4. update category Food → Transport
-5. delete expense
-```
-
-Expected:
-
-```text
-after create:
-  expense count = 1
-  CREATED event = 1
-  dashboard monthly total = €20
-  Food budget remaining = €80
-
-after duplicate:
-  expense count = 1
-  CREATE_DUPLICATE_SKIPPED event = 1
-
-after amount update:
-  UPDATED event = 1
-  dashboard monthly total = €25
-
-after category update:
-  UPDATED/BULK_UPDATED event = 1
-  Food total = €0
-  Transport total = €25
-
-after delete:
-  expense count = 0
-  DELETED event = 1
-  dashboard monthly total = €0
-```
-
-This single test would verify the main lifecycle contract.
-
 ---
 
-# 9. Most likely real instability sources
+# Source files inspected
 
-Ranked:
-
-1. **Nested transaction side effects.**
-   - Can produce side effects for rolled-back data.
-
-2. **Direct DAO update bypasses.**
-   - Events/audit/debug visibility missing for many edits.
-
-3. **Dedupe identity mismatch.**
-   - Duplicate detected but `existingExpenseId` missing or wrong.
-
-4. **Strict external ID conflict semantics.**
-   - Idempotent retries become generic conflicts.
-
-5. **Hardcoded EUR base snapshot.**
-   - Wrong for non-EUR home currency.
-
-6. **Mock-only lifecycle tests.**
-   - Real DB constraints and rollback behavior unproven.
-
----
-
-# 10. Final recommendation
-
-For Pipeline 2, do not start by adding more features.
-
-Stabilize it in this order:
-
-```text
-1. Add DB-backed lifecycle tests.
-2. Fix nested transaction / post-commit side effects.
-3. Route all update paths through lifecycle.
-4. Fix dedupe identity/idempotency.
-5. Fix home-currency snapshot.
-6. Add lifecycle diagnostics/debug screen.
-```
-
-The guiding rule should be:
-
-> No expense row should be created, updated, deleted, shared, imported, approved, or restored without a lifecycle event and a clear source.
-
-Once this is true, debugging the rest of the app becomes much easier.
-
----
-
-# 11. Verification & Fix Log (2026-05-06)
-
-## Methodology
-Each finding from the original report was verified against the actual source code at the current commit. Fixes were applied where safe and impactful.
-
-## Finding Verification Status
-
-### P0-1 — "Post-commit" side effects are not always post-commit
-**Status: CONFIRMED & FIXED**
-
-Four callers wrap `TransactionLifecycleCoordinator.createExpense()` inside their own `database.withTransaction { … }`, causing "post-commit" side effects (budget monitoring, anomaly alerts, merchant learning, recurring link) to execute while the outer transaction is still active:
-
-1. `ManualExpenseRepository.addManualExpense()` — wraps coordinator call at line 151
-2. `ReviewQueueRepository.approveReview()` — wraps at line 181
-3. `ReviewQueueRepository.markAsRelevant()` — wraps at line 524
-4. `NotificationProcessingPipeline.handleAutoAcceptInTransaction()` — called inside `database.withTransaction` at line 371
-5. `GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup()` — wraps at line 461
-
-**Fix applied:** Introduced `SideEffectMode` enum (`IMMEDIATE` / `DEFER`). All four nested-transaction callers now use `SideEffectMode.DEFER` and call `coordinator.dispatchPostCreationSideEffects()` only after their outer transaction commits. This eliminates side effects for rolled-back data.
-
-Files changed:
-- `SideEffectMode.kt` — new enum
-- `TransactionLifecycleCoordinator.kt` — added `sideEffectMode` parameter + public `dispatchPostCreationSideEffects()` method
-- `ManualExpenseRepository.kt` — DEFER + dispatch after tx
-- `ReviewQueueRepository.kt` — DEFER in approveReview + markAsRelevant + dispatch after tx
-- `NotificationProcessingPipeline.kt` — DEFER + dispatch in AutoAccepted post-commit
-- `GroupTransactionCoordinator.kt` — DEFER + dispatch after tx via `.also {}`
-
-### P0-2 — Several update paths bypass lifecycle event logging
-**Status: PARTIALLY FIXED (2026-05-06) — C1 migration started, NOT complete**
-
-**FIXED:**
-- `updateExpenseCategory()` — both overloads → `coordinator.updateCategory()` (C1-PR1)
-- `updateExpenseMerchant()` single path → `coordinator.updateMerchant()` (C1-PR2)
-- `updateExpenseType()` → `coordinator.updateType()` (C1-PR2)
-- `ExpenseRepository.kt` now has a comprehensive `## C1 LIFECYCLE MIGRATION — PARTIALLY COMPLETE` KDoc block documenting all remaining bypasses
-- `updateTransferDetails()` → `coordinator.updateTransferDetails()` (C1-PR3)
-- `updateNotMineDetails()` / `updateSharedExpenseDetails()` / `updateOwnership()` → `coordinator.updateOwnership()` (C1-PR3)
-- `updateExpenseLocation()` / `conditionallySetLocation()` / `clearExpenseLocation()` → `coordinator.updateLocation()` (C1-PR4)
-- `updateExpenseCategoryBulk()` → `coordinator.bulkUpdateCategory()` (C1-PR4)
-- `updateExpenseMerchantBulk()` → `coordinator.bulkUpdateMerchant()` (C1-PR4)
-
-**STILL BYPASSING (7 methods across 3 files):**
-- `ReceiptLinkService.kt` RCP-30 category propagation — `runCatching` block
-- `GroupTransactionCoordinator.kt` — shared-expense flags clearing + ownership normalization
-
-The remaining bypasses are deprecated with `@Deprecated` annotations and documented in the code.
-Full migration still requires adding remaining update methods to the coordinator (staged PR 5).
-
-### Post-update side effects (evaluation follow-up, 2026-05-06):
-- **FIXED — PR A**: Targeted update methods (updateCategory, updateMerchant, updateType,
-  updateTransferDetails, updateOwnership) now dispatch post-update side effects via
-  sideEffectDispatcher.dispatchOnUpdated() (budget + anomaly + merchant learning).
-  updateMerchant and updateType also reconcile recurring links (unlink + relink).
-  updateLocation and bulk methods intentionally skip side effects.
-- **FIXED — PR B**: bulkUpdateMerchant() no longer NULLs dedupeKey. Now fetches affected
-  rows, recomputes individual dedupeKey per row, and updates with updateMerchantAndKey().
-
-### P1-1 — Strict external ID idempotency returns InsertConflict
-**Status: CONFIRMED, NOT FIXED**
-
-When `STRICT_EXTERNAL_ID` mode encounters a unique-index conflict, it returns `CreateExpenseResult.InsertConflict(dedupeKey)` instead of looking up the existing expense and returning `DuplicateSkipped(existingId)`. Low-risk but reduces caller clarity. Recommend adding `expenseDao.findIdByDedupeKey()` query.
-
-### P1-2 — Duplicate lookup does not mirror duplicate detection
-**Status: FIXED (2026-05-06):** Added `findDuplicateIdCurrencyAware()` to ExpenseDao.kt that uses the same 3-tier matching as `isDuplicateCurrencyAware()`. TransactionLifecycleCoordinator now calls this unified method in all 3 call sites instead of `findDuplicateId()`.
-
-### P1-3 — Duplicate event writing is best-effort
-**Status: CONFIRMED, ACCEPTABLE**
-
-`writeDuplicateEvent()` catches exceptions and logs. This is intentional robustness — duplicate events are informational and should not block the caller.
-
-### P1-4 — Failed creates are invisible in transaction_events
-**Status: CONFIRMED, NOT FIXED**
-
-`CREATE_ATTEMPTED`, `CREATE_VALIDATION_FAILED`, `CREATE_INSERT_CONFLICT` event types exist but are never written. The model supports `expenseId = null` for attempted-but-failed creates. Recommend as a follow-up improvement.
-
-### P1-5 — Currency snapshot always assumes EUR, not user home currency
-**Status: CONFIRMED — FIXED**
-
-- `TransactionLifecycleCoordinator` now injects `CurrencySettingsRepository` and reads the user's home currency via `currencySettingsRepository.homeCurrency().first()`.
-- Falls back to `CurrencyConverter.DEFAULT_BASE_CURRENCY` if the setting cannot be read.
-- Both `createExpense` and `updateExpense` now use the user's actual home currency for the conversion snapshot.
-
-### P1-6 — Update path may leave merchantKey stale
-**Status: CONFIRMED — ALREADY FIXED**
-
-- The `updateExpense` method already regenerates `merchantKey` via `MerchantKeyGenerator.generate()` when `existing.merchant != expense.merchant`.
-
-### P1-7 — Update/delete do not dispatch lifecycle side effects
-**Status: FIXED (2026-05-06):** `TransactionSideEffectDispatcher` now has `dispatchOnUpdated()` (budget + anomaly + merchant) and `dispatchOnDeleted()` (budget) methods. `TransactionLifecycleCoordinator.updateExpense()` and `deleteExpense()` call them post-commit.
-
-### P2-1 — Delete source is hardcoded
-**Status: CONFIRMED & FIXED**
-
-Both `deleteExpense(expenseId)` and `deleteExpense(expense)` now accept `source: String = "USER_ACTION"`, `reason: String? = null`, and `actor: String? = null` parameters. Existing callers remain unchanged due to defaults.
-
-### P2-2 — TransactionEventDao is too minimal
-**Status: CONFIRMED, NOT FIXED**
-
-Only has `insert` and `getEventsForExpense`. Recommend adding audit/debug queries as a follow-up.
-
-### P2-3 — Existing lifecycle tests are mock-only
-**Status: CONFIRMED, NOTED (testing strategy under separate refactor)**
-
----
-
-# 12. New issues discovered (not in original report)
-
-### NEW-1: `deleteAllExpenses()` bypasses lifecycle entirely (P2)
-`ExpenseRepository.deleteAllExpenses()` calls `expenseDao.deleteAll()` with no lifecycle events. Used by `DebugViewModel.resetExpenses()` and `NotificationRepository.deleteAll()`. Debug-only path but creates audit gaps.
-
-### NEW-2: `restoreDebugSnapshot()` inserts via `expenseDao.insertAll()` directly (P2)
-Bypasses coordinator validation, dedup, and event logging. Debug-only but the audit trail gap during snapshot restore is invisible.
-
-### NEW-3: `ReceiptLinkService` updates category directly (P1)
-`ReceiptLinkService.kt` line 207 calls `expenseDao.updateCategory()`, bypassing lifecycle. Same pattern as P0-2 but from a different service.
-
-### NEW-4: `expenseToSnapshot()` only captures 6 fields — FIXED
-Before/after snapshots for lifecycle events only included id, amount, currency, merchant, date, type. Missing: categoryId, merchantKey, dedupeKey, ownership fields, transfer details, notes, base amount/currency/exchange rate.
-
-**Fix applied:** Enriched snapshot to include merchantKey, categoryId, dedupeKey, isNotMine, isSharedExpense, mySharePercentage, myShareAmount, transferDirection, notes, baseAmount, baseCurrency, exchangeRateUsed.
-
-### NEW-5: `updateExpense()` uses latest exchange rate instead of historical — FIXED
-`createExpense()` correctly uses `currencyConverter.convertAsOf(atMillis = expense.date)` for historical rates. But `updateExpense()` used `currencyConverter.convert()` which fetches the latest rate. If a user changes the date of a foreign-currency expense, the base amount conversion would use the wrong rate.
-
-**Fix applied:** `updateExpense()` now uses `currencyConverter.convertAsOf(atMillis = updatedExpense.date)` matching the create path.
-
-### NEW-6: `expenseToSnapshot()` was inconsistent between overloads (code quality)
-The `expenseToSnapshot(e: Expense)` and `expenseToSnapshot(id: Long, e: Expense)` overloads duplicated logic. Consolidated: the single-arg version now delegates to the two-arg version.
-
----
-
-# 13. Applied fixes summary
-
-| # | Finding | Severity | Fix |
-|---|---------|----------|-----|
-| 1 | P0-1: Nested transaction side effects | P0 | `SideEffectMode.DEFER` in 4 callers |
-| 2 | P1-6: Stale merchantKey on update | P1 | Regenerate merchantKey in `updateExpense()` |
-| 3 | P2-1: Hardcoded delete source | P2 | Added source/reason/actor params |
-| 4 | NEW-4: Incomplete lifecycle snapshots | P1 | Enriched `expenseToSnapshot()` |
-| 5 | NEW-5: Wrong exchange rate in update | P1 | Use `convertAsOf()` in `updateExpense()` |
-| 6 | P1-5: Use home currency for conversion snapshot | P1 | Use home currency instead of hardcoded EUR for conversion snapshot in `TransactionLifecycleCoordinator.kt` |
-
----
-
-# 14. Remaining work priority
-
-1. **Route all update paths through lifecycle** (P0-2) — dedicated PR, ~10 methods in `ExpenseRepository` + `ReceiptLinkService`
-2. ~~**Align duplicate detection and ID retrieval** (P1-2) — create `findDuplicateCandidateCurrencyAware()`~~ **DONE**
-3. **Fix strict external ID conflict semantics** (P1-1) — return `DuplicateSkipped(existingId)` on conflict
-4. **Write failed-create events** (P1-4) — use existing `LifecycleEventType` values
-5. ~~**Add update/delete side-effect dispatch** (P1-7) — `dispatchOnUpdated()`, `dispatchOnDeleted()`~~ **DONE**
-6. **Add audit queries to TransactionEventDao** (P2-2) — `getRecentEvents`, `getEventsByType`, etc.
-
----
-
-# Sources
-
-- Dependency map  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
+- Commit:  
+  https://github.com/panospao7/Cost-agregator/commit/71fbbf9aed221a7446f99967b49b6e9ebeb51946
 
 - `TransactionLifecycleCoordinator.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
 
 - `TransactionSideEffectDispatcher.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt
-
-- `CreateExpenseRequest.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/CreateExpenseRequest.kt
-
-- `CreateExpenseResult.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/CreateExpenseResult.kt
-
-- `DeduplicationMode.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/DeduplicationMode.kt
-
-- `ExpenseSource.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/ExpenseSource.kt
-
-- `LifecycleEventType.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/LifecycleEventType.kt
-
-- `TransactionEvent.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/TransactionEvent.kt
-
-- `TransactionEventDao.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/TransactionEventDao.kt
-
-- `ExpenseDao.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
-
-- `ManualExpenseRepository.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ManualExpenseRepository.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt
 
 - `ExpenseRepository.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+
+- `ManualExpenseRepository.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/ManualExpenseRepository.kt
 
 - `ReviewQueueRepository.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
 
 - `ReceiptRepository.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
 
 - `GroupTransactionCoordinator.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
 
-- `BankApiIntegration.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt
-
-- `EmailReceiptIngestionService.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/email/EmailReceiptIngestionService.kt
-
-- `AppDatabase.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
-
-- Schema v113, expenses unique `dedupeKey` index  
-  https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/schemas/com.yourname.expensetracker.data.database.AppDatabase/113.json
-
-- Existing mock lifecycle test  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/test/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinatorTest.kt
+- `ExpenseDao.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt

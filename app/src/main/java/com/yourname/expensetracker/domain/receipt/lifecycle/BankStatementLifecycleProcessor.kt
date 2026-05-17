@@ -99,7 +99,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val assetStore: ReceiptAssetStore,
     private val transactionValidator: ValidateBankStatementTransactionsUseCase,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val restoreMaintenanceMode: DatabaseWriteBarrier,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
@@ -115,7 +115,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
      */
     suspend fun processBankStatement(uri: Uri): Result<BankStatementResult> {
         try {
-            restoreMaintenanceMode.checkWritesAllowed("BankStatementLifecycleProcessor.processBankStatement")
+            writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processBankStatement")
         } catch (e: Exception) {
             return Result.failure(e)
         }
@@ -258,9 +258,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // coordinator provides.
             // Re-check barrier here — OCR/AI/parsing may have taken time and restore
             // could have started while we were processing.
-            restoreMaintenanceMode.checkWritesAllowed(
-                "BankStatementLifecycleProcessor.writeResults"
-            )
+            writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.writeResults")
             val receiptId = receiptRepository.insertReceipt(statementReceipt)
             if (receiptId <= 0) {
                 return Result.failure(

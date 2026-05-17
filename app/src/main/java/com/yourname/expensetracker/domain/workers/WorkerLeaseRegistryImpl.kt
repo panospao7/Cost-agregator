@@ -54,11 +54,11 @@ class WorkerLeaseRegistryImpl @Inject constructor(
 
     // ── Internal reset (called after maintenance exits) ───────────
 
-    fun resetStopFlag() {
+    override fun resetStopFlag() {
         stopRequested.set(false)
     }
 
-    fun isStopRequested(): Boolean = stopRequested.get()
+    override fun isStopRequested(): Boolean = stopRequested.get()
 
     // ── WorkerLeaseImpl ───────────────────────────────────────────
 

@@ -108,8 +108,7 @@ class RestoreMaintenanceMode @Inject constructor(
             // receipt matching, etc.) resume without delay after restore.
             scheduleAllWorkers()
             // Reset the worker stop flag so future workers can run normally
-            (workerLeaseRegistry.get() as? com.yourname.expensetracker.domain.workers.WorkerLeaseRegistryImpl)
-                ?.resetStopFlag()
+            workerLeaseRegistry.get().resetStopFlag()
             Timber.d("Maintenance mode: workers rescheduled")
         } else {
             Timber.d("Maintenance mode: writes remain blocked until app restart")

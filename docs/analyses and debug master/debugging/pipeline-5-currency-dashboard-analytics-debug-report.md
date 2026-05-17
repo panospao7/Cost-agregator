@@ -1,406 +1,129 @@
-# Pipeline 5 Debugging Report — Currency / Dashboard / Analytics
+# Pipeline 5 Debug Report — Currency / Dashboard / Analytics
 
-Target commit: `53c915f09cbc92137b5b84d5839bdbf1cd321c16`  
-Review type: static GitHub code review, not local/device execution.
+Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`  
+Mode: static GitHub/code review, not local Gradle/device execution.
 
-## 1. Executive summary
+## Verdict
 
-Pipeline 5 is intended to be:
+Pipeline 5 is **much improved but not fully clean/stable yet**.
 
-```text
-Expense rows
-→ ExpenseDao currency-grouped aggregates
-→ MultiCurrencyRepository
-→ CurrencyConverter / ExchangeRateStore
-→ MoneyAggregate
-→ AnalyticsRepository / Dashboard widgets / Budget / Forecast / Health / Savings
-→ UI totals, warnings, metrics
-```
+The codebase now has strong infrastructure:
 
-The architecture is much improved compared to raw `Double` summing. You now have:
-
+- `CurrencyCode`
 - `MoneyAmount`
 - `MoneyAggregate`
+- `MoneyBucket`
+- `ConversionFailure`
+- `MoneyAggregateBuilder`
+- `CurrencyConverter.convertAsOf()`
 - `MultiCurrencyRepository`
 - `AnalyticsCurrencyNormalizer`
-- purchase-only DAO grouped aggregates
-- type-agnostic grouped aggregates
-- `isPartial` / conversion-failure modeling
+- `AnalyticsInputAssembler`
+- `NormalizedAnalyticsInput`
+- per-currency SQL aggregate queries in `ExpenseDao`
 
-But the pipeline is not fully safe yet.
-
-Highest-risk findings:
-
-1. **Historical exchange-rate support is structurally broken/incomplete.**
-2. **Dashboard and analytics often consume only `displayAmount`, losing `isPartial` and warnings.**
-3. **Current-rate conversion is used for historical analytics, so old reports can change when rates update.**
-4. **Some dashboard calculations mix transaction semantics: purchase totals, all-type totals, deposits, and transfers are not consistently separated.**
-5. **`TotalsAggregationEngine` still explicitly says it sums raw mixed-currency DAO totals.**
-6. **Budget conversion fallback can compare home-currency spending against an unconverted foreign-currency limit.**
-7. **Many outputs still expose raw `Double + currency` instead of `MoneyAggregate`, so warnings cannot propagate cleanly.**
-
-Main recommendation:
-
-> Make `MoneyAggregate` the public contract for dashboard/analytics/budget totals, and make historical `convertAsOf(expense.date)` the default for analytics/reporting.
-
----
-
-# 2. Intended architecture contract
-
-From `DEPENDENCY_MAP.md`, the intended dashboard/analytics/currency flow is:
+But the pipeline is still **yellow/orange**, not production-clean, because dashboard and analytics still mix three contracts:
 
 ```text
-HomeScreen
-→ HomeViewModel
-→ DashboardRepository
-→ ComputeDashboardWidgetsUseCase
-→ DashboardDataProvider adapters
-→ TotalsAggregationEngine
-→ MultiCurrencyRepository
-→ ExpenseDao
-→ CurrencyConverter
-→ CurrencySettingsRepository
-→ TimeProvider
-
-AnalyticsRepository
-→ ExpenseDao
-→ MultiCurrencyRepository
-→ AnalyticsCurrencyNormalizer
+1. canonical MoneyAggregate / normalized input
+2. latest-rate aggregate conversion
+3. deprecated raw Double totals
 ```
 
-`MultiCurrencyRepository` is explicitly described as the currency-aware aggregation backbone used by dashboard, budget, analytics, forecast, health, savings, groups, export, AI/query, and anomaly.
+Main risks:
 
-This is the right architecture. The gap is that not every downstream consumer preserves the full `MoneyAggregate` contract.
+1. current/latest FX rates are still used for several historical period aggregates;
+2. dashboard adapter drops `MoneyAggregate`, partial flags, source buckets, and warnings;
+3. weekly/daily totals drilldown currently returns empty lists;
+4. dashboard trend/forecast widgets still use raw dashboard expenses;
+5. stale-rate information is not propagated into analytics quality;
+6. `ExchangeRateDao.getRate()` can return an arbitrary historical row because it has no `ORDER BY`;
+7. many deprecated raw aggregate DAO methods remain reachable;
+8. UI model does not carry enough currency-quality metadata to show warnings consistently.
 
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
+Current state: **core currency primitives are good, but dashboard/analytics consumption is still partial**.
 
 ---
 
-# 3. Actual code path summary
+# Severity scale
 
-## 3.1 MultiCurrencyRepository
-
-`MultiCurrencyRepository` has two families of methods.
-
-### Older `Result<Double>` methods
-
-Examples:
-
-```kotlin
-getTotalExpensesInHomeCurrency(...)
-getCategoryTotalsInHomeCurrency(...)
-getMerchantTotalsInHomeCurrency(...)
-getMonthlyTotalsInHomeCurrency(...)
-```
-
-These throw/return `Result.Error` on missing rates.
-
-### Newer `MoneyAggregate` methods
-
-Examples:
-
-```kotlin
-getHomeCurrencyTotal(...)
-getHomeCurrencyCategoryTotals(...)
-getHomeCurrencyMerchantTotals(...)
-getHomeCurrencyMonthlyTotals(...)
-getHomeCurrencyPurchaseTotal(...)
-getHomeCurrencyPurchaseCategoryTotals(...)
-```
-
-These return:
-
-```kotlin
-MoneyAggregate(
-  displayAmount,
-  displayCurrency,
-  sourceBuckets,
-  conversionFailures,
-  isPartial,
-  warningMessage
-)
-```
-
-This is the correct direction.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/MultiCurrencyRepository.kt
+- **P0 / Critical:** silently wrong financial totals in common user-visible dashboard/analytics paths.
+- **P1 / High:** partial/missing warnings, broken drilldown, wrong FX-rate basis, lifecycle-wide regression risk.
+- **P2 / Medium:** weak diagnostics, stale confidence, legacy API surface, UX caveat.
+- **P3 / Low:** cleanup/maintainability.
 
 ---
 
-## 3.2 CurrencyConverter
+# Pipeline checklist status
 
-`CurrencyConverter` supports:
-
-```kotlin
-convert(...)
-convertAsOf(...)
-convertMultiple(...)
-```
-
-Important details:
-
-- `convert()` uses current/latest rate.
-- `convertAsOf()` is intended for historical reporting.
-- `convertMultiple()` uses `convert()`, not `convertAsOf()`.
-- `convertMultiple()` correctly excludes failed conversions from total.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/currency/CurrencyConverter.kt
+| Checklist item | Status |
+|---|---|
+| Home currency setting loaded | Mostly yes. `CurrencySettingsRepository.homeCurrency()` is used in several paths. Silent EUR fallback remains. |
+| Original currency preserved | Mostly yes. `Expense.currency`, `NormalizedExpense.originalCurrency`, and `MoneyBucket` preserve source currency. |
+| Exchange rate lookup works | Partial. Direct/latest and historical lookup exist, but latest lookup query is ambiguous with historical rows. |
+| Historical rates used correctly | Partial. `AnalyticsCurrencyNormalizer` uses `convertAsOf()`, but `MultiCurrencyRepository` aggregates use `convertMultiple()` / latest rates. |
+| Stale rate detected | Partial. `CurrencyConverter.convertMultiple()` classifies stale vs missing, but analytics quality hardcodes `staleRateCount = 0`. |
+| Missing rate detected | Mostly yes at domain layer, but warnings are often dropped before dashboard UI. |
+| Source buckets preserved | Yes inside `MoneyAggregate`; lost in dashboard DTOs. |
+| No raw cross-currency sum | Not fully. Deprecated raw DAO methods remain; dashboard trend/forecast still raw-sum some paths. |
+| Partial aggregate flag shown | Not consistently. Several adapters strip `isPartial` and `aggregate`. |
+| Dashboard warning shown | Not reliably. Dashboard widget models mostly have raw `Double`, no quality/warning fields. |
+| Analytics warning shown | Partial. Advanced analytics returns warning lists; repository summary TODO still says quality is incomplete. |
+| Budget uses normalized values safely | Partial. Advanced analytics deprecates budget comparison path and says use `BudgetVsActualEngine`. |
+| Export includes original + converted fields | Not rechecked in this pipeline. |
+| Forecast confidence reduced if data partial | Partial. `AnalyticsDataQuality` has penalty fields, but TODO says downstream propagation is incomplete. |
 
 ---
 
-## 3.3 Exchange rates
+# Positive findings to preserve
 
-`ExchangeRate` entity has:
+## PF-01 — Strong money primitives now exist
+
+`MoneyAggregate` is explicitly documented as the approved result type for financial aggregation. It preserves:
 
 ```text
-fromCurrency
-toCurrency
-rate
-lastUpdated
-source
-validDate
+displayAmount
+displayCurrency
+sourceBuckets
+conversionFailures
+isPartial
+warningMessage
 ```
 
-and a unique index:
+This is the right contract.
+
+## PF-02 — Effective amount SQL is centralized
+
+`ExpenseDao.EFFECTIVE_AMOUNT_SQL` mirrors ownership logic:
 
 ```text
-fromCurrency + toCurrency + validDate
+isNotMine → 0
+shared with myShareAmount → myShareAmount
+shared with mySharePercentage → proportional amount
+else → full amount
 ```
 
-So the schema is trying to support historical rates.
+The per-currency aggregate queries use this formula, which is good for dashboard totals and shared expenses.
 
-But `DomainExchangeRate` does **not** include `validDate`, and `ExchangeRateStoreAdapter.toEntity()` does not set it. Therefore new rates default to `validDate = 0`.
+## PF-03 — Per-currency aggregate DAO paths exist
 
-Also `ExchangeRateDao.getRate()` does:
-
-```sql
-SELECT * FROM exchange_rates
-WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency
-LIMIT 1
-```
-
-with no `ORDER BY`.
-
-That is a serious risk once more than one row exists for a pair.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/ExchangeRate.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExchangeRateDao.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/currency/ExchangeRateContracts.kt
-
----
-
-## 3.4 AnalyticsRepository
-
-`AnalyticsRepository` now injects:
-
-```kotlin
-CurrencySettingsRepository
-MultiCurrencyRepository
-AnalyticsCurrencyNormalizer
-```
-
-Good.
-
-`getSpendingSummary()` uses:
-
-```kotlin
-multiCurrencyRepository.getHomeCurrencyPurchaseTotal(...)
-analyticsCurrencyNormalizer.normalizeExpenses(...)
-```
-
-This is a good currency-aware direction.
-
-But outputs like `SpendingSummary` still expose:
+`ExpenseDao` has per-currency methods such as:
 
 ```text
-totalSpent: Double
-currency: String
+getAllSpentBetweenByCurrency
+getTotalSpentBetweenByCurrency
+getDepositTotalsBetweenByCurrency
+getAllCategoryTotalsBetweenByCurrency
+getCategoryTotalsBetweenByCurrency
+getAllMerchantTotalsBetweenByCurrency
+getAllMonthlyTotalsBetweenByCurrency
 ```
 
-rather than `MoneyAggregate`, so conversion warnings are lost.
+This is much safer than raw `SUM(amount)`.
 
-Source:  
-https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt
+## PF-04 — `AnalyticsCurrencyNormalizer` uses historical conversion
 
----
-
-## 3.5 Dashboard widgets
-
-`ComputeDashboardWidgetsUseCase` injects `MultiCurrencyRepository`.
-
-Good.
-
-It uses currency-safe calls in some places:
-
-```kotlin
-todaySpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(...).displayAmount
-weekSpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(...).displayAmount
-spentToDate = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(...).displayAmount
-```
-
-But it usually keeps only `displayAmount`, not the aggregate warnings.
-
-Also, one suspicious calculation exists:
-
-```kotlin
-monthlyIncome = multiCurrencyRepository.getHomeCurrencyTotal(ctx.monthStart, ctx.now).displayAmount
-```
-
-`getHomeCurrencyTotal()` is type-agnostic. It can include purchases, deposits, transfers, and unknowns. Using it for `monthlyIncome` is probably semantically wrong.
-
-Source:  
-https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt
-
----
-
-# 4. Major findings
-
-## Finding P0-1 — Historical exchange-rate support is currently incomplete/broken
-
-The codebase claims historical exchange-rate support:
-
-```text
-ExchangeRate.validDate
-CurrencyConverter.convertAsOf(...)
-ExchangeRateDao.getRateAsOf(...)
-```
-
-But the data path does not preserve `validDate`.
-
-Current `DomainExchangeRate`:
-
-```kotlin
-data class DomainExchangeRate(
-  val fromCurrency: String,
-  val toCurrency: String,
-  val rate: Double,
-  val lastUpdated: Long,
-  val source: String = "manual"
-)
-```
-
-No `validDate`.
-
-Current adapter:
-
-```kotlin
-private fun DomainExchangeRate.toEntity(): ExchangeRate {
-  return ExchangeRate(
-    fromCurrency = fromCurrency,
-    toCurrency = toCurrency,
-    rate = rate,
-    lastUpdated = lastUpdated,
-    source = source
-  )
-}
-```
-
-So `validDate` defaults to `0L`.
-
-### Why this matters
-
-If all rates have `validDate = 0`:
-
-- `convertAsOf()` cannot select correct historical rates.
-- historical reports are not truly historical.
-- old analytics can change after rates refresh.
-- month-over-month comparisons may shift.
-- forecast/health/savings can be based on today’s FX rate instead of transaction-date FX rate.
-
-### Second issue
-
-`ExchangeRateDao.getRate()` has no deterministic ordering:
-
-```sql
-SELECT * FROM exchange_rates
-WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency
-LIMIT 1
-```
-
-If multiple rows exist for a pair, SQLite can return any matching row.
-
-### Recommended fix
-
-Add `validDate` to domain model:
-
-```kotlin
-data class DomainExchangeRate(
-    val fromCurrency: String,
-    val toCurrency: String,
-    val rate: Double,
-    val lastUpdated: Long,
-    val source: String = "manual",
-    val validDate: Long = lastUpdated
-)
-```
-
-Update adapter:
-
-```kotlin
-private fun DomainExchangeRate.toEntity(): ExchangeRate {
-    return ExchangeRate(
-        fromCurrency = fromCurrency.uppercase(),
-        toCurrency = toCurrency.uppercase(),
-        rate = rate,
-        lastUpdated = lastUpdated,
-        source = source,
-        validDate = validDate
-    )
-}
-```
-
-Update DAO current-rate lookup:
-
-```sql
-SELECT * FROM exchange_rates
-WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency
-ORDER BY validDate DESC, lastUpdated DESC, id DESC
-LIMIT 1
-```
-
-Update `CurrencyConverter.storeRate()` and `storeRates()` to set `validDate`.
-
-Priority: highest.
-
----
-
-## Finding P0-2 — Historical analytics uses current-rate conversion
-
-`AnalyticsCurrencyNormalizer.normalizeExpenses()` calls:
-
-```kotlin
-currencyConverter.convert(
-  amount = expense.effectiveAmount,
-  fromCurrency = sourceCurrency.code,
-  toCurrency = homeCurrency.code
-)
-```
-
-It has each expense’s `date`, but does not use:
-
-```kotlin
-convertAsOf(..., atMillis = expense.date)
-```
-
-### Why this matters
-
-A USD expense from 2023 is converted using the latest available USD→home rate, not the 2023 rate.
-
-Symptoms:
-
-- analytics totals change after exchange-rate refresh,
-- old month comparisons drift,
-- backup/restore with different rate table may show different historical reports,
-- forecast training data changes even though expense rows did not.
-
-### Recommended fix
-
-For reports/analytics/history:
+For per-row analytics, it calls:
 
 ```kotlin
 currencyConverter.convertAsOf(
@@ -411,1028 +134,1133 @@ currencyConverter.convertAsOf(
 )
 ```
 
-Keep `convert()` for:
+This is the right basis for historical analytics.
 
-- current display,
-- manual conversion now,
-- current rate management UI.
+## PF-05 — Advanced analytics mostly normalizes before arithmetic
 
-Use `convertAsOf()` for:
+`AdvancedAnalyticsEngine` now injects `AnalyticsCurrencyNormalizer` and normalizes expenses before statistical/category/merchant/day-of-week calculations.
 
-- analytics,
-- dashboard period totals,
-- budget historical spend,
-- forecast training,
-- tax/export reports,
-- backup/restore parity tests.
+## PF-06 — Some dangerous dashboard totals are now blocked
 
-Priority: highest.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsCurrencyNormalizer.kt
+`TotalsAggregationEngine.getWeeklyTotals()`, `getDailyTotals()`, and `getDailyTotalsForRange()` no longer execute known raw mixed-currency DAO sums. They warn and return empty lists. That avoids silent wrong data, but it breaks drilldown.
 
 ---
 
-## Finding P0-3 — Partial conversion state is lost in dashboard/analytics UI contracts
+# Issue P1-01 — Historical totals use latest-rate aggregate conversion
 
-`MultiCurrencyRepository` returns `MoneyAggregate` with:
+## Severity
 
-```text
-sourceBuckets
-conversionFailures
-isPartial
-warningMessage
-```
+P1 / High
 
-But downstream often does:
+## Evidence
+
+`MultiCurrencyRepository.getHomeCurrencyPurchaseTotal()`, category totals, merchant totals, and monthly totals use per-currency aggregate SQL, then call:
 
 ```kotlin
-.displayAmount
+currencyConverter.convertMultiple(amounts, homeCurrency)
 ```
 
-Examples:
+`convertMultiple()` uses `convert()`, and `convert()` explicitly uses latest/current exchange rates, not historical rates.
 
-```kotlin
-todaySpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(...).displayAmount
-weekSpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(...).displayAmount
-spentToDate = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(...).displayAmount
-```
+At the same time, `AnalyticsCurrencyNormalizer` uses `convertAsOf(expense.date)` for daily-history normalization.
 
-`AnalyticsRepository.getSpendingSummary()` also extracts only:
+## Impact
 
-```kotlin
-totalSpent = currentAggregate.displayAmount
-previousTotal = previousAggregate.displayAmount
-transactionCount = currentAggregate.totalTransactionCount
-currency = homeCurrency
-```
-
-### Why this matters
-
-If GBP conversion fails, the app may show:
+A dashboard period can contain internally inconsistent numbers:
 
 ```text
-Monthly total: €120
+monthly total = converted with latest rate
+daily history = converted with historical per-expense rate
+category total = latest rate
+analytics insight = historical rate
 ```
 
-when actual data includes:
+For volatile currencies, old transactions can be materially misreported.
+
+## Fixing strategy
+
+Define one conversion basis per output:
 
 ```text
-€120 + £50 unconverted
+Historical reporting/dashboard period totals → convertAsOf(expense.date)
+Current valuation cards → convert()
 ```
 
-The internal aggregate knows this is partial, but the UI output may not.
+Do not let a period-reporting API use latest rates unless the method name says so.
 
-### Recommended fix
+## Implementation plan
 
-Make output models carry `MoneyAggregate` or equivalent warning fields.
+1. Add historical aggregate API:
 
-Example:
+```kotlin
+suspend fun getHomeCurrencyPurchaseTotalHistorical(
+    startDate: Long,
+    endDate: Long
+): MoneyAggregate
+```
+
+2. For historical correctness, either:
+   - fetch rows and convert each row with `convertAsOf(expense.date)`, or
+   - group by `(currency, validDate/day)` if a performant SQL path is needed.
+
+3. Rename current-rate APIs:
+
+```kotlin
+getHomeCurrencyPurchaseTotalLatestRate(...)
+getHomeCurrencyCategoryTotalsLatestRate(...)
+```
+
+4. Migrate dashboard and analytics period/reporting paths to historical APIs.
+
+5. Tests:
+
+```text
+period_total_uses_purchase_date_rate_not_latest_rate
+daily_history_sum_matches_period_total_when_all_rates_available
+category_breakdown_sum_matches_period_total
+latest_rate_card_uses_latest_rate_explicitly
+```
+
+---
+
+# Issue P1-02 — `ExchangeRateDao.getRate()` is ambiguous with historical rows
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`ExchangeRate` has a unique index on:
+
+```text
+fromCurrency + toCurrency + validDate
+```
+
+so multiple rows can exist for the same pair across dates.
+
+But `ExchangeRateDao.getRate()` is:
+
+```sql
+SELECT * FROM exchange_rates
+WHERE fromCurrency = :fromCurrency
+  AND toCurrency = :toCurrency
+LIMIT 1
+```
+
+No `ORDER BY validDate DESC` or `lastUpdated DESC`.
+
+## Impact
+
+`CurrencyConverter.convert()` can use an arbitrary historical rate rather than the newest available rate.
+
+That affects:
+
+```text
+MultiCurrencyRepository latest-rate totals
+current dashboard cards
+currency settings screen
+rate existence checks
+```
+
+## Fixing strategy
+
+Make “latest rate” deterministic.
+
+## Implementation plan
+
+1. Change DAO:
+
+```sql
+SELECT * FROM exchange_rates
+WHERE fromCurrency = :fromCurrency
+  AND toCurrency = :toCurrency
+ORDER BY validDate DESC, lastUpdated DESC
+LIMIT 1
+```
+
+2. If `validDate = 0` means unknown, decide ordering policy:
+
+```text
+known validDate rows first, or lastUpdated first for manual rates
+```
+
+3. Add a specific DAO for current/latest rate:
+
+```kotlin
+suspend fun getLatestRateForPair(from: String, to: String): ExchangeRate?
+```
+
+4. Tests:
+
+```text
+getRate_returns_newest_validDate_for_pair
+getRate_tiebreaks_by_lastUpdated
+convert_uses_latest_pair_rate
+historical_getRateAsOf_still_uses_validDate_lte_requested_date
+```
+
+---
+
+# Issue P1-03 — Dashboard adapter drops `MoneyAggregate` and partial warnings
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`AnalyticsRepository.getSpendingSummary()` returns:
+
+```text
+aggregate: MoneyAggregate?
+isPartial: Boolean
+currency
+```
+
+But `DashboardContractsAdapter.observeSpendingSummary()` maps it to dashboard-domain `SpendingSummary` with only:
+
+```text
+totalSpent
+previousTotalSpent
+changePercent
+dailyHistory
+previousDailyHistory
+transactionCount
+currency
+```
+
+The aggregate and `isPartial` do not survive.
+
+Similarly, dashboard category breakdown maps to raw amount/percentage and loses aggregate, source buckets, and conversion failures.
+
+## Impact
+
+The domain knows totals are partial, but the dashboard cannot display:
+
+```text
+“Total excludes 3 transactions due to missing/stale exchange rates”
+```
+
+This violates the pipeline checklist:
+
+```text
+partial aggregate flag shown
+dashboard warning shown
+source buckets preserved
+```
+
+## Fixing strategy
+
+Carry `MoneyAggregate` or a compact `CurrencyQuality` object through dashboard DTOs.
+
+## Implementation plan
+
+1. Extend dashboard model:
 
 ```kotlin
 data class SpendingSummary(
-    val total: MoneyAggregate,
-    val previousTotal: MoneyAggregate?,
-    val changePercent: Double?,
-    val dailyHistory: List<MoneyAmount>, // or normalized values + warning metadata
+    val totalSpent: Double,
+    ...
+    val currency: String,
+    val aggregate: MoneyAggregate? = null,
+    val isPartial: Boolean = false,
+    val warningMessage: String? = null
+)
+```
+
+2. Extend `DashboardCategoryBreakdown`:
+
+```kotlin
+val aggregate: MoneyAggregate?
+val isPartial: Boolean
+val warningMessage: String?
+```
+
+3. Update `DashboardContractsAdapter` to preserve these fields.
+
+4. Update UI cards:
+   - period summary,
+   - top categories,
+   - totals dashboard,
+   - analytics cards.
+
+5. Tests:
+
+```text
+dashboard_spending_summary_preserves_partial_flag
+dashboard_category_breakdown_preserves_source_buckets
+dashboard_shows_warning_when_money_aggregate_partial
+```
+
+---
+
+# Issue P1-04 — Weekly/daily totals drilldown is functionally broken
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`TotalsAggregationEngine.getWeeklyTotals()`, `getDailyTotals()`, and `getDailyTotalsForRange()` are deprecated and immediately return:
+
+```kotlin
+return@reactiveFlow emptyList()
+```
+
+after logging that the raw mixed-currency path is unsafe.
+
+`HomeViewModel.drillDownToPeriod()` still calls:
+
+```kotlin
+totalsAggregationEngine.getWeeklyTotals(year, month)
+totalsAggregationEngine.getDailyTotalsForRange(...)
+```
+
+## Impact
+
+The totals dashboard can show monthly totals, but drilling into weeks/days returns empty data.
+
+This is safer than wrong raw sums, but it is still a user-visible broken pipeline.
+
+## Fixing strategy
+
+Wire the already-existing safe APIs:
+
+```text
+MultiCurrencyRepository.getHomeCurrencyWeeklyTotals()
+MultiCurrencyRepository.getHomeCurrencyDailyTotals()
+```
+
+or use `DailyBucketEngine` + `NormalizedAnalyticsInput`.
+
+## Implementation plan
+
+1. Replace `getWeeklyTotals()` implementation:
+
+```kotlin
+val weekly = multiCurrencyRepository.getHomeCurrencyWeeklyTotals(monthStartMs, monthEndMs)
+```
+
+2. Replace `getDailyTotalsForRange()`:
+
+```kotlin
+val daily = multiCurrencyRepository.getHomeCurrencyDailyTotals(startMs, endMs)
+```
+
+3. Convert `PeriodMoneyAggregate` into `PeriodTotal`.
+
+4. Preserve `MoneyAggregate` quality in `PeriodTotal` or add side channel:
+
+```kotlin
+val aggregate: MoneyAggregate?
+val isPartial: Boolean
+val warningMessage: String?
+```
+
+5. Tests:
+
+```text
+month_drilldown_returns_weekly_totals_for_mixed_currency
+week_drilldown_returns_daily_totals_for_mixed_currency
+weekly_drilldown_shows_partial_warning_when_rate_missing
+daily_drilldown_sum_matches_parent_week_total
+```
+
+---
+
+# Issue P1-05 — Dashboard widgets still raw-sum `DashboardExpense.effectiveAmount`
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`ComputeDashboardWidgetsUseCase` uses `MultiCurrencyRepository` for some headline numbers:
+
+```text
+todaySpent
+weekSpent
+Monte Carlo spentToDate
+```
+
+But other widgets still use raw dashboard expenses:
+
+- `computeSpendingTrend()` groups `ctx.data.data.expenses` and accumulates `exp.effectiveAmount`;
+- `computeRunwayAndForecast()` converts `DashboardExpense` into `ExpenseSnapshot` with original amount/currency and sends it to `ForecastInputAssembler`;
+- `computeBlockParty()` passes `ctx.expenseEntities` and `summary.dailyHistory`;
+- recent/category widgets use already-flattened dashboard DTO amounts.
+
+Unless every upstream dashboard expense has already been normalized, these are raw mixed-currency paths.
+
+`DashboardDataProvider` injects `AnalyticsCurrencyNormalizer` but does not actually use it in `getAllDataFlow()` or `getProcessedDataFlow()`.
+
+## Impact
+
+Some dashboard widgets can disagree with the headline totals.
+
+Example:
+
+```text
+PeriodSummary monthSpent = normalized total
+SpendingTrend = raw EUR+USD+GBP sum
+Forecast/block-party = potentially raw expenses
+```
+
+## Fixing strategy
+
+Dashboard computation should use one canonical normalized input object.
+
+## Implementation plan
+
+1. Add:
+
+```kotlin
+DashboardNormalizedInput(
+    val period: PeriodRange,
+    val homeCurrency: String,
+    val expenses: List<NormalizedExpense>,
     val dataQuality: AnalyticsDataQuality
 )
 ```
 
-For dashboard widgets:
+2. Build it in `DashboardDataProvider` using `AnalyticsInputAssembler` or `AnalyticsCurrencyNormalizer`.
 
-```kotlin
-DashboardWidget.MonthlyTotal(
-    total = MoneyAggregate,
-    warning = total.warningMessage,
-    sourceBuckets = total.sourceBuckets
-)
+3. Change `ComputeDashboardWidgetsUseCase.compute()` to consume normalized amounts for:
+   - spending trend,
+   - forecast input,
+   - block party,
+   - health score,
+   - category widgets.
+
+4. Keep original currency only for display rows/recent transaction detail.
+
+5. Tests:
+
+```text
+dashboard_spending_trend_does_not_raw_sum_mixed_currency
+dashboard_forecast_receives_home_currency_expense_snapshots
+dashboard_period_summary_and_trend_month_total_match
+dashboard_data_quality_warning_propagates_to_widgets
 ```
-
-Minimum short-term fix:
-
-- keep `Double` fields,
-- add `isPartial`,
-- add `conversionWarning`,
-- add `missingCurrencyCount`,
-- add `sourceBuckets`.
-
-Priority: highest.
 
 ---
 
-## Finding P0-4 — Dashboard semantics mix spending, income, and all transaction types
+# Issue P1-06 — Stale-rate state is not propagated to analytics quality
 
-`MultiCurrencyRepository` has:
+## Severity
 
-```kotlin
-getHomeCurrencyTotal(...)
-```
+P1 / High
 
-This uses `ExpenseDao.getAllSpentBetweenByCurrency()`.
+## Evidence
 
-That DAO method is explicitly type-agnostic:
-
-```text
-includes all transaction types
-```
-
-It includes purchases, deposits, transfers, unknowns, etc.
-
-But in `ComputeDashboardWidgetsUseCase`, a value named:
-
-```kotlin
-monthlyIncome
-```
-
-is computed as:
-
-```kotlin
-multiCurrencyRepository.getHomeCurrencyTotal(ctx.monthStart, ctx.now).displayAmount
-```
-
-That is probably wrong.
-
-### Why this matters
-
-If a user has:
-
-```text
-purchase €100
-deposit €1000
-transfer €500
-```
-
-then a type-agnostic aggregate can produce a number that is neither income nor spending nor net cashflow.
-
-### Recommended fix
-
-Add explicit currency-aware APIs:
-
-```kotlin
-getHomeCurrencyPurchaseTotal(...)
-getHomeCurrencyDepositTotal(...)
-getHomeCurrencyTransferOutTotal(...)
-getHomeCurrencyTransferInTotal(...)
-getHomeCurrencyNetCashFlow(...)
-```
-
-Then dashboard code should use the method that matches the widget’s semantic contract.
-
-Rules:
-
-```text
-Monthly spend card → PURCHASE only
-Income card → DEPOSIT only
-Net cashflow → deposits - purchases ± transfers according to policy
-Budget usage → PURCHASE only
-Forecast spend pace → PURCHASE only
-Runway income → DEPOSIT only or configured income source
-```
-
-Priority: highest.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/MultiCurrencyRepository.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
-
----
-
-## Finding P0-5 — `TotalsAggregationEngine` still raw-sums mixed currencies
-
-`TotalsAggregationEngine.kt` has a clear KDoc warning:
-
-```text
-CURRENCY NORMALIZATION: GAP — no normalization applied
-```
-
-It lists methods that use raw DAO totals without conversion:
-
-- monthly totals,
-- weekly totals,
-- daily totals,
-- yearly totals,
-- category breakdown,
-- averages.
-
-This is good self-documentation, but dangerous if any live UI still consumes it.
-
-### Recommended fix
-
-Do not allow this class in production flows until fixed.
-
-Options:
-
-1. Refactor it to inject `AnalyticsCurrencyNormalizer` or `MultiCurrencyRepository`.
-2. Mark raw methods internal/test-only.
-3. Add a runtime guard:
-
-```kotlin
-require(allExpensesSingleCurrency) {
-    "TotalsAggregationEngine raw aggregation cannot be used with multi-currency data"
-}
-```
-
-4. Add a CI scan for calls to deprecated raw DAO totals.
-
-Priority: highest if any production screen still uses this engine.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/analytics/TotalsAggregationEngine.kt
-
----
-
-## Finding P1-1 — Budget conversion fallback can compare different currencies
-
-`BudgetRepository.convertBudgetAmountToHomeCurrency()` converts the budget limit to home currency.
-
-If conversion fails, it returns:
-
-```kotlin
-MoneyAggregate.singleCurrency(
-  amount = amount,
-  currency = CurrencyCode(sourceCurrency)
-).copy(
-  isPartial = true,
-  warningMessage = "Budget limit could not be converted..."
-)
-```
-
-Then `createBudgetStatus()` does:
-
-```kotlin
-spent = spentAggregate.displayAmount       // home currency
-baseLimit = initialLimitAggregate.displayAmount
-percent = spent / effectiveLimit
-currency = initialLimitAggregate.displayCurrency.code
-```
-
-If budget is GBP and home is EUR, and the GBP→EUR rate is missing:
-
-```text
-spent = EUR amount
-baseLimit = raw GBP amount
-percent = EUR / GBP
-```
-
-The status is marked partial, but percent/remaining/health can still be wrong.
-
-### Recommended fix
-
-If budget limit cannot be converted:
-
-```text
-BudgetStatus.isPartial = true
-BudgetStatus.healthStatus = UNKNOWN or UNAVAILABLE
-percentUsed = null
-remainingAmount = null
-```
-
-Do not compute health thresholds from mixed units.
-
-Alternatively, require budget currency to equal home currency unless rate exists.
-
-Priority: high.
-
-Source:  
-https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
-
----
-
-## Finding P1-2 — Empty category spend fallback uses default EUR
-
-In `BudgetRepository.getAggregateSpent()`:
-
-```kotlin
-multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)[categoryId]
-  ?: MoneyAggregate.empty(CurrencyCode(MultiCurrencyRepository.DEFAULT_HOME_CURRENCY))
-```
-
-`DEFAULT_HOME_CURRENCY = "EUR"`.
-
-If user home currency is USD and no spend exists for a category, the empty spend aggregate is EUR.
-
-In many cases this does not break numeric status because spend is `0.0`, but it is semantically wrong and can leak into warning/debug/UI states.
-
-### Recommended fix
-
-Return empty aggregate in resolved home currency:
-
-```kotlin
-val home = resolveHomeCurrency()
-MoneyAggregate.empty(CurrencyCode(home))
-```
-
-Priority: medium-high.
-
----
-
-## Finding P1-3 — Exchange-rate staleness is not part of conversion failure contract
-
-`CurrencyConverter.convert()` only returns null when no rate exists.
-
-It does not seem to reject stale rates.
-
-`MultiCurrencyRepository.shouldUpdateRates()` can detect staleness, but conversion still uses stale rates if present.
-
-### Why this matters
-
-Dashboard may show confident totals using old rates.
-
-### Recommended fix
-
-Add conversion policy:
-
-```kotlin
-data class ConversionPolicy(
-    val maxRateAgeMs: Long?,
-    val allowStaleRates: Boolean
-)
-```
-
-Then conversion failure reasons should distinguish:
+`CurrencyConverter.convertMultiple()` distinguishes:
 
 ```text
 MISSING_RATE
 STALE_RATE
-INVALID_CURRENCY
 ```
 
-`MoneyAggregate.conversionFailures` should carry this reason.
-
-Priority: high.
-
----
-
-## Finding P1-4 — Transaction lifecycle base snapshot may still hardcode EUR
-
-From Pipeline 2, `TransactionLifecycleCoordinator` appears to snapshot non-EUR expenses using `CurrencyConverter.DEFAULT_BASE_CURRENCY`, which is EUR.
-
-Pipeline 5 expects home currency to come from `CurrencySettingsRepository`.
-
-If an expense stores:
-
-```text
-baseAmount/baseCurrency/exchangeRateUsed
-```
-
-using EUR while the user’s home currency is USD, then stored base snapshot and dashboard home-currency totals can disagree.
-
-### Recommended fix
-
-Pick one explicit policy:
-
-1. `baseCurrency` always means system base EUR, and UI never treats it as home currency.
-2. `baseCurrency` means user home currency at creation time.
-
-Then enforce naming and tests.
-
-Recommended:
-
-```text
-originalAmount/originalCurrency
-homeAmountAtCreation/homeCurrencyAtCreation/homeRateAtCreation
-systemBaseAmount/systemBaseCurrency only if needed
-```
-
-Priority: high.
-
----
-
-## Finding P1-5 — Deprecated raw DAO totals still exist and can be accidentally reused
-
-`ExpenseDao` has many deprecated raw sum methods:
-
-- `getTotalSpentBetween`
-- `getCategoryTotalsBetween`
-- `getMerchantTotalsBetween`
-- `getDailyTotalsForPeriod`
-- `getTotalDepositsForPeriod`
-- etc.
-
-The deprecation messages are good, but they do not prevent accidental use.
-
-### Recommended fix
-
-Add CI guard:
-
-```text
-No production code may call deprecated raw aggregation methods unless allowlisted.
-```
-
-Allowlist only:
-
-- invalidation triggers if absolutely needed,
-- legacy tests,
-- single-currency-only code paths with explicit assertion.
-
-Priority: high.
-
----
-
-## Finding P1-6 — Analytics data quality exists but is not necessarily surfaced
-
-`AnalyticsRepository.getDataQualityReport()` is a strong idea. It uses `AnalyticsCurrencyNormalizer` and can report reliability.
-
-But dashboard and analytics screens must actually display or consume this result.
-
-### Recommended fix
-
-Every dashboard/analytics output should include:
-
-```text
-conversionConfidence
-excludedTransactionCount
-missingRateCurrencies
-invalidCurrencyCount
-latestRateTimestamp
-isPartial
-```
-
-Then UI can show:
-
-```text
-“Partial total: excludes 2 GBP transactions due to missing rate.”
-```
-
-Priority: high.
-
----
-
-# 5. Debugging checklist for Pipeline 5
-
-## Currency settings
-
-Check:
-
-- [ ] home currency loads from DataStore,
-- [ ] invalid home currency rejected,
-- [ ] setting persists after restart,
-- [ ] changing home currency invalidates dashboard/analytics flows,
-- [ ] budget currency and home currency behavior is explicit.
-
-## Exchange rates
-
-Check:
-
-- [ ] rate insert sets `validDate`,
-- [ ] current rate lookup is deterministic,
-- [ ] historical rate lookup uses latest `validDate <= expense.date`,
-- [ ] direct pair conversion works,
-- [ ] EUR-intermediate conversion works,
-- [ ] missing rate returns failure,
-- [ ] stale rate returns warning/failure according to policy,
-- [ ] invalid rate rejected,
-- [ ] rate cleanup does not delete needed historical rates.
-
-## Expense aggregation
-
-Check:
-
-- [ ] source currency buckets preserved,
-- [ ] PURCHASE-only totals exclude deposits/transfers,
-- [ ] all-type totals are used only for explicitly all-type widgets,
-- [ ] `isNotMine` excluded,
-- [ ] shared expense uses `effectiveAmount`,
-- [ ] null category appears as Uncategorized where expected,
-- [ ] merchant grouping uses intended key/raw merchant policy,
-- [ ] no row caps in analytics/export/forecast.
-
-## Dashboard
-
-Check:
-
-- [ ] monthly spend uses purchase-only aggregate,
-- [ ] today/week spend use purchase-only aggregate,
-- [ ] income uses deposit-only aggregate,
-- [ ] net cashflow uses explicit net formula,
-- [ ] dashboard carries `isPartial`,
-- [ ] dashboard shows conversion warnings,
-- [ ] dashboard source buckets visible in debug/details,
-- [ ] forecast uses converted values with confidence warnings.
-
-## Analytics
-
-Check:
-
-- [ ] summary total uses `MoneyAggregate`,
-- [ ] daily history uses historical conversion,
-- [ ] category totals use converted aggregates,
-- [ ] merchant totals use converted aggregates,
-- [ ] month comparison uses consistent historical policy,
-- [ ] data-quality report is surfaced,
-- [ ] raw `TotalsAggregationEngine` is not used for multi-currency flows.
-
-## Budget
-
-Check:
-
-- [ ] budget limit conversion failure does not compute false percent,
-- [ ] category budget uses purchase-only converted spend,
-- [ ] overall budget uses purchase-only converted spend,
-- [ ] rollover uses same currency policy for all periods,
-- [ ] warning state propagates to UI,
-- [ ] no default EUR leak for non-EUR users.
-
-## Forecast / health / savings
-
-Check:
-
-- [ ] training inputs normalized historically,
-- [ ] partial conversion reduces confidence,
-- [ ] missing-rate buckets excluded explicitly,
-- [ ] health score does not silently treat partial data as complete,
-- [ ] savings recommendations include data-quality warning.
-
----
-
-# 6. Recommended fix plan
-
-## PR 1 — Fix exchange-rate historical model
-
-Change:
-
-```text
-DomainExchangeRate
-ExchangeRateStoreAdapter
-CurrencyConverter.storeRate/storeRates
-ExchangeRateDao.getRate
-```
-
-Acceptance:
-
-```text
-rates store validDate,
-current getRate returns newest validDate,
-convertAsOf returns correct historical rate,
-old reports do not change when new rate is added.
-```
-
----
-
-## PR 2 — Use historical conversion for analytics/reporting
-
-Change `AnalyticsCurrencyNormalizer` to use:
+But `AnalyticsInputAssembler` sets:
 
 ```kotlin
-convertAsOf(expense.effectiveAmount, expense.currency, homeCurrency, expense.date)
+staleRateCount = 0 // A19: STALE_EXCHANGE_RATE not yet surfaced by normalizer
 ```
 
-Add optional policy for dashboard “current value” vs “historical report”.
+`AnalyticsCurrencyNormalizer` treats failed `convertAsOf()` as `MISSING_EXCHANGE_RATE`; it does not expose stale-vs-missing or old-rate-quality metadata.
 
-Acceptance:
+## Impact
+
+The app cannot accurately communicate:
 
 ```text
-a 2024 USD expense uses the 2024 USD→home rate in 2024 reports.
+missing rate
+vs stale current rate
+vs old historical estimate
 ```
 
----
+Forecast confidence and insights confidence cannot react correctly.
 
-## PR 3 — Propagate MoneyAggregate through dashboard/analytics
+## Fixing strategy
 
-Replace or augment raw fields:
+Make conversion failure typed end-to-end.
 
-```text
-Double totalSpent
-String currency
-```
+## Implementation plan
 
-with:
-
-```text
-MoneyAggregate total
-DataQualityReport dataQuality
-```
-
-Acceptance:
-
-```text
-missing GBP rate displays partial warning in dashboard and analytics.
-```
-
----
-
-## PR 4 — Split transaction-type semantics
-
-Add:
+1. Add typed result to `CurrencyConverter`:
 
 ```kotlin
-getHomeCurrencyDepositTotal()
-getHomeCurrencyNetCashFlow()
-getHomeCurrencyTransferTotals()
+sealed interface ConversionOutcome {
+    data class Converted(...)
+    data class Failed(
+        val type: ConversionFailureType,
+        val sourceCurrency: String,
+        val targetCurrency: String,
+        val amount: Double
+    )
+}
 ```
 
-Audit dashboard code so every widget uses the correct semantic total.
-
-Acceptance:
+2. Update `AnalyticsCurrencyNormalizer` warnings:
 
 ```text
-income card no longer uses all transaction types.
+MISSING_EXCHANGE_RATE
+STALE_EXCHANGE_RATE
+INVALID_TRANSACTION_CURRENCY
+INVALID_HOME_CURRENCY
+```
+
+3. Fill:
+
+```kotlin
+AnalyticsDataQuality.staleRateCount
+missingRateCount
+conversionWarnings
+confidencePenalty
+```
+
+4. Tests:
+
+```text
+stale_latest_rate_sets_stale_warning
+missing_rate_sets_missing_warning
+analytics_quality_counts_stale_and_missing_separately
+forecast_confidence_reduced_when_rates_partial
 ```
 
 ---
 
-## PR 5 — Fix budget mixed-currency failure behavior
+# Issue P1-07 — `MultiCurrencyRepository` does not consistently use `MoneyAggregateBuilder`
 
-When budget limit conversion fails:
+## Severity
 
-```text
-do not compute percent/health from mixed units
-mark status partial/unavailable
-show warning
+P1 / High for diagnostics consistency
+
+## Evidence
+
+`MoneyAggregateBuilder.fromBuckets()` correctly maps failures and sets transaction counts in warning messages.
+
+But `MultiCurrencyRepository.aggregateToMoneyAggregate()` and `aggregateCurrencyTotalsToMoneyAggregate()` manually build `MoneyAggregate` and map:
+
+```kotlin
+aggregate.failedConversions.map { it.toConversionFailure() }
 ```
 
-Acceptance:
+without attaching the bucket transaction count.
+
+The warning says:
 
 ```text
-GBP budget + missing GBP→EUR rate cannot produce fake “80% used” status.
+Total excludes N currency bucket(s)
+```
+
+not affected transaction count.
+
+## Impact
+
+The UI/debug layer can show incorrect diagnostic counts:
+
+```text
+1 failed bucket
+```
+
+when the bucket contains 37 transactions.
+
+`MoneyAggregate.failedTransactionCount` may also be unreliable for these paths if `toConversionFailure()` defaults transaction count to zero/one.
+
+## Fixing strategy
+
+Use one builder everywhere.
+
+## Implementation plan
+
+1. Replace internal manual MCR aggregate helpers with:
+
+```kotlin
+MoneyAggregateBuilder.fromBuckets(
+    buckets = currencyTotals.map { it.total to it.currency },
+    transactionCounts = currencyTotals.map { it.txCount },
+    homeCurrency = homeCurrency,
+    converter = currencyConverter
+)
+```
+
+2. Delete duplicate manual warning construction.
+
+3. Tests:
+
+```text
+mcr_total_failure_reports_failed_transaction_count_not_bucket_count
+mcr_category_failure_preserves_source_bucket_counts
+mcr_monthly_failure_uses_same_warning_as_money_aggregate_builder
 ```
 
 ---
 
-## PR 6 — Ban raw aggregation methods in production
+# Issue P1-08 — Budget-vs-actual comparisons are still not fully normalized
 
-Add CI script:
+## Severity
+
+P1 / High
+
+## Evidence
+
+`AdvancedAnalyticsEngine.getCategoryAnalytics()` is deprecated and has a code comment:
 
 ```text
-scripts/testing/check-raw-money-aggregation.kts
+A10 PARTIAL: Budget amounts may not be normalized.
+Use BudgetVsActualEngine for canonical comparison.
 ```
 
-Fail on production usage of:
+It still compares normalized spending totals against `budget.amount` from `BudgetSnapshot`.
+
+`DashboardContractsAdapter.observeBudgetStatuses()` maps budget status values from `BudgetRepository` directly into dashboard DTOs.
+
+## Impact
+
+If budget currency or expense currency differs from home currency, budget utilization can be wrong:
 
 ```text
-getTotalSpentBetween
+normalized spend / raw budget amount
+```
+
+This affects:
+
+```text
+budget health widget
+category analytics
+safe-to-spend
+forecast confidence
+```
+
+## Fixing strategy
+
+Make `BudgetVsActualEngine` the only budget comparison contract.
+
+## Implementation plan
+
+1. Define canonical output:
+
+```kotlin
+data class NormalizedBudgetStatus(
+    val budgetId: Long,
+    val budgetAmount: MoneyAggregate,
+    val spentAmount: MoneyAggregate,
+    val remainingAmount: MoneyAggregate,
+    val isPartial: Boolean,
+    val warningMessage: String?
+)
+```
+
+2. Make `DashboardContractsAdapter.observeBudgetStatuses()` use the canonical engine.
+
+3. Remove/deprecate raw `BudgetStatusSnapshot.spentAmount` where possible.
+
+4. Tests:
+
+```text
+budget_status_uses_same_home_currency_as_spending
+budget_status_partial_when_budget_or_spend_rate_missing
+advanced_category_analytics_deprecated_path_not_used_by_dashboard
+```
+
+---
+
+# Issue P2-09 — Silent EUR fallback can hide settings failures
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+Multiple paths do:
+
+```kotlin
+runCatching { homeCurrency().first() }.getOrDefault("EUR")
+```
+
+or fallback to `MultiCurrencyRepository.DEFAULT_HOME_CURRENCY = "EUR"`.
+
+## Impact
+
+If DataStore fails or settings are corrupted, the dashboard silently switches to EUR instead of showing a configuration/data-quality error.
+
+## Fixing strategy
+
+Distinguish default-on-first-run from settings-load failure.
+
+## Implementation plan
+
+1. Add:
+
+```kotlin
+sealed interface HomeCurrencyResolution {
+    data class Resolved(val currency: CurrencyCode)
+    data class DefaultedFirstRun(val currency: CurrencyCode)
+    data class Failed(val fallback: CurrencyCode, val error: Throwable)
+}
+```
+
+2. Add warning when fallback happens after an exception.
+
+3. Surface warning to dashboard/analytics.
+
+4. Tests:
+
+```text
+home_currency_datastore_error_adds_dashboard_warning
+first_run_default_EUR_does_not_show_error
+invalid_home_currency_blocks_analytics_with_warning
+```
+
+---
+
+# Issue P2-10 — Deprecated raw aggregate DAO/repository surface remains broad
+
+## Severity
+
+P2 / Medium, P1 regression risk
+
+## Evidence
+
+`ExpenseDao` still exposes many deprecated raw aggregate methods:
+
+```text
+getTotalSpentFlow
+getTotalForPeriod
 getCategoryTotalsBetween
-getMerchantTotalsBetween
 getDailyTotalsForPeriod
-sumOf { it.amount }
-sumOf { it.effectiveAmount }
+getWeeklyTotalsForPeriod
+getMonthlyTotalsForPeriod
+getAverageDailySpend
+getTotalDepositsForPeriod
+getMonthlySpendingTotals
+getTopMerchantsForPeriod
+...
 ```
 
-unless allowlisted with reason.
+They are marked deprecated, but still callable from production code.
 
-Acceptance:
+## Impact
+
+New code can accidentally reintroduce mixed-currency sums.
+
+## Fixing strategy
+
+Static guard + allowlist.
+
+## Implementation plan
+
+1. Add CI script:
 
 ```text
-new mixed-currency bugs cannot be added silently.
+fail if production code calls deprecated raw aggregate DAO methods
+outside allowlisted migration/debug files
+```
+
+2. Rename dangerous DAO methods with prefix:
+
+```kotlin
+unsafeRawGetTotalForPeriod()
+```
+
+3. Add `@Deprecated(level = DeprecationLevel.ERROR)` once migration is complete.
+
+4. Tests/guards:
+
+```text
+currency_guard_fails_on_getTotalForPeriod_usage
+currency_guard_fails_on_getWeeklyTotalsForPeriod_usage
+currency_guard_allows_migration_tests_only
 ```
 
 ---
 
-# 7. Tests to add
+# Issue P2-11 — Category percentages ignore partial-conversion semantics
 
-## 7.1 `ExchangeRateHistoricalContractTest`
+## Severity
 
-Seed rates:
+P2 / Medium
 
-```text
-USD→EUR 0.90 validDate Jan 2024
-USD→EUR 0.80 validDate Jan 2025
+## Evidence
+
+`AnalyticsRepository.getCategoryBreakdown()` computes:
+
+```kotlin
+val totalSpent = categoryAggregates.values.sumOf { it.displayAmount }
+percentage = aggregate.displayAmount / totalSpent
 ```
 
-Assert:
+If one category has missing/stale conversion, its display amount excludes some transactions. The percentage is then calculated over only successfully converted amounts.
+
+## Impact
+
+The chart can look precise while excluding data:
 
 ```text
-convertAsOf(100 USD, Jan 2024) = 90 EUR
-convertAsOf(100 USD, Jan 2025) = 80 EUR
-convert(100 USD) uses latest validDate deterministically
+Food 40%
+Travel 60%
 ```
 
-Also assert `validDate` is not `0L`.
+but actually some Travel USD transactions were excluded.
 
----
+## Fixing strategy
 
-## 7.2 `MultiCurrencyRepositoryPartialAggregateTest`
+Category percentages need quality metadata.
 
-Seed:
+## Implementation plan
 
-```text
-EUR purchase 50
-USD purchase 10 with rate
-GBP purchase 20 without rate
+1. Add to breakdown:
+
+```kotlin
+val isPartial: Boolean
+val excludedTransactionCount: Int
+val excludedBucketCount: Int
+val warningMessage: String?
 ```
 
-Assert:
+2. If any category aggregate is partial, parent breakdown is partial.
+
+3. UI should show:
 
 ```text
-displayAmount excludes GBP
-sourceBuckets include EUR, USD, GBP
-isPartial = true
-conversionFailures contains GBP
-warningMessage not null
+Percentages based only on convertible transactions.
 ```
 
----
-
-## 7.3 `DashboardPartialCurrencyWarningScenarioTest`
-
-Seed same dataset.
-
-Run:
+4. Tests:
 
 ```text
-ComputeDashboardWidgetsUseCase
-```
-
-Assert:
-
-```text
-monthly total widget shows partial warning
-source buckets available
-dashboard does not present total as complete
+category_breakdown_partial_when_one_category_rate_missing
+category_percentage_warning_when_parent_total_partial
+uncategorized_bucket_preserves_partial_warning
 ```
 
 ---
 
-## 7.4 `AnalyticsHistoricalConversionScenarioTest`
+# Issue P2-12 — Forecast/health/savings consumers are not proven to use normalized currency input
 
-Seed:
+## Severity
 
-```text
-Jan 2024 USD expense
-Jan 2025 USD expense
-different historical rates
+P2 / Medium, possibly P1 depending on feature path
+
+## Evidence
+
+`ComputeDashboardWidgetsUseCase.computeRunwayAndForecast()` converts dashboard expenses to `ExpenseSnapshot` and passes them into:
+
+```kotlin
+forecastInputAssembler.assemble(...)
+synthesisEngine.synthesize(...)
 ```
 
-Assert:
+Those snapshots carry original currency and effective amount, not guaranteed-normalized amounts.
 
-```text
-monthly analytics uses each month’s historical rate
-adding a 2026 rate does not change 2024/2025 reports
+Some spending values are normalized via `MultiCurrencyRepository`, but not all inputs into forecast/block-party/health are clearly normalized.
+
+## Impact
+
+Dashboard secondary widgets can diverge from canonical totals.
+
+## Fixing strategy
+
+Make forecast input assembly require normalized inputs.
+
+## Implementation plan
+
+1. Change `ForecastInputAssembler` API:
+
+```kotlin
+assemble(input: NormalizedAnalyticsInput, ...)
 ```
 
----
+2. If legacy raw API remains, mark it deprecated/error.
 
-## 7.5 `DashboardTransactionTypeSemanticsTest`
+3. Carry data quality into forecast:
 
-Seed:
-
-```text
-purchase 100 EUR
-deposit 1000 EUR
-transfer 500 EUR
+```kotlin
+ForecastDataQuality(
+    isPartial = input.dataQuality.isPartial,
+    confidenceMultiplier = input.dataQuality.confidenceMultiplier,
+    warnings = input.dataQuality.conversionWarnings
+)
 ```
 
-Assert:
+4. Tests:
 
 ```text
-monthly spend = 100
-income = 1000
-net cashflow follows explicit policy
-no widget labeled spend/income uses all-type total
-```
-
----
-
-## 7.6 `BudgetMissingRateContractTest`
-
-Seed:
-
-```text
-home EUR
-budget 100 GBP
-no GBP→EUR rate
-spend 50 EUR
-```
-
-Assert:
-
-```text
-BudgetStatus.isPartial = true
-health = UNKNOWN/UNAVAILABLE
-percentUsed not computed or explicitly unreliable
-warning shown
+forecast_assembler_rejects_mixed_raw_currency_input
+partial_currency_data_reduces_forecast_confidence
+dashboard_forecast_warning_matches_analytics_warning
 ```
 
 ---
 
-## 7.7 `RawAggregationUsageGuardTest`
+# Recommended fixing order
 
-Static/CI test:
+## PR 1 — Deterministic exchange-rate lookup
+
+Files:
 
 ```text
-production code must not call deprecated raw aggregation methods
-production code must not sum raw amount/effectiveAmount for money totals
+ExchangeRateDao.kt
+CurrencyConverter.kt
+ExchangeRateStore implementation
+CurrencyConverterTest.kt
+```
+
+Fix:
+
+```text
+- getRate() returns latest deterministic row
+- getRateAsOf() remains historical
+- add pair/date tests
+```
+
+## PR 2 — Historical aggregate contract
+
+Files:
+
+```text
+MultiCurrencyRepository.kt
+CurrencyConverter.kt
+MoneyAggregateBuilder.kt
+AnalyticsRepository.kt
+TotalsAggregationEngine.kt
+```
+
+Fix:
+
+```text
+- add historical MoneyAggregate APIs
+- dashboard/analytics period totals use convertAsOf
+- latest-rate APIs renamed explicitly
+```
+
+## PR 3 — Dashboard quality propagation
+
+Files:
+
+```text
+DashboardRepositoryContracts.kt
+DashboardContractsAdapter.kt
+DashboardDataProvider.kt
+ComputeDashboardWidgetsUseCase.kt
+HomeViewModel.kt
+UI cards
+```
+
+Fix:
+
+```text
+- preserve aggregate/isPartial/warning/source bucket metadata
+- show partial dashboard warnings
+```
+
+## PR 4 — Fix totals drilldown
+
+Files:
+
+```text
+TotalsAggregationEngine.kt
+HomeViewModel.kt
+PeriodTotal model
+```
+
+Fix:
+
+```text
+- weekly/daily drilldown uses MultiCurrencyRepository safe APIs
+- no empty-list fallback for valid data
+```
+
+## PR 5 — Normalize dashboard widget input
+
+Files:
+
+```text
+DashboardDataProvider.kt
+ComputeDashboardWidgetsUseCase.kt
+ForecastInputAssembler.kt
+SynthesisEngine.kt
+```
+
+Fix:
+
+```text
+- build a canonical normalized dashboard input
+- trend/forecast/block-party/health use normalized amounts
+```
+
+## PR 6 — Stale/missing rate quality propagation
+
+Files:
+
+```text
+CurrencyConverter.kt
+AnalyticsCurrencyNormalizer.kt
+AnalyticsInputAssembler.kt
+DataQualityReport.kt
+ForecastDataQuality.kt
+```
+
+Fix:
+
+```text
+- typed conversion failures
+- staleRateCount populated
+- confidence penalties propagated
+```
+
+## PR 7 — Raw aggregate guardrails
+
+Files:
+
+```text
+ExpenseDao.kt
+scripts/currency_guardrails.*
+build.gradle.kts
+docs/architecture/CONTRACTS.md
+```
+
+Fix:
+
+```text
+- CI fails on raw aggregate usage
+- deprecated raw methods become ERROR after migration
 ```
 
 ---
 
-# 8. Suggested canonical scenario
-
-## `multicurrency_partial_rate_dashboard_analytics`
-
-Seed:
+# Golden tests to add
 
 ```text
-home currency = EUR
-
-exchange rates:
-  USD→EUR = 0.90, validDate = 2026-05-01
-  GBP→EUR = missing
-
-expenses:
-  groceries: 50 EUR, PURCHASE
-  coffee: 10 USD, PURCHASE
-  books: 20 GBP, PURCHASE
-  salary: 1000 EUR, DEPOSIT
-  transfer: 200 EUR, TRANSFER
+exchange_rate_getRate_returns_latest_validDate
+historical_conversion_uses_rate_as_of_expense_date
+dashboard_month_total_matches_sum_of_historical_daily_buckets
+dashboard_category_breakdown_sum_matches_month_total
+dashboard_partial_rate_warning_survives_adapter_mapping
+dashboard_weekly_drilldown_returns_non_empty_safe_totals
+dashboard_daily_drilldown_returns_non_empty_safe_totals
+dashboard_spending_trend_does_not_raw_sum_USD_EUR
+analytics_summary_preserves_MoneyAggregate_and_isPartial
+analytics_quality_counts_missing_rates
+analytics_quality_counts_stale_rates
+budget_vs_actual_uses_normalized_budget_and_spend
+forecast_confidence_reduced_for_partial_currency_data
+currency_guard_blocks_getTotalForPeriod_in_production_code
+currency_guard_blocks_getWeeklyTotalsForPeriod_in_production_code
 ```
 
-Expected:
+---
+
+# AI implementation checklist
+
+Before coding, run:
+
+```bash
+grep -R "getTotalForPeriod" app/src/main/java
+grep -R "getWeeklyTotalsForPeriod" app/src/main/java
+grep -R "getDailyTotalsWithDatesForPeriod" app/src/main/java
+grep -R "getCategoryTotalsBetween" app/src/main/java
+grep -R "sumOf.*effectiveAmount" app/src/main/java/com/yourname/expensetracker/domain
+grep -R "displayAmount" app/src/main/java/com/yourname/expensetracker
+grep -R "staleRateCount = 0" app/src/main/java
+grep -R "getRate(fromCurrency" app/src/main/java
+grep -R "getOrDefault(\"EUR\")" app/src/main/java
+```
+
+Allowed raw-money usage should be explicit:
 
 ```text
-purchase display total = 59 EUR
-source buckets:
-  EUR purchase 50
-  USD purchase 10
-  GBP purchase 20
-isPartial = true
-conversion failure = GBP→EUR
-dashboard monthly spend = 59 EUR with warning
-analytics total = 59 EUR with warning
-income = 1000 EUR
-net cashflow does not accidentally include transfer unless policy says so
-budget uses purchase-only normalized spend
-forecast confidence reduced because one bucket missing
+- single-currency tests
+- migration/backfill diagnostics
+- source bucket construction before MoneyAggregate conversion
 ```
 
-This scenario should be one of your highest-priority fed-DB tests.
-
----
-
-# 9. Most likely real instability sources
-
-Ranked:
-
-1. **Historical rate model incomplete.**
-   - `validDate` exists in DB but is lost in domain adapter.
-
-2. **Warnings dropped by `.displayAmount`.**
-   - UI can show partial totals as complete.
-
-3. **Current rates used for historical analytics.**
-   - Old reports change after rate refresh.
-
-4. **All-type totals used where purchase/deposit-specific totals are needed.**
-   - Dashboard cards can be semantically wrong.
-
-5. **Raw aggregation engine still present.**
-   - Any consumer can reintroduce mixed-currency summing.
-
-6. **Budget fallback mixes units after conversion failure.**
-   - Can show fake budget health.
-
-7. **Raw `Double` models still dominate downstream outputs.**
-   - The type system cannot force warning propagation.
-
----
-
-# 10. Final recommendation
-
-For Pipeline 5, stabilize in this order:
+Everything else should use:
 
 ```text
-1. Fix ExchangeRate.validDate propagation and deterministic current-rate lookup.
-2. Use convertAsOf() for analytics/reporting.
-3. Propagate MoneyAggregate through dashboard/analytics/budget outputs.
-4. Split purchase/deposit/transfer/net-cashflow aggregation APIs.
-5. Disable or refactor TotalsAggregationEngine raw mixed-currency paths.
-6. Fix budget missing-rate behavior.
-7. Add the multicurrency partial-rate fed-DB scenario.
+MoneyAggregate
+AnalyticsCurrencyNormalizer
+NormalizedAnalyticsInput
+MultiCurrencyRepository historical aggregate APIs
 ```
 
-Guiding rule:
+---
 
-> No dashboard, analytics, budget, forecast, health, savings, export, or AI-query total should be a bare `Double` unless it is guaranteed single-currency or paired with explicit `MoneyAggregate`/data-quality metadata.
+# Definition of done
 
-Second guiding rule:
-
-> Missing or stale rates must make outputs visibly partial; they must never produce confident-looking totals.
+```text
+- ExchangeRateDao latest-rate lookup is deterministic.
+- Historical dashboard/analytics period totals use convertAsOf or documented historical aggregate logic.
+- Dashboard DTOs preserve MoneyAggregate/isPartial/warnings.
+- Weekly/daily totals drilldown returns safe converted data, not empty lists.
+- Dashboard spending trend, forecast, block-party, and health widgets consume normalized amounts.
+- Stale and missing exchange-rate failures are typed and propagated to AnalyticsDataQuality.
+- Category percentages show partial-data caveats when any bucket failed conversion.
+- Budget-vs-actual uses normalized budget and normalized spend.
+- CI blocks new raw aggregate DAO usage.
+```
 
 ---
 
-# 11. Verification & Fix Log (2026-05-06)
+# Source files inspected
 
-## Finding P0-1 — Historical exchange-rate support is structurally incomplete
-**STATUS: CONFIRMED — PARTIALLY FIXED**
-- `AnalyticsCurrencyNormalizer.normalizeInternal()` now uses `currencyConverter.convertAsOf(amount, fromCurrency, toCurrency, expense.date)` instead of `currencyConverter.convert()`.
-- This ensures analytics/dashboard/reports use the exchange rate valid at the time of each transaction, producing stable results that don't shift when rates update.
-- Remaining gap: `MultiCurrencyRepository` older `Result<Double>` methods still use spot rates via `convert()`. These need migration to `convertAsOf` for consistency.
+- Commit baseline:  
+  https://github.com/panospao7/Cost-agregator/commit/71fbbf9aed221a7446f99967b49b6e9ebeb51946
 
-## Finding P0-2 — Dashboard and analytics lose isPartial / warnings
-**STATUS: CONFIRMED — NOT FIXED (architectural — requires MoneyAggregate propagation through all widget pipelines)**
-
-## Finding P0-3 — Current-rate conversion used for historical analytics
-**STATUS: CONFIRMED — FIXED (see P0-1)**
-
-## Finding P0-4 — Dashboard mixes transaction semantics
-**STATUS: CONFIRMED — NOT FIXED (requires careful DAO query audit)**
-
-## Finding P0-5 — TotalsAggregationEngine sums raw mixed-currency DAO totals
-**STATUS: CONFIRMED — NOT FIXED (requires engine refactor)**
-
-## Finding P0-6 — Budget conversion fallback compares unconverted amounts
-**STATUS: CONFIRMED — NOT FIXED (requires BudgetRepository refactor)**
-
-## Finding P0-7 — Many outputs expose raw Double instead of MoneyAggregate
-**STATUS: CONFIRMED — NOT FIXED (gradual migration needed)**
-
-## Finding P1-2 — Empty category spend fallback uses default EUR
-**STATUS: CONFIRMED — FIXED**
-- `BudgetRepository.getAggregateSpent()` now calls `resolveHomeCurrency()` to get the user's actual home currency instead of using `MultiCurrencyRepository.DEFAULT_HOME_CURRENCY`.
-- The empty `MoneyAggregate` fallback now uses the correct home currency code.
-
-## Finding P1-4 — Transaction lifecycle base snapshot may still hardcode EUR
-**STATUS: CONFIRMED — FIXED (see Pipeline 2 P1-5)**
-- `TransactionLifecycleCoordinator` now reads home currency from `CurrencySettingsRepository`.
-
-## Finding P1-3 — Exchange-rate staleness is not part of conversion failure contract
-
-### Post-evaluation fix (2026-05-06):
-- **FIXED — P1-3 (Stage 1)**: CurrencyConverter.convert() now checks rate.lastUpdated
-  against 24h staleness threshold before using a rate. Stale rates fall through to
-  fallback paths (EUR cross-rate). Historical convertAsOf() is exempt.
-  Full ConversionPolicy with configurable thresholds deferred to Stage 2.
-
-## Finding P1-5 — Deprecated raw DAO totals still exist and can be accidentally reused
-**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-01 Stage 1)**
-
-## Finding P1-6 — Analytics data quality exists but is not necessarily surfaced
-**PARTIALLY FIXED — P1-6 (ARCH-02 Stage 2)**: ForecastInputAssembler now populates
-ForecastDataQuality from actual expense normalization results (excluded count,
-missing rate count, penalty). FinancialWeather confidence reduction deferred.
-Planned/recurring quality deferred to Stage 3.
-
----
-
-# 12. New issues discovered
-
-No additional issues beyond those in the original report were found during code verification.
-
----
-
-# 13. Applied fixes summary
-
-| Fix | File(s) | Finding |
-|-----|---------|---------|
-| Use `convertAsOf(expense.date)` for historical analytics | `AnalyticsCurrencyNormalizer.kt` | P0-1, P0-3 |
-| Use actual home currency in budget empty-spend fallback | `BudgetRepository.kt` | P1-2 |
-
----
-
-# 14. Remaining work priority
-
-1. **P0-2**: Propagate `MoneyAggregate` (with `isPartial`/warnings) through all dashboard widget pipelines
-2. **P0-5**: Refactor `TotalsAggregationEngine` to normalize currencies before summing
-3. **P0-6**: Fix BudgetRepository to convert budget limit to home currency before comparison
-4. **P0-4**: Audit DAO queries to separate purchase/transfer/deposit semantics in dashboards
-5. **P0-7**: Gradually replace `Double + currency` returns with `MoneyAggregate`
-
----
-
-# Sources
-
-- Dependency map  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
-
-- `MultiCurrencyRepository.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/MultiCurrencyRepository.kt
-
-- `CurrencyConverter.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/currency/CurrencyConverter.kt
-
-- `ExchangeRateContracts.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/currency/ExchangeRateContracts.kt
-
-- `ExchangeRateStoreAdapter.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
-
-- `ExchangeRate.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/ExchangeRate.kt
-
-- `ExchangeRateDao.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExchangeRateDao.kt
+- `CODEBASE_SEGMENTS.md`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/docs/architecture/CODEBASE_SEGMENTS.md
 
 - `MoneyAggregate.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/core/money/MoneyAggregate.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/core/money/MoneyAggregate.kt
 
-- `MoneyAmount.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/core/money/MoneyAmount.kt
+- `MoneyAggregateBuilder.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/core/money/MoneyAggregateBuilder.kt
+
+- `CurrencyConverter.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/currency/CurrencyConverter.kt
+
+- `ExchangeRateDao.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExchangeRateDao.kt
+
+- `ExchangeRate.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/database/entity/ExchangeRate.kt
+
+- `MultiCurrencyRepository.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/MultiCurrencyRepository.kt
 
 - `AnalyticsCurrencyNormalizer.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsCurrencyNormalizer.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsCurrencyNormalizer.kt
+
+- `AnalyticsInputAssembler.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsInputAssembler.kt
+
+- `NormalizedAnalyticsInput.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/analytics/NormalizedAnalyticsInput.kt
 
 - `AnalyticsRepository.kt`  
-  https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt
 
-- `ComputeDashboardWidgetsUseCase.kt`  
-  https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt
+- `AdvancedAnalyticsEngine.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsEngine.kt
 
 - `TotalsAggregationEngine.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/analytics/TotalsAggregationEngine.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/analytics/TotalsAggregationEngine.kt
+
+- `DashboardDataProvider.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/DashboardDataProvider.kt
+
+- `DashboardContractsAdapter.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/DashboardContractsAdapter.kt
+
+- `ComputeDashboardWidgetsUseCase.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt
+
+- `HomeViewModel.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/ui/screens/home/HomeViewModel.kt
 
 - `ExpenseDao.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt
-
-- `BudgetRepository.kt`  
-  https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt

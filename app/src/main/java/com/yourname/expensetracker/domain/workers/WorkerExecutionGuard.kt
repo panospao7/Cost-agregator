@@ -107,9 +107,7 @@ class WorkerExecutionGuard @Inject constructor(
      * Call before each DB mutation inside a long-running worker loop.
      */
     suspend fun checkpoint(operation: String) {
-        // Check stop flag via registry (same check as WorkerLease.checkpoint)
-        if ((leaseRegistry as? com.yourname.expensetracker.domain.workers.WorkerLeaseRegistryImpl)
-                ?.isStopRequested() == true) {
+        if (leaseRegistry.isStopRequested()) {
             throw kotlinx.coroutines.CancellationException(
                 "Worker cancelled at checkpoint '$operation' — maintenance stop requested"
             )

@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
+import com.yourname.expensetracker.data.backup.WorkerDrainTimeoutException
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
@@ -65,7 +67,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     private val receiptAssetStore: ReceiptAssetStore,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
-    private val restoreJournal: RestoreJournal
+    private val restoreJournal: RestoreJournal,
+    private val workerDrain: com.yourname.expensetracker.domain.workers.WorkerDrainController,
+    private val restoreDatabaseOpener: RestoreDatabaseOpener
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -91,7 +95,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     ) : this(
         context, database, ioDispatcher, privacyGate, privacySettingsRepository,
         backupEncryptionService, exportAnonymizer, secureKeyStorage,
-        receiptAssetStore, restoreMaintenanceMode, restoreJournal
+        receiptAssetStore, restoreMaintenanceMode, restoreJournal,
+        com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
+        object : RestoreDatabaseOpener { override fun openFreshDatabase() = database }
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -460,8 +466,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
-            // P1-05: Enter backup maintenance mode for point-in-time consistency
-            restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
+            // P1-05: Enter backup maintenance mode + drain workers for point-in-time consistency
+            enterMaintenanceAndDrain(
+                RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
+                "createCostBackup",
+                failOnTimeout = true
+            )
             Timber.d("BackupOperationEvent.BACKUP_STARTED: entering BACKUP_EXPORTING mode")
 
             // WAL checkpoint
@@ -564,9 +574,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         password: String
     ): Result<DatabaseImportResult> = withContext(ioDispatcher) {
         try {
-            // 1. Enter maintenance mode — RESTORE_PREPARING, blocks all writes
-            restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
-            Timber.w("Restore: entered maintenance mode")
+            // 1. Enter maintenance mode + drain workers — RESTORE_PREPARING, blocks all writes
+            enterMaintenanceAndDrain(
+                RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
+                "restoreCostBackup",
+                failOnTimeout = true
+            )
+            Timber.w("Restore: entered maintenance mode, workers drained")
 
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             val liveDbPath = liveDbFile.absolutePath
@@ -740,99 +754,76 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
-            // P7-P1-01: After file swap, the existing app-wide `database` (constructor-injected val)
-            // still references the old Room instance which was closed for the swap.
-            // The verification below re-opens the connection via openHelper.writableDatabase
-            // but any DAOs cached before the swap hold stale references.
-            // A full app restart (forceRestartRequired=true) is relied upon to
-            // obtain a fresh Room instance.
-            //
-            // TODO (P7-P1-01): Eliminate stale Room instance after restore:
-            //   Option A: Use a Provider<AppDatabase> or Lazy<AppDatabase> in Dagger so
-            //     the binding can be invalidated and re-created without process restart.
-            //   Option B: Use AppDatabase.fileBuilder() to create a one-shot verification
-            //     instance here (already done for staged verification), and skip
-            //     re-opening the stale `database` val entirely. The forced restart
-            //     then only serves to refresh DAO caches in ViewModels.
-            //   Until resolved, the forced process kill in P7-P1-08 ensures correctness.
-
-            // 9. Verify live DB
+            // 9. Verify live DB using a FRESH Room instance — the injected singleton is stale after swap
             journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
             try {
-                database.openHelper.writableDatabase
-                refreshInvalidationTrackerSafelyForVerification(database)
-                val liveSummary = queryRoomCountsForVerification(database)
+                val freshDb = restoreDatabaseOpener.openFreshDatabase()
+                val liveSummary: DatabaseImportSummary
+                try {
+                    freshDb.openHelper.writableDatabase
+                    liveSummary = queryRoomCountsForVerification(freshDb)
 
-                // Full verification
-                val verificationResult = BackupVerifier.verify(liveDbFile, manifestTableCounts)
-                if (!verificationResult.passed) {
-                    val errorMsg = "Live verification failed: ${verificationResult.errors.joinToString("; ")}"
-                    throw Exception(errorMsg)
-                }
+                    // Full verification
+                    val verificationResult = BackupVerifier.verify(liveDbFile, manifestTableCounts)
+                    if (!verificationResult.passed) {
+                        throw Exception("Live verification failed: ${verificationResult.errors.joinToString("; ")}")
+                    }
 
-                // Verify summary preserved
-                verifySummaryPreservedForVerification(
-                    DatabaseImportSummary(
-                        transactionCount = manifestTableCounts["expenses"] ?: 0,
-                        categoryCount = manifestTableCounts["categories"] ?: 0,
-                        merchantCount = manifestTableCounts["merchant_categories"] ?: 0,
-                        pendingReviewCount = manifestTableCounts["pending_reviews"] ?: 0,
-                        budgetCount = manifestTableCounts["budgets"] ?: 0,
-                        allTableCounts = manifestTableCounts
-                    ),
-                    liveSummary,
-                    manifest.databaseVersion
-                )
-
-                // 10. P7-P1-04: Transition to ASSETS_RESTORING so a crash during asset
-                // restore does not rollback the already-verified live DB. On recovery,
-                // ASSETS_RESTORING is treated as non-destructive — staging is cleaned,
-                // journal deleted, and normal startup proceeds (assets restored
-                // best-effort on next manual restore).
-                journalEntry = restoreJournal.transitionTo(
-                    journalEntry,
-                    RestoreJournal.JournalState.ASSETS_RESTORING
-                )
-
-                // Restore receipt assets if present
-                val receiptWarnings = if (tempDir.exists()) {
-                    restoreReceiptAssets(tempDir, manifest)
-                } else {
-                    emptyList()
-                }
-
-                // 11. Cleanup
-                preRestoreFile.delete()
-                stagedDbFile.delete()
-                stagedDbWalFile.delete()
-                stagedDbShmFile.delete()
-                tempDir.deleteRecursively()
-
-                // 12. Mark complete — asset restore finished (with or without warnings)
-                restoreJournal.commitJournal(journalEntry)
-
-                // 13. Set maintenance mode to restart-required
-                restoreMaintenanceMode.exit(forceRestartRequired = true)
-
-                Timber.w("Restore completed successfully. Restart required.")
-                Result.success(
-                    DatabaseImportResult.SuccessNeedsRestart(
+                    verifySummaryPreservedForVerification(
                         DatabaseImportSummary(
-                            transactionCount = liveSummary.transactionCount,
-                            categoryCount = liveSummary.categoryCount,
-                            merchantCount = liveSummary.merchantCount,
-                            pendingReviewCount = liveSummary.pendingReviewCount,
-                            budgetCount = liveSummary.budgetCount,
-                            receiptCount = liveSummary.receiptCount,
-                            warrantyCount = liveSummary.warrantyCount,
-                            groupCount = liveSummary.groupCount,
-                            subscriptionCount = liveSummary.subscriptionCount,
-                            savingsGoalCount = liveSummary.savingsGoalCount,
-                            allTableCounts = liveSummary.allTableCounts,
-                            receiptAssetWarnings = receiptWarnings
+                            transactionCount = manifestTableCounts["expenses"] ?: 0,
+                            categoryCount = manifestTableCounts["categories"] ?: 0,
+                            merchantCount = manifestTableCounts["merchant_categories"] ?: 0,
+                            pendingReviewCount = manifestTableCounts["pending_reviews"] ?: 0,
+                            budgetCount = manifestTableCounts["budgets"] ?: 0,
+                            allTableCounts = manifestTableCounts
+                        ),
+                        liveSummary,
+                        manifest.databaseVersion
+                    )
+
+                    journalEntry = restoreJournal.transitionTo(
+                        journalEntry,
+                        RestoreJournal.JournalState.ASSETS_RESTORING
+                    )
+
+                    val receiptWarnings = if (tempDir.exists()) {
+                        restoreReceiptAssets(tempDir, manifest, freshDb)
+                    } else {
+                        emptyList()
+                    }
+
+                    preRestoreFile.delete()
+                    stagedDbFile.delete()
+                    stagedDbWalFile.delete()
+                    stagedDbShmFile.delete()
+                    tempDir.deleteRecursively()
+
+                    restoreJournal.commitJournal(journalEntry)
+                    restoreMaintenanceMode.exit(forceRestartRequired = true)
+
+                    Timber.w("Restore completed successfully. Restart required.")
+                    Result.success(
+                        DatabaseImportResult.SuccessNeedsRestart(
+                            DatabaseImportSummary(
+                                transactionCount = liveSummary.transactionCount,
+                                categoryCount = liveSummary.categoryCount,
+                                merchantCount = liveSummary.merchantCount,
+                                pendingReviewCount = liveSummary.pendingReviewCount,
+                                budgetCount = liveSummary.budgetCount,
+                                receiptCount = liveSummary.receiptCount,
+                                warrantyCount = liveSummary.warrantyCount,
+                                groupCount = liveSummary.groupCount,
+                                subscriptionCount = liveSummary.subscriptionCount,
+                                savingsGoalCount = liveSummary.savingsGoalCount,
+                                allTableCounts = liveSummary.allTableCounts,
+                                receiptAssetWarnings = receiptWarnings
+                            )
                         )
                     )
-                )
+                } finally {
+                    runCatching { freshDb.close() }
+                }
             } catch (e: Exception) {
                 // Verification failed — rollback from safety backup
                 Timber.e(e, "Live verification failed, rolling back")
@@ -914,7 +905,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      */
     private suspend fun restoreReceiptAssets(
         assetsDir: java.io.File,
-        manifest: CostbackupBundle.BackupManifest
+        manifest: CostbackupBundle.BackupManifest,
+        db: com.yourname.expensetracker.data.database.AppDatabase = database
     ): List<String> {
         val warnings = mutableListOf<String>()
         val receiptsDir = java.io.File(context.filesDir, "receipts")
@@ -932,7 +924,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             return warnings
         }
 
-        val dao = database.scannedReceiptDao()
+        val dao = db.scannedReceiptDao()
         var restoredCount = 0
 
         for (assetFile in receiptFiles) {
@@ -1058,9 +1050,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
         }
 
-        // Enter maintenance mode first — blocks all concurrent writes during the swap
-        restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
-        Timber.w("Legacy import: entered maintenance mode")
+        // Enter maintenance mode + drain workers — blocks all concurrent writes during the swap
+        enterMaintenanceAndDrain(
+            RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
+            "importDatabase",
+            failOnTimeout = true
+        )
+        Timber.w("Legacy import: entered maintenance mode, workers drained")
         try {
             // Validate source file exists and is readable
             if (!sourceFile.exists()) {
@@ -1181,19 +1177,20 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.d("Verified database staged and swapped from: ${sourceFile.absolutePath}")
 
                 journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
-                val finalSummary = liveImportVerifier(
-                    database,
-                    liveDbFile,
-                    sourceSummary.schemaVersion,
-                    verifiedStagedSummary
-                )
+                val freshDb = restoreDatabaseOpener.openFreshDatabase()
+                val finalSummary = try {
+                    liveImportVerifier(
+                        freshDb,
+                        liveDbFile,
+                        sourceSummary.schemaVersion,
+                        verifiedStagedSummary
+                    )
+                } finally {
+                    runCatching { freshDb.close() }
+                }
 
                 Timber.d("Import verified: ${finalSummary.transactionCount} transactions, ${finalSummary.categoryCount} categories")
                 importSucceeded = true
-
-                // P7-P1-01: The injected `database` val is a stale Room instance after the
-                // file swap — a full app restart (forced by P7-P1-08) is required to
-                // obtain a fresh binding. See TODO in restoreCostBackup for resolution options.
                 restoreJournal.commitJournal(journalEntry)
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
 
@@ -1402,6 +1399,27 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
     
+    /**
+     * Enters [mode] and drains active workers before a destructive DB operation.
+     * @param failOnTimeout if true, throws [WorkerDrainTimeoutException] and exits maintenance
+     *   if workers do not drain within 5 seconds.
+     */
+    private suspend fun enterMaintenanceAndDrain(
+        mode: RestoreMaintenanceMode.Mode,
+        operationName: String,
+        failOnTimeout: Boolean = true
+    ) {
+        restoreMaintenanceMode.enter(mode)
+        val drained = workerDrain.requestStopAndAwaitDrain(operationName)
+        if (!drained && failOnTimeout) {
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
+            throw com.yourname.expensetracker.data.backup.WorkerDrainTimeoutException(operationName)
+        }
+        if (!drained) {
+            Timber.w("Worker drain timed out for $operationName — proceeding with backup")
+        }
+    }
+
     private fun closeLiveDatabaseForFileSwap() {
         runCatching { database.close() }
             .onFailure { Timber.w(it, "Failed to close Room database before import") }
@@ -1908,9 +1926,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     
     override suspend fun resetDatabase(): Result<Unit> = withContext(ioDispatcher) {
         try {
-            // Enter maintenance mode — blocks all writes for the duration of the reset
-            restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESETTING_DATABASE)
-            Timber.w("Reset: entered RESETTING_DATABASE maintenance mode")
+            // Enter maintenance mode + drain workers — blocks all writes for the duration of the reset
+            enterMaintenanceAndDrain(
+                RestoreMaintenanceMode.Mode.RESETTING_DATABASE,
+                "resetDatabase",
+                failOnTimeout = true
+            )
+            Timber.w("Reset: entered RESETTING_DATABASE maintenance mode, workers drained")
 
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
 

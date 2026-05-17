@@ -1,1420 +1,871 @@
-# Pipeline 1 Debugging Report — Notification Capture → Expense → Dashboard
+# Pipeline 1 Debug Report — Notification Capture → Expense → Dashboard
 
-Target commit: `53c915f09cbc92137b5b84d5839bdbf1cd321c16`
+Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`  
+Mode: static code/debug rerun, not local device/Gradle execution.
 
-## Executive summary
+## Verdict
 
-Pipeline 1 is architecturally correct on paper, but runtime reliability is fragile.
+Pipeline 1 is **much better than the older baseline**, but I would not call it fully clean/stable yet.
 
-Expected flow:
+Current state:
 
-```text
-Android NotificationListener
-→ NotificationCaptureService
-→ NotificationFilter / PrivacyGate / RestoreMaintenanceMode
-→ RawNotification
-→ NotificationProcessingPipeline
-→ AppParserRegistry
-→ ConfidenceRouter
-→ PendingReview OR TransactionLifecycleCoordinator
-→ Expense / TransactionEvent
-→ Dashboard / Analytics / Budget
-```
+- Listener exists and has restore-mode guard.
+- Privacy gate exists before persistence.
+- Text extraction is unified for several fields.
+- Raw duplicate pre-check now happens before expensive parser/AI fallback.
+- Auto-accepted expenses go through `TransactionLifecycleCoordinator` with deferred side effects.
+- Needs-review and parser-failed fallback paths are stronger than before.
 
-Most likely reasons the app “does not read notifications”:
-
-1. **NotificationListenerService lifecycle is being treated like a normal keep-alive foreground service.**
-2. **Notifications are filtered before all useful notification fields are extracted.**
-3. **There is no persistent drop-reason telemetry, so received-but-dropped looks identical to not-received.**
-4. **Restore/privacy gates can silently block capture.**
-5. **Package lists may be stale or real bank text may live in `infoText`, `summaryText`, `textLines`, or message extras.**
-6. **The pipeline has nested transaction / side-effect timing risks after the move to lifecycle coordinators.**
-
-My highest-confidence bug is still:
-
-> `NotificationCaptureService.onNotificationPosted()` calls `NotificationFilter.shouldCapture()` using only `title`, `text`, and `bigText`, but later `processNotification()` resolves `infoText` and `summaryText`. So some real bank notifications can be rejected before the app ever sees their actual transaction text.
+Main remaining instability is **observability, extraction completeness, privacy/raw-text policy, and shutdown/durable-processing safety**.
 
 ---
 
-# 1. Architecture contract
+# Severity scale
 
-Based on `DEPENDENCY_MAP.md`, Pipeline 1 is supposed to be:
-
-```text
-NotificationCaptureService
-→ NotificationFilter
-→ PrivacyGate.check(NOTIFICATION_CAPTURE)
-→ RestoreMaintenanceMode
-→ NotificationProcessingPipeline
-→ AppParserRegistry
-→ GreekBankParser / RevolutParser / SmsParser / GoogleWalletParser / GenericParser
-→ ConfidenceRouter
-→ NotificationRepository / ReviewQueueRepository
-→ TransactionLifecycleCoordinator
-→ ExpenseDao / TransactionEventDao
-→ DashboardRepository / AnalyticsRepository / MultiCurrencyRepository
-```
-
-This is the right shape.
-
-The problem is not the high-level design. The problem is that some runtime seams are unsafe:
-
-- Android listener lifecycle
-- notification field extraction
-- silent gates
-- insufficient diagnostics
-- possible stale package mapping
-- transaction boundaries around the coordinator
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
+- **P0 / Critical:** can lose user money data, create duplicates, or violate privacy.
+- **P1 / High:** major pipeline instability or impossible-to-debug behavior.
+- **P2 / Medium:** correctness gap for common edge cases.
+- **P3 / Low:** cleanup, polish, maintainability.
 
 ---
 
-# 2. Actual code trace
+# Issue P1-01 — Processing outcomes are flattened to `Success`
 
-## 2.1 Android manifest
+## Severity
 
-The service is declared as:
+P1 / High
 
-```xml
-<service
-  android:name=".service.NotificationCaptureService"
-  android:exported="true"
-  android:foregroundServiceType="dataSync"
-  android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-  <intent-filter>
-    <action android:name="android.service.notification.NotificationListenerService" />
-  </intent-filter>
-</service>
+## Evidence
+
+`NotificationProcessingPipeline.process()` returns `ProcessingResult.Success` whenever `processInternal()` returns normally, even when the internal result was:
+
+- duplicate
+- parser failed
+- auto rejected
+- needs review
+- auto accepted
+
+There is already a TODO in `NotificationProcessingPipeline.kt`:
+
+```text
+TODO (P2-1): Return sealed ProcessingOutcome from processInternal() instead of flattening everything to Success/Error.
 ```
 
-The app also declares:
+`NotificationRepository.processAndSave()` then treats most outcomes as success and only logs rejected/error.
 
-```xml
-FOREGROUND_SERVICE
-FOREGROUND_SERVICE_DATA_SYNC
-POST_NOTIFICATIONS
-RECEIVE_BOOT_COMPLETED
-WAKE_LOCK
+## Impact
+
+The caller cannot know what happened. The debug UI cannot reliably show:
+
+- last drop reason
+- duplicate reason
+- parser failure
+- review created
+- expense created
+- auto rejected
+- DB write attempted/succeeded
+
+This directly violates the pipeline-debug checklist.
+
+## Fixing strategy
+
+Create a real outcome contract.
+
+## Implementation plan
+
+1. Add sealed outcome:
+
+```kotlin
+sealed interface NotificationPipelineOutcome {
+    data class AutoAccepted(val rawId: Long, val expenseId: Long) : NotificationPipelineOutcome
+    data class NeedsReview(val rawId: Long, val reviewId: Long) : NotificationPipelineOutcome
+    data class Duplicate(val packageName: String, val reason: String) : NotificationPipelineOutcome
+    data class ParserFailed(val rawId: Long?, val reason: String) : NotificationPipelineOutcome
+    data class AutoRejected(val rawId: Long?, val reason: String) : NotificationPipelineOutcome
+    data class Dropped(val packageName: String, val reason: DropReason) : NotificationPipelineOutcome
+    data class Error(val packageName: String, val throwable: Throwable) : NotificationPipelineOutcome
+}
 ```
 
-Observations:
+2. Make `processInternal()` return this instead of `Unit`.
 
-- Required listener permission/action exist.
-- `android:exported="true"` is unnecessary for a notification listener and should probably be `false`.
-- `foregroundServiceType="dataSync"` is part of the current keep-alive strategy, but notification listener callbacks are system-bound, not a normal periodic background service model.
-- Android 12+ restricts background foreground-service starts.
-- Android 15 adds more restrictions around BOOT_COMPLETED + foreground-service types.
+3. Update `NotificationRepository.processAndSave()` and `processAndSaveAll()` to propagate/log the real outcome.
 
-Source:  
-https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/AndroidManifest.xml  
-Android NLS docs: https://developer.android.com/reference/android/service/notification/NotificationListenerService  
-Android FGS background restrictions: https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start  
-Android 15 behavior changes: https://developer.android.com/about/versions/15/behavior-changes-15
+4. Add tests:
+
+```text
+duplicate_returns_Duplicate
+parser_failure_returns_ParserFailed
+auto_reject_returns_AutoRejected
+needs_review_returns_NeedsReview_with_reviewId
+auto_accept_returns_AutoAccepted_with_expenseId
+```
 
 ---
 
-# 3. Major findings
+# Issue P1-02 — No durable notification diagnostic/drop-reason ledger
 
-## Finding P0-1 — The listener lifecycle strategy is risky
+## Severity
 
-`NotificationCaptureService` extends `NotificationListenerService`, but it also behaves like a foreground keep-alive service:
+P1 / High
 
-- `onStartCommand()` calls `startForegroundWithNotification()`
-- returns `START_STICKY`
-- `onCreate()` schedules a repeating restart alarm
-- `BootReceiver` starts it after boot/package replacement
-- `ServiceRestartReceiver` calls `startForegroundService()` every 15 minutes
-- `onListenerDisconnected()` restarts foreground service while waiting for rebind
+## Evidence
 
-This can create misleading states:
+`NotificationCaptureService` records service start/disconnect/killed via `ServiceDiagnostics`, but most pipeline decisions are only `Timber` logs:
 
-```text
-foreground service alive
-but listener not connected
-therefore no onNotificationPosted callbacks
-```
+- restore drop
+- filter drop
+- privacy denial
+- blocked package
+- duplicate
+- parser failure
+- review created
+- expense created
+- DB error
 
-A notification listener should primarily rely on:
-
-```text
-user grants notification listener access
-→ system binds service
-→ onListenerConnected()
-→ onNotificationPosted()
-→ requestRebind() on disconnect
-```
-
-Periodic foreground-service restarts do not guarantee listener binding.
-
-## Recommendation
-
-Do not use periodic restart alarms as the reliability mechanism.
-
-Change strategy:
-
-1. Keep the service as `NotificationListenerService`.
-2. Use `onListenerConnected()` / `onListenerDisconnected()` as truth.
-3. Use `requestRebind()` on disconnect.
-4. Remove or disable repeating `ServiceRestartReceiver`.
-5. Stop `BootReceiver` from trying to start the listener as a foreground service.
-6. Add listener-health status in the app.
-
-Relevant files:
-
-- `NotificationCaptureService.kt`
-- `BootReceiver.kt`
-- `ServiceRestartReceiver.kt`
-- `AndroidManifest.xml`
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/receiver/BootReceiver.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/receiver/ServiceRestartReceiver.kt
-
----
-
-## Finding P0-2 — Filtering happens before full text extraction
-
-Current `onNotificationPosted()` extracts:
-
-```kotlin
-title = EXTRA_TITLE
-text = EXTRA_TEXT
-bigText = EXTRA_BIG_TEXT
-```
-
-Then immediately:
-
-```kotlin
-if (!NotificationFilter.shouldCapture(packageName, title, text, bigText)) return
-```
-
-But later `processNotification()` extracts:
-
-```kotlin
-subText = EXTRA_SUB_TEXT
-infoText = EXTRA_INFO_TEXT
-summaryText = EXTRA_SUMMARY_TEXT
-effectiveBigText = bigText ?: infoText ?: summaryText
-```
-
-Problem:
-
-If the bank app puts transaction text in:
-
-- `EXTRA_INFO_TEXT`
-- `EXTRA_SUMMARY_TEXT`
-- `EXTRA_SUB_TEXT`
-- `EXTRA_TEXT_LINES`
-- `EXTRA_MESSAGES`
-- custom extras
-
-then the notification can be rejected before `processNotification()` sees the actual content.
-
-This is especially likely for banking apps, SMS apps, Gmail, wallet apps, and rich notifications.
-
-## Recommendation
-
-Create one extraction function and use it before filtering, hashing, raw persistence, parser input, and debug logging.
-
-Required extracted fields:
+The checklist requires a standard enum:
 
 ```text
-title
-text
-bigText
-subText
-infoText
-summaryText
-textLines
-messages
-extras keys
-combinedTextPreview
+RECEIVED
+DROPPED_FILTER
+DROPPED_PRIVACY
+DROPPED_RESTORE_MODE
+DROPPED_DUPLICATE
+PARSER_FAILED
+REVIEW_CREATED
+EXPENSE_CREATED
+DB_ERROR
+PIPELINE_ERROR
 ```
 
-Then call:
+## Impact
+
+If the user says “my Revolut notification did not appear,” the app cannot answer where it died.
+
+## Fixing strategy
+
+Add a DB-backed or DataStore-backed pipeline diagnostics ledger.
+
+## Implementation plan
+
+1. Add entity:
 
 ```kotlin
-NotificationFilter.shouldCapture(
-  packageName = packageName,
-  title = parts.title,
-  text = parts.text,
-  bigText = parts.effectiveBigText
+@Entity(tableName = "notification_pipeline_events")
+data class NotificationPipelineEvent(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val packageName: String?,
+    val stage: String,
+    val outcome: String,
+    val dropReason: String?,
+    val rawNotificationId: Long?,
+    val reviewId: Long?,
+    val expenseId: Long?,
+    val timestamp: Long,
+    val message: String?,
+    val exceptionClass: String?,
+    val exceptionMessage: String?
 )
 ```
 
-Also pass the same `effectiveBigText` into:
-
-- content hash
-- raw notification fingerprint
-- parser
-- raw DB insert
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationFilter.kt
-
----
-
-## Finding P0-3 — Drop reasons are not persisted
-
-`ServiceDiagnostics` currently tracks mostly:
-
-- service start count
-- service killed count
-- listener disconnect count
-- last restart time
-- last kill time
-
-It does **not** persist:
-
-- listener connected time
-- last `onNotificationPosted`
-- last package seen
-- last extras keys
-- last filter decision
-- privacy decision
-- restore mode
-- parser result
-- DB insert result
-- last exception
-- last successful raw notification
-- last successful expense/review
-
-So right now:
-
-```text
-Android never delivered notification
-```
-
-and
-
-```text
-Android delivered notification, app dropped it by filter/privacy/restore/dedupe/parser
-```
-
-look almost the same.
-
-## Recommendation
-
-Add a diagnostic ring buffer/table:
+2. Add DAO:
 
 ```kotlin
-enum class NotificationCaptureStage {
-    POSTED_CALLBACK,
-    DROPPED_MAINTENANCE,
-    DROPPED_FILTER,
-    DROPPED_PRIVACY,
-    DROPPED_BLOCKED_PACKAGE,
-    DROPPED_MEMORY_DEDUPE,
-    RAW_INSERT_ATTEMPT,
-    RAW_DUPLICATE_DB,
-    PARSER_NULL,
-    PENDING_REVIEW_CREATED,
-    EXPENSE_CREATED,
-    PIPELINE_ERROR
+@Dao
+interface NotificationPipelineEventDao {
+    @Insert suspend fun insert(event: NotificationPipelineEvent)
+    @Query("SELECT * FROM notification_pipeline_events ORDER BY timestamp DESC LIMIT :limit")
+    fun recent(limit: Int): Flow<List<NotificationPipelineEvent>>
 }
 ```
 
-Record:
+3. Write events at every exit point:
+   - service received
+   - restore blocked
+   - filter blocked
+   - privacy denied
+   - blocked package
+   - duplicate
+   - parser failed
+   - review created
+   - expense created
+   - DB error
 
-```text
-timestamp
-packageName
-appLabel
-title/text/effectiveBigText preview
-extras keys
-stage
-reason
-exception message
-privacy decision
-restore mode
-listener connected yes/no
+4. Add a compact debug summary:
+
+```kotlin
+data class NotificationPipelineHealth(
+    val lastReceivedAt: Long?,
+    val lastSuccessAt: Long?,
+    val lastDropReason: String?,
+    val lastException: String?,
+    val listenerConnected: Boolean,
+    val restoreWritesAllowed: Boolean
+)
 ```
 
-Then expose this in DebugScreen.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/debug/ServiceDiagnostics.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugScreen.kt
+5. Tests:
+   - each drop path inserts exactly one event
+   - success path inserts received + final success
+   - exception path inserts `PIPELINE_ERROR`
 
 ---
 
-## Finding P1-1 — Restore maintenance mode can silently block notifications
+# Issue P1-03 — Extraction misses `textLines` and notification `messages`
 
-`NotificationCaptureService.onNotificationPosted()` checks:
+## Severity
+
+P1 / High
+
+## Evidence
+
+`NotificationTextParts.extract()` extracts:
+
+- title
+- text
+- bigText
+- subText
+- infoText
+- summaryText
+
+But the checklist also requires:
+
+- `textLines`
+- `messages`
+
+Many bank/SMS/email notifications place transaction details in `Notification.EXTRA_TEXT_LINES` or messaging-style extras.
+
+## Impact
+
+The filter/parser can drop valid transaction notifications because the amount/merchant is not in `title`, `text`, or `effectiveBigText`.
+
+## Fixing strategy
+
+Replace “single effective bigText” with a full normalized text payload.
+
+## Implementation plan
+
+1. Extend model:
 
 ```kotlin
-if (!restoreMaintenanceMode.isWritesAllowed()) return
+internal data class NotificationTextParts(
+    val title: String?,
+    val text: String?,
+    val bigText: String?,
+    val subText: String?,
+    val infoText: String?,
+    val summaryText: String?,
+    val textLines: List<String>,
+    val messages: List<String>,
+    val combinedBody: String
+)
 ```
 
-`RestoreMaintenanceMode.isWritesAllowed()` allows only:
+2. Extract:
 
-```text
-NORMAL
-BACKUP_EXPORTING
+```kotlin
+Notification.EXTRA_TEXT_LINES
+Notification.EXTRA_MESSAGES
+Notification.EXTRA_TITLE_BIG
 ```
 
-All restore states block writes.
+3. Build `combinedBody` from all unique non-blank values.
 
-This is correct architecturally, but it is currently silent from the user's perspective.
+4. Pass `combinedBody` to:
+   - `NotificationFilter.shouldCapture`
+   - `computeNotificationContentHash`
+   - `RawNotification.bigText` or new `combinedText` field
+   - parser registry
 
-`AppStartupCoordinator` resets non-normal modes on startup, but if debugging notification capture, you still need to display:
-
-```text
-current restore mode
-writes allowed yes/no
-last restore transition
-```
-
-## Recommendation
-
-Debug screen should show:
-
-```text
-Restore mode: NORMAL / RESTORE_STAGING / RESTORE_COMPLETE_RESTART_REQUIRED
-Notification capture blocked by restore: yes/no
-```
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/backup/RestoreMaintenanceMode.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/startup/AppStartupCoordinator.kt
+5. Add tests:
+   - amount only in `EXTRA_TEXT_LINES` is captured
+   - amount only in `EXTRA_MESSAGES` is captured
+   - duplicate hash changes when textLines change
+   - no duplicate text inflation
 
 ---
 
-## Finding P1-2 — Privacy gate can silently block notification capture
+# Issue P1-04 — `effectiveBigText` is lossy
 
-`NotificationPrivacyGate` allows notification capture by default, because `PrivacySettingsRepositoryImpl` defaults:
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`effectiveBigText` chooses:
 
 ```kotlin
-notificationCaptureEnabled = true
+bigText ?: infoText ?: summaryText
 ```
 
-But if the setting was toggled off or migrated incorrectly, every notification is dropped.
+If `bigText` exists but the amount is in `summaryText`, the summary is ignored.
 
-The gate logs audit decisions, which is good, but the notification service does not persist a capture-stage drop reason.
+## Impact
 
-## Recommendation
+False negatives in filter/parser and incorrect fingerprinting.
 
-Show in DebugScreen:
+## Fixing strategy
+
+Use `combinedBody`, not a single fallback field.
+
+## Implementation plan
+
+1. Keep `bigText` as raw original.
+2. Add `combinedBody`.
+3. Use combined text for capture/filter/parser.
+4. Keep raw columns unchanged if migration cost is high.
+5. Add regression test:
 
 ```text
-Notification capture privacy setting: enabled/disabled
-Last privacy decision: allowed/denied
-Last privacy denial reason
+bigText_present_but_amount_in_summaryText_is_captured
 ```
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/NotificationPrivacyGate.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacySettingsRepositoryImpl.kt
 
 ---
 
-## Finding P1-3 — In-memory dedupe uses incomplete content
+# Issue P1-05 — Privacy gate runs after text extraction/filter
 
-The service computes:
+## Severity
 
-```kotlin
-contentHash = computeNotificationContentHash(title, text, bigText)
-dedupeKey = "${sbn.key}:$contentHash"
-```
+P1 / High for privacy correctness
 
-But this ignores the fallback fields.
+## Evidence
 
-If a notification updates its amount/merchant in `infoText`, `summaryText`, or `textLines`, but `title/text/bigText` stay the same, the service can treat the new content as duplicate within the 5-second window.
+`onNotificationPosted()` does:
 
-## Recommendation
+1. restore guard
+2. extract notification text
+3. filter
+4. dedupe
+5. launch coroutine
+6. check `PrivacyGate`
 
-Use the same extracted/effective content for:
+The KDoc says the gate protects persistence, which is true, but the debug checklist expects privacy gate decision as a first-class gate.
 
-```text
-filter
-memory dedupe
-raw dedupe fingerprint
-parser
-debug preview
-```
+## Impact
 
-This removes an entire class of inconsistencies.
+If notification capture is disabled, the app still reads notification contents in memory and applies heuristics. That may be acceptable technically, but it is not the strictest privacy contract.
 
----
+## Fixing strategy
 
-## Finding P1-4 — Package list may be stale
+Check privacy before reading extras whenever possible.
 
-`NotificationFilter.FINANCE_PACKAGES` includes:
+## Implementation plan
 
-```text
-com.revolut.revolut
-com.google.android.apps.walletnfcrel
-com.google.android.apps.nbu.paisa.user
-gr.nbg.mobilebanking
-mbanking.NBG
-com.eurobank.mobile
-gr.alpha.mobile
-com.winbank.mobile
-```
+1. In `onNotificationPosted()`:
+   - get only `packageName`
+   - check restore
+   - launch coroutine or use fast cached privacy state
+   - if denied, record diagnostic and return
+   - only then extract text
 
-If a Greek bank changed package name, the notification falls to heuristic mode.
+2. Avoid expensive suspend call on main listener callback by maintaining a cached `StateFlow<PrivacyDecision>` in a lightweight `NotificationCaptureGate`.
 
-Heuristic mode requires:
-
-```text
-amount/currency signal
-AND financial keyword
-```
-
-That can drop valid short bank notifications such as:
-
-```text
-POS 12,40 EUR SKLAVENITIS
--12,40€ ****1234 ΣΚΛΑΒΕΝΙΤΗΣ
-```
-
-because they may lack the keyword list.
-
-## Recommendation
-
-Add a package discovery screen:
-
-```text
-last 50 notification packages seen
-app label
-filter passed yes/no
-drop reason
-extras keys
-sample preview
-```
-
-Then update the finance package list from real device logs.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationFilter.kt
+3. Add tests:
+   - privacy denied does not call extractor
+   - privacy denied records `DROPPED_PRIVACY`
+   - privacy allowed proceeds
 
 ---
 
-## Finding P1-5 — Debug simulation uses a misleading package
+# Issue P1-06 — Restore/write guard exists in service but not in repository pipeline
 
-`DebugViewModel.simulateDepositNotification()` uses examples like:
+## Severity
 
-```kotlin
-Triple("com.revolut", "Revolut", "deposit €500.00 from EMPLOYER")
-```
+P1 / High
 
-But the real Revolut package in `NotificationFilter` and `RevolutParser` is:
+## Evidence
 
-```text
-com.revolut.revolut
-```
+`NotificationCaptureService` checks `restoreMaintenanceMode.isWritesAllowed()` in:
 
-So a debug simulation can pass/fail differently from real Revolut behavior.
+- `onNotificationPosted`
+- `processNotificationBypassDedupe`
 
-## Recommendation
+But `NotificationProcessingPipeline.process()` itself does not visibly own a restore/write guard.
 
-Fix all debug seeded notifications to use real package IDs:
+## Impact
 
-```text
-com.revolut.revolut
-gr.nbg.mobilebanking
-com.eurobank.mobile
-gr.alpha.mobile
-com.winbank.mobile
-```
+Any non-service caller of `NotificationRepository.processAndSave()` or `processAndSaveAll()` can still write during restore unless another global DB write barrier catches it.
 
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt
+## Fixing strategy
 
----
+Guard writes at the lowest shared write boundary, not only in the listener.
 
-## Finding P1-6 — Auto-accept path has nested transaction / post-commit side-effect risk
+## Implementation plan
 
-`NotificationProcessingPipeline.processInternal()` opens:
-
-```kotlin
-database.withTransaction { ... }
-```
-
-Inside that transaction, `handleAutoAcceptInTransaction()` calls:
-
-```kotlin
-coordinator.createExpense(request)
-```
-
-But `TransactionLifecycleCoordinator.createExpense()` also opens:
-
-```kotlin
-database.withTransaction { insert expense + transaction event }
-```
-
-Then the coordinator dispatches side effects after its inner transaction:
-
-```kotlin
-sideEffectDispatcher.dispatchOnCreated(...)
-recurringLifecycleCoordinator.linkExpenseToOccurrence(...)
-```
-
-Because the coordinator is called from inside the outer notification transaction, its “post-commit” side effects may actually run before the outer notification transaction has fully committed.
-
-This probably does not explain “not reading notifications,” but it can explain unstable downstream behavior:
-
-- dashboard/budget side effects see incomplete raw notification state,
-- side effects happen while outer transaction is still active,
-- nested transaction semantics become hard to reason about,
-- failures can be confusing.
-
-## Recommendation
-
-Refactor so the notification pipeline does not call side-effecting coordinator methods inside an existing DB transaction.
-
-Options:
-
-### Option A — coordinator supports DB-only creation + deferred side effects
-
-```text
-outer transaction:
-  insert raw notification
-  create expense row
-  insert transaction event
-  update source stats
-
-after outer commit:
-  dispatch side effects
-  recurring link
-  recommendations
-```
-
-### Option B — coordinator owns the transaction, pipeline does not wrap around it
-
-Harder because raw notification + source stats should be consistent.
-
-Best long-term design:
-
-```text
-TransactionLifecycleCoordinator.createExpenseAtomic(...)
-returns Created + PostCommitActions
-pipeline commits
-pipeline executes post-commit actions
-```
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+1. Inject `RestoreMaintenanceMode` or `WriteBarrier` into `NotificationProcessingPipeline`.
+2. Check before any DB transaction.
+3. Return `NotificationPipelineOutcome.Dropped(DROPPED_RESTORE_MODE)`.
+4. Add tests:
+   - direct repository call during restore creates no raw notification
+   - batch processing during restore creates no rows
+   - diagnostic event is written only if diagnostics are allowed during restore
 
 ---
 
-## Finding P2-1 — `NotificationProcessingPipeline.process()` always reports Success unless exception
+# Issue P1-07 — Service shutdown can silently lose accepted notifications
 
-`NotificationRepository.processAndSave()` receives:
+## Severity
 
-```kotlin
-ProcessingResult.Success
-ProcessingResult.Rejected
-ProcessingResult.Error
-```
+P1 / High
 
-But `NotificationProcessingPipeline.process()` returns `Success` after `processInternal()` unless an exception occurs.
+## Evidence
 
-Inside `processInternal()`, duplicates, auto-rejects, parser failures, pending-review creation, and auto-accept outcomes are mostly internal.
+`onNotificationPosted()` puts the dedupe key in memory before async processing.  
+`onDestroy()` then sets `isShuttingDown = true` and cancels `serviceJob`.
 
-So repository-level logging cannot clearly say:
+So this sequence can happen:
+
+1. notification received
+2. dedupe key stored
+3. coroutine launched
+4. service destroyed
+5. job cancelled before DB write
+6. notification not persisted
+7. short-term duplicate cache may suppress retry
+
+## Impact
+
+A real bank notification can be lost.
+
+## Fixing strategy
+
+Make the first durable write happen before the pipeline can be cancelled, or remove dedupe entry when processing is cancelled.
+
+## Implementation plan
+
+Preferred:
+
+1. Split pipeline into:
+   - `captureRawNotification()` durable insert
+   - async processing of raw rows
+2. On notification:
+   - check gates
+   - insert raw row quickly
+   - enqueue processing work by raw ID
+3. If service dies after raw insert, a worker can resume unprocessed raw notifications.
+
+Alternative:
+
+1. Wrap coroutine with `try/finally`.
+2. If cancelled before `repository.processAndSave()` completes, remove dedupe key.
+3. Record `PIPELINE_CANCELLED`.
+
+Tests:
+- cancelling service job before DB insert does not suppress retry
+- raw notification survives process death
+- worker resumes unprocessed raw notification
+
+---
+
+# Issue P2-08 — Manual refresh bypasses in-memory dedupe
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`refreshActiveNotifications()` calls `processNotificationBypassDedupe()` for each active notification.
+
+DB-level duplicate checks probably catch exact duplicates, but this still performs work and can hit parser/AI/review paths unnecessarily.
+
+## Impact
+
+Manual refresh can produce extra load and noisy logs. If timestamps/content differ slightly, it may create extra pending reviews.
+
+## Fixing strategy
+
+Do not bypass all dedupe. Bypass only the short 5-second callback suppression, not durable DB duplicate detection.
+
+## Implementation plan
+
+1. Rename method to `processActiveNotificationRefresh`.
+2. Use a stable durable fingerprint check before parser.
+3. Record outcome as `DROPPED_DUPLICATE` when already known.
+4. Add test:
+   - refresh same active notification twice creates one raw row and one final outcome.
+
+---
+
+# Issue P2-09 — Finance packages bypass all filter/deny heuristics
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`NotificationFilter.shouldCapture()` returns true immediately for packages in `FINANCE_PACKAGES`.
+
+KDoc says bank 2FA/promo filtering is handled downstream.
+
+## Impact
+
+Bank 2FA, promo, security, and balance-only alerts may be persisted as raw notifications. This increases privacy exposure and debug noise.
+
+## Fixing strategy
+
+Keep finance packages high-trust, but add a small “hard deny unless transaction-like” layer for clearly non-transactional content.
+
+## Implementation plan
+
+1. Add finance-safe deny categories:
+   - password reset
+   - login attempt
+   - verification code
+   - security code
+   - promo-only
+2. For finance packages:
+   - if content has hard-deny and no transaction amount/keyword, drop
+   - if content has amount + transaction keyword, keep
+3. Add tests:
+   - bank card purchase captured
+   - bank 2FA dropped
+   - bank promo without transaction amount dropped
+   - bank transfer captured
+
+---
+
+# Issue P2-10 — Currency/amount filter is too narrow for supported currencies
+
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`NotificationFilter` currency regex supports symbols and only:
 
 ```text
-parser failed
-duplicate skipped
-pending review created
-auto accepted
-auto rejected
+EUR, USD, GBP, CHF
 ```
 
-## Recommendation
+The README says the app supports many currencies.
 
-Change `processInternal()` to return a detailed outcome:
+## Impact
+
+Non-finance-package transaction alerts in other currencies may be dropped.
+
+## Fixing strategy
+
+Use the app’s `CurrencyCode`/supported-currency list or a shared money parser instead of local regex.
+
+## Implementation plan
+
+1. Create shared `NotificationAmountSignalDetector`.
+2. Support all configured currency codes.
+3. Include common symbols and ISO codes.
+4. Add tests for:
+   - PLN
+   - RON
+   - TRY
+   - CAD
+   - AUD
+   - no-currency decimal amount with financial keyword
+
+---
+
+# Issue P2-11 — Raw text storage policy is not granular
+
+## Severity
+
+P1/P2 depending on privacy requirements
+
+## Evidence
+
+If privacy gate allows notification capture, the app stores:
+
+- title
+- text
+- bigText/effectiveBigText
+- subText
+- extrasJson
+
+`buildExtrasJson()` redacts some sensitive keys, but generic Android keys can still contain raw body text.
+
+## Impact
+
+A user may want notification-derived expenses but not raw notification body retention.
+
+## Fixing strategy
+
+Separate “capture/process” permission from “store raw text” permission.
+
+## Implementation plan
+
+1. Add policy:
 
 ```kotlin
-sealed interface ProcessingOutcome {
-  data class AutoAccepted(val rawId: Long, val expenseId: Long)
-  data class NeedsReview(val rawId: Long, val reviewId: Long?)
-  data class AutoRejected(val rawId: Long, val reason: String)
-  data class Duplicate(val rawId: Long?)
-  data class ParserFailed(val rawId: Long?)
+enum class RawNotificationStorageMode {
+    STORE_RAW,
+    STORE_REDACTED,
+    STORE_METADATA_ONLY
 }
 ```
 
-Then emit the same outcome into capture diagnostics.
+2. Apply sanitizer before building `RawNotification`.
+3. If metadata-only:
+   - keep package name, timestamp, fingerprint, parser outcome
+   - do not store body text
+4. Add tests:
+   - raw disabled stores no title/text/bigText/extras body
+   - parser still receives text in memory when capture allowed
+   - debug UI shows redacted state
 
 ---
 
-## Finding P2-2 — `AppParserRegistry` AI fallback is package-gated
+# Issue P2-12 — AI/provider fallback may occur inside notification pipeline without explicit per-call audit
 
-`AppParserRegistry.parseWithAiFallback()` tries deterministic parsers first.
+## Severity
 
-Then AI fallback only runs if:
+P2 / Medium
 
-```text
-known finance package
-OR communication package with financial keyword
-```
+## Evidence
 
-All other packages skip AI fallback.
-
-That is reasonable for privacy/compute, but if a real bank package is missing from `FINANCE_PACKAGES`, the app may never try its strongest fallback.
-
-## Recommendation
-
-During debug mode only, allow user to mark a recently seen package as “financial candidate” from the DebugScreen. That package should then bypass the heuristic until the static package list is updated.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/parser/AppParserRegistry.kt
-
----
-
-## Finding P2-3 — Dependency map has one suspicious entry
-
-`DEPENDENCY_MAP.md` lists:
-
-```text
-NotificationFilter [domain/privacy/NotificationPrivacyGate.kt]
-```
-
-But actual `NotificationFilter` is:
-
-```text
-service/NotificationFilter.kt
-```
-
-Small docs bug, but for AI agents this matters.
-
-## Recommendation
-
-Fix the generated dependency map source so `NotificationFilter` points to the real file.
-
----
-
-# 4. Device debugging procedure
-
-Use this exact sequence.
-
-## Step 1 — confirm listener permission
-
-```bash
-adb shell settings get secure enabled_notification_listeners
-```
-
-Expected: your app component appears.
-
-If not:
-
-```text
-Settings → Notification access
-→ disable ExpenseTracker
-→ enable ExpenseTracker
-→ force stop
-→ open app
-```
-
-## Step 2 — run logcat
-
-```bash
-adb logcat -s NotificationCapture AndroidRuntime ActivityManager ServiceDiagnostics
-```
-
-Trigger one real bank notification.
-
-You need to see whether these appear:
-
-```text
-onCreate
-onListenerConnected
-onNotificationPosted
-DROPPED_FILTER
-DROPPED_PRIVACY
-DROPPED_MAINTENANCE
-RAW_INSERT
-PARSER_NULL
-EXPENSE_CREATED
-```
-
-Right now not all these stages exist. Add them.
-
-## Step 3 — check app process/service state
-
-```bash
-adb shell ps -A | grep expensetracker
-adb shell dumpsys activity services | grep -i expensetracker
-adb shell dumpsys notification | grep -i expensetracker
-```
-
-## Step 4 — check battery/background state
-
-```bash
-adb shell am get-standby-bucket com.yourname.expensetracker
-adb shell cmd appops get com.yourname.expensetracker RUN_ANY_IN_BACKGROUND
-```
-
-Also test with battery unrestricted.
-
-## Step 5 — test matrix
-
-| Situation | Expected |
-|---|---|
-| app open, listener enabled | capture works |
-| app in background | capture works |
-| screen off 30 min | capture works |
-| after `adb shell am kill ...` | listener should reconnect |
-| after force-stop | likely does not capture until app opened |
-| after reboot | listener permission should survive, system should bind |
-| battery restricted | may be inconsistent |
-| battery unrestricted | should be stable |
-
----
-
-# 5. Immediate fix plan
-
-## PR 1 — Observability only
-
-Add persistent capture diagnostics.
-
-Do not change behavior yet.
-
-Record:
-
-- service created
-- listener connected
-- listener disconnected
-- notification posted
-- package name
-- extras keys
-- extracted fields preview
-- filter decision
-- privacy decision
-- restore mode
-- raw insert result
-- parser result
-- review/expense result
-- exception
-
-Expose in DebugScreen.
-
-Acceptance:
-
-```text
-When a notification arrives, DebugScreen shows whether it was seen and why it was dropped/processed.
-```
-
----
-
-## PR 2 — Extraction/filter fix
-
-Add:
+Pipeline calls:
 
 ```kotlin
-NotificationTextExtractor.extract(extras)
+parserRegistry.parseWithAiFallback(...)
 ```
 
-Fields:
+Auto-accept audit exists, but parser AI fallback itself should be auditable if cloud/local AI is used.
 
-```text
-title
-text
-bigText
-subText
-infoText
-summaryText
-textLines
-messages
-effectiveBigText
-combinedPreview
-extrasKeys
+## Impact
+
+Hard to debug whether a parse came from deterministic parser or AI fallback. Privacy review is harder.
+
+## Fixing strategy
+
+Return parser provenance.
+
+## Implementation plan
+
+1. Change parser result to include:
+
+```kotlin
+data class ParseOutcome(
+    val parsed: ParsedTransaction?,
+    val parserName: String?,
+    val usedAiFallback: Boolean,
+    val aiProvider: String?,
+    val confidence: Float,
+    val failureReason: String?
+)
 ```
 
-Use it for:
+2. Store provenance in pending review / transaction event metadata.
+3. Add diagnostics:
+   - `PARSER_SELECTED`
+   - `AI_FALLBACK_USED`
+   - `PARSER_FAILED`
 
-- filter
-- contentHash
-- RawNotificationFingerprint
-- RawNotification.bigText
-- parser input
-- debug trace
+---
 
-Acceptance:
+# Issue P3-13 — `NotificationCaptureService` contains too many responsibilities
+
+## Severity
+
+P3 / Low/Medium
+
+## Evidence
+
+The service currently handles:
+
+- Android listener lifecycle
+- foreground service behavior
+- restart alarm
+- extraction
+- filtering
+- dedupe
+- privacy gate
+- restore gate
+- raw entity creation
+- extras JSON redaction
+
+## Impact
+
+Hard to test and easy to create mixed behavior.
+
+## Fixing strategy
+
+Extract pure components.
+
+## Implementation plan
+
+Create:
 
 ```text
-A notification with amount only in infoText/summaryText/textLines is captured.
+NotificationExtractor
+NotificationCaptureGate
+NotificationCaptureDeduper
+NotificationRawMapper
+NotificationExtrasSanitizer
+NotificationCaptureDiagnostics
+```
+
+Keep `NotificationCaptureService` as a thin Android adapter.
+
+---
+
+# Positive findings
+
+These should be preserved:
+
+1. `NotificationTextParts` creates a single extraction object used consistently.
+2. Restore mode is checked before service-level processing.
+3. Privacy gate exists before persistence.
+4. `RawNotificationFingerprint` is computed consistently.
+5. Pipeline performs DB duplicate pre-check before expensive parser/AI fallback.
+6. Parser-failed transaction-signal fallback can create pending review instead of silently dropping.
+7. Auto-accept uses `TransactionLifecycleCoordinator.createExpense(..., SideEffectMode.DEFER)`.
+8. Auto-accept writes `AI_AUTO_ACCEPT` transaction event.
+9. Post-commit side effects are separated from DB transaction.
+
+---
+
+# Recommended fixing order
+
+## PR 1 — Diagnostics/outcome contract
+
+Files:
+- `NotificationProcessingPipeline.kt`
+- `NotificationRepository.kt`
+- new `NotificationPipelineEvent.kt`
+- new `NotificationPipelineEventDao.kt`
+- `AppDatabase.kt`
+
+Goal:
+- no more flattened success
+- every exit path has a durable outcome
+
+Tests:
+- all major outcome paths
+
+---
+
+## PR 2 — Full extraction model
+
+Files:
+- `NotificationCaptureService.kt`
+- new `NotificationExtractor.kt`
+- `NotificationFilter.kt`
+- parser tests
+
+Goal:
+- support `textLines`, `messages`, `combinedBody`
+
+Tests:
+- amount in textLines/messages captured
+- amount in summary captured even when bigText exists
+
+---
+
+## PR 3 — Capture gate hardening
+
+Files:
+- `NotificationCaptureService.kt`
+- new `NotificationCaptureGate.kt`
+- `PrivacyGate`
+- `RestoreMaintenanceMode`
+
+Goal:
+- privacy/restore checked before text extraction and again before DB writes
+
+Tests:
+- denied privacy does not extract
+- restore blocks repository/direct batch writes
+
+---
+
+## PR 4 — Durable raw queue / shutdown safety
+
+Files:
+- `NotificationCaptureService.kt`
+- `NotificationProcessingPipeline.kt`
+- maybe new worker: `RawNotificationProcessingWorker`
+
+Goal:
+- notification cannot be lost after listener callback accepts it
+
+Tests:
+- cancellation does not lose raw row
+- unprocessed raw notification resumes
+
+---
+
+## PR 5 — Raw text storage policy
+
+Files:
+- privacy settings
+- `RawNotification`
+- `NotificationRawMapper`
+- `buildExtrasJson` replacement
+
+Goal:
+- user can capture notifications without retaining full raw text
+
+Tests:
+- `STORE_REDACTED`
+- `STORE_METADATA_ONLY`
+- debug UI displays policy
+
+---
+
+# AI implementation checklist
+
+Before coding:
+
+```text
+./gradlew test
+grep -R "processAndSave(" app/src/main/java
+grep -R "RawNotification(" app/src/main/java
+grep -R "NotificationFilter.shouldCapture" app/src
+grep -R "parseWithAiFallback" app/src/main/java
+```
+
+Required golden scenarios:
+
+```text
+1. Revolut card purchase → AUTO_ACCEPT or NEEDS_REVIEW → dashboard changes
+2. Greek bank notification → parser/review path works
+3. Gmail receipt/bank alert → heuristic capture works
+4. Notification amount only in textLines → captured
+5. Notification amount only in messages → captured
+6. Privacy denied → no extraction, no raw row, diagnostic recorded
+7. Restore mode active → no raw/review/expense writes
+8. Duplicate notification → duplicate outcome, no parser/AI call
+9. Parser failed but transaction signal exists → PendingReview
+10. Service cancellation after receive → no silent loss
+```
+
+Definition of done:
+
+```text
+- Every pipeline exit returns NotificationPipelineOutcome.
+- Every drop path writes diagnostic event.
+- No notification text is extracted when capture privacy is denied.
+- Repository/pipeline write path has restore/write barrier.
+- textLines/messages are included in filter/parser/fingerprint.
+- Auto-accepted notification expenses still go through TransactionLifecycleCoordinator.
+- Post-commit side effects remain outside final DB transaction.
 ```
 
 ---
 
-## PR 3 — Remove risky restart model
-
-Disable or remove:
-
-- repeating restart alarm
-- `ServiceRestartReceiver` periodic keep-alive
-- boot receiver foreground-service start
-
-Keep:
-
-- notification listener permission flow
-- `requestRebind()` on disconnect
-- foreground notification only if absolutely needed and only when safe
-
-Acceptance:
-
-```text
-Debug status distinguishes:
-- listener permission granted
-- listener connected
-- foreground service running
-```
-
-Do not show “monitoring active” just because foreground service exists.
-
----
-
-## PR 4 — Package discovery
-
-Add DebugScreen section:
-
-```text
-Recent notification packages:
-- packageName
-- appLabel
-- filter pass/fail
-- drop reason
-- last seen
-- preview
-- button: mark as financial candidate
-```
-
-Acceptance:
-
-```text
-Unknown bank package can be discovered from real device logs.
-```
-
----
-
-## PR 5 — Pipeline outcome return type
-
-Make `NotificationProcessingPipeline` return detailed outcomes.
-
-Acceptance:
-
-```text
-Debug trace can say:
-- raw saved
-- parser failed
-- review created
-- auto accepted
-- duplicate skipped
-- auto rejected
-```
-
----
-
-## PR 6 — Transaction side-effect boundary
-
-Refactor notification auto-accept so coordinator side effects do not run before the outer notification transaction commits.
-
-Acceptance:
-
-```text
-notification raw insert + expense insert + transaction event + source stats are atomic;
-budget/anomaly/recurring/recommendation side effects run after commit.
-```
-
----
-
-# 6. Tests to add
-
-## Unit tests
-
-### `NotificationTextExtractorTest`
-
-Cases:
-
-- amount in `EXTRA_TEXT`
-- amount in `EXTRA_BIG_TEXT`
-- amount in `EXTRA_INFO_TEXT`
-- amount in `EXTRA_SUMMARY_TEXT`
-- amount in `EXTRA_SUB_TEXT`
-- amount in `EXTRA_TEXT_LINES`
-- blank `bigText` falls back to info/summary/textLines
-- combined preview redacts or truncates safely
-
-### `NotificationFilterFallbackFieldsTest`
-
-Cases:
-
-```text
-unknown package + amount/keyword in infoText → captured
-communication package + financial text in textLines → captured
-ignored package → rejected
-known finance package → captured
-```
-
-### `NotificationCaptureDedupeTest`
-
-Cases:
-
-```text
-same sbn.key but changed fallback text → not deduped incorrectly
-same exact effective text within 5s → deduped
-```
-
-### `NotificationCaptureGateTest`
-
-Cases:
-
-```text
-privacy denied → trace DROPPED_PRIVACY
-restore mode active → trace DROPPED_MAINTENANCE
-blocked package → trace DROPPED_BLOCKED_PACKAGE
-```
-
----
-
-## DB-backed pipeline tests
-
-### `NotificationToRawDbContractTest`
-
-```text
-feed fake StatusBarNotification or service adapter
-→ raw_notifications row inserted
-→ extras/effectiveBigText saved
-→ source stats updated
-```
-
-### `NotificationReviewDashboardScenarioTest`
-
-```text
-seed categories + budget
-feed Greek bank notification
-→ parser result
-→ review or auto-accept
-→ TransactionLifecycleCoordinator
-→ Expense row
-→ TransactionEvent.CREATED
-→ dashboard monthly total
-→ budget remaining
-→ analytics category total
-```
-
-### `NotificationFilterPackageDiscoveryScenarioTest`
-
-```text
-unknown bank package
-→ trace visible
-→ user marks financial candidate
-→ same format captured next time
-```
-
----
-
-# 7. Most likely root cause ranking
-
-## 1. Early filter before full extraction
-
-Very likely.
-
-Why:
-
-- code proves filter sees only title/text/bigText,
-- later code proves additional fallback fields exist,
-- real apps often use rich extras.
-
-## 2. Listener permission stale / service disconnected
-
-Very likely.
-
-Why:
-
-- user reports inconsistency,
-- app uses risky foreground-service restart strategy,
-- Android listener binding and foreground service running are different states.
-
-## 3. Background FGS start restrictions
-
-Likely.
-
-Why:
-
-- BootReceiver and ServiceRestartReceiver call `startForegroundService()` from background.
-- Android 12+ restricts this.
-- Android 15 adds more restrictions.
-
-## 4. Silent restore/privacy gate
-
-Possible.
-
-Why:
-
-- both can drop notifications before persistence.
-- no visible drop reason currently.
-
-## 5. Package list stale
-
-Possible.
-
-Why:
-
-- if real bank package differs, heuristic may reject.
-- current system lacks package discovery.
-
-## 6. Parser failure
-
-Possible but less likely for “not read at all.”
-
-Why:
-
-- if raw notifications are visible but no expense/review appears, parser/routing is likely.
-- if no raw notifications appear, issue is before parser.
-
----
-
-# 8. What I would check first on your device
-
-1. Re-toggle notification listener access.
-2. Open DebugScreen.
-3. Trigger real bank notification.
-4. Check whether raw notification count increases.
-5. If not, check new diagnostics:
-   - listener connected?
-   - last notification callback?
-   - drop reason?
-6. If callback exists but no raw row:
-   - filter/privacy/restore/package blocked issue.
-7. If raw row exists but no review/expense:
-   - parser/confidence/router issue.
-8. If expense exists but dashboard wrong:
-   - dashboard/analytics/currency flow issue.
-
----
-
-# 9. Final recommendation
-
-For Pipeline 1, do not start by rewriting parsers.
-
-Start with:
-
-```text
-diagnostics → extraction fix → listener lifecycle cleanup → package discovery → scenario test
-```
-
-That gives you proof.
-
-The key goal is to make the app answer:
-
-```text
-Did Android deliver the notification?
-Did the app see it?
-If dropped, exactly why?
-If processed, what row/review/expense did it create?
-Did dashboard observe it?
-```
-
-Until the app can answer those questions, notification bugs will feel random.
-
----
-
-# Sources
-
-- Dependency map  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
-
-- Architecture guide  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/ARCHITECTURE.md
-
-- Android manifest  
-  https://github.com/panospao7/Cost-agregator/blob/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/AndroidManifest.xml
+# Source files inspected
 
 - `NotificationCaptureService.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt
+  https://github.com/panospao7/Cost-agregator/blob/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt
 
 - `NotificationFilter.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationFilter.kt
-
-- `BootReceiver.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/receiver/BootReceiver.kt
-
-- `ServiceRestartReceiver.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/receiver/ServiceRestartReceiver.kt
-
-- `NotificationRepository.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  https://github.com/panospao7/Cost-agregator/blob/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/service/NotificationFilter.kt
 
 - `NotificationProcessingPipeline.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  https://github.com/panospao7/Cost-agregator/blob/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+
+- `NotificationRepository.kt`  
+  https://github.com/panospao7/Cost-agregator/blob/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
 
 - `ReviewQueueRepository.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
-
-- `AppParserRegistry.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/parser/AppParserRegistry.kt
-
-- `GreekBankParser.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/parser/parsers/GreekBankParser.kt
-
-- `RevolutParser.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/parser/parsers/RevolutParser.kt
-
-- `GenericTransactionParser.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/parser/GenericTransactionParser.kt
-
-- `ConfidenceRouter.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt
-
-- `TransactionLifecycleCoordinator.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-
-- `RawNotification.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/RawNotification.kt
-
-- `RawNotificationDao.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/RawNotificationDao.kt
-
-- `RawNotificationFingerprint.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/notification/RawNotificationFingerprint.kt
-
-- `RestoreMaintenanceMode.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/backup/RestoreMaintenanceMode.kt
-
-- `AppStartupCoordinator.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/startup/AppStartupCoordinator.kt
-
-- `NotificationPrivacyGate.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/NotificationPrivacyGate.kt
-
-- `PrivacySettingsRepositoryImpl.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacySettingsRepositoryImpl.kt
-
-- `ServiceDiagnostics.kt`  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/debug/ServiceDiagnostics.kt
-
-- Android `NotificationListenerService` docs  
-  https://developer.android.com/reference/android/service/notification/NotificationListenerService
-
-- Android foreground-service background-start restrictions  
-  https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start
-
-- Android notification runtime permission docs  
-  https://developer.android.com/develop/ui/compose/notifications/notification-permission
-
-- Android 15 behavior changes  
-  https://developer.android.com/about/versions/15/behavior-changes-15
-
----
-
-# 10. Verification & Fix Log (2026-05-06)
-
-## Verification methodology
-
-All findings were cross-referenced against the actual codebase by reading every Pipeline 1 source file and its dependencies, tracing the full notification flow from `onNotificationPosted()` through `TransactionLifecycleCoordinator.createExpense()`.
-
-## Finding verification status
-
-| Finding | Verified | Status after fix |
-|---------|----------|-----------------|
-| P0-1: Listener lifecycle risky | ✅ Confirmed | Not fixed — needs architectural discussion (PR 3 in fix plan) |
-| P0-2: Filtering before full extraction | ✅ Confirmed | **FIXED** — `NotificationTextParts.extract()` does single-pass extraction; `effectiveBigText` passed to filter, hash, fingerprint, entity |
-| P0-3: Drop reasons not persisted | ✅ Confirmed | Not fixed — needs new diagnostic table (PR 1 in fix plan) |
-| P1-1: Restore mode silent block | ✅ Confirmed | Not fixed — UI observability improvement (PR 1) |
-| P1-2: Privacy gate silent block | ✅ Confirmed | Not fixed — UI observability improvement (PR 1) |
-| P1-3: In-memory dedupe incomplete | ✅ Confirmed | **FIXED** — `computeNotificationContentHash()` now uses `effectiveBigText` via unified extraction |
-| P1-4: Package list stale | ✅ Confirmed as maintenance concern | Not fixed — needs runtime package discovery (PR 4) |
-| P1-5: Debug simulation wrong package | Not verified in this pass | Deferred |
-| P1-6: Nested transaction side-effects | ✅ Confirmed | Not fixed — needs coordinator refactor (PR 6) |
-| P2-1: Pipeline Success reporting | ✅ Confirmed | Not fixed — needs outcome type refactor (PR 5) |
-| P2-2: AI fallback package-gated | ✅ Confirmed | Not fixed — design decision, flagged for discovery (PR 4) |
-| P2-3: Dependency map docs bug | ✅ Confirmed | Deferred |
-
-## Fixes applied
-
-### Fix 1 — Unified notification text extraction (P0-2 + P1-3)
-
-**Files changed:** `NotificationCaptureService.kt`
-
-Created `NotificationTextParts` data class with `extract(extras: Bundle)` companion factory that extracts ALL notification fields (`title`, `text`, `bigText`, `subText`, `infoText`, `summaryText`) in a single pass and computes `effectiveBigText`.
-
-Both `onNotificationPosted()` and `processNotificationBypassDedupe()` now use `NotificationTextParts.extract()` and pass `effectiveBigText` to:
-- `NotificationFilter.shouldCapture()` — notifications with transaction info in infoText/summaryText are no longer dropped
-- `computeNotificationContentHash()` — content changes in fallback fields are detected
-- `RawNotificationFingerprint.compute()` — fingerprint covers the resolved content
-- `RawNotification` entity — stored bigText is the effective resolved value
-
-Removed the old `resolveEffectiveBigText()` standalone function — its logic is now inside `NotificationTextParts.extract()`.
-
-### Fix 2 — Restore maintenance mode guard on manual refresh (NEW-3)
-
-**Files changed:** `NotificationCaptureService.kt`
-
-`processNotificationBypassDedupe()` (called by `refreshActiveNotifications()`) was missing the `restoreMaintenanceMode.isWritesAllowed()` check. During a restore, a manual refresh could write to the DB.
-
-Added the same guard as `onNotificationPosted()`.
-
-### Fix 3 — Consolidate FINANCIAL_PACKAGES (NEW-1)
-
-**Files changed:** `NotificationProcessingPipeline.kt`
-
-`NotificationProcessingPipeline.FINANCIAL_PACKAGES` was a separate hardcoded set that had to be manually kept in sync with `NotificationFilter.FINANCE_PACKAGES`. Replaced with a delegating property:
-
-```kotlin
-private val FINANCIAL_PACKAGES: Set<String>
-    get() = NotificationFilter.FINANCE_PACKAGES
-```
-
-### Fix 4 — Deny keyword cleanup (NEW-4)
-
-**Files changed:** `NotificationFilter.kt`
-
-Removed deny keywords that blocked legitimate financial events:
-- `"refund processed"` — refunds are valid financial events
-- `"you received"` — deposits/transfers should be captured
-- `"on hold"` — authorization holds are financial events
-- `"offer"` — too broad, catches "offer price $50"
-- `"discount"` — too broad, catches "discount applied -$5.00"
-- `"επιστροφ"` (Greek: return/refund) — financial event
-
-Changed `"κωδικ"` (too broad) to `"κωδικός ασφαλείας"` and `"κωδικ επαληθ"` for specificity.
-
-### Fix 5 — Filter ordering: finance packages bypass deny keywords (NEW-5)
-
-**Files changed:** `NotificationFilter.kt`
-
-The deny keyword check was applied BEFORE the finance package check. This violated the documented contract that "finance apps bypass heuristics — every notification is financial." A bank's 2FA notification would be incorrectly dropped.
-
-Moved the `FINANCE_PACKAGES` check to execute before deny keyword evaluation. Finance package notifications are always captured; deny keywords only apply to communication and unknown packages.
-
-### Fix 6 — RevolutParser reject pattern fix (NEW-8)
-
-**Files changed:** `RevolutParser.kt`
-
-The parser aborted the entire `parse()` when ANY candidate field (title, text, bigText) matched a reject pattern like "weekly report" — even if another field contained a valid transaction. Changed `return null` to `continue` so the parser skips the rejected field and tries the next one.
-
-## New issues discovered (not in original report)
-
-### NEW-1 — FINANCIAL_PACKAGES duplicated → FIXED (Fix 3)
-
-### NEW-2 — `processNotificationBypassDedupe` missing restore guard → FIXED (Fix 2)
-
-### NEW-3 — Deny keywords block legitimate financial notifications → FIXED (Fix 4)
-
-### NEW-4 — No `EXTRA_TEXT_LINES` / `EXTRA_MESSAGES` extraction
-
-`NotificationTextParts.extract()` currently does not extract `EXTRA_TEXT_LINES` (inbox-style notifications) or `EXTRA_MESSAGES` (messaging-style notifications). Banking apps that use these notification styles could have transaction text invisible to the pipeline.
-
-**Severity:** P2 (enhancement — less common than infoText/summaryText but still a gap)
-
-**Recommendation:** Add `textLines` and `messages` fields to `NotificationTextParts` and incorporate them into the `effectiveBigText` fallback chain.
-
-### NEW-5 — Filter ordering violated finance package contract → FIXED (Fix 5)
-
-### NEW-6 — `ServiceDiagnostics` uses `System.currentTimeMillis()` directly
-
-Line 35 of `ServiceDiagnostics.kt`:
-```kotlin
-putLong(KEY_LAST_RESTART_TIME, System.currentTimeMillis())
-```
-
-Bypasses `TimeProvider`, making this untestable and inconsistent with the app's time abstraction.
-
-**Severity:** P3 (consistency / testability)
-
-### NEW-7 — `dedupeFingerprint` hash mismatch between migration backfill and runtime
-
-`RawNotificationFingerprint.compute()` stores a **SHA-256 hex hash** of `packageName|timestamp|title|text|bigText`. But the SQL migration backfill (`MIGRATION_104_105` in `AppDatabase.kt`) stores the **plain concatenation** (SHA-256 is not available in SQLite).
-
-This means the same logical notification can appear twice in the DB: one row with a plaintext fingerprint (from migration) and one with a SHA-256 hash (from runtime capture). The unique index compares full string values — they will never match.
-
-**ACKNOWLEDGED (2026-05-06):** TODO comment added in AppDatabase.kt before MIGRATION_104_105 
-        documenting the SHA-256 vs plaintext mismatch. Full fix requires a Kotlin one-time migration 
-        (SHA-256 not available in SQLite). Deferred to a future migration window.
-
-### NEW-8 — RevolutParser reject pattern aborts entire parse → **FIXED**
-
-`RevolutParser.parse()` iterated through `title`, `text`, `bigText` candidates. If ANY candidate matched a reject pattern (e.g., title = "Weekly report"), `return null` aborted the entire method — even if a later candidate (text/bigText) contained a valid transaction like "Paid €12.50 at Store".
-
-Changed `return null` to `continue` so the parser skips the rejected field and tries the next one.
-
-### NEW-9 — `ProcessingResult.Rejected` is dead code
-
-`NotificationProcessingPipeline.process()` always returns `Success` or `Error`. The `Rejected` variant is never emitted. `NotificationRepository.processAndSave()` has a branch for `Rejected` that never executes.
-
-**Severity:** P3 (dead code, no runtime impact)
-
-### NEW-10 — `ReviewQueueRepository.markAsRelevant` cache invalidation uses wrong key
-
-`markAsRelevant` calls `confidenceRouter.invalidateAfterUserAction(notification.packageName, notification.title ?: "Unknown")`. The second argument should be a **merchant** name (used as merchant cache key), but `notification.title` is passed instead. This may mis-invalidate or miss the correct merchant-keyed cache entry.
-
-**FIXED (2026-05-06):** confidenceRouter.invalidateAfterUserAction() now receives 
-        expense?.merchant (falling back to suggestedMerchant → packageName) instead of 
-        notification.title. This matches the merchant-keyed cache pattern used by approveReview/rejectReview.
-
-### NEW-11 — `RestoreMaintenanceMode.scheduleAllWorkers` missing `ai_daily_briefing`
-
-Class KDoc says "all 7 background workers" are managed. `pauseAllWorkers()` correctly cancels all `WorkerSpec.DEFAULTS.keys` entries. But `scheduleAllWorkers()` only reschedules 6 workers — `ai_daily_briefing` is not rescheduled after restore exit.
-
-**FIXED (2026-05-06):** scheduleAllWorkers() now includes ai_daily_briefing 
-        via WorkerSpecScheduler.scheduleAtMidnight(). All 7 workers are now rescheduled after restore.
-
-### NEW-12 — Currency detection in fallback paths is simplistic
-
-`detectOversizedAmountCandidate()` and `detectTransactionSignalCandidate()` in the pipeline default to EUR when no USD/GBP signal is found. Missing: CHF, SEK, PLN, CZK, and all `$`-denominated currencies beyond USD (AUD, CAD, NZD, etc.).
-
-**Severity:** P3 (affects non-EUR/USD/GBP users only)
-
-### NEW-13 — P1-6 nested transaction confirmed: coordinator side effects fire mid-transaction
-
-Traced the exact call path:
-
-```text
-NotificationProcessingPipeline.processInternal()
-  → database.withTransaction {                            ← OUTER
-      → handleAutoAcceptInTransaction()
-          → coordinator.createExpense(request)
-              → database.withTransaction { insert + event }  ← INNER (savepoint)
-              → sideEffectDispatcher.dispatchOnCreated()     ← SIDE EFFECTS HERE
-              → recurringLifecycleCoordinator.linkExpenseToOccurrence()
-          ← returns Created
-      → dao.markRelevance(rawId, true)
-      → sourceStatsDao.incrementTotalAndAccepted()
-    }                                                       ← OUTER COMMIT
-
-Side effects include:
-  - budgetMonitor.checkBudgets() → reads expenses (uncommitted outer txn)
-  - anomalyAlertOrchestrator.checkAndAlert() → reads expenses (uncommitted outer txn)
-  - merchantCategoryRepository.learnPattern() → DB write (part of outer txn, safe)
-  - recurringLifecycleCoordinator.linkExpenseToOccurrence() → DB write (part of outer txn, safe)
-```
-
-The DB writes in side effects are safe (they participate in the outer transaction). The READS are the risk: `budgetMonitor` and `anomalyAlertOrchestrator` query expense data that may not yet be committed. If the outer transaction rolls back, those reads saw phantom data.
-
-**Practical risk:** Low — the remaining outer transaction steps (`markRelevance`, `incrementTotalAndAccepted`) are unlikely to fail. But architecturally unsound.
-
-**Recommendation:** Add `createExpenseDbOnly()` to the coordinator that returns the expense ID without dispatching side effects. The pipeline owns the outer transaction and dispatches side effects post-commit.
-
----
-
-# 11. Remaining work priority
-
-After these fixes, the remaining Pipeline 1 work in priority order:
-
-1. **PR 1 — Observability** (P0-3, P1-1, P1-2): Add persistent capture diagnostics ring buffer. Without this, debugging notification issues on user devices remains guesswork.
-
-2. **PR 3 — Listener lifecycle** (P0-1): Remove periodic restart alarm; rely on system listener binding + `requestRebind()`. This is the most impactful reliability fix for the "not reading notifications" symptom.
-
-3. **PR 6 — Transaction boundary** (P1-6 / NEW-8): Add `createExpenseDbOnly()` to coordinator; pipeline dispatches side effects post-commit. Prevents phantom reads.
-
-4. **PR 4 — Package discovery** (P1-4): Runtime package discovery in debug screen. Enables users to identify unrecognized bank packages.
-
-5. **PR 5 — Pipeline outcome** (P2-1): Return detailed outcomes from `processInternal()` for diagnostic logging.
-
-6. **Fingerprint hash migration** (NEW-7): One-time Kotlin migration to re-hash plaintext fingerprints from pre-105 data.
-
-7. **EXTRA_TEXT_LINES / EXTRA_MESSAGES** (NEW-4): Add inbox-style and messaging-style extraction to `NotificationTextParts`.
-
-8. **ReviewQueueRepository cache key** (NEW-10): Fix `markAsRelevant` to pass merchant name instead of notification title.
-
-9. **RestoreMaintenanceMode worker gap** (NEW-11): Add `ai_daily_briefing` to `scheduleAllWorkers()`.
+  https://github.com/panospao7/Cost-agregator/blob/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt

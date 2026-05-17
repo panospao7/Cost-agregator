@@ -1,1416 +1,1686 @@
-# Pipeline 8 Debugging Report — Privacy Gates / AI / Redaction / Retention
+# Pipeline 8 Debug Report — Privacy Gates / AI / Redaction
 
-Target commit: `53c915f09cbc92137b5b84d5839bdbf1cd321c16`  
-Review type: static GitHub code review, not local/device execution.
+Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`  
+Mode: static GitHub/code review, not local Gradle/device execution.
 
-## 1. Executive summary
+## Verdict
 
-Pipeline 8 is intended to be:
+Pipeline 8 is **substantially improved but not fully clean/stable yet**.
 
-```text
-PrivacySettingsScreen
-→ PrivacySettingsRepositoryImpl/DataStore
-→ CompositePrivacyGate
-→ NotificationPrivacyGate / CloudAiPrivacyGate / LocationPrivacyGate / BackupPrivacyGate
-→ PrivacyAuditLogger
-→ PrivacyAuditEvent / PrivacyAuditDao
+Good foundations exist:
 
-Cloud / external-capability callers:
-  notification capture
-  cloud AI providers
-  geocoding/location backfill
-  backup/export
-  data retention
-```
+- `PrivacySettings`
+- `PrivacySettingsRepository`
+- `PrivacyGate`
+- `CompositePrivacyGate`
+- capability-specific gates:
+  - `CloudAiPrivacyGate`
+  - `NotificationPrivacyGate`
+  - `LocationPrivacyGate`
+  - `BackupPrivacyGate`
+- `PrivacyAuditLogger`
+- `CloudPayloadRedactor`
+- `DefaultCloudPayloadRedactor`
+- `CloudPiiSanitizer`
+- `DataRetentionWorker`
+- cloud AI services now mostly use `SecureKeyStorage`, `PrivacyGate`, and redaction.
 
-The architecture is good: privacy is no longer just UI text; there are real gate objects, DataStore settings, audit events, redaction utilities, and retention workers.
+But the pipeline is still **yellow/orange**, not production-clean, because several privacy contracts are incomplete or inconsistent:
 
-But the implementation is not fully consistent yet.
+1. privacy settings changes do not immediately stop workers/services;
+2. privacy settings and AI settings can disagree;
+3. audit logging is noisy and incomplete;
+4. raw notification/OCR/email/AI artifacts are still stored first and purged later;
+5. retention does not cover all sensitive artifacts;
+6. bank-statement cloud text path can send a prebuilt raw prompt;
+7. redaction is regex/field-based, not a formal purpose-aware payload contract;
+8. geocoding/location privacy enforcement is not statically guaranteed across all providers;
+9. raw backup/export remains reachable;
+10. denied states are not consistently visible to users.
 
-Highest-risk findings:
-
-1. **There are two separate privacy/AI settings systems that can drift: `PrivacySettings` and `AiSettings`.**
-2. **Several cloud AI hybrid services route through `AiSettings` only and do not call `PrivacyGate`.**
-3. **Some cloud provider implementations are self-defending with `PrivacyGate`, but others only check `AiSettings.allowCloudAi`.**
-4. **Cloud natural-language query interpretation checks the cloud gate but does not clearly apply redaction before building the prompt.**
-5. **Receipt item categorization trusts `input.redactBeforeCloud` instead of resolving privacy settings itself.**
-6. **Gate implementations do not fail closed if `getSettings()` throws.**
-7. **Audit logging exists, but cloud calls are not uniformly audited with provider, redaction status, route, and payload hash.**
-8. **`RedactionSanitizer` in `domain/privacy` only hashes merchants; real text redaction lives separately in `CloudPiiSanitizer`, so there is no single redaction contract.**
-9. **Data retention worker purges raw notification/OCR text, but it does not check restore maintenance mode and cannot prove all raw copies/artifacts are purged.**
-10. **Privacy UI already notes some toggles require restart, so runtime behavior may not update immediately.**
-
-Main recommendation:
-
-> Make `PrivacyGate` the mandatory enforcement point for every external/cloud/privacy-sensitive capability, and make redaction/audit a required wrapper around all cloud payload construction.
+Overall: **good privacy infrastructure, incomplete enforcement coverage**.
 
 ---
 
-# 2. Intended architecture contract
+# Severity scale
 
-From `DEPENDENCY_MAP.md`, Pipeline 8 is:
+- **P0 / Critical:** direct privacy leak despite disabled setting or cloud/raw export policy.
+- **P1 / High:** common path can bypass or delay a privacy setting; audit/retention insufficient for compliance/debug.
+- **P2 / Medium:** weak observability, inconsistent UX, regression risk.
+- **P3 / Low:** cleanup/maintainability.
 
-```text
-PrivacySettingsScreen
-→ PrivacySettingsViewModel
-→ PrivacySettingsRepositoryImpl
-→ CompositePrivacyGate
-   ├─ NotificationPrivacyGate
-   ├─ LocationPrivacyGate
-   ├─ CloudAiPrivacyGate
-   └─ BackupPrivacyGate
-→ PrivacyDecision
-→ PrivacyAuditLogger
-→ PrivacyAuditEvent / PrivacyAuditDao
-```
+---
 
-Main gated capabilities:
+# Pipeline checklist status
+
+| Checklist item | Status |
+|---|---|
+| Privacy settings load from DataStore | Mostly yes. DataStore repository exists. |
+| Settings persist across restart | Yes. Preferences DataStore persists toggles. |
+| Cloud AI disabled blocks cloud provider | Mostly yes, but split `PrivacySettings` vs `AiSettings` can disagree. |
+| Notification capture disabled blocks capture | Partial. Gate exists, but setting changes do not stop active service immediately. |
+| Geocoding disabled blocks external calls | Gate exists, but full provider coverage needs guard tests. |
+| Backup/export disabled blocks raw export | Partial. `BackupPrivacyGate` blocks raw export only when encrypted backup is enabled; no master export-disable setting. |
+| Audit event written for allow/deny | Partial. Gates log decisions, but logs are noisy, incomplete, and lack provider/model/redaction metadata. |
+| Redaction before cloud calls | Partial. Most cloud text prompts redacted, but not all paths are guaranteed and bank-statement `suggestFromText(prompt)` is risky. |
+| Raw notification/OCR text not stored when forbidden | Not fully. Current model is retention-after-storage, not store-time policy. |
+| AI provider fallback deterministic | Mostly yes through hybrid/no-op services. Provenance remains weak. |
+| Denied state visible to user | Partial. Many cloud services return null/disabled failure without durable/user-visible reason. |
+
+---
+
+# Positive findings to preserve
+
+## PF-01 — Capability-based privacy gate architecture exists
+
+The app now has a real `PrivacyGate` abstraction and capability enum. This is the right base for policy enforcement.
+
+Important capabilities include:
 
 ```text
 NOTIFICATION_CAPTURE
-CLOUD_AI_RECEIPT_ASSIST
-CLOUD_AI_ITEM_CATEGORIZATION
-CLOUD_AI_DAILY_BRIEFING
-CLOUD_AI_QUERY_INTERPRETATION / CLOUD_AI_GENERAL
+CLOUD_AI_GENERAL
+CLOUD_AI_BANK_STATEMENT
+RECEIPT_IMAGE_CLOUD_UPLOAD
 EXTERNAL_GEOCODING
 BACKGROUND_LOCATION_BACKFILL
+DEVICE_GPS_LOCATION
 RAWBACKUP_EXPORT
 ENCRYPTED_BACKUP
 RAW_NOTIFICATION_RETENTION
 RAW_OCR_RETENTION
+DEBUG_DATA_PERSISTENCE
+OVERPASS_API
+TIMBER_PII_LOGGING
 ```
 
-This is the correct target shape.
+## PF-02 — Cloud AI defaults are conservative
 
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
+`PrivacySettings.cloudAiEnabled` defaults to `false`.
+
+`redactBeforeCloud` defaults to `true`.
+
+`receiptImageCloudEnabled` defaults to `false`.
+
+`bankStatementAiEnabled` defaults to `false`.
+
+This is good.
+
+## PF-03 — Cloud image upload has a strong privacy rule
+
+`CloudAiPrivacyGate` denies `RECEIPT_IMAGE_CLOUD_UPLOAD` when redaction is required, because images cannot be meaningfully redacted.
+
+`CloudReceiptAssistService` also suppresses inline image upload when `shouldRedact = true`.
+
+Preserve this rule.
+
+## PF-04 — Cloud services mostly self-defend
+
+Several cloud services now check privacy directly before making HTTP calls, including:
+
+- cloud receipt assist,
+- cloud categorization assist,
+- cloud dashboard briefing,
+- cloud dedupe judge,
+- cloud review explanation,
+- cloud query interpretation,
+- receipt item categorization.
+
+This is good defense-in-depth.
+
+## PF-05 — API keys moved out of `BuildConfig`
+
+Cloud providers use `SecureKeyStorage.getGeminiKey()` instead of compiled API keys.
+
+This closes an important extraction risk.
+
+## PF-06 — Redaction infrastructure exists
+
+`CloudPayloadRedactor` and `DefaultCloudPayloadRedactor` exist.
+
+`CloudPiiSanitizer` redacts common patterns:
+
+```text
+email
+IBAN
+card-like numbers
+phone-like numbers
+long numbers
+```
+
+Merchant names can be hashed through `redactMerchant()`.
+
+## PF-07 — Data retention worker exists
+
+`DataRetentionWorker` purges raw notification fields and raw OCR text after configured retention periods and writes audit events for purges.
+
+## PF-08 — Redacted backups sanitize raw notification/OCR text
+
+`ExportAnonymizer` strips raw OCR and raw notification content from a temporary DB copy.
+
+`.costbackup` also skips receipt image assets when redacted.
 
 ---
 
-# 3. Actual code path summary
+# Issue P1-01 — Privacy setting changes do not immediately stop active workers/services
 
-## 3.1 Privacy settings
+## Severity
 
-`PrivacySettings` defaults are mostly privacy-safe:
+P1 / High
+
+## Evidence
+
+`PrivacySettingsRepositoryImpl.updateSettings()` has an explicit TODO saying privacy setting changes should immediately cancel active workers and stop capture services instead of waiting for app restart.
+
+This affects at least:
+
+```text
+notification capture
+location backfill
+cloud AI scheduled work
+data retention/debug workers
+daily briefing worker
+```
+
+## Impact
+
+A user can disable a privacy-sensitive feature, but already-running services/workers may continue until their next gate check, worker cycle, or restart.
+
+Example:
+
+```text
+User disables notification capture
+→ active NotificationListenerService may still receive/extract notifications
+```
+
+or:
+
+```text
+User disables background location backfill
+→ already scheduled worker may run until it checks gate or is rescheduled
+```
+
+## Fixing strategy
+
+Privacy settings must be an active runtime policy source, not just a persisted config.
+
+## Implementation plan
+
+1. Add:
+
+```kotlin
+interface PrivacyRuntimePolicyApplier {
+    suspend fun apply(old: PrivacySettings, new: PrivacySettings)
+}
+```
+
+2. On update, compare old/new settings and apply side effects:
+
+```text
+notificationCaptureEnabled false
+→ stop/disable notification capture pipeline
+→ cancel related work
+→ clear in-memory capture queues if needed
+
+cloudAiEnabled false
+→ cancel cloud AI work
+→ force hybrid routers into local/no-op mode
+→ invalidate cloud request queues
+
+externalGeocodingEnabled false
+→ cancel location/geocoding workers
+
+backgroundLocationBackfillEnabled false
+→ cancel LocationBackfillWorker
+
+debugDataPersistenceEnabled false
+→ purge/disable debug persistence
+```
+
+3. Add one central scheduler/canceller using `WorkerSpecScheduler`.
+
+4. Tests:
+
+```text
+disable_notification_capture_cancels_capture_work_and_blocks_service
+disable_cloud_ai_cancels_daily_briefing_worker
+disable_geocoding_cancels_location_backfill_worker
+settings_update_writes_privacy_policy_applied_audit_event
+```
+
+---
+
+# Issue P1-02 — `PrivacySettings` and `AiSettings` can disagree
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+Cloud privacy is split across two systems:
+
+```text
+PrivacySettings.cloudAiEnabled
+PrivacySettings.redactBeforeCloud
+PrivacySettings.bankStatementAiEnabled
+PrivacySettings.receiptImageCloudEnabled
+```
+
+and AI-specific settings such as:
+
+```text
+AiSettings.allowCloudAi
+AiSettings.redactBeforeCloud
+AiSettings.receiptImageCloudEnabled
+```
+
+Several providers check both, but not uniformly:
+
+- hybrid services route based on `AiSettings`;
+- cloud services often check `PrivacyGate`;
+- some cloud services also check `AiSettings`;
+- `CloudQueryInterpretationService` directly checks the privacy gate, while hybrid routing checks AI settings.
+
+## Impact
+
+The app can enter contradictory states:
+
+```text
+Privacy cloud AI disabled, AI settings enabled
+AI settings cloud disabled, privacy cloud enabled
+Privacy redaction enabled, AI redaction disabled
+Receipt image cloud enabled in one settings system only
+```
+
+This makes behavior hard to reason about and can lead to bypasses if a cloud service is called directly.
+
+## Fixing strategy
+
+Make `PrivacySettings` the authoritative privacy contract. AI settings may select models/routes, but must not weaken privacy.
+
+## Implementation plan
+
+1. Add a unified resolver:
+
+```kotlin
+data class EffectiveCloudAiPolicy(
+    val cloudAllowed: Boolean,
+    val reason: String?,
+    val redactBeforeCloud: Boolean,
+    val receiptImageUploadAllowed: Boolean,
+    val bankStatementCloudAllowed: Boolean
+)
+```
+
+2. Source it from privacy settings first:
+
+```text
+privacy denies → deny always
+AI route disabled → fallback/no-op
+AI route cloud allowed only if privacy allows
+```
+
+3. Replace direct `settings.allowCloudAi` checks in cloud services with:
+
+```kotlin
+cloudAiPolicy.requireAllowed(capability)
+```
+
+4. Add consistency tests:
+
+```text
+privacy_false_ai_true_denies_cloud
+privacy_true_ai_false_uses_noop_or_on_device
+privacy_redact_true_ai_redact_false_redacts
+receipt_image_requires_both_privacy_and_ai_opt_in
+bank_statement_requires_global_cloud_and_bank_statement_toggle
+```
+
+---
+
+# Issue P1-03 — Audit logging is noisy and not semantically precise
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+Each concrete gate logs a decision, including `Allowed` for capabilities it does not handle.
+
+With `CompositePrivacyGate`, a single cloud check can produce multiple audit rows like:
+
+```text
+Notification gate allowed unrelated cloud capability
+Location gate allowed unrelated cloud capability
+Backup gate allowed unrelated cloud capability
+Cloud AI gate allowed or denied actual capability
+```
+
+Also, if `CompositePrivacyGate` catches an exception and fails closed, it returns `Denied`, but there is no guaranteed durable audit event for that fail-closed denial.
+
+## Impact
+
+The audit table can be misleading:
+
+```text
+Many ALLOWED rows for gates that did not actually authorize the capability
+No clear final effective decision
+No clear provider/model/redaction/payload metadata
+```
+
+This weakens compliance/debuggability.
+
+## Fixing strategy
+
+Only the composite gate should write the final effective audit decision, or audit records must distinguish `NOT_APPLICABLE` from `ALLOWED`.
+
+## Implementation plan
+
+1. Change gate contract:
+
+```kotlin
+sealed interface GateDecision {
+    data object NotApplicable
+    data object Allowed
+    data class Denied(val reason: String)
+}
+```
+
+2. Concrete gates return `NotApplicable` for unrelated capabilities and do not audit.
+
+3. `CompositePrivacyGate` writes exactly one final audit row:
+
+```text
+ALLOWED
+DENIED
+DENIED_FAIL_CLOSED
+```
+
+4. Add metadata:
+
+```text
+capability
+effectiveDecision
+denyingGate
+reason
+caller
+provider
+modelId
+route
+redactionApplied
+payloadHash
+rawTextIncluded
+rawImageUploaded
+timestamp
+```
+
+5. Tests:
+
+```text
+cloud_ai_check_writes_one_audit_event
+unsupported_gate_does_not_write_allowed_noise
+gate_exception_writes_denied_fail_closed_audit
+audit_event_contains_denying_gate_and_reason
+```
+
+---
+
+# Issue P1-04 — Audit context can store caller-provided sensitive data
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`PrivacyAuditLoggerImpl` serializes the arbitrary `context: Map<String, String>` directly to JSON.
+
+Today many contexts are safe, such as `receiptId` or `operation`, but the API allows future callers to pass:
+
+```text
+raw notification text
+merchant name
+email subject
+OCR text
+file path
+prompt snippet
+```
+
+## Impact
+
+The privacy audit table itself can become a PII sink.
+
+## Fixing strategy
+
+Make audit context structured and sanitized.
+
+## Implementation plan
+
+1. Replace raw context map with:
+
+```kotlin
+data class PrivacyAuditContext(
+    val operation: String?,
+    val caller: String?,
+    val entityType: String?,
+    val entityId: String?,
+    val provider: String?,
+    val modelId: String?,
+    val payloadHash: String?,
+    val redactionApplied: Boolean?,
+    val rawTextIncluded: Boolean?,
+    val rawImageUploaded: Boolean?
+)
+```
+
+2. If map remains, sanitize with allowlist:
+
+```text
+allowed keys only
+max length
+hash unknown values
+reject keys containing text/body/raw/prompt/path
+```
+
+3. Tests:
+
+```text
+audit_context_drops_raw_text_key
+audit_context_hashes_unknown_value
+audit_context_preserves_safe_receipt_id
+```
+
+---
+
+# Issue P1-05 — Raw notification/OCR/email data is stored first and purged later
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`PrivacySettings` only has retention-day settings:
+
+```text
+rawNotificationRetentionDays
+rawOcrRetentionDays
+```
+
+`DataRetentionWorker` purges old raw fields later.
+
+There is no write-time storage mode like:
+
+```text
+STORE_RAW
+STORE_REDACTED
+STORE_METADATA_ONLY
+DO_NOT_STORE
+```
+
+Previous pipeline reports also found raw notification and receipt OCR text are persisted during normal processing.
+
+## Impact
+
+A user may want notification/receipt processing without long-term raw content retention. Current behavior still writes raw text to DB until the retention worker runs.
+
+This is risky for:
+
+```text
+bank notifications
+email receipts
+OCR text
+debug exports
+backup snapshots before purge
+```
+
+## Fixing strategy
+
+Separate “process in memory” from “persist raw text”.
+
+## Implementation plan
+
+1. Extend settings:
+
+```kotlin
+enum class RawNotificationStorageMode {
+    STORE_RAW,
+    STORE_REDACTED,
+    STORE_METADATA_ONLY,
+    DO_NOT_STORE
+}
+
+enum class RawOcrStorageMode {
+    STORE_RAW,
+    STORE_REDACTED,
+    STORE_METADATA_ONLY,
+    DO_NOT_STORE
+}
+```
+
+2. Apply at write time:
+
+```text
+parser receives raw text in memory
+DB stores according to storage mode
+```
+
+3. For metadata-only, keep:
+
+```text
+source type
+timestamp
+fingerprint/hash
+parser result
+drop reason
+entity id
+```
+
+not raw body.
+
+4. Tests:
+
+```text
+notification_metadata_only_stores_no_title_text_bigText_extras
+receipt_ocr_do_not_store_persists_no_rawOcrText
+email_receipt_metadata_only_does_not_store_email_body
+parser_still_works_with_in_memory_text
+```
+
+---
+
+# Issue P1-06 — Retention worker scope is incomplete
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`DataRetentionWorker` has a TODO saying retention should expand to:
+
+```text
+AI artifacts
+chat messages
+service diagnostics
+email receipt sources
+```
+
+Current purging covers:
+
+```text
+raw notification content
+scanned_receipts.rawOcrText
+```
+
+## Impact
+
+Sensitive data can remain indefinitely in:
+
+```text
+AI prompt/response artifacts
+AI chat history
+debug diagnostics
+email receipt bodies
+cloud provider logs/metadata if persisted
+service diagnostic messages
+```
+
+## Fixing strategy
+
+Retention should cover every sensitive persistence table.
+
+## Implementation plan
+
+1. Create a retention registry:
+
+```kotlin
+interface RetentionTarget {
+    val name: String
+    suspend fun purge(cutoff: Long, now: Long): RetentionPurgeResult
+}
+```
+
+2. Add targets:
+
+```text
+RawNotificationRetentionTarget
+ScannedReceiptOcrRetentionTarget
+EmailReceiptSourceRetentionTarget
+AiArtifactRetentionTarget
+AiChatMessageRetentionTarget
+ServiceDiagnosticsRetentionTarget
+DebugDataRetentionTarget
+```
+
+3. Add separate settings:
+
+```text
+aiArtifactRetentionDays
+emailReceiptRawBodyRetentionDays
+debugDiagnosticsRetentionDays
+```
+
+4. Tests:
+
+```text
+retention_purges_ai_artifact_prompts
+retention_purges_ai_chat_messages
+retention_purges_email_receipt_raw_body
+retention_purges_debug_diagnostics_when_disabled
+```
+
+---
+
+# Issue P1-07 — Bank-statement cloud text path can send a prebuilt raw prompt
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`CloudReceiptAssistService.suggestFromText(prompt)` checks `CLOUD_AI_BANK_STATEMENT`, but sends the provided `prompt` directly as a text part.
+
+The caller is expected to prepare the prompt safely. The method itself does not apply `CloudPayloadRedactor` to the text.
+
+## Impact
+
+Bank statements can contain highly sensitive data:
+
+```text
+merchant names
+descriptions
+account details
+counterparty names
+transaction references
+IBAN/card-like values
+```
+
+A direct cloud fallback can leak raw prompt text if the caller forgot to redact.
+
+## Fixing strategy
+
+Cloud services must be self-redacting, not caller-dependent.
+
+## Implementation plan
+
+1. Change API:
+
+```kotlin
+suspend fun suggestFromText(
+    prompt: String,
+    purpose: CloudPayloadPurpose = BANK_STATEMENT_VALIDATION
+)
+```
+
+2. Add new purpose:
+
+```kotlin
+CloudPayloadPurpose.BANK_STATEMENT_VALIDATION
+```
+
+3. Resolve effective policy:
+
+```text
+if redactBeforeCloud → redact prompt before request
+else send raw only if explicit user opt-in allows raw cloud text
+```
+
+4. Audit:
+
+```text
+payloadHash
+redactionApplied
+rawTextIncluded
+provider
+model
+```
+
+5. Tests:
+
+```text
+bank_statement_suggestFromText_redacts_when_policy_requires
+bank_statement_suggestFromText_denied_when_bank_ai_disabled
+bank_statement_cloud_audit_records_redaction_applied
+```
+
+---
+
+# Issue P1-08 — Redaction is not a formal purpose-aware payload contract yet
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`DefaultCloudPayloadRedactor.redactText()` uses broad regex redaction and truncation.
+
+Some providers build prompts themselves and decide which fields to redact. Examples:
+
+- receipt assist redacts merchant/OCR/line-items conditionally;
+- dashboard briefing redacts some category/upcoming labels;
+- item categorization redacts item descriptions with text regex;
+- dedupe judge appears to redact merchant/preview unconditionally;
+- query interpretation redacts full prompt.
+
+There is still a TODO in `RedactionSanitizer.kt` saying remaining providers need migration.
+
+## Impact
+
+Redaction behavior differs by provider and field. Some sensitive fields remain by design or accident:
+
+```text
+exact amount
+date
+currency
+package name
+category names
+item descriptions that are not regex-detected PII
+merchant-like text if sanitized through redactText instead of redactMerchant
+```
+
+This is not necessarily always wrong, but it is not a clear enforceable contract.
+
+## Fixing strategy
+
+Define typed cloud payloads per purpose and build prompts only from redacted DTOs.
+
+## Implementation plan
+
+1. Add typed payloads:
+
+```kotlin
+data class CloudReceiptPayload(...)
+data class CloudDedupePayload(...)
+data class CloudDashboardBriefingPayload(...)
+data class CloudBankStatementPayload(...)
+```
+
+2. Add:
+
+```kotlin
+interface CloudPayloadPolicy {
+    fun prepare(payload, purpose, policy): PreparedCloudPayload
+}
+```
+
+3. Prepared payload includes:
+
+```text
+promptText
+redactionApplied
+rawTextIncluded
+rawImageIncluded
+payloadHash
+fieldsRedacted
+```
+
+4. Make providers accept only `PreparedCloudPayload`.
+
+5. Add static guard:
+
+```text
+no cloud provider may call Request.Builder().post(...) unless it has a PreparedCloudPayload
+```
+
+6. Tests:
+
+```text
+all_cloud_providers_use_cloud_payload_policy
+redactBeforeCloud_true_never_sends_raw_merchant
+redactBeforeCloud_true_never_sends_raw_notification_text
+receipt_image_upload_false_or_redact_true_never_sends_inlineData
+```
+
+---
+
+# Issue P1-09 — Notification privacy gate is too late and runtime state is not cached
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+From Pipeline 1: notification capture currently extracts notification text before the privacy gate in some paths, and setting changes do not stop the service immediately.
+
+`NotificationPrivacyGate` itself only checks the master toggle.
+
+## Impact
+
+When notification capture is disabled, the app may still read notification contents in memory before denying persistence.
+
+This may be unacceptable under a strict privacy model.
+
+## Fixing strategy
+
+Add a fast runtime `NotificationCaptureGate` that is checked before extras extraction.
+
+## Implementation plan
+
+1. Maintain cached privacy state:
+
+```kotlin
+class NotificationCaptureGate {
+    val captureAllowed: StateFlow<Boolean>
+}
+```
+
+2. In listener callback:
+
+```text
+read packageName only
+check restore mode
+check captureAllowed
+if denied → record diagnostic and return
+only then extract text/extras
+```
+
+3. On setting update:
+
+```text
+captureAllowed=false
+cancel capture workers
+optionally request listener rebind/stop foreground helper
+```
+
+4. Tests:
+
+```text
+notification_disabled_does_not_call_extractor
+notification_disabled_writes_denied_audit_or_diagnostic
+settings_change_to_disabled_blocks_next_callback_without_restart
+```
+
+---
+
+# Issue P1-10 — Geocoding/location gate coverage is not statically guaranteed
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+`LocationPrivacyGate` handles:
+
+```text
+EXTERNAL_GEOCODING
+BACKGROUND_LOCATION_BACKFILL
+DEVICE_GPS_LOCATION
+OVERPASS_API
+```
+
+The codebase contains multiple external/location providers and workers, including:
+
+```text
+GeoapifyGeocodingService
+GooglePlacesGeocodingService
+NominatimGeocodingService
+PhotonGeocodingService
+OverpassNearbyService
+LocationBackfillWorker
+AndroidForegroundLocationProvider
+```
+
+In this pass, gate existence was verified, but every provider call site was not proven to be protected by a static guard.
+
+## Impact
+
+A future or existing provider can make an external geocoding/network call without checking privacy first.
+
+## Fixing strategy
+
+Make external location/network providers self-defending and add CI guardrails.
+
+## Implementation plan
+
+1. Wrap external geocoding:
+
+```kotlin
+class PrivacyAwareGeocodingService(
+    private val gate: PrivacyGate,
+    private val delegate: GeocodingService
+)
+```
+
+2. Each provider should check the exact capability:
+
+```text
+Geoapify/Google/Nominatim/Photon → EXTERNAL_GEOCODING
+Overpass → OVERPASS_API
+LocationBackfillWorker → BACKGROUND_LOCATION_BACKFILL
+Foreground GPS → DEVICE_GPS_LOCATION
+```
+
+3. Add static guard:
+
+```text
+all classes ending GeocodingService or NearbyService must inject/use PrivacyGate
+```
+
+4. Tests:
+
+```text
+external_geocoding_disabled_blocks_geoapify_google_nominatim_photon
+overpass_disabled_when_external_geocoding_disabled
+background_location_backfill_disabled_skips_worker
+device_gps_disabled_blocks_foreground_location_provider
+```
+
+---
+
+# Issue P1-11 — Raw backup/export remains reachable
+
+## Severity
+
+P1 / High if reachable in release UI, otherwise P2
+
+## Evidence
+
+`DatabaseBackupRepositoryImpl.exportDatabase()` is deprecated as debug-only, but still exists in production repository interface.
+
+`BackupPrivacyGate` allows raw plaintext export when `encryptedBackupEnabled = false`.
+
+There is no separate setting:
+
+```text
+backupExportEnabled
+rawPlaintextExportAllowed
+```
+
+## Impact
+
+A user or UI path can disable encrypted backup and thereby make raw export allowed.
+
+That is not the same as an explicit plaintext export consent.
+
+## Fixing strategy
+
+Raw export should be impossible in release unless explicitly debug-gated or protected by a strong user confirmation.
+
+## Implementation plan
+
+1. Add release guard:
+
+```kotlin
+if (!BuildConfig.DEBUG) {
+    return Result.failure(UnsupportedOperationException("Raw DB export disabled in release"))
+}
+```
+
+2. Replace boolean with explicit policy:
+
+```kotlin
+enum class BackupExportPolicy {
+    ENCRYPTED_ONLY,
+    ENCRYPTED_REDACTED,
+    DISABLED,
+    DEBUG_RAW_ONLY
+}
+```
+
+3. Require a one-time user confirmation for raw plaintext export if ever allowed.
+
+4. Tests:
+
+```text
+raw_export_rejected_in_release
+encrypted_backup_allowed_when_policy_encrypted_only
+backup_disabled_blocks_all_export
+raw_export_requires_debug_build_and_explicit_policy
+```
+
+---
+
+# Issue P1-12 — Denied privacy states are not consistently visible to users
+
+## Severity
+
+P1 / High
+
+## Evidence
+
+Many cloud providers return:
+
+```text
+null
+AiServiceResult.Failure(AiServiceError.Disabled(...))
+Unsupported(...)
+```
+
+when privacy denies a call.
+
+This is good for blocking, but user visibility depends on each caller/UI.
+
+There is no unified user-facing privacy-denied event model.
+
+## Impact
+
+User symptoms can look like generic feature failure:
+
+```text
+AI unavailable
+no receipt suggestion
+no dashboard briefing
+no geocoding result
+no notification capture
+```
+
+instead of:
+
+```text
+Blocked by privacy setting: Cloud AI disabled
+```
+
+## Fixing strategy
+
+Return explicit privacy-denied outcomes from privacy-sensitive pipelines.
+
+## Implementation plan
+
+1. Add shared error:
+
+```kotlin
+sealed interface PrivacyBlocked {
+    val capability: PrivacyCapability
+    val reason: String
+}
+```
+
+2. Map provider failures to UI states:
+
+```text
+Cloud AI disabled
+Receipt image upload disabled
+External geocoding disabled
+Notification capture disabled
+Raw export disabled
+```
+
+3. Add debug/health screens:
+
+```text
+last privacy denied capability
+last privacy denied reason
+last audit timestamp
+```
+
+4. Tests:
+
+```text
+cloud_ai_denied_shows_privacy_disabled_state
+geocoding_denied_shows_privacy_disabled_state
+notification_capture_denied_visible_in_diagnostics
+backup_export_denied_shows_specific_reason
+```
+
+---
+
+# Issue P2-13 — DataStore fail-closed is only partially fail-closed
+
+## Severity
+
+P2 / Medium, P1 for strict privacy mode
+
+## Evidence
+
+The DataStore corruption handler returns empty preferences.
+
+Defaults then produce:
 
 ```text
 notificationCaptureEnabled = true
 cloudAiEnabled = false
 redactBeforeCloud = true
-receiptImageCloudEnabled = false
-bankStatementAiEnabled = false
 externalGeocodingEnabled = false
-backgroundLocationBackfillEnabled = false
-deviceGpsLocationEnabled = false
 encryptedBackupEnabled = true
-rawNotificationRetentionDays = 30
-rawOcrRetentionDays = 30
+```
+
+So cloud/location fail closed, but notification capture defaults to enabled.
+
+## Impact
+
+If privacy settings are corrupt, notification capture remains enabled by default.
+
+That may be acceptable if capture is considered core app functionality, but it is not a strict privacy fail-closed posture.
+
+## Fixing strategy
+
+Distinguish first install defaults from corrupted settings defaults.
+
+## Implementation plan
+
+1. Add:
+
+```kotlin
+PrivacySettingsLoadState {
+    Loaded(settings)
+    DefaultFirstRun(settings)
+    Corrupted(failClosedSettings)
+}
+```
+
+2. On corruption, use strict fail-closed:
+
+```text
+notificationCaptureEnabled = false
+cloudAiEnabled = false
+externalGeocodingEnabled = false
 debugDataPersistenceEnabled = false
 ```
 
-Good:
+3. Show user warning:
 
-- cloud AI is opt-in,
-- receipt image cloud upload is opt-in,
-- external geocoding is opt-in,
-- redaction before cloud is on by default,
-- encrypted backup is on by default.
+```text
+Privacy settings were reset for safety.
+```
 
-Risk:
+4. Tests:
 
-- AI has its own separate `AiSettings` DataStore with fields like:
-  - `allowCloudAi`
-  - `redactBeforeCloud`
-  - `receiptImageCloudEnabled`
-  - capability-specific flags
-  - `preferredMode`
-
-So the app currently has two settings models that can disagree.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/PrivacySettings.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacySettingsRepositoryImpl.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/ai/model/AiModels.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/AiSettingsRepositoryImpl.kt
+```text
+datastore_corruption_disables_notification_capture
+datastore_corruption_disables_cloud_ai
+first_run_defaults_can_still_enable_notification_capture
+corruption_warning_visible_to_user
+```
 
 ---
 
-## 3.2 Privacy gates
+# Issue P2-14 — Cloud audit lacks provider/model/payload provenance
 
-`CompositePrivacyGate` delegates through:
+## Severity
+
+P2 / Medium
+
+## Evidence
+
+`PrivacyAuditLoggerImpl` has TODO for:
 
 ```text
-NotificationPrivacyGate
-LocationPrivacyGate
-CloudAiPrivacyGate
-BackupPrivacyGate
+provider name
+model ID
+routing decision
+redactionApplied
+payloadHash
+rawImageUploaded
+rawTextIncluded
 ```
 
-Each specific gate logs a decision through `PrivacyAuditLogger`.
+Cloud providers generate correlation IDs for HTTP errors, but privacy audit does not consistently store them.
 
-Good:
+## Impact
 
-- cloud receipt image upload is denied when redaction is required,
-- notification capture can be master-disabled,
-- location/geocoding is off by default,
-- backup raw/encrypted mode has a gate.
+You cannot answer:
 
-Risk:
+```text
+Which model/provider was called?
+Was text redacted?
+Was an image uploaded?
+Was this routed cloud/on-device/no-op?
+Which payload hash was sent?
+```
 
-- gate code calls `settingsRepository.getSettings()` with no `try/catch`.
-- the `PrivacyGate` contract says fail closed if settings cannot be determined, but the actual gates can throw instead of returning `Denied`.
+## Fixing strategy
 
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/CompositePrivacyGate.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/CloudAiPrivacyGate.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/NotificationPrivacyGate.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/LocationPrivacyGate.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/BackupPrivacyGate.kt
+Make cloud request provenance mandatory.
+
+## Implementation plan
+
+1. Add `CloudAiCallAudit` or extend `PrivacyAuditEvent`.
+
+2. Providers must emit:
+
+```text
+capability
+route
+provider
+modelId
+redactionApplied
+fieldsRedacted
+payloadHash
+rawTextIncluded
+rawImageUploaded
+result
+errorClass
+correlationId
+```
+
+3. Tests:
+
+```text
+cloud_receipt_text_call_audit_has_model_and_payload_hash
+cloud_receipt_image_suppressed_audit_rawImageUploaded_false
+cloud_query_interpretation_audit_redactionApplied_true
+cloud_http_failure_audit_has_correlation_id
+```
 
 ---
 
-## 3.3 Audit logging
+# Issue P2-15 — Test constructors can bypass privacy gates
 
-`PrivacyAuditLoggerImpl` inserts:
+## Severity
 
-```text
-PrivacyAuditEvent(
-  capability,
-  decision = ALLOWED/DENIED,
-  reason,
-  context JSON,
-  timestampMs = System.currentTimeMillis(),
-  caller = "privacy-gate"
-)
-```
+P2 / Medium
 
-Good:
+## Evidence
 
-- decisions persist to Room,
-- `PrivacyAuditDao.getRecent(limit)` exists.
+Several cloud providers include secondary constructors for tests that use a no-op allow-all `PrivacyGate`.
 
-Risks:
+That is useful for unit testing, but dangerous if those constructors become reachable outside tests.
 
-- uses `System.currentTimeMillis()` instead of `TimeProvider`,
-- all caller values are `"privacy-gate"`, so caller identity depends on context JSON,
-- DAO only supports recent list, not by capability/decision/time,
-- if audit insert fails, gate behavior is unclear,
-- provider-level cloud calls are not uniformly logged with route/provider/redaction/payload hash.
+## Impact
 
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/PrivacyAuditEvent.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/PrivacyAuditDao.kt
+Future code may accidentally instantiate a cloud provider with allow-all gate.
 
----
+## Fixing strategy
 
-# 4. Major findings
+Restrict test-only constructors or replace with explicit test fakes.
 
-## Finding P0-1 — `PrivacySettings` and `AiSettings` can drift
+## Implementation plan
 
-There are two independent settings models:
-
-### Privacy settings
-
-```text
-cloudAiEnabled
-redactBeforeCloud
-receiptImageCloudEnabled
-bankStatementAiEnabled
-```
-
-### AI settings
-
-```text
-allowCloudAi
-redactBeforeCloud
-receiptImageCloudEnabled
-preferredMode
-capability-specific AI toggles
-```
-
-The privacy screen updates `PrivacySettings`.
-
-The AI router and many hybrid services use `AiSettings`.
-
-So this can happen:
-
-```text
-PrivacySettings.cloudAiEnabled = false
-AiSettings.allowCloudAi = true
-```
-
-Then a cloud AI path that relies only on the AI router can still route to cloud.
-
-Or:
-
-```text
-PrivacySettings.redactBeforeCloud = true
-AiSettings.redactBeforeCloud = false
-```
-
-Then a cloud provider that reads only `AiSettings` can send raw merchant/notification/OCR/query text.
-
-### Recommended fix
-
-Create one source of truth or a strict bridge:
+1. Mark constructors:
 
 ```kotlin
-effectiveCloudAllowed =
-    privacySettings.cloudAiEnabled &&
-    aiSettings.allowCloudAi &&
-    capabilityEnabled
-
-effectiveRedactBeforeCloud =
-    privacySettings.redactBeforeCloud || aiSettings.redactBeforeCloud
-
-effectiveReceiptImageCloudAllowed =
-    privacySettings.cloudAiEnabled &&
-    privacySettings.receiptImageCloudEnabled &&
-    aiSettings.receiptImageCloudEnabled &&
-    !effectiveRedactBeforeCloud
+@VisibleForTesting
+internal constructor(...)
 ```
 
-Then route all cloud decisions through:
+2. Move test helpers to test source set.
 
-```kotlin
-CloudAiGuard
+3. Static guard:
+
+```text
+production source must not call constructors that create no-op PrivacyGate
 ```
 
-or make `DefaultAiCapabilityRouter` depend on `PrivacyGate`.
+4. Tests/CI:
 
-Priority: highest.
+```text
+no_noop_privacy_gate_in_main_source_except_test_visibility
+```
 
 ---
 
-## Finding P0-2 — Several hybrid cloud routes do not call `PrivacyGate`
+# Issue P2-16 — `TIMBER_PII_LOGGING` capability exists but logging policy is not enforced
 
-Examples:
+## Severity
 
-```text
-HybridCategorizationAssistService
-HybridDashboardBriefingService
-HybridReviewExplanationService
-HybridDedupeJudgeService
-HybridQueryInterpretationService
-```
+P2 / Medium
 
-They route based on:
+## Evidence
 
-```text
-AiSettingsRepository + AiCapabilityRouter
-```
+`PrivacyCapability.TIMBER_PII_LOGGING` exists.
 
-Only some downstream cloud services self-check `PrivacyGate`.
+Cloud/location/backup services log many messages. Most avoid raw bodies, but there is no visible central logging sanitizer or guard.
 
-Observed provider pattern:
+## Impact
 
-### Uses `PrivacyGate`
-
-```text
-CloudReceiptAssistService
-CloudQueryInterpretationService
-CloudReceiptItemCategorizationService
-CloudWarrantyExtractionService likely via AiModule provider
-```
-
-### Uses only `AiSettings` / optional `AiSettingsRepository`
-
-```text
-CloudCategorizationAssistService
-CloudDashboardBriefingService
-CloudDedupeJudgeService
-CloudReviewExplanationService
-```
-
-This is not enough because the privacy screen controls `PrivacySettings`, not necessarily `AiSettings`.
-
-### Recommended fix
-
-Every cloud provider should call:
-
-```kotlin
-privacyGate.check(...)
-```
-
-inside the provider itself, not only at the hybrid/router layer.
-
-Mandatory mapping:
-
-```text
-CloudCategorizationAssistService → CLOUD_AI_ITEM_CATEGORIZATION or CLOUD_AI_GENERAL/CATEGORIZATION
-CloudDashboardBriefingService → CLOUD_AI_DAILY_BRIEFING
-CloudDedupeJudgeService → CLOUD_AI_DEDUPE_JUDGE or CLOUD_AI_GENERAL
-CloudReviewExplanationService → CLOUD_AI_REVIEW_EXPLANATION or CLOUD_AI_GENERAL
-CloudQueryInterpretationService → CLOUD_AI_QUERY_INTERPRETATION or CLOUD_AI_GENERAL
-CloudReceiptAssistService → CLOUD_AI_RECEIPT_ASSIST / RECEIPT_IMAGE_CLOUD_UPLOAD
-```
-
-Also extend `PrivacyCapability` if needed because the current enum lacks some named capabilities used by dependency map text.
-
-Priority: highest.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridCategorizationAssistService.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridDashboardBriefingService.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridDedupeJudgeService.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/HybridReviewExplanationService.kt
-
----
-
-## Finding P0-3 — Cloud query interpretation gates cloud use but does not clearly redact query text
-
-`CloudQueryInterpretationService` checks:
-
-```text
-PrivacyCapability.CLOUD_AI_GENERAL
-```
-
-Good.
-
-But `buildRequestBody(input)` delegates to prompt building without visibly checking:
-
-```text
-PrivacySettings.redactBeforeCloud
-AiSettings.redactBeforeCloud
-```
-
-Natural language queries can contain sensitive data:
-
-```text
-"show transactions at pharmacy"
-"how much did I spend at Dr Smith"
-"find salary from employer X"
-"show payments to iban..."
-```
-
-So cloud query interpretation should never send raw query text when redaction is required.
-
-### Recommended fix
-
-Add explicit redaction policy:
-
-```kotlin
-val effectivePrivacy = cloudAiGuard.requireAllowed(
-    capability = CLOUD_AI_QUERY_INTERPRETATION,
-    context = ...
-)
-
-val safeInput = if (effectivePrivacy.redactBeforeCloud) {
-    financialQueryRedactor.redact(input)
-} else input
-```
-
-Redact or bucket:
+Future debug logs may leak:
 
 ```text
 merchant names
-person names
-IBAN/account/card/phone/email
-exact amounts if configured
-raw user query
-free-text filters
+notification snippets
+file paths
+email subjects
+prompt bodies
 ```
 
-Priority: highest.
+## Fixing strategy
 
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudQueryInterpretationService.kt
+Make PII logging opt-in and sanitize log helpers.
 
----
+## Implementation plan
 
-## Finding P0-4 — Receipt item categorization trusts caller-provided redaction flag
-
-`CloudReceiptItemCategorizationService` checks `PrivacyGate` for cloud item categorization.
-
-Good.
-
-But redaction is controlled by:
+1. Add:
 
 ```kotlin
-input.redactBeforeCloud
+PrivacySafeLogger
 ```
 
-not by resolving current privacy settings inside the provider.
+2. Ban direct `Timber.d/w/e` with raw domain objects in sensitive packages.
 
-If a caller accidentally passes:
+3. Static guard:
 
 ```text
-redactBeforeCloud = false
+cloud/location/notification/receipt packages cannot log raw prompt/body/OCR/text
 ```
 
-while user privacy settings require redaction, raw merchant, item descriptions, and category names can be sent.
-
-### Recommended fix
-
-Provider should compute effective redaction internally:
-
-```kotlin
-val settings = privacySettingsRepository.getSettings()
-val shouldRedact = settings.redactBeforeCloud || input.redactBeforeCloud
-```
-
-Even better, do not let callers decide whether privacy redaction is required. Let callers supply raw data; provider sanitizes before cloud.
-
-Priority: highest.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptItemCategorizationService.kt
-
----
-
-## Finding P0-5 — Privacy gates do not fail closed on settings read failure
-
-The `PrivacyGate` contract says gates should fail closed if settings cannot be determined.
-
-But gates do:
-
-```kotlin
-val settings = settingsRepository.getSettings()
-```
-
-with no try/catch.
-
-`observeSettings()` catches `IOException`, but `getSettings()` in `PrivacySettingsRepositoryImpl` uses:
-
-```kotlin
-context.privacySettingsDataStore.data.first().toPrivacySettings()
-```
-
-without a catch.
-
-If DataStore throws:
-
-- gate can throw,
-- caller may crash or catch and proceed incorrectly,
-- no `DENIED` audit event is written.
-
-### Recommended fix
-
-Add helper:
-
-```kotlin
-suspend fun PrivacySettingsRepository.getSettingsOrDeny(...)
-```
-
-or update every gate:
-
-```kotlin
-val settings = try {
-    settingsRepository.getSettings()
-} catch (e: Exception) {
-    val decision = PrivacyDecision.Denied("Privacy settings unavailable; failing closed")
-    auditLogger.logDecision(capability, decision, context + ("error" to e.safeClassName()))
-    return decision
-}
-```
-
-Priority: highest.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/PrivacyGate.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacySettingsRepositoryImpl.kt
-
----
-
-## Finding P1-1 — Redaction is split across two incompatible abstractions
-
-There is:
+4. Tests:
 
 ```text
-domain/privacy/RedactionSanitizer.kt
-```
-
-which only has:
-
-```kotlin
-sanitizeMerchant(value: String): String
-```
-
-But cloud providers use:
-
-```text
-data/ai/provider/internal/CloudPiiSanitizer
-```
-
-which handles:
-
-```text
-email
-IBAN
-card
-phone
-long numbers
-merchant hashing
-text length
-```
-
-This means there is no single domain-level redaction contract for:
-
-- notification text,
-- raw OCR,
-- receipt line items,
-- natural language queries,
-- dashboard briefing prompts,
-- review explanations,
-- dedupe previews,
-- bank statement text.
-
-### Recommended fix
-
-Create:
-
-```kotlin
-interface CloudPayloadRedactor {
-    fun redactReceiptAssist(input): RedactedReceiptAssistInput
-    fun redactReceiptItems(input): RedactedReceiptItemInput
-    fun redactReviewExplanation(input): RedactedReviewExplanationInput
-    fun redactDedupeInput(input): RedactedDedupeJudgeInput
-    fun redactDashboardBriefing(input): RedactedDashboardBriefingInput
-    fun redactFinancialQuery(input): RedactedFinancialQueryInput
-}
-```
-
-It should return metadata:
-
-```text
-redactionApplied: Boolean
-fieldsRedacted: List<String>
-payloadHash: String
-containsRawText: Boolean
-```
-
-Priority: high.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/RedactionSanitizer.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/internal/CloudPiiSanitizer.kt
-
----
-
-## Finding P1-2 — Audit events are too shallow for cloud AI debugging
-
-Current privacy audit logs:
-
-```text
-capability
-decision
-reason
-context JSON
-timestamp
-caller
-```
-
-Good start.
-
-But for cloud privacy debugging, you need:
-
-```text
-provider
-model
-route
-redactionApplied
-payloadHash
-rawImageUploaded yes/no
-rawTextIncluded yes/no
-settingsSnapshotHash
-callResult allowed/denied/skipped/success/failure
-```
-
-Right now a gate decision may be logged, but the actual cloud provider call is not uniformly audited.
-
-### Recommended fix
-
-Add:
-
-```kotlin
-CloudAiAuditLogger.logCloudAttempt(...)
-```
-
-or extend privacy audit.
-
-Record:
-
-```text
-CLOUD_ATTEMPT_BLOCKED
-CLOUD_ATTEMPT_SENT_REDACTED
-CLOUD_ATTEMPT_SENT_RAW
-CLOUD_ATTEMPT_FAILED
-CLOUD_ATTEMPT_SKIPPED_NO_KEY
-```
-
-Priority: high.
-
----
-
-## Finding P1-3 — Notification privacy denial is silent to user/debug state
-
-`NotificationCaptureService` checks:
-
-```text
-PrivacyCapability.NOTIFICATION_CAPTURE
-```
-
-Good.
-
-But if denied, it just logs and drops the notification. The dependency map and prior Pipeline 1 report already flagged this as a debugging problem.
-
-### Recommended fix
-
-Add capture diagnostics:
-
-```text
-DROPPED_PRIVACY
-capability = NOTIFICATION_CAPTURE
-decision reason
-packageName
-timestamp
-```
-
-and show in DebugScreen / notification capture status.
-
-Priority: high.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt
-
----
-
-## Finding P1-4 — DataRetentionWorker does not check restore maintenance mode
-
-`DataRetentionWorker` purges raw notification/OCR text and writes privacy audit events.
-
-It does not inject/check `RestoreMaintenanceMode`.
-
-During restore/backup swap, this worker can mutate:
-
-```text
-raw_notifications
-scanned_receipts
-privacy_audit_events
-```
-
-This was also noted in Pipeline 7 as a worker-safety issue.
-
-### Recommended fix
-
-Inject `RestoreMaintenanceMode` and skip:
-
-```kotlin
-if (!restoreMaintenanceMode.isWritesAllowed()) {
-    return Result.success()
-}
-```
-
-Also log:
-
-```text
-BackgroundJobRun.SKIPPED_RESTORE_MODE
-```
-
-Priority: high.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
-
----
-
-## Finding P1-5 — Data retention may not cover all raw/sensitive copies
-
-DataRetentionWorker purges:
-
-```text
-RawNotification.title/text/bigText/subText/extrasJson/parseResult
-ScannedReceipt.rawOcrText
-```
-
-Good.
-
-But sensitive text may also exist in:
-
-```text
-AI artifacts
-AI chat messages
-review explanations
-debug diagnostics
-backup files
-receipt images
-email receipt body/source rows
-receipt line item descriptions
-privacy audit context JSON
-logs
-```
-
-Some of these may be intentionally retained, but the retention policy should explicitly say so.
-
-### Recommended fix
-
-Create a raw-data inventory:
-
-```text
-Table / file / log | Raw data type | Retention setting | Purged by | Redacted before cloud? | Included in backup?
-```
-
-Then expand DataRetentionWorker or add separate retention workers.
-
-Priority: high.
-
----
-
-## Finding P1-6 — Redacted backup does not mean fully private backup
-
-`ExportAnonymizer` removes raw OCR and raw notification text from a DB copy.
-
-Good.
-
-But as noted in Pipeline 7, if receipt images are included, images can still contain sensitive data. Also other fields such as receipt line items, email receipt sources, AI artifacts, and audit context may still reveal sensitive data.
-
-### Recommended fix
-
-Use clearer backup modes:
-
-```text
-Full encrypted backup
-Redacted DB backup
-Redacted DB + no receipt images
-Public/shareable anonymized export
-```
-
-Do not call a bundle “redacted” if it still includes raw receipt images.
-
-Priority: high.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
-
----
-
-## Finding P1-7 — Privacy UI warns restart may be required
-
-`PrivacySettingsScreen` notes:
-
-```text
-Capture notifications — requires restart of NotificationListenerService
-Background location backfill — requires restart of background location workers
-```
-
-This means toggles may not take effect immediately in all runtime paths.
-
-For a privacy setting, delayed enforcement is risky. Disabling a privacy-sensitive feature should take effect immediately where possible.
-
-### Recommended fix
-
-When privacy setting changes:
-
-```text
-notificationCaptureEnabled=false → request listener stop/ignore immediately
-backgroundLocationBackfillEnabled=false → cancel worker immediately
-cloudAiEnabled=false → cancel pending AI work immediately
-externalGeocodingEnabled=false → cancel queued location work
-```
-
-At minimum, show a blocking “restart required for full enforcement” warning when relevant.
-
-Priority: medium-high.
-
-Source:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/ui/screens/privacysettings/PrivacySettingsScreen.kt
-
----
-
-## Finding P1-8 — Location interactive search may bypass `PrivacyGate`
-
-`LocationBackfillWorker` correctly checks:
-
-```text
-BACKGROUND_LOCATION_BACKFILL
-```
-
-But `CompositeGeocodingService.searchMultiple()` itself does not check `PrivacyGate`. It relies on callers/UI to decide whether external geocoding is allowed.
-
-For defense-in-depth, external-network providers should self-check gate or be wrapped in a gated geocoding service.
-
-### Recommended fix
-
-Add a `GatedGeocodingService` wrapper:
-
-```text
-search/searchMultiple/reverseGeocode
-→ PrivacyGate.check(EXTERNAL_GEOCODING)
-→ if denied: return PrivacyDenied result
-→ else call provider
-```
-
-Background worker can still check `BACKGROUND_LOCATION_BACKFILL` separately.
-
-Priority: medium-high.
-
-Sources:  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/location/CompositeGeocodingService.kt  
-https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/location/LocationBackfillWorker.kt
-
----
-
-# 5. Debugging checklist for Pipeline 8
-
-## Privacy settings
-
-Check:
-
-- [ ] defaults are privacy-safe,
-- [ ] toggles persist after restart,
-- [ ] privacy settings and AI settings cannot conflict,
-- [ ] disabling cloud AI cancels/blocks all cloud work,
-- [ ] disabling notification capture immediately stops capture,
-- [ ] disabling background location cancels workers,
-- [ ] disabling external geocoding blocks all provider calls,
-- [ ] retention days apply to all raw copies.
-
-## Privacy gates
-
-Check:
-
-- [ ] every gate fails closed on settings read failure,
-- [ ] every gate logs allowed/denied decision,
-- [ ] unhandled capabilities return allowed only intentionally,
-- [ ] cloud image upload denied when redaction required,
-- [ ] backup raw/encrypted rules are correct,
-- [ ] gate context does not contain raw sensitive text.
-
-## Cloud AI
-
-Check:
-
-- [ ] every cloud provider has self-defense `PrivacyGate.check`,
-- [ ] every hybrid service respects privacy master toggle,
-- [ ] on-device mode never falls back to cloud,
-- [ ] cloud mode falls back to on-device only if allowed,
-- [ ] cloud disabled produces deterministic/no-op fallback,
-- [ ] API key absence prevents route to cloud,
-- [ ] network/wifi-only policy enforced,
-- [ ] cloud attempts audited.
-
-## Redaction
-
-Check:
-
-- [ ] raw OCR text redacted before cloud,
-- [ ] notification text redacted before cloud,
-- [ ] natural-language query redacted before cloud,
-- [ ] receipt line items redacted before cloud,
-- [ ] merchant names hashed or bucketed,
-- [ ] receipt image upload suppressed when redaction required,
-- [ ] exact amounts are bucketed when policy requires,
-- [ ] payload hash stored for audit, not raw payload.
-
-## Retention
-
-Check:
-
-- [ ] raw notification text purged,
-- [ ] raw OCR text purged,
-- [ ] email receipt body retention defined,
-- [ ] AI artifact retention defined,
-- [ ] debug diagnostics retention defined,
-- [ ] privacy audit retention defined,
-- [ ] purge writes audit events,
-- [ ] purge skips during restore mode.
-
-## Backup/export
-
-Check:
-
-- [ ] redacted backup removes raw DB text,
-- [ ] redacted backup excludes receipt images or warns,
-- [ ] export anonymizer covers AI artifacts/email sources if needed,
-- [ ] raw plaintext backup is denied when encrypted backup enabled,
-- [ ] backup privacy decisions audited.
-
----
-
-# 6. Recommended fix plan
-
-## PR 1 — Single effective privacy policy for AI
-
-Create:
-
-```kotlin
-CloudAiGuard
-```
-
-It should combine:
-
-```text
-PrivacySettings
-AiSettings
-AiPolicy
-network/wifi policy
-API key availability
-```
-
-Return:
-
-```kotlin
-CloudAiPermission(
-    allowed: Boolean,
-    reason: String?,
-    redactBeforeCloud: Boolean,
-    allowImageUpload: Boolean
-)
-```
-
-Acceptance:
-
-```text
-If PrivacySettings.cloudAiEnabled=false, no cloud provider can make a network request even if AiSettings.allowCloudAi=true.
-```
-
-Priority: P0.
-
----
-
-## PR 2 — Provider self-defense matrix
-
-Make every cloud provider call `PrivacyGate` or `CloudAiGuard` internally.
-
-Add a static/contract test:
-
-```text
-Every class named Cloud*Service must check PrivacyGate/CloudAiGuard before network call.
-```
-
-Priority: P0.
-
----
-
-## PR 3 — Central redaction layer
-
-Replace per-provider ad-hoc sanitization with:
-
-```text
-CloudPayloadRedactor
-```
-
-Acceptance:
-
-```text
-redactBeforeCloud=true produces sanitized payload for receipt, review, dedupe, dashboard, query, categorization, bank statement.
-```
-
-Priority: P0/P1.
-
----
-
-## PR 4 — Fail closed
-
-Update all gates to catch settings repository failures and return:
-
-```text
-PrivacyDecision.Denied("Privacy settings unavailable; failing closed")
-```
-
-Write audit event if possible.
-
-Priority: P0.
-
----
-
-## PR 5 — Audit cloud attempts
-
-Add cloud attempt audit records:
-
-```text
-provider
-capability
-route
-redacted
-imageUploaded
-payloadHash
-decision
-result
-```
-
-Priority: P1.
-
----
-
-## PR 6 — Runtime cancellation after settings changes
-
-When privacy setting disables a runtime capability:
-
-```text
-cloud AI → cancel queued AI work
-notification capture → stop/ignore immediately
-background location → cancel worker
-external geocoding → cancel active calls
-debug persistence → purge debug buffer if disabled
-```
-
-Priority: P1.
-
----
-
-## PR 7 — Data retention expansion
-
-Create raw-data inventory and expand retention to:
-
-```text
-email receipt source/body
-AI artifacts/chat messages
-debug diagnostics
-receipt images if user asks
-privacy audit context
-```
-
-Priority: P1/P2.
-
----
-
-# 7. Tests to add
-
-## `PrivacySettingsAiSettingsBridgeTest`
-
-Cases:
-
-```text
-Privacy cloud=false, AI cloud=true → effective cloud denied
-Privacy redact=true, AI redact=false → effective redaction true
-Privacy image=false, AI image=true → image upload denied
-```
-
-## `CloudProviderPrivacySelfDefenseTest`
-
-For each cloud provider:
-
-```text
-privacy cloud disabled
-→ provider called directly
-→ no HTTP request
-→ audit denied event
-```
-
-Providers:
-
-```text
-CloudReceiptAssistService
-CloudCategorizationAssistService
-CloudDashboardBriefingService
-CloudDedupeJudgeService
-CloudReviewExplanationService
-CloudQueryInterpretationService
-CloudReceiptItemCategorizationService
-CloudWarrantyExtractionService
-```
-
-## `CloudRedactionContractTest`
-
-Inputs with:
-
-```text
-email
-IBAN
-card number
-phone
-merchant name
-receipt line items
-notification text
-natural language query
-```
-
-Assert:
-
-```text
-cloud payload contains no raw sensitive values when redaction enabled
-payload hash exists
-redaction metadata recorded
-```
-
-## `PrivacyGateFailClosedTest`
-
-Simulate DataStore failure.
-
-Assert:
-
-```text
-gate returns Denied
-audit event attempted/written
-caller does not proceed to network/DB capture
-```
-
-## `NotificationCapturePrivacyRuntimeTest`
-
-```text
-notificationCaptureEnabled=false
-→ onNotificationPosted
-→ no raw notification row
-→ DROPPED_PRIVACY diagnostic
-→ audit denied event
-```
-
-## `LocationPrivacyGateContractTest`
-
-```text
-externalGeocodingEnabled=false
-→ search/searchMultiple/reverseGeocode
-→ no provider HTTP call
-```
-
-## `DataRetentionWorkerContractTest`
-
-Seed:
-
-```text
-raw_notifications with raw text
-scanned_receipts with rawOcrText
-AI artifacts/chat/debug rows if included
-```
-
-Assert:
-
-```text
-old raw data purged
-parsed financial records preserved
-audit events written
-worker skips during restore mode
-```
-
-## `RedactedBackupPrivacyContractTest`
-
-Seed:
-
-```text
-raw notification
-raw OCR
-receipt image
-AI artifact
-email receipt body
-```
-
-Assert chosen policy:
-
-```text
-redacted backup excludes receipt images
-or warns manifest contains raw image data
+pii_logging_disabled_redacts_merchant_and_text
+debug_data_persistence_disabled_blocks_sensitive_logs
 ```
 
 ---
 
-# 8. Suggested canonical scenario
+# Recommended fixing order
 
-## `privacy_settings_to_runtime_gate`
+## PR 1 — Runtime privacy policy applier
 
-Seed:
-
-```text
-PrivacySettings:
-  notificationCaptureEnabled = false
-  cloudAiEnabled = false
-  redactBeforeCloud = true
-  receiptImageCloudEnabled = false
-  externalGeocodingEnabled = false
-  backgroundLocationBackfillEnabled = false
-  encryptedBackupEnabled = true
-```
-
-Run:
+Files:
 
 ```text
-1. simulate bank notification
-2. call cloud receipt assist directly
-3. call hybrid dashboard briefing
-4. call cloud query interpretation
-5. run location backfill
-6. call interactive geocoding
-7. create redacted costbackup
-8. run data retention worker
+PrivacySettingsRepositoryImpl.kt
+new PrivacyRuntimePolicyApplier.kt
+WorkerSpecScheduler.kt
+NotificationCaptureService.kt
+LocationBackfillWorker.kt
+DailyBriefingWorker.kt
 ```
 
-Expected:
+Fix:
 
 ```text
-notification is dropped with DROPPED_PRIVACY
-no raw notification row
-no cloud HTTP calls from any provider
-on-device/no-op fallback used where applicable
-cloud attempts write DENIED audit events
-natural-language query is not sent raw
-location providers are not called
-background location worker skips
-backup is encrypted
-redacted backup strips raw DB text and handles receipt images according to policy
-data retention purges old raw text and writes audit events
+- settings changes immediately cancel/stop affected services/workers
+- no restart required for privacy-off changes
 ```
 
-This is the Pipeline 8 fed-DB/runtime acceptance test.
+## PR 2 — Unified cloud AI policy resolver
 
----
-
-# 9. Most likely real instability sources
-
-Ranked:
-
-1. **PrivacySettings vs AiSettings drift.**
-2. **Cloud providers/hybrid services not uniformly gated by PrivacyGate.**
-3. **Natural-language cloud prompt lacking explicit redaction.**
-4. **Receipt item categorization trusting caller redaction flag.**
-5. **Privacy gates not failing closed on settings read failure.**
-6. **Audit records not detailed enough to prove no cloud/raw leak.**
-7. **Data retention does not cover all raw copies.**
-8. **Runtime toggles may require restart/cancel to fully apply.**
-9. **Interactive geocoding may rely on caller-level gate instead of provider-level self-defense.**
-10. **Redacted backup terminology can overpromise privacy.**
-
----
-
-# 10. Final recommendation
-
-Stabilize Pipeline 8 in this order:
+Files:
 
 ```text
-1. Create effective CloudAiGuard combining PrivacySettings + AiSettings.
-2. Require all cloud providers to self-check CloudAiGuard/PrivacyGate.
-3. Centralize redaction with CloudPayloadRedactor.
-4. Make all gates fail closed.
-5. Add cloud attempt audit records.
-6. Add runtime cancellation when privacy toggles disable features.
-7. Expand DataRetentionWorker/raw-data inventory.
-8. Add privacy_settings_to_runtime_gate scenario test.
+PrivacySettings.kt
+AiSettingsRepository.kt
+CloudAiPrivacyGate.kt
+all Cloud*Service.kt
+Hybrid*Service.kt
 ```
 
-Guiding rule:
+Fix:
 
-> No cloud, external geocoding, notification capture, raw backup, or raw-data retention path should depend only on caller discipline. Sensitive providers must be self-defending.
+```text
+- privacy settings are authoritative
+- AI settings cannot weaken privacy
+- one effective cloud policy object
+```
 
-Second guiding rule:
+## PR 3 — Audit contract cleanup
 
-> If redaction is enabled, the app must be able to prove what was redacted, what was sent, and what was blocked — without storing the raw payload itself.
+Files:
+
+```text
+PrivacyGate.kt
+CompositePrivacyGate.kt
+PrivacyAuditLoggerImpl.kt
+PrivacyAuditEvent.kt
+PrivacyAuditDao.kt
+```
+
+Fix:
+
+```text
+- NotApplicable vs Allowed
+- one final audit event per check
+- fail-closed exception audit
+- sanitized structured context
+```
+
+## PR 4 — Write-time raw data storage policy
+
+Files:
+
+```text
+PrivacySettings.kt
+NotificationCaptureService.kt
+NotificationProcessingPipeline.kt
+ReceiptLifecycleCoordinator.kt
+ReceiptRepository.kt
+EmailReceipt ingestion
+```
+
+Fix:
+
+```text
+- raw notification/OCR/email body storage modes
+- metadata-only and do-not-store modes
+```
+
+## PR 5 — Expand retention coverage
+
+Files:
+
+```text
+DataRetentionWorker.kt
+AiArtifactDao
+AiChatMessageDao
+EmailReceiptDao
+ServiceDiagnosticsDao
+Debug diagnostics tables
+```
+
+Fix:
+
+```text
+- retention registry
+- AI/email/debug artifact purge
+```
+
+## PR 6 — Cloud payload policy
+
+Files:
+
+```text
+CloudPayloadRedactor.kt
+DefaultCloudPayloadRedactor.kt
+Cloud*Service.kt
+DashboardBriefingPromptFormatter.kt
+ValidateBankStatementTransactionsUseCase.kt
+```
+
+Fix:
+
+```text
+- no raw prompt sent without PreparedCloudPayload
+- bank statement suggestFromText redacts internally
+- audit payload hashes/redaction metadata
+```
+
+## PR 7 — Location privacy guardrails
+
+Files:
+
+```text
+GeoapifyGeocodingService.kt
+GooglePlacesGeocodingService.kt
+NominatimGeocodingService.kt
+PhotonGeocodingService.kt
+OverpassNearbyService.kt
+LocationBackfillWorker.kt
+AndroidForegroundLocationProvider.kt
+```
+
+Fix:
+
+```text
+- all external calls self-check privacy
+- static guard for providers
+```
+
+## PR 8 — Raw export hard disable
+
+Files:
+
+```text
+BackupPrivacyGate.kt
+DatabaseBackupRepositoryImpl.kt
+BackupRestoreViewModel.kt
+```
+
+Fix:
+
+```text
+- raw export debug-only/release-blocked
+- explicit backup export policy
+```
 
 ---
 
-# 11. Verification & Fix Log (2026-05-06)
+# Golden tests to add
 
-## Finding P0-1 — PrivacySettings and AiSettings can drift
-**STATUS: CONFIRMED — NOT FIXED (requires architectural unification of settings models)**
-
-## Finding P0-2 — Several hybrid cloud routes do not call PrivacyGate
-**STATUS: CONFIRMED — NOT FIXED (requires routing all cloud decisions through PrivacyGate)**
-
-## Finding P0-3 — Some cloud providers only check AiSettings, not PrivacyGate
-**STATUS: CONFIRMED — NOT FIXED (requires audit of all cloud service implementations)**
-
-## Finding P0-4 — Cloud NL query interpretation may send unredacted text
-**STATUS: CONFIRMED — NOT FIXED (requires redaction before prompt construction)**
-
-## Finding P0-5 — Receipt item categorization trusts input.redactBeforeCloud
-**STATUS: CONFIRMED — NOT FIXED (should resolve privacy settings independently)**
-
-## Finding P0-6 — Gate implementations do not fail closed on exception
-**STATUS: CONFIRMED — FIXED**
-- `CompositePrivacyGate.check()` now wraps each individual gate's `check()` call in try/catch.
-- On any exception (e.g. DataStore corruption, network error), it returns `PrivacyDecision.Denied("Privacy check failed (fail-closed): ...")` instead of propagating the exception.
-- This enforces the contract that privacy gates must fail closed.
-
-## Finding P0-7 — Audit logging not uniform across cloud calls
-**STATUS: CONFIRMED — NOT FIXED (requires per-provider audit wrapper)**
-
-## Finding P1-1 — RedactionSanitizer vs CloudPiiSanitizer — no single redaction contract
-**PARTIALLY FIXED — P1-1 (ARCH-04 Stage 1)**: DefaultCloudPayloadRedactor implemented
-wrapping CloudPiiSanitizer. CloudQueryInterpretationService migrated — query text
-now redacted before cloud API call. PrivacyModule DI binding added.
-Remaining 6 providers deferred to Stage 2.
-
-## Finding P1-2 — Audit events are too shallow for cloud AI debugging
-**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-05 Stage 1)**
-- CloudAiAuditLogger design scoped; provider-level audit event expansion (route, redaction, payload hash) deferred to Stage 2.
-
-## Finding P1-2 — Data retention worker does not check RestoreMaintenanceMode
-**STATUS: CONFIRMED — FIXED (see Pipeline 9)**
-
-## Finding P1-3 — PrivacyAuditLoggerImpl uses System.currentTimeMillis()
-**STATUS: CONFIRMED — FIXED**
-- `PrivacyAuditLoggerImpl` now injects `TimeProvider` and uses `timeProvider.now()` instead of `System.currentTimeMillis()`.
-
-## Finding P1-4 — Privacy UI toggles may require restart
-**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-06 Stage 1)**
-- Restartless toggle design explored; full runtime cancellation on setting change deferred to Stage 2.
-
-## Finding P1-5 — Data retention may not cover all raw/sensitive copies
-**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-07/08 Stage 1)**
-- Raw-data inventory design sketched; expansion to AI artifacts, chat messages, debug diagnostics, receipt images deferred to Stage 2.
-
-## Finding P1-6 — Redacted backup does not mean fully private backup
-**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-03 Stage 1)**
-- BackupPrivacyMode enum created (FULL_ENCRYPTED, DB_TEXT_REDACTED, DB_REDACTED_NO_IMAGES, ANONYMIZED_EXPORT).
-- Manifest field added to record backup privacy mode.
-- Full enforcement of mode constraints in CostbackupBundle deferred to Stage 2.
+```text
+privacy_settings_persist_across_restart
+privacy_settings_corruption_fails_closed_for_cloud_location_and_notification
+disable_cloud_ai_blocks_all_cloud_services
+disable_cloud_ai_cancels_daily_briefing_worker
+disable_notification_capture_blocks_listener_before_extraction
+disable_external_geocoding_blocks_all_external_geocoders
+disable_background_location_blocks_location_backfill_worker
+disable_device_gps_blocks_foreground_location_provider
+receipt_image_upload_denied_when_redactBeforeCloud_true
+bank_statement_ai_disabled_blocks_suggestFromText
+bank_statement_suggestFromText_redacts_prompt_when_required
+cloud_receipt_text_prompt_redacted_before_http
+cloud_dashboard_prompt_redacted_before_http
+cloud_dedupe_prompt_redacted_before_http
+cloud_review_prompt_redacted_before_http
+cloud_query_prompt_redacted_before_http
+raw_notification_metadata_only_stores_no_raw_text
+raw_ocr_metadata_only_stores_no_raw_ocr
+email_receipt_body_purged_by_retention
+ai_artifact_prompt_purged_by_retention
+privacy_audit_writes_one_final_decision_per_check
+privacy_audit_fail_closed_exception_is_recorded
+privacy_audit_context_does_not_store_raw_text
+raw_backup_export_rejected_in_release
+privacy_denied_state_visible_in_ui_or_diagnostics
+```
 
 ---
 
-# 12. New issues discovered
+# AI implementation checklist
 
-No additional issues beyond those in the original report were found during code verification.
+Before coding, run:
+
+```bash
+grep -R "PrivacyCapability" app/src/main/java
+grep -R "privacyGate.check" app/src/main/java
+grep -R "allowCloudAi" app/src/main/java
+grep -R "redactBeforeCloud" app/src/main/java
+grep -R "Request.Builder()" app/src/main/java/com/yourname/expensetracker/data/ai/provider
+grep -R "suggestFromText" app/src/main/java
+grep -R "rawOcrText" app/src/main/java
+grep -R "raw_notifications" app/src/main/java
+grep -R "EmailReceipt" app/src/main/java
+grep -R "Timber." app/src/main/java/com/yourname/expensetracker/data/ai app/src/main/java/com/yourname/expensetracker/data/location
+grep -R "object : PrivacyGate" app/src/main/java
+```
+
+Allowed direct cloud HTTP calls should be restricted to:
+
+```text
+Cloud*Service implementations only
+each must use effective cloud policy + prepared redacted payload + audit
+```
+
+Allowed raw sensitive storage should be explicit:
+
+```text
+only when user policy says STORE_RAW
+otherwise redacted/metadata-only
+```
 
 ---
 
-# 13. Applied fixes summary
+# Definition of done
 
-| Fix | File(s) | Finding |
-|-----|---------|---------|
-| Fail-closed exception handling in CompositePrivacyGate | `CompositePrivacyGate.kt` | P0-6 |
-| Use TimeProvider in PrivacyAuditLoggerImpl | `PrivacyAuditLoggerImpl.kt` | P1-3 |
+```text
+- Disabling a privacy setting takes effect immediately without app restart.
+- PrivacySettings is the authoritative privacy contract over AiSettings.
+- Every cloud provider self-checks privacy and uses prepared redacted payloads.
+- Bank statement cloud text path redacts internally.
+- Receipt image upload is impossible when redaction is required.
+- CompositePrivacyGate writes exactly one final audit event per check.
+- Audit context is structured/sanitized and cannot store raw prompt/body/OCR text.
+- Raw notification/OCR/email body storage is controlled at write time.
+- Retention covers notification, OCR, email, AI artifacts, AI chats, and debug diagnostics.
+- External geocoding/Overpass/GPS/background location calls are all privacy-gated.
+- Raw plaintext DB export is release-disabled or explicit debug-only.
+- Privacy-denied outcomes are visible to user/debug UI.
+- CI/static guards prevent new cloud/privacy bypasses.
+```
 
 ---
 
-# 14. Remaining work priority
+# Source files inspected
 
-1. **P0-1**: Unify PrivacySettings and AiSettings into single source of truth or strict bridge
-2. **P0-2**: Route all hybrid cloud services through PrivacyGate before cloud calls
-3. **P0-3**: Make all cloud providers self-check PrivacyGate, not just AiSettings
-4. **P0-4**: Enforce redaction in CloudQueryInterpretationService before prompt construction
-5. **P0-5**: Make receipt item categorization resolve privacy settings itself
-6. **P0-7**: Implement per-provider audit wrapper with route/redaction/payload hash
-7. **P1-1**: Unify RedactionSanitizer and CloudPiiSanitizer into single contract
+- Commit baseline:  
+  https://github.com/panospao7/Cost-agregator/commit/71fbbf9aed221a7446f99967b49b6e9ebeb51946
 
----
+- `PrivacySettings.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/PrivacySettings.kt
 
-# Sources
+- `PrivacyCapability.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/PrivacyCapability.kt
 
-- Dependency map:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/docs/architecture/DEPENDENCY_MAP.md
+- `CloudAiPrivacyGate.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/CloudAiPrivacyGate.kt
 
-- Privacy settings/gates:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/PrivacySettings.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacySettingsRepositoryImpl.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/CompositePrivacyGate.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/CloudAiPrivacyGate.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/NotificationPrivacyGate.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/LocationPrivacyGate.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/BackupPrivacyGate.kt
+- `CompositePrivacyGate.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/CompositePrivacyGate.kt
 
-- Audit:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/entity/PrivacyAuditEvent.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/database/dao/PrivacyAuditDao.kt
+- `NotificationPrivacyGate.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/NotificationPrivacyGate.kt
 
-- AI settings/router/providers:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/ai/model/AiModels.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/repository/AiSettingsRepositoryImpl.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/ai/policy/DefaultAiCapabilityRouter.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/SmartReceiptAssistService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptAssistService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudQueryInterpretationService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptItemCategorizationService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudCategorizationAssistService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDashboardBriefingService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDedupeJudgeService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReviewExplanationService.kt
+- `LocationPrivacyGate.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/LocationPrivacyGate.kt
 
-- Redaction/retention/backup/location/notification:  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/ai/provider/internal/CloudPiiSanitizer.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/domain/privacy/RedactionSanitizer.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/location/CompositeGeocodingService.kt  
-  https://raw.githubusercontent.com/panospao7/Cost-agregator/53c915f09cbc92137b5b84d5839bdbf1cd321c16/app/src/main/java/com/yourname/expensetracker/data/location/LocationBackfillWorker.kt
+- `BackupPrivacyGate.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/BackupPrivacyGate.kt
+
+- `PrivacySettingsRepositoryImpl.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacySettingsRepositoryImpl.kt
+
+- `PrivacyAuditLoggerImpl.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt
+
+- `DefaultCloudPayloadRedactor.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/privacy/DefaultCloudPayloadRedactor.kt
+
+- `CloudPiiSanitizer.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/internal/CloudPiiSanitizer.kt
+
+- `CloudPayloadRedactor.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/CloudPayloadRedactor.kt
+
+- `RedactionSanitizer.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/domain/privacy/RedactionSanitizer.kt
+
+- `DataRetentionWorker.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
+
+- `ExportAnonymizer.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+
+- `CloudQueryInterpretationService.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudQueryInterpretationService.kt
+
+- `CloudReceiptAssistService.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptAssistService.kt
+
+- `CloudCategorizationAssistService.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudCategorizationAssistService.kt
+
+- `CloudDashboardBriefingService.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDashboardBriefingService.kt
+
+- `CloudDedupeJudgeService.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDedupeJudgeService.kt
+
+- `CloudReceiptItemCategorizationService.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptItemCategorizationService.kt
+
+- `CloudReviewExplanationService.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReviewExplanationService.kt
+
+- `DashboardBriefingPromptFormatter.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/ai/provider/DashboardBriefingPromptFormatter.kt
+
+- `DatabaseBackupRepositoryImpl.kt`  
+  https://raw.githubusercontent.com/panospao7/Cost-agregator/71fbbf9aed221a7446f99967b49b6e9ebeb51946/app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt

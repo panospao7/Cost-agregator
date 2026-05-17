@@ -16,4 +16,10 @@ interface WorkerLeaseRegistry {
      * @return true if all workers drained, false if timed out.
      */
     suspend fun awaitNoActiveWorkers(timeoutMs: Long): Boolean
+
+    /** Whether a stop has been requested. */
+    fun isStopRequested(): Boolean
+
+    /** Reset the stop flag so future workers can run normally after maintenance exits. */
+    fun resetStopFlag()
 }
