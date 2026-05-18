@@ -72,7 +72,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val restoreDatabaseOpener: RestoreDatabaseOpener,
     private val maintenanceOperationRunner: com.yourname.expensetracker.data.backup.MaintenanceOperationRunner,
     private val snapshotCreator: com.yourname.expensetracker.data.backup.SqliteSnapshotCreator,
-    private val restoreInternalWriteScope: com.yourname.expensetracker.data.backup.RestoreInternalWriteScope
+    private val restoreInternalWriteScope: com.yourname.expensetracker.data.backup.RestoreInternalWriteScope,
+    private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -106,7 +107,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController()
         ),
         com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
-        com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode)
+        com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode),
+        object : com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder {
+            override suspend fun start(operationType: String, actor: String?, metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata): com.yourname.expensetracker.domain.diagnostics.OperationRunHandle =
+                com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
+        }
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -472,6 +477,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         redacted: Boolean,
         privacyMode: BackupPrivacyMode?
     ): Result<File> = withContext(ioDispatcher) {
+        val run = operationRunRecorder.start("BACKUP_EXPORT", actor = "user")
         try {
             // If privacyMode is provided, derive booleans from it
             val resolvedIncludeReceiptImages = privacyMode?.includesReceiptImages ?: includeReceiptImages
@@ -483,6 +489,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 mapOf("operation" to "create_costbackup")
             )
             if (encryptedDecision is PrivacyDecision.Denied) {
+                run.failedFinal("Privacy gate denied: ${encryptedDecision.reason}")
                 return@withContext Result.failure(
                     Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason}")
                 )
@@ -592,6 +599,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 if (result.isFailure) {
                     restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    run.failedFinal("Bundle creation failed", result.exceptionOrNull())
                     return@withContext Result.failure(
                         result.exceptionOrNull() ?: Exception("Failed to create .costbackup bundle")
                     )
@@ -600,6 +608,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.d("Created .costbackup: %s", outputFile.absolutePath)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
+                run.success()
                 Result.success(outputFile)
             } finally {
                 tempDb.delete()
@@ -607,6 +616,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             Timber.e(e, "Failed to create .costbackup bundle")
             restoreMaintenanceMode.exit(forceRestartRequired = false)
+            run.failedFinal(e.message ?: "Exception", e)
             Result.failure(e)
         }
     }
@@ -615,6 +625,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         bundleFile: File,
         password: String
     ): Result<DatabaseImportResult> = withContext(ioDispatcher) {
+        val run = operationRunRecorder.start("RESTORE_COSTBACKUP", actor = "user")
         try {
             // 1. Enter maintenance mode + drain workers — RESTORE_PREPARING, blocks all writes
             maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
@@ -843,6 +854,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     restoreMaintenanceMode.exit(forceRestartRequired = true)
 
                     Timber.w("Restore completed successfully. Restart required.")
+                    run.success()
                     Result.success(
                         DatabaseImportResult.SuccessNeedsRestart(
                             DatabaseImportSummary(
@@ -892,11 +904,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 tempDir.deleteRecursively()
 
+                run.failedFinal("Restore verification failed and was rolled back", e)
                 Result.failure(Exception("Restore verification failed and was rolled back: ${e.message}"))
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to restore .costbackup bundle")
             restoreMaintenanceMode.exit(forceRestartRequired = false)
+            run.failedFinal(e.message ?: "Exception", e)
             Result.failure(e)
         }
     }

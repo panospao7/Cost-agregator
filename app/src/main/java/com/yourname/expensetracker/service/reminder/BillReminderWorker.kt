@@ -11,8 +11,6 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
-import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
@@ -34,7 +32,7 @@ class BillReminderWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val coordinator: RecurringLifecycleCoordinator,
     private val executionGuard: WorkerExecutionGuard,
-    private val diagnosticEventDao: PipelineDiagnosticEventDao
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -72,17 +70,16 @@ class BillReminderWorker @AssistedInject constructor(
                         coordinator.markReminderSent(reminder.id)
                         ctx.addNotificationsSent()
                         try {
-                            diagnosticEventDao.insert(
-                                PipelineDiagnosticEvent(
-                                    pipeline = "bill_reminder",
-                                    stage = "dispatch",
-                                    outcome = "SENT",
-                                    entityType = "RecurringReminderDelivery",
-                                    entityId = reminder.id,
-                                    message = "Reminder successfully delivered",
-                                    timestamp = System.currentTimeMillis()
-                                )
-                            )
+                            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECURRING,
+                                stage = "dispatch",
+                                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                                entityType = "RecurringReminderDelivery",
+                                entityId = reminder.id,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .put("delivered", true)
+                                    .build()
+                            ))
                         } catch (e: Exception) {
                             Log.w(TAG, "Failed to write reminder diagnostic event", e)
                         }

@@ -3,10 +3,8 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 import android.net.Uri
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
-import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.PendingReview
-import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
@@ -87,7 +85,7 @@ data class BankStatementResult(
 class BankStatementLifecycleProcessor @Inject constructor(
     private val receiptRepository: ReceiptRepository,
     private val scannedReceiptDao: ScannedReceiptDao,
-    private val receiptEventDao: ReceiptEventDao,
+    private val receiptLifecycleEventWriter: ReceiptLifecycleEventWriter,
     private val receiptLinkService: ReceiptLinkService,
     private val timeProvider: TimeProvider,
     private val bankStatementParser: BankStatementParser,
@@ -267,21 +265,15 @@ class BankStatementLifecycleProcessor @Inject constructor(
             }
 
             // ── Step 5: Write RECEIPT_SAVED lifecycle event ────────────────────
-            receiptEventDao.insert(
-                ReceiptEvent(
-                    receiptId = receiptId,
-                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
-                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
-                    eventType = "RECEIPT_SAVED",
-                    occurredAt = timeProvider.now(),
-                    oldStatus = null,
-                    newStatus = ReceiptProcessingStatus.PARSED.name,
-                    actor = "system:bank_statement_processor",
-                    message = "Bank statement processed with $transactionsFound transactions",
-                    metadata = null,
-                    errorDetails = null
-                )
-            )
+            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                receiptId = receiptId,
+                sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                eventType = "RECEIPT_SAVED",
+                newStatus = ReceiptProcessingStatus.PARSED.name,
+                actor = "system:bank_statement_processor",
+                message = "Bank statement processed with $transactionsFound transactions"
+            ))
 
             // ── Step 6: Create a PendingReview for each transaction ────────────
             var reviewsCreated = 0
@@ -410,21 +402,21 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     updatedAt = timeProvider.now()
                 ))
             }
-            receiptEventDao.insert(
-                ReceiptEvent(
-                    receiptId = receiptId,
-                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
-                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
-                    eventType = "PROCESSING_COMPLETE",
-                    occurredAt = timeProvider.now(),
-                    oldStatus = ReceiptProcessingStatus.PARSED.name,
-                    newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
-                    actor = "system:bank_statement_processor",
-                    message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
-                    metadata = """{"transactionsFound":$transactionsFound,"reviewsCreated":$reviewsCreated,"duplicatesSkipped":$duplicatesSkipped}""",
-                    errorDetails = null
-                )
-            )
+            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                receiptId = receiptId,
+                sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                eventType = "PROCESSING_COMPLETE",
+                oldStatus = ReceiptProcessingStatus.PARSED.name,
+                newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                actor = "system:bank_statement_processor",
+                message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("transactionsFound", transactionsFound)
+                    .put("reviewsCreated", reviewsCreated)
+                    .put("duplicatesSkipped", duplicatesSkipped)
+                    .build()
+            ))
 
             val debugData = DebugData(
                 rawText = ocrResult.fullText,

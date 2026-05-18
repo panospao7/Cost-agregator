@@ -86,6 +86,7 @@ class EmailReceiptIngestionService(
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
 ) {
     @Inject
@@ -103,7 +104,8 @@ class EmailReceiptIngestionService(
         database: AppDatabase,
         restoreMaintenanceMode: RestoreMaintenanceMode,
         writeBarrier: DatabaseWriteBarrier,
-        privacySettingsRepository: PrivacySettingsRepository
+        privacySettingsRepository: PrivacySettingsRepository,
+        diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -118,6 +120,7 @@ class EmailReceiptIngestionService(
         restoreMaintenanceMode = restoreMaintenanceMode,
         writeBarrier = writeBarrier,
         privacySettingsRepository = privacySettingsRepository,
+        diagnosticEventWriter = diagnosticEventWriter,
         transactionRunner = { block -> database.withTransaction { block() } }
     )
 
@@ -149,6 +152,9 @@ class EmailReceiptIngestionService(
         restoreMaintenanceMode = restoreMaintenanceMode,
         writeBarrier = writeBarrier,
         privacySettingsRepository = privacySettingsRepository,
+        diagnosticEventWriter = object : com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter {
+            override suspend fun emit(event: com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent) {}
+        },
         transactionRunner = { block -> block() }
     )
 
@@ -180,9 +186,33 @@ class EmailReceiptIngestionService(
         receivedAt: Long,
         messageId: String
     ): EmailReceiptResult = ingestionMutex.withLock {
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        try {
+            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                stage = "front_door",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
+                correlationId = correlationId,
+                sourceType = "email",
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("messageId", messageId)
+                    .putHashed("sender", sender)
+                    .build()
+            ))
+        } catch (_: Exception) {}
         try {
             writeBarrier.checkWritesAllowed("EmailReceiptIngestionService.processEmailReceipt")
         } catch (e: IllegalStateException) {
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                    stage = "front_door",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
+                    correlationId = correlationId,
+                    isTerminal = true
+                ))
+            } catch (_: Exception) {}
             return@withLock EmailReceiptResult.ParseError(e.message ?: "Database writes blocked during restore")
         }
         try {
@@ -192,10 +222,32 @@ class EmailReceiptIngestionService(
 
             // Step 2: Parse email body based on provider
             val parsedReceipt = parseEmailReceipt(emailBody, receivedAt, provider)
-                ?: return EmailReceiptResult.ParseError("Could not parse receipt from email")
+            if (parsedReceipt == null) {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                        stage = "parser",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PARSER_FAILED,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+                return EmailReceiptResult.ParseError("Could not parse receipt from email")
+            }
 
             // Step 3: Validate parsed data
             if (!validateParsedReceipt(parsedReceipt)) {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                        stage = "validation",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
                 return EmailReceiptResult.ParseError("Invalid receipt data: amount=${parsedReceipt.amount}, merchant=${parsedReceipt.merchant}")
             }
 

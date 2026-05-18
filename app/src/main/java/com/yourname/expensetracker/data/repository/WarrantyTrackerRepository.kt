@@ -57,7 +57,8 @@ class WarrantyTrackerRepository @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val writeBarrier: DatabaseWriteBarrier
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val receiptLifecycleEventWriter: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter
 ) {
     private companion object {
         private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
@@ -158,19 +159,19 @@ class WarrantyTrackerRepository @Inject constructor(
                     put("warrantyType", warranty.warrantyType.name)
                 }.toString()
                 runCatching {
-                    database.receiptEventDao().insert(
-                        ReceiptEvent(
+                    receiptLifecycleEventWriter.write(
+                        com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent(
                             receiptId = warranty.receiptId,
                             sourceType = warranty.extractionSource,
                             documentType = "WARRANTY_EXTRACTION",
                             eventType = "AI_WARRANTY_CREATED",
-                            occurredAt = now,
-                            oldStatus = null,
-                            newStatus = null,
                             actor = "system:ai_warranty_extraction",
                             message = auditMessage,
-                            metadata = auditMetadata,
-                            errorDetails = null
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .put("productName", warranty.productName)
+                                .put("warrantyDurationMonths", warranty.warrantyDurationMonths)
+                                .put("warrantyType", warranty.warrantyType.name)
+                                .build()
                         )
                     )
                 }.onFailure { error ->

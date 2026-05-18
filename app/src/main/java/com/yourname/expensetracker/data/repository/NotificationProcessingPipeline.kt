@@ -5,12 +5,9 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
-import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
-import com.yourname.expensetracker.data.database.dao.TransactionEventDao
-import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ExtractionState
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
@@ -22,7 +19,6 @@ import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
-import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.ApplicationScope
@@ -147,8 +143,8 @@ class NotificationProcessingPipeline @Inject constructor(
     private val recommendationRepository: RecommendationRepository,
     private val subscriptionDetector: NotificationSubscriptionDetector,
     private val coordinator: TransactionLifecycleCoordinator,
-    private val transactionEventDao: TransactionEventDao,
-    private val pipelineDiagnosticEventDao: PipelineDiagnosticEventDao,
+    private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val writeBarrier: DatabaseWriteBarrier,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
@@ -273,16 +269,15 @@ class NotificationProcessingPipeline @Inject constructor(
         val parserSource = if (deterministicResult != null) "PARSER_USED" else if (parsed != null) "AI_FALLBACK_USED" else null
         if (parserSource != null) {
             runCatching {
-                pipelineDiagnosticEventDao.insert(
-                    PipelineDiagnosticEvent(
-                        pipeline = "notification",
-                        stage = "parse",
-                        outcome = parserSource,
-                        packageName = notification.packageName,
-                        message = if (parserSource == "AI_FALLBACK_USED") "AI fallback used: deterministic parse failed" else "Deterministic parser succeeded",
-                        timestamp = timeProvider.now()
-                    )
-                )
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "parse",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", notification.packageName)
+                        .put("parserSource", parserSource)
+                        .build()
+                ))
             }
         }
 
@@ -531,58 +526,39 @@ class NotificationProcessingPipeline @Inject constructor(
                 is NotificationPipelineOutcome.Dropped -> "drop" to "DROPPED"
                 is NotificationPipelineOutcome.Error -> "error" to "ERROR"
             }
-            pipelineDiagnosticEventDao.insert(
-                PipelineDiagnosticEvent(
-                    pipeline = "notification",
-                    stage = stage,
-                    outcome = outcomeStr,
-                    packageName = packageName,
-                    dropReason = when (outcome) {
-                        is NotificationPipelineOutcome.Duplicate -> outcome.reason
-                        is NotificationPipelineOutcome.ParserFailed -> outcome.reason
-                        is NotificationPipelineOutcome.AutoRejected -> outcome.reason
-                        is NotificationPipelineOutcome.Dropped -> outcome.reason
-                        else -> null
-                    },
-                    entityType = when (outcome) {
-                        is NotificationPipelineOutcome.AutoAccepted -> "Expense"
-                        is NotificationPipelineOutcome.NeedsReview -> "PendingReview"
-                        is NotificationPipelineOutcome.ParserFailed -> outcome.rawId?.let { "RawNotification" }
-                        is NotificationPipelineOutcome.AutoRejected -> outcome.rawId?.let { "RawNotification" }
-                        else -> null
-                    },
-                    entityId = when (outcome) {
-                        is NotificationPipelineOutcome.AutoAccepted -> outcome.expenseId
-                        is NotificationPipelineOutcome.NeedsReview -> outcome.reviewId
-                        else -> null
-                    },
-                    sourceId = when (outcome) {
-                        is NotificationPipelineOutcome.AutoAccepted -> outcome.rawId
-                        is NotificationPipelineOutcome.NeedsReview -> outcome.rawId
-                        is NotificationPipelineOutcome.ParserFailed -> outcome.rawId
-                        is NotificationPipelineOutcome.AutoRejected -> outcome.rawId
-                        else -> null
-                    },
-                    timestamp = timeProvider.now(),
-                    notificationKeyHash = "${packageName}_${outcome}".hashCode().toString(16),
-                    confidence = when (outcome) {
-                        is NotificationPipelineOutcome.AutoAccepted -> 0.8f
-                        is NotificationPipelineOutcome.NeedsReview -> 0.5f
-                        is NotificationPipelineOutcome.AutoRejected -> 0.0f
-                        else -> null
-                    },
-                    decisionSource = when (outcome) {
-                        is NotificationPipelineOutcome.AutoAccepted -> "classifier"
-                        is NotificationPipelineOutcome.NeedsReview -> "classifier"
-                        is NotificationPipelineOutcome.Duplicate -> "dedupe"
-                        is NotificationPipelineOutcome.ParserFailed -> "parser"
-                        is NotificationPipelineOutcome.AutoRejected -> "classifier"
-                        is NotificationPipelineOutcome.Dropped -> "privacy"
-                        is NotificationPipelineOutcome.Error -> "exception"
-                    },
-                    elapsedMs = null
-                )
-            )
+            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = stage,
+                outcome = when (outcome) {
+                    is NotificationPipelineOutcome.AutoAccepted -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED
+                    is NotificationPipelineOutcome.NeedsReview -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.NEEDS_REVIEW
+                    is NotificationPipelineOutcome.Duplicate -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE
+                    is NotificationPipelineOutcome.ParserFailed -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL
+                    is NotificationPipelineOutcome.AutoRejected -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED
+                    is NotificationPipelineOutcome.Dropped -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED
+                    is NotificationPipelineOutcome.Error -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL
+                },
+                reasonCode = when (outcome) {
+                    is NotificationPipelineOutcome.Duplicate -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE
+                    is NotificationPipelineOutcome.ParserFailed -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PARSER_FAILED
+                    is NotificationPipelineOutcome.Dropped -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED
+                    else -> null
+                },
+                entityType = when (outcome) {
+                    is NotificationPipelineOutcome.AutoAccepted -> "Expense"
+                    is NotificationPipelineOutcome.NeedsReview -> "PendingReview"
+                    else -> null
+                },
+                entityId = when (outcome) {
+                    is NotificationPipelineOutcome.AutoAccepted -> outcome.expenseId
+                    is NotificationPipelineOutcome.NeedsReview -> outcome.reviewId
+                    else -> null
+                },
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName)
+                    .build(),
+                isTerminal = true
+            ))
         }
     }
 
@@ -1019,19 +995,16 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     put("merchant", preDb.correctedMerchant)
                 }.toString()
                 runCatching {
-                    transactionEventDao.insert(
-                        TransactionEvent(
+                    transactionLifecycleEventWriter.write(
+                        com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
                             expenseId = expenseId,
                             eventType = "AI_AUTO_ACCEPT",
                             source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
                             actor = "system:ai_auto_accept",
-                            occurredAt = timeProvider.now(),
                             dedupeKey = preDb.dedupeKey,
-                            duplicateExpenseId = null,
-                            beforeSnapshot = null,
-                            afterSnapshot = null,
-                            metadata = auditMetadata,
-                            reason = auditReason
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .putHashed("packageName", notification.packageName)
+                                .build()
                         )
                     )
                 }.onFailure { error ->

@@ -8,7 +8,10 @@ import androidx.room.PrimaryKey
     tableName = "pipeline_diagnostic_events",
     indices = [
         Index(value = ["pipeline", "stage"]),
-        Index(value = ["timestamp"])
+        Index(value = ["timestamp"]),
+        Index(value = ["correlationId"]),
+        Index(value = ["reasonCode"]),
+        Index(value = ["entityType", "entityId"])
     ]
 )
 data class PipelineDiagnosticEvent(
@@ -29,5 +32,15 @@ data class PipelineDiagnosticEvent(
     val notificationKeyHash: String? = null,
     val confidence: Float? = null,
     val decisionSource: String? = null,
-    val elapsedMs: Long? = null
+    val elapsedMs: Long? = null,
+    // --- PR 2 additions ---
+    val eventId: String? = null,
+    val correlationId: String? = null,
+    val causationId: String? = null,
+    val severity: String? = null,
+    val reasonCode: String? = null,
+    val sourceType: String? = null,
+    val sourceIdHash: String? = null,
+    val isTerminal: Boolean? = null,
+    val metadataSchemaVersion: Int = 1
 )

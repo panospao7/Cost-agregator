@@ -51,7 +51,8 @@ class ReceiptSideEffectDispatcher @Inject constructor(
     private val receiptLinkService: ReceiptLinkService,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptEventDao: ReceiptEventDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 ) {
 
     /**
@@ -257,6 +258,54 @@ class ReceiptSideEffectDispatcher @Inject constructor(
             )
         } catch (e: Exception) {
             Timber.w(e, "Failed to write $eventType event for receipt %d", receipt.id)
+        }
+        if (eventType == "SIDE_EFFECT_FAILED") {
+            try {
+                diagnosticEventWriter.emit(
+                    com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECEIPT,
+                        stage = "side_effect",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_FAILED,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.SIDE_EFFECT_EXCEPTION,
+                        entityType = "receipt",
+                        entityId = receipt.id,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("sideEffect", message.take(128))
+                            .build()
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** Wraps a side-effect call with STARTED/COMPLETED/FAILED diagnostic events. */
+    private suspend fun runSideEffect(receipt: ScannedReceipt, name: String, block: suspend () -> Unit) {
+        try {
+            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECEIPT,
+                stage = "side_effect",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_STARTED,
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.DEBUG,
+                entityType = "receipt", entityId = receipt.id,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder().put("sideEffect", name).build()
+            ))
+        } catch (_: Exception) {}
+        try {
+            block()
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECEIPT,
+                    stage = "side_effect",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_COMPLETED,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.DEBUG,
+                    entityType = "receipt", entityId = receipt.id,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder().put("sideEffect", name).build()
+                ))
+            } catch (_: Exception) {}
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED", "$name failed", errorDetails = e.message)
         }
     }
 }

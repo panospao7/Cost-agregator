@@ -220,6 +220,12 @@ class NotificationCaptureService : NotificationListenerService() {
     @Inject
     lateinit var privacySettingsRepository: PrivacySettingsRepository
 
+    @Inject
+    lateinit var diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+
+    @Inject
+    lateinit var diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
+
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     private val workTracker = NotificationServiceWorkTracker()
@@ -410,6 +416,12 @@ class NotificationCaptureService : NotificationListenerService() {
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
+            serviceScope.launch {
+                try {
+                    diagnosticSink.recordBlockedOperation(packageName, restoreMaintenanceMode.currentMode(), "P1",
+                        reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
+                } catch (_: Exception) {}
+            }
             return
         }
 
@@ -429,12 +441,24 @@ class NotificationCaptureService : NotificationListenerService() {
         cleanupCacheIfNeeded()
 
         // P1-05: Fast privacy gate check BEFORE extracting text from extras.
-        // Uses a cached @Volatile flag updated reactively from the privacy
-        // settings Flow — avoids calling the suspend PrivacyGate.check() on
-        // the main thread and allows rejecting notifications before any text
-        // extraction from extras (zero PII read).
         if (isPrivacyDeniedFast()) {
             Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
+            serviceScope.launch {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "listener",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                        sourceType = "notification",
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .putHashed("packageName", packageName)
+                            .build(),
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+            }
             return
         }
 
@@ -450,11 +474,36 @@ class NotificationCaptureService : NotificationListenerService() {
                 parts.combinedBody
             )) return
 
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+
         workTracker.launch(serviceScope) {
+            // Emit RECEIVED before any further processing
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "listener",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName)
+                        .build()
+                ))
+            } catch (_: Exception) {}
             try {
                 when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                     is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                         Timber.d("Privacy gate denied notification capture from $packageName")
+                        try {
+                            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                                stage = "privacy_gate",
+                                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                                correlationId = correlationId,
+                                isTerminal = true
+                            ))
+                        } catch (_: Exception) {}
                         return@launch
                     }
                     is PrivacyDecision.Allowed -> { /* proceed */ }

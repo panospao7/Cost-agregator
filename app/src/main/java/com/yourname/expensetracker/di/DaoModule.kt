@@ -288,4 +288,14 @@ object DaoModule {
     @Singleton
     fun providePipelineDiagnosticEventDao(database: AppDatabase): PipelineDiagnosticEventDao =
         database.pipelineDiagnosticEventDao()
+
+    @Provides
+    @Singleton
+    fun provideOperationRunDao(database: AppDatabase): OperationRunDao =
+        database.operationRunDao()
+
+    @Provides
+    @Singleton
+    fun provideOperationRunEventDao(database: AppDatabase): OperationRunEventDao =
+        database.operationRunEventDao()
 }

@@ -34,7 +34,8 @@ class TransactionSideEffectDispatcher @Inject constructor(
     private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizationRepository: MerchantNormalizationRepository,
-    private val recurringLifecycleCoordinator: Lazy<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator>
+    private val recurringLifecycleCoordinator: Lazy<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator>,
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 ) {
     /**
      * Dispatches all standard post-creation side effects for the given expense.
@@ -191,10 +192,52 @@ class TransactionSideEffectDispatcher @Inject constructor(
 
     private suspend fun runSafely(action: String, block: suspend () -> Unit) {
         try {
+            diagnosticEventWriter.emit(
+                com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.TRANSACTION,
+                    stage = "side_effect",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_STARTED,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.DEBUG,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("sideEffect", action.take(128))
+                        .build()
+                )
+            )
+        } catch (_: Exception) {}
+        try {
             block()
+            try {
+                diagnosticEventWriter.emit(
+                    com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.TRANSACTION,
+                        stage = "side_effect",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_COMPLETED,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.DEBUG,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("sideEffect", action.take(128))
+                            .build()
+                    )
+                )
+            } catch (_: Exception) {}
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "TransactionSideEffectDispatcher: $action failed")
+            try {
+                diagnosticEventWriter.emit(
+                    com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.TRANSACTION,
+                        stage = "side_effect",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_FAILED,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.SIDE_EFFECT_EXCEPTION,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("sideEffect", action.take(128))
+                            .build(),
+                        exception = e,
+                        isTerminal = false
+                    )
+                )
+            } catch (_: Exception) {}
         }
     }
 }

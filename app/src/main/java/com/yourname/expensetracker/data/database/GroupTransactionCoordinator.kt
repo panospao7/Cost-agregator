@@ -6,13 +6,11 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
-import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
-import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.di.IoDispatcher
@@ -142,7 +140,7 @@ class GroupTransactionCoordinator @Inject constructor(
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
     private val expenseDao: ExpenseDao,
-    private val transactionEventDao: TransactionEventDao,
+    private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider,
@@ -826,18 +824,15 @@ class GroupTransactionCoordinator @Inject constructor(
                 put("count", linkedExpenseIds.size)
             }.toString()
             try {
-                transactionEventDao.insert(
-                    TransactionEvent(
+                transactionLifecycleEventWriter.write(
+                    com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
                         expenseId = null,
                         eventType = LifecycleEventType.BULK_UPDATED.name,
                         source = "GROUP_HARD_DELETE",
                         actor = "system:group_transaction_coordinator",
-                        occurredAt = now,
-                        dedupeKey = null,
-                        duplicateExpenseId = null,
-                        beforeSnapshot = null,
-                        afterSnapshot = null,
-                        metadata = metadata,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("count", linkedExpenseIds.size)
+                            .build(),
                         reason = "Group hard-delete cleared shared expense flags for ${linkedExpenseIds.size} expenses"
                     )
                 )

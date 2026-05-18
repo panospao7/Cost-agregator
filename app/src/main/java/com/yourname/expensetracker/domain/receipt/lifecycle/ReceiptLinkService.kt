@@ -5,13 +5,11 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
-import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.MatchStatus
-import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -82,7 +80,7 @@ class ReceiptLinkService @Inject constructor(
     private val database: AppDatabase,
     private val receiptExpenseLinkDao: ReceiptExpenseLinkDao,
     private val scannedReceiptDao: ScannedReceiptDao,
-    private val receiptEventDao: ReceiptEventDao,
+    private val receiptLifecycleEventWriter: ReceiptLifecycleEventWriter,
     private val receiptItemCategorizationDao: ReceiptItemCategorizationDao,
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
@@ -266,21 +264,14 @@ class ReceiptLinkService @Inject constructor(
             }
 
             // 5. Write lifecycle event
-            receiptEventDao.insert(
-                ReceiptEvent(
-                    receiptId = receiptId,
-                    sourceType = receipt.sourceType,
-                    documentType = receipt.documentType,
-                    eventType = "RECEIPT_LINKED_TO_EXPENSE",
-                    occurredAt = now,
-                    oldStatus = null,
-                    newStatus = null,
-                    actor = createdBy ?: "system",
-                    message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated.",
-                    metadata = null,
-                    errorDetails = null
-                )
-            )
+            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                receiptId = receiptId,
+                sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = "RECEIPT_LINKED_TO_EXPENSE",
+                actor = createdBy ?: "system",
+                message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated."
+            ))
 
             // 6. Return the link with actual DB-generated ID
             Result.success(link.copy(id = linkId))
@@ -370,21 +361,14 @@ class ReceiptLinkService @Inject constructor(
                 // 3. Write lifecycle event
                 val sourceType = receipt?.sourceType ?: "UNKNOWN"
                 val documentType = receipt?.documentType ?: "UNKNOWN"
-                receiptEventDao.insert(
-                    ReceiptEvent(
-                        receiptId = receiptId,
-                        sourceType = sourceType,
-                        documentType = documentType,
-                        eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
-                        occurredAt = now,
-                        oldStatus = null,
-                        newStatus = null,
-                        actor = "system",
-                        message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared.",
-                        metadata = null,
-                        errorDetails = null
-                    )
-                )
+                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                    receiptId = receiptId,
+                    sourceType = sourceType,
+                    documentType = documentType,
+                    eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
+                    actor = "system",
+                    message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
+                ))
             }
 
             Result.success(Unit)

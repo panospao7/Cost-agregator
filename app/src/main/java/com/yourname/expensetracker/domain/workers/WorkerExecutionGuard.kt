@@ -7,9 +7,12 @@ import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.yield
 import timber.log.Timber
 import javax.inject.Inject
@@ -19,9 +22,7 @@ data class WorkerGuardRequest(
     val workerName: String,
     val requiredCapabilities: List<PrivacyCapability> = emptyList(),
     val requiresNotificationPermission: Boolean = false,
-    /** If true, this worker writes to the DB and must be blocked in all non-NORMAL modes. */
     val requiresDatabaseWrite: Boolean = true,
-    /** If true AND requiresDatabaseWrite=false, allow read-only work during BACKUP_EXPORTING. */
     val allowDuringBackupExport: Boolean = false
 )
 
@@ -47,7 +48,9 @@ class WorkerExecutionGuard @Inject constructor(
     private val workerRunLogger: WorkerRunLogger,
     private val privacyGate: PrivacyGate,
     private val leaseRegistry: WorkerLeaseRegistry,
-    private val diagnosticSink: MaintenanceSafeDiagnosticSink
+    private val diagnosticSink: MaintenanceSafeDiagnosticSink,
+    private val backgroundJobRunDao: BackgroundJobRunDao,
+    private val timeProvider: TimeProvider
 ) {
     suspend fun <T> runGuarded(
         request: WorkerGuardRequest,
@@ -58,7 +61,6 @@ class WorkerExecutionGuard @Inject constructor(
             request.allowDuringBackupExport &&
             !request.requiresDatabaseWrite
 
-        // Barrier check — before acquiring lease or logging a run
         if (mode != RestoreMaintenanceMode.Mode.NORMAL) {
             if (allowedReadOnly) {
                 try {
@@ -69,17 +71,17 @@ class WorkerExecutionGuard @Inject constructor(
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     diagnosticSink.recordBlockedOperation(
-                                        request.workerName, mode, "P9",
-                                        reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
-                                    )
-                    return WorkerGuardResult.Skipped("Read barrier denied during backup: ${e.message}")
+                        request.workerName, mode, "P9",
+                        reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+                    )
+                    return WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
                 }
             } else {
                 diagnosticSink.recordBlockedOperation(
-                                    request.workerName, mode, "P9",
-                                    reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
-                                )
-                return WorkerGuardResult.Skipped("Blocked in mode $mode")
+                    request.workerName, mode, "P9",
+                    reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+                )
+                return WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
             }
         } else if (request.requiresDatabaseWrite) {
             try {
@@ -87,38 +89,36 @@ class WorkerExecutionGuard @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 diagnosticSink.recordBlockedOperation(
-                                    request.workerName, mode, "P9",
-                                    reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
-                                )
-                return WorkerGuardResult.Skipped("Write barrier denied: ${e.message}")
+                    request.workerName, mode, "P9",
+                    reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+                )
+                return WorkerGuardResult.Skipped(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
             }
         }
 
         val lease = leaseRegistry.acquire(request.workerName)
         try {
-            // Read-only backup-export path: no Room logging (BackgroundJobRun is a DB write)
             if (allowedReadOnly) {
                 val result = block()
                 return WorkerGuardResult.Success(result)
             }
 
-            // Normal path: start run log inside try so lease is always released
             val run = workerRunLogger.start(request.workerName)
             try {
                 val spec = WorkerSpec.DEFAULTS[request.workerName]
                 if (spec != null && !spec.enabled) {
-                    run.skipped("DISABLED")
+                    run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name)
                     return WorkerGuardResult.Skipped("Worker disabled by spec")
                 }
 
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            run.skipped("PRIVACY_$capability")
+                            run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name)
                             return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
                         }
                         is PrivacyDecision.FailClosed -> {
-                            run.skipped("PRIVACY_FAIL_CLOSED_$capability")
+                            run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
                             return WorkerGuardResult.Skipped("Privacy check failed (fail-closed): $capability - ${decision.reason}")
                         }
                         else -> { }
@@ -130,7 +130,8 @@ class WorkerExecutionGuard @Inject constructor(
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) {
-                    run.cancelled("coroutine_cancelled_or_maintenance_stop")
+                    // Finalize CANCELLED before rethrowing — plan requirement
+                    run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
                     throw e
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
@@ -158,25 +159,95 @@ class WorkerExecutionGuard @Inject constructor(
     }
 
     /**
-     * Like [runGuarded] but provides a [WorkerRunContext] to the block for counter tracking.
-     * Counters are written to [BackgroundJobRun] on success.
+     * Like [runGuarded] but provides a [WorkerRunContext] to the block.
+     * Counters accumulated in the context are written to [BackgroundJobRun] on success.
      */
     suspend fun <T> runGuardedWithContext(
         request: WorkerGuardRequest,
         block: suspend (WorkerRunContext) -> T
     ): WorkerGuardResult<T> {
         val ctx = WorkerRunContext(checkpointDelegate = ::checkpoint)
-        // Wrap block to capture result; counts are read from ctx after block completes
-        var capturedCtx: WorkerRunContext? = null
-        val result = runGuarded(request) {
-            val r = block(ctx)
-            capturedCtx = ctx
-            r
+        val mode = restoreMaintenanceMode.currentMode()
+        val allowedReadOnly = mode == RestoreMaintenanceMode.Mode.BACKUP_EXPORTING &&
+            request.allowDuringBackupExport &&
+            !request.requiresDatabaseWrite
+
+        if (mode != RestoreMaintenanceMode.Mode.NORMAL && !allowedReadOnly) {
+            diagnosticSink.recordBlockedOperation(
+                request.workerName, mode, "P9",
+                reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+            )
+            return WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
         }
-        // If success, the run.success() inside runGuarded used default zeros.
-        // Counts are available in capturedCtx for callers that need them externally.
-        // Full count propagation requires a deeper refactor tracked separately.
-        return result
+
+        val lease = leaseRegistry.acquire(request.workerName)
+        try {
+            val run = workerRunLogger.start(request.workerName)
+            try {
+                val spec = WorkerSpec.DEFAULTS[request.workerName]
+                if (spec != null && !spec.enabled) {
+                    run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name)
+                    return WorkerGuardResult.Skipped("Worker disabled by spec")
+                }
+
+                for (capability in request.requiredCapabilities) {
+                    when (val decision = privacyGate.check(capability)) {
+                        is PrivacyDecision.Denied -> {
+                            run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name)
+                            return WorkerGuardResult.Skipped("Privacy blocked: $capability")
+                        }
+                        is PrivacyDecision.FailClosed -> {
+                            run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
+                            return WorkerGuardResult.Skipped("Privacy fail-closed: $capability")
+                        }
+                        else -> { }
+                    }
+                }
+
+                val result = block(ctx)
+                run.success(
+                    rowsScanned = ctx.rowsScanned,
+                    rowsUpdated = ctx.rowsUpdated,
+                    notificationsSent = ctx.notificationsSent
+                )
+                return WorkerGuardResult.Success(result)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) {
+                    run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
+                    throw e
+                }
+                Timber.w(e, "Worker ${request.workerName} failed")
+                return if (classifyTransient(e)) {
+                    run.retry(e.message ?: "Transient error", e)
+                    WorkerGuardResult.Retry(e.message ?: "Transient error", e)
+                } else {
+                    run.failure(e.message ?: "Permanent error", e)
+                    WorkerGuardResult.Failed(e.message ?: "Permanent error", e)
+                }
+            }
+        } finally {
+            lease.close()
+        }
+    }
+
+    /**
+     * Marks any RUNNING rows older than [staleThresholdMs] as STALE_ABORTED.
+     * Call from app startup or a periodic maintenance worker.
+     */
+    suspend fun recoverStaleRunningJobs(staleThresholdMs: Long = timeProvider.now() - STALE_THRESHOLD_MS) {
+        val stale = backgroundJobRunDao.getStaleRunningRuns(staleThresholdMs)
+        for (run in stale) {
+            backgroundJobRunDao.update(
+                run.copy(
+                    status = "STALE_ABORTED",
+                    finishedAt = timeProvider.now(),
+                    statusReason = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name
+                )
+            )
+        }
+        if (stale.isNotEmpty()) {
+            Timber.w("Recovered ${stale.size} stale RUNNING job(s) as STALE_ABORTED")
+        }
     }
 
     private fun classifyTransient(e: Exception): Boolean {
@@ -191,5 +262,10 @@ class WorkerExecutionGuard @Inject constructor(
             e is kotlinx.coroutines.TimeoutCancellationException -> true
             else -> false
         }
+    }
+
+    companion object {
+        /** Runs older than 4 hours are considered stale. */
+        const val STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000L
     }
 }

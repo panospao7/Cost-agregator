@@ -1,9 +1,7 @@
 package com.yourname.expensetracker.domain.budget
 
-import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
-import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -31,8 +29,7 @@ class BudgetMonitor @Inject constructor(
     private val timeProvider: TimeProvider,
     private val notificationService: NotificationService,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
-    /** P2-20: Durable diagnostic ledger for budget alert decisions. */
-    private val diagnosticEventDao: PipelineDiagnosticEventDao,
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
     private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 ) {
@@ -162,16 +159,13 @@ class BudgetMonitor @Inject constructor(
             serviceScope.launch(ioDispatcher) {
                 try {
                     writeBarrier.checkWritesAllowed("BudgetMonitor.checkBudgets.diagnostic")
-                    diagnosticEventDao.insert(
-                        PipelineDiagnosticEvent(
-                            pipeline = "budget_monitor",
-                            stage = "CHECK_FAILED",
-                            outcome = "ERROR",
-                            exceptionClass = lastException?.javaClass?.name,
-                            exceptionMessage = lastException?.message,
-                            timestamp = timeProvider.now()
-                        )
-                    )
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                        stage = "CHECK_FAILED",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                        exception = lastException
+                    ))
                 } catch (e: Exception) {
                     Timber.w(e, "Failed to write CHECK_FAILED diagnostic event")
                 }
@@ -220,23 +214,20 @@ class BudgetMonitor @Inject constructor(
         withContext(ioDispatcher) {
             try {
                 writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
-                diagnosticEventDao.insert(
-                    PipelineDiagnosticEvent(
-                        pipeline = "budget_monitor",
-                        stage = "CHECK_STARTED",
-                        outcome = "OK",
-                        entityType = "Budget",
-                        entityId = budget.id,
-                        timestamp = now
-                    )
-                )
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = "CHECK_STARTED",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED,
+                    entityType = "Budget",
+                    entityId = budget.id
+                ))
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
-                                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
-                                } else {
-                                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
-                                }
+                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                } else {
+                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                }
             }
         }
 
@@ -263,26 +254,26 @@ class BudgetMonitor @Inject constructor(
         withContext(ioDispatcher) {
             try {
                 writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
-                diagnosticEventDao.insert(
-                    PipelineDiagnosticEvent(
-                        pipeline = "budget_monitor",
-                        stage = "STATUS_COMPUTED",
-                        outcome = "OK",
-                        entityType = "BudgetStatus",
-                        entityId = budget.id,
-                        confidence = adjustedPercent.toDouble().coerceIn(0.0, 2.0).toFloat(),
-                        message = "spent=%.2f limit=%.2f percent=%.2f partial=%b"
-                            .format(spent, effectiveLimit, adjustedPercent, status.isPartial),
-                        timestamp = now
-                    )
-                )
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = "STATUS_COMPUTED",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                    entityType = "BudgetStatus",
+                    entityId = budget.id,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("spent", spent)
+                        .put("limit", effectiveLimit)
+                        .put("percent", adjustedPercent)
+                        .put("partial", status.isPartial)
+                        .build()
+                ))
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
-                                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
-                                } else {
-                                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
-                                }
+                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                } else {
+                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                }
             }
         }
 
@@ -341,17 +332,17 @@ class BudgetMonitor @Inject constructor(
         serviceScope.launch(ioDispatcher) {
             try {
                 writeBarrier.checkWritesAllowed("BudgetMonitor.writeAlertDiagnostic")
-                diagnosticEventDao.insert(
-                    PipelineDiagnosticEvent(
-                        pipeline = "budget_monitor",
-                        stage = stage,
-                        outcome = if (delivered) "DELIVERED" else "NOT_DELIVERED",
-                        entityType = "Budget",
-                        entityId = budgetId,
-                        confidence = percentUsed.toDouble().coerceIn(0.0, 2.0).toFloat(),
-                        timestamp = now
-                    )
-                )
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = stage,
+                    outcome = if (delivered) com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED
+                              else com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                    entityType = "Budget",
+                    entityId = budgetId,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("percentUsed", percentUsed)
+                        .build()
+                ))
             } catch (e: Exception) {
                 Timber.w(e, "Failed to write budget-monitor diagnostic event (stage=%s)", stage)
             }

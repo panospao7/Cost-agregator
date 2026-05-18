@@ -5,46 +5,36 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * Persistent record of a background worker execution (job run).
+ * Persistent record of a background worker execution.
  *
- * Each time a WorkManager worker executes, it inserts a [BackgroundJobRun] row
- * to track observability: when it started/finished, what it processed, and
- * whether it succeeded or needs retry.
- *
- * Status values:
- * - SCHEDULED: Worker was scheduled but has not started yet.
- * - RUNNING:  Worker is currently executing.
- * - SUCCESS:  Worker completed successfully.
- * - FAILED:   Worker failed with a permanent error.
- * - RETRY:    Worker hit a transient error and will be retried.
+ * Status values: RUNNING, SUCCESS, SKIPPED, RETRY, FAILED, CANCELLED, STALE_ABORTED
+ * Use [statusReason] for typed skip/cancel reason instead of encoding it in status.
  */
 @Entity(
     tableName = "background_job_runs",
     indices = [
         Index(value = ["workerName", "startedAt"]),
-        Index(value = ["status"])
+        Index(value = ["status"]),
+        Index(value = ["correlationId"])
     ]
 )
 data class BackgroundJobRun(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    /** Logical worker name, e.g. "data_retention", "location_backfill". */
     val workerName: String,
-    /** Epoch millis when the run started. */
     val startedAt: Long,
-    /** Epoch millis when the run finished (null while still running). */
     val finishedAt: Long? = null,
-    /** Execution status: SCHEDULED, RUNNING, SUCCESS, FAILED, RETRY. */
+    /** RUNNING, SUCCESS, SKIPPED, RETRY, FAILED, CANCELLED, STALE_ABORTED */
     val status: String,
-    /** Number of rows/documents scanned during this run. */
     val rowsScanned: Int = 0,
-    /** Number of rows/documents updated during this run. */
     val rowsUpdated: Int = 0,
-    /** Number of notifications sent during this run. */
     val notificationsSent: Int = 0,
-    /** If retrying, the reason for the retry. */
     val retryReason: String? = null,
-    /** If failed, the error message. */
     val errorMessage: String? = null,
-    /** Typed reason for SKIPPED/CANCELLED status (e.g. RESTORE_BLOCKED, DISABLED, NO_WORK). */
-    val statusReason: String? = null
+    /** Typed reason code (DiagnosticReasonCode name) for SKIPPED/CANCELLED status. */
+    val statusReason: String? = null,
+    // --- PR 2 additions ---
+    val correlationId: String? = null,
+    val cancellationReason: String? = null,
+    val metadataJson: String? = null,
+    val errorClass: String? = null
 )

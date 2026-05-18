@@ -6,13 +6,11 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
-import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
-import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -96,7 +94,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val privacySettingsRepository: PrivacySettingsRepository,
-    private val diagnosticEventDao: PipelineDiagnosticEventDao
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 ) {
 
     companion object {
@@ -764,17 +762,21 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         entityId: Long? = null
     ) {
         try {
-            diagnosticEventDao.insert(
-                PipelineDiagnosticEvent(
-                    pipeline = "email_receipt",
-                    stage = stage,
-                    outcome = outcome,
-                    message = reason,
-                    entityType = entityType,
-                    entityId = entityId,
-                    timestamp = timeProvider.now()
-                )
-            )
+            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                stage = stage,
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.valueOf(
+                    outcome.uppercase().replace(" ", "_").let { o ->
+                        com.yourname.expensetracker.domain.diagnostics.EventOutcome.entries
+                            .firstOrNull { it.name == o }?.name ?: "FAILED_FINAL"
+                    }
+                ),
+                entityType = entityType,
+                entityId = entityId,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("reason", reason.take(128))
+                    .build()
+            ))
         } catch (e: Exception) {
             Timber.w(e, "Failed to write email receipt diagnostic event")
         }

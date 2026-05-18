@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 125
+const val APP_DATABASE_SCHEMA_VERSION = 126
 
 @Database(
     entities = [
@@ -103,7 +103,9 @@ const val APP_DATABASE_SCHEMA_VERSION = 125
         InvestmentTransaction::class,
         GroupSettlementEntity::class,
         GroupLifecycleEventEntity::class,
-        PipelineDiagnosticEvent::class
+        PipelineDiagnosticEvent::class,
+        OperationRun::class,
+        OperationRunEvent::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -171,6 +173,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun investmentTransactionDao(): InvestmentTransactionDao
     abstract fun groupSettlementDao(): GroupSettlementDao
     abstract fun groupLifecycleEventDao(): GroupLifecycleEventDao
+    abstract fun operationRunDao(): OperationRunDao
+    abstract fun operationRunEventDao(): OperationRunEventDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -7693,6 +7697,82 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_125_126 = object : androidx.room.migration.Migration(125, 126) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Enhance pipeline_diagnostic_events
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN eventId TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN correlationId TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN causationId TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN severity TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN reasonCode TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN sourceType TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN sourceIdHash TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN isTerminal INTEGER")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN metadataSchemaVersion INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pipeline_diagnostic_events_correlationId ON pipeline_diagnostic_events(correlationId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pipeline_diagnostic_events_reasonCode ON pipeline_diagnostic_events(reasonCode)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pipeline_diagnostic_events_entity ON pipeline_diagnostic_events(entityType, entityId)")
+
+                // Enhance background_job_runs
+                database.execSQL("ALTER TABLE background_job_runs ADD COLUMN correlationId TEXT")
+                database.execSQL("ALTER TABLE background_job_runs ADD COLUMN cancellationReason TEXT")
+                database.execSQL("ALTER TABLE background_job_runs ADD COLUMN metadataJson TEXT")
+                database.execSQL("ALTER TABLE background_job_runs ADD COLUMN errorClass TEXT")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_background_job_runs_correlationId ON background_job_runs(correlationId)")
+
+                // Create operation_runs table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS operation_runs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        correlationId TEXT NOT NULL,
+                        operationType TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        startedAt INTEGER NOT NULL,
+                        finishedAt INTEGER,
+                        actor TEXT,
+                        rowsTotal INTEGER,
+                        rowsProcessed INTEGER NOT NULL DEFAULT 0,
+                        rowsSucceeded INTEGER NOT NULL DEFAULT 0,
+                        rowsFailed INTEGER NOT NULL DEFAULT 0,
+                        rowsSkipped INTEGER NOT NULL DEFAULT 0,
+                        warningCount INTEGER NOT NULL DEFAULT 0,
+                        errorCount INTEGER NOT NULL DEFAULT 0,
+                        metadataJson TEXT,
+                        errorSummary TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_runs_operationType_startedAt ON operation_runs(operationType, startedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_runs_status ON operation_runs(status)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_operation_runs_correlationId ON operation_runs(correlationId)")
+
+                // Create operation_run_events table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS operation_run_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        operationRunId INTEGER,
+                        correlationId TEXT NOT NULL,
+                        causationId TEXT,
+                        operationType TEXT NOT NULL,
+                        stage TEXT NOT NULL,
+                        eventType TEXT NOT NULL,
+                        outcome TEXT NOT NULL,
+                        severity TEXT NOT NULL,
+                        reasonCode TEXT,
+                        occurredAt INTEGER NOT NULL,
+                        entityType TEXT,
+                        entityId INTEGER,
+                        metadataJson TEXT,
+                        exceptionClass TEXT,
+                        exceptionMessage TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_operationRunId ON operation_run_events(operationRunId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_correlationId ON operation_run_events(correlationId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_eventType ON operation_run_events(eventType)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_occurredAt ON operation_run_events(occurredAt)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7853,7 +7933,8 @@ MIGRATION_91_92,
         MIGRATION_121_122,
         MIGRATION_122_123,
         MIGRATION_123_124,
-        MIGRATION_124_125
+        MIGRATION_124_125,
+        MIGRATION_125_126
     )
 }
 }

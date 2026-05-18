@@ -61,7 +61,8 @@ data class SyncResult(
 class BankApiIntegration @Inject constructor(
     private val timeProvider: TimeProvider,
     private val coordinator: TransactionLifecycleCoordinator,
-    private val writeBarrier: DatabaseWriteBarrier
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
 ) {
     
     companion object {
@@ -136,6 +137,7 @@ class BankApiIntegration @Inject constructor(
     ): SyncResult = withContext(Dispatchers.IO) {
         requireStubMode()
         writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions")
+        val run = operationRunRecorder.start("BANK_SYNC", actor = "system")
 
         // In real implementation, this would:
         // 1. Check token validity and refresh if needed
@@ -190,16 +192,20 @@ class BankApiIntegration @Inject constructor(
                 }
             }
             
-            SyncResult(
+            val syncResult = SyncResult(
                 success = errors.isEmpty(),
                 importedCount = importedCount,
                 skippedCount = skippedCount,
                 errorCount = errors.size,
                 errors = errors
             )
+            run.increment(processed = importedCount + skippedCount + errors.size, succeeded = importedCount, failed = errors.size, skipped = skippedCount)
+            if (errors.isEmpty()) run.success() else run.partialSuccess("${errors.size} errors")
+            syncResult
             
         } catch (e: Exception) {
             Timber.e(e, "Sync failed for bank ${connection.bankId}")
+            run.failedFinal(e.message ?: "Exception", e)
             SyncResult(
                 success = false,
                 importedCount = 0,
