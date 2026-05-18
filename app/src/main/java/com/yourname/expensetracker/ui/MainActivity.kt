@@ -406,9 +406,14 @@ fun MainScreen(
             return
         }
         is AppOperationalState.CriticalRecoveryRequired -> {
+            val msg = buildString {
+                append("The database is in an unrecoverable state.")
+                if (state.reason != null) append("\n\nReason: ${state.reason}")
+                append("\n\nPlease restart the app. If the problem persists, contact support.")
+            }
             AppOperationalLockScreen(
                 title = "Critical Recovery Required",
-                message = "The database is in an unrecoverable state. Please export logs and contact support.",
+                message = msg,
                 actionLabel = "OK",
                 onAction = { /* no-op: user must intervene */ }
             )

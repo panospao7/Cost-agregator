@@ -5,5 +5,8 @@ sealed interface AppOperationalState {
     data object BackupExporting : AppOperationalState
     data class RestoreInProgress(val mode: RestoreMaintenanceMode.Mode) : AppOperationalState
     data object RestartRequiredAfterRestore : AppOperationalState
-    data object CriticalRecoveryRequired : AppOperationalState
+    data class CriticalRecoveryRequired(
+        val reason: String? = null,
+        val timestamp: Long? = null
+    ) : AppOperationalState
 }

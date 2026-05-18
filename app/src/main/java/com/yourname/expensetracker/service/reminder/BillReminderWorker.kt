@@ -40,33 +40,27 @@ class BillReminderWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.d(TAG, "BillReminderWorker started — checking for due reminders")
 
-        val guardResult = executionGuard.runGuarded(
+        val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "bill_reminder_periodic",
                 allowDuringBackupExport = false
             )
-        ) {
+        ) { ctx ->
             try {
                 val dueReminders = coordinator.getDueReminders()
                 if (dueReminders.isEmpty()) {
                     Log.d(TAG, "No due reminders found")
-                    return@runGuarded
+                    return@runGuardedWithContext
                 }
 
-                var sentCount = 0
                 for (reminder in dueReminders) {
                     if (isStopped) break
 
-                    // Checkpoint: verify writes are still allowed and this worker hasn't been cancelled
-                    executionGuard.checkpoint("bill_reminder")
+                    ctx.checkpoint("bill_reminder")
 
-                    // TODO: Handle stale claims — if a delivery is CLAIMED for > 10 minutes
-                    // (likely due to a crashed/killed worker), reset it to SCHEDULED so it
-                    // can be picked up by the next worker cycle.
-
-                    // Atomic claim: only one worker can claim each delivery
                     if (!coordinator.claimReminderDelivery(reminder.id)) {
                         Log.d(TAG, "Reminder ${reminder.id} already claimed by another worker, skipping")
+                        ctx.addRowsSkipped()
                         continue
                     }
 
@@ -76,7 +70,7 @@ class BillReminderWorker @AssistedInject constructor(
 
                     if (delivered) {
                         coordinator.markReminderSent(reminder.id)
-                        sentCount++
+                        ctx.addNotificationsSent()
                         try {
                             diagnosticEventDao.insert(
                                 PipelineDiagnosticEvent(
@@ -98,7 +92,7 @@ class BillReminderWorker @AssistedInject constructor(
                     }
                 }
 
-                Log.d(TAG, "BillReminderWorker completed — sent $sentCount reminders")
+                Log.d(TAG, "BillReminderWorker completed — sent ${ctx.notificationsSent} reminders")
             } catch (e: Exception) {
                 Log.e(TAG, "BillReminderWorker failed", e)
                 throw e

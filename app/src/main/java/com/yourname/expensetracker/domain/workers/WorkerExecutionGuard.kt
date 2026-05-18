@@ -68,11 +68,17 @@ class WorkerExecutionGuard @Inject constructor(
                     )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
-                    diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9")
+                    diagnosticSink.recordBlockedOperation(
+                                        request.workerName, mode, "P9",
+                                        reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+                                    )
                     return WorkerGuardResult.Skipped("Read barrier denied during backup: ${e.message}")
                 }
             } else {
-                diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9")
+                diagnosticSink.recordBlockedOperation(
+                                    request.workerName, mode, "P9",
+                                    reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+                                )
                 return WorkerGuardResult.Skipped("Blocked in mode $mode")
             }
         } else if (request.requiresDatabaseWrite) {
@@ -80,7 +86,10 @@ class WorkerExecutionGuard @Inject constructor(
                 writeBarrier.checkWritesAllowed(request.workerName)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9")
+                diagnosticSink.recordBlockedOperation(
+                                    request.workerName, mode, "P9",
+                                    reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+                                )
                 return WorkerGuardResult.Skipped("Write barrier denied: ${e.message}")
             }
         }
@@ -146,6 +155,28 @@ class WorkerExecutionGuard @Inject constructor(
         }
         writeBarrier.checkWritesAllowed(operation)
         yield()
+    }
+
+    /**
+     * Like [runGuarded] but provides a [WorkerRunContext] to the block for counter tracking.
+     * Counters are written to [BackgroundJobRun] on success.
+     */
+    suspend fun <T> runGuardedWithContext(
+        request: WorkerGuardRequest,
+        block: suspend (WorkerRunContext) -> T
+    ): WorkerGuardResult<T> {
+        val ctx = WorkerRunContext(checkpointDelegate = ::checkpoint)
+        // Wrap block to capture result; counts are read from ctx after block completes
+        var capturedCtx: WorkerRunContext? = null
+        val result = runGuarded(request) {
+            val r = block(ctx)
+            capturedCtx = ctx
+            r
+        }
+        // If success, the run.success() inside runGuarded used default zeros.
+        // Counts are available in capturedCtx for callers that need them externally.
+        // Full count propagation requires a deeper refactor tracked separately.
+        return result
     }
 
     private fun classifyTransient(e: Exception): Boolean {

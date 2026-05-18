@@ -66,6 +66,7 @@ FILE_OP_APPROVED = {
     "DeterministicExpenseExportPager",
     "DatabaseIntegrityScanner",
     "LegacyDataMigrationService",
+    "SqliteSnapshotCreator",
 }
 
 # ── YAML parse ────────────────────────────────────────────────────────────────
@@ -164,6 +165,8 @@ def load_allowlist(path: str) -> dict:
 
 
 LOCAL_DAO_ASSIGN = re.compile(r'\bval\s+(\w+)\s*=\s*\w+\.(\w+Dao)\s*\(')
+# Detect direct chain: database.someDao().update(...)
+DIRECT_CHAIN_DAO = re.compile(r'\w+\.\w+Dao\s*\(\s*\)\s*\.\s*(?:insert|insertAll|update|delete|deleteAll|clear|replace|upsert|set|mark|link|unlink|increment|suppress|claim|fulfill|restore|save|bulkRename|approve|reject)\s*\(')
 
 
 def _extract_method_body(lines: list, start: int) -> str:
@@ -243,6 +246,8 @@ def scan(source_dir: str, allowlist: dict) -> list:
             current_fun_start = 0
             # Track local DAO variable names: var_name -> True
             local_dao_vars: set = set()
+            # Track pending multi-line DAO assignment: variable name being assigned
+            pending_dao_var: str | None = None
 
             for lineno, line in enumerate(lines, start=1):
                 s = line.strip()
@@ -253,13 +258,36 @@ def scan(source_dir: str, allowlist: dict) -> list:
                 m_assign = LOCAL_DAO_ASSIGN.search(line)
                 if m_assign:
                     local_dao_vars.add(m_assign.group(1))
+                    pending_dao_var = None
+                else:
+                    # Multi-line: val dao =\n    database.scannedReceiptDao()
+                    m_pending_start = re.search(r'\bval\s+(\w+)\s*=\s*$', line.rstrip())
+                    if m_pending_start:
+                        pending_dao_var = m_pending_start.group(1)
+                    elif pending_dao_var and re.search(r'\w+Dao\s*\(', line):
+                        local_dao_vars.add(pending_dao_var)
+                        pending_dao_var = None
+                    else:
+                        pending_dao_var = None
 
                 # Track current function name (including expression-bodied)
                 m = FUN_PATTERN.match(line)
                 if m:
                     current_fun = m.group(1)
                     current_fun_start = lineno - 1
-                    local_dao_vars.clear()  # reset per function
+                    local_dao_vars.clear()
+                    pending_dao_var = None
+
+                # Check for direct chain: database.someDao().update(...)
+                if DIRECT_CHAIN_DAO.search(line) and not s.startswith("//"):
+                    if entry is None:
+                        violations.append((rel_path, lineno, line.rstrip(), "UNALLOWLISTED_CLASS_DIRECT_CHAIN"))
+                    elif entry.get("requires_write_barrier", True):
+                        if not _barrier_before_line(lines, current_fun_start, lineno):
+                            violations.append((
+                                rel_path, lineno, line.rstrip(),
+                                f"MISSING_WRITE_BARRIER_DIRECT_CHAIN: {class_name}.{current_fun}"
+                            ))
 
                 # Check for DAO mutation — either via "Dao" reference or local dao var
                 has_dao_ref = "Dao" in line

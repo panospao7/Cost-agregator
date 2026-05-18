@@ -70,7 +70,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val restoreJournal: RestoreJournal,
     private val workerDrain: com.yourname.expensetracker.domain.workers.WorkerDrainController,
     private val restoreDatabaseOpener: RestoreDatabaseOpener,
-    private val maintenanceOperationRunner: com.yourname.expensetracker.data.backup.MaintenanceOperationRunner
+    private val maintenanceOperationRunner: com.yourname.expensetracker.data.backup.MaintenanceOperationRunner,
+    private val snapshotCreator: com.yourname.expensetracker.data.backup.SqliteSnapshotCreator,
+    private val restoreInternalWriteScope: com.yourname.expensetracker.data.backup.RestoreInternalWriteScope
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -102,7 +104,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         com.yourname.expensetracker.data.backup.MaintenanceOperationRunner(
             restoreMaintenanceMode,
             com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController()
-        )
+        ),
+        com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
+        com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode)
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -322,9 +326,20 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     override suspend fun exportDatabase(): Result<File> = withContext(ioDispatcher) {
         // P1-11: Raw DB export is disabled in release builds
         if (!BuildConfig.DEBUG) throw UnsupportedOperationException("Raw DB export disabled in release")
+        // Enter maintenance mode + drain workers before copying live DB (debug path)
+        try {
+            maintenanceOperationRunner.enterAndDrain(
+                RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
+                "exportDatabaseDebugRaw",
+                failOnTimeout = true
+            )
+        } catch (e: Exception) {
+            return@withContext Result.failure(e)
+        }
         try {
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             if (!dbFile.exists()) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Database file not found"))
             }
 
@@ -409,10 +424,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 Timber.d("Database exported successfully to: ${backupFile.absolutePath}")
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 Result.success(backupFile)
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to export database")
+            runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
             Result.failure(e)
         }
     }
@@ -496,11 +513,24 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
             val tempDb = java.io.File(context.cacheDir, "costbackup_snapshot_${timestamp}.db")
             try {
-                dbFile.inputStream().use { input ->
-                    tempDb.outputStream().use { output ->
-                        input.copyTo(output)
+                // Capture live counts under drain before snapshot (for equivalence verification)
+                val liveCountsBeforeCopy = runCatching {
+                    val liveDb = android.database.sqlite.SQLiteDatabase.openDatabase(
+                        dbFile.absolutePath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+                    )
+                    liveDb.use {
+                        BackupVerifier.allTableNames().associateWith { tableName ->
+                            runCatching {
+                                liveDb.rawQuery("SELECT COUNT(*) FROM \"$tableName\"", null)
+                                    .use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+                            }.getOrDefault(0)
+                        }
                     }
-                }
+                }.getOrNull()
+
+                // Use VACUUM INTO if supported, otherwise drained file-copy
+                val snapshotResult = snapshotCreator.createSnapshot(dbFile, tempDb, liveCountsBeforeCopy)
+                Timber.d("Snapshot created via %s", snapshotResult.method)
 
                 // Sanitize if redacted
                 if (resolvedRedacted) {
@@ -707,7 +737,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
 
             // 7. Create safety backup
-            val safetyBackupResult = createSafetyBackup()
+            val safetyBackupResult = createSafetyBackupInternalAssumingMaintenance("restore")
             if (safetyBackupResult.isFailure) {
                 val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown error"
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
@@ -798,7 +828,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
 
                     val receiptWarnings = if (tempDir.exists()) {
-                        restoreReceiptAssets(tempDir, manifest, freshDb)
+                        restoreReceiptAssets(tempDir, manifest, freshDb, journalEntry)
                     } else {
                         emptyList()
                     }
@@ -917,7 +947,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private suspend fun restoreReceiptAssets(
         assetsDir: java.io.File,
         manifest: CostbackupBundle.BackupManifest,
-        db: com.yourname.expensetracker.data.database.AppDatabase
+        db: com.yourname.expensetracker.data.database.AppDatabase,
+        journalEntry: RestoreJournal.JournalEntry? = null
     ): List<String> {
         val warnings = mutableListOf<String>()
         val receiptsDir = java.io.File(context.filesDir, "receipts")
@@ -969,7 +1000,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     assetFile.inputStream().use { input ->
                         tempFile.outputStream().use { output -> input.copyTo(output) }
                     }
-                    dao.update(receipt.copy(imagePath = finalFile.absolutePath))
+                    restoreInternalWriteScope.run("restoreReceiptAssets.updateImagePath") {
+                        dao.update(receipt.copy(imagePath = finalFile.absolutePath))
+                    }
                     if (!tempFile.renameTo(finalFile)) {
                         tempFile.copyTo(finalFile, overwrite = true)
                         tempFile.delete()
@@ -982,10 +1015,33 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     throw e
                 }
                 restoredCount++
+                // Update journal ledger: mark task COMPLETED
+                if (journalEntry != null) {
+                    val updatedTasks = journalEntry.assetTasks.map { t ->
+                        if (t.receiptId == receiptId) t.copy(
+                            status = RestoreJournal.AssetRestoreStatus.COMPLETED,
+                            targetPath = finalFile.absolutePath
+                        ) else t
+                    }
+                    runCatching { restoreJournal.writeJournal(journalEntry.copy(assetTasks = updatedTasks)) }
+                }
             } catch (e: Exception) {
                 val msg = "Failed to restore receipt asset: ${assetFile.name} - ${e.message}"
                 warnings.add(msg)
                 Timber.e(e, "Failed to restore receipt asset: %s", assetFile.name)
+                // Update journal ledger: mark task FAILED
+                if (journalEntry != null) {
+                    val receiptId = assetFile.nameWithoutExtension.substringBefore("_").toLongOrNull()
+                    if (receiptId != null) {
+                        val updatedTasks = journalEntry.assetTasks.map { t ->
+                            if (t.receiptId == receiptId) t.copy(
+                                status = RestoreJournal.AssetRestoreStatus.FAILED,
+                                error = e.message
+                            ) else t
+                        }
+                        runCatching { restoreJournal.writeJournal(journalEntry.copy(assetTasks = updatedTasks)) }
+                    }
+                }
             }
         }
 
@@ -1150,7 +1206,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.STAGED)
 
-                val safetyBackupResult = createSafetyBackup()
+                val safetyBackupResult = createSafetyBackupInternalAssumingMaintenance("restore")
                 if (safetyBackupResult.isFailure) {
                     val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown backup error"
                     Timber.e("Database import aborted: safety backup failed: $reason")
@@ -1887,39 +1943,52 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     }
     
     override suspend fun createSafetyBackup(): Result<File> = withContext(ioDispatcher) {
+        // Public entry: enter maintenance mode and drain workers before copying live DB
+        try {
+            maintenanceOperationRunner.enterAndDrain(
+                RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
+                "createSafetyBackup",
+                failOnTimeout = true
+            )
+            val result = createSafetyBackupInternalAssumingMaintenance("createSafetyBackup")
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
+            result
+        } catch (e: Exception) {
+            runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Creates a safety backup assuming maintenance mode is already active and workers are drained.
+     * Call only from within an already-entered maintenance scope.
+     */
+    private suspend fun createSafetyBackupInternalAssumingMaintenance(
+        callerOperation: String
+    ): Result<File> = withContext(ioDispatcher) {
         try {
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             if (!dbFile.exists()) {
                 return@withContext Result.failure(Exception("Database file not found"))
             }
-            
+
             val checkpointResult = checkpointWal()
             if (checkpointResult.isFailure) {
                 return@withContext Result.failure(
                     checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
                 )
             }
-            
+
             val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
-            val safetyBackupFileName = "${BACKUP_PREFIX}SAFETY_${timestamp}.db"
-            
-            val appDir = context.filesDir
-            val safetyBackupDir = File(appDir, "safety_backups")
-            safetyBackupDir.mkdirs()
-            
-            val safetyBackupFile = File(safetyBackupDir, safetyBackupFileName)
-            
-            // Copy database file (now self-contained after checkpoint)
+            val safetyBackupDir = File(context.filesDir, "safety_backups").apply { mkdirs() }
+            val safetyBackupFile = File(safetyBackupDir, "${BACKUP_PREFIX}SAFETY_${timestamp}.db")
+
             dbFile.inputStream().use { input ->
-                safetyBackupFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+                safetyBackupFile.outputStream().use { output -> input.copyTo(output) }
             }
-            
-            // Clean up old safety backups (keep only last 3)
+
             cleanupOldSafetyBackups(safetyBackupDir)
-            
-            Timber.d("Safety backup created: ${safetyBackupFile.absolutePath}")
+            Timber.d("Safety backup created by $callerOperation: ${safetyBackupFile.absolutePath}")
             Result.success(safetyBackupFile)
         } catch (e: Exception) {
             Timber.e(e, "Failed to create safety backup")
@@ -1938,7 +2007,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
 
             // Create safety backup before touching anything
-            val safetyBackupResult = createSafetyBackup()
+            val safetyBackupResult = createSafetyBackupInternalAssumingMaintenance("restore")
             if (safetyBackupResult.isFailure) {
                 val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown backup error"
                 Timber.e("Database reset aborted: safety backup failed: $reason")

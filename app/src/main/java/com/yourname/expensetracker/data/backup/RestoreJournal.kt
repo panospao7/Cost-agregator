@@ -36,6 +36,16 @@ class RestoreJournal @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
 
+    data class AssetRestoreTask(
+        val receiptId: Long,
+        val sourceRelativePath: String,
+        val status: AssetRestoreStatus,
+        val targetPath: String? = null,
+        val error: String? = null
+    )
+
+    enum class AssetRestoreStatus { PENDING, COMPLETED, FAILED }
+
     data class JournalEntry(
         val operationId: String = UUID.randomUUID().toString(),
         val state: JournalState = JournalState.PREPARING,
@@ -44,7 +54,8 @@ class RestoreJournal @Inject constructor(
         val stagedDbPath: String? = null,
         val safetyBackupPath: String? = null,
         val liveDbPath: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        val assetTasks: List<AssetRestoreTask> = emptyList()
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("operationId", operationId)
@@ -55,6 +66,17 @@ class RestoreJournal @Inject constructor(
             put("safetyBackupPath", safetyBackupPath ?: JSONObject.NULL)
             put("liveDbPath", liveDbPath ?: JSONObject.NULL)
             put("error", error ?: JSONObject.NULL)
+            put("assetTasks", org.json.JSONArray().also { arr ->
+                assetTasks.forEach { t ->
+                    arr.put(JSONObject().apply {
+                        put("receiptId", t.receiptId)
+                        put("src", t.sourceRelativePath)
+                        put("status", t.status.name)
+                        if (t.targetPath != null) put("target", t.targetPath)
+                        if (t.error != null) put("error", t.error)
+                    })
+                }
+            })
         }
 
         companion object {
@@ -77,7 +99,21 @@ class RestoreJournal @Inject constructor(
                 liveDbPath = json.optString("liveDbPath", null)
                     ?.takeIf { it != "null" },
                 error = json.optString("error", null)
-                    ?.takeIf { it != "null" }
+                    ?.takeIf { it != "null" },
+                assetTasks = json.optJSONArray("assetTasks")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { i ->
+                        runCatching {
+                            val o = arr.getJSONObject(i)
+                            AssetRestoreTask(
+                                receiptId = o.getLong("receiptId"),
+                                sourceRelativePath = o.getString("src"),
+                                status = AssetRestoreStatus.valueOf(o.getString("status")),
+                                targetPath = o.optString("target").takeIf { it.isNotEmpty() && it != "null" },
+                                error = o.optString("error").takeIf { it.isNotEmpty() && it != "null" }
+                            )
+                        }.getOrNull()
+                    }
+                } ?: emptyList()
             )
         }
     }

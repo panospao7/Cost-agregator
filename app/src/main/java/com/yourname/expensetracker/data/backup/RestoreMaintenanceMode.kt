@@ -94,6 +94,10 @@ class RestoreMaintenanceMode @Inject constructor(
      */
     fun enterCriticalRecoveryRequired(reason: String) {
         Timber.e("Maintenance mode: entering CRITICAL_RECOVERY_REQUIRED — %s", reason)
+        prefs.edit()
+            .putString(KEY_CRITICAL_REASON, reason)
+            .putLong(KEY_CRITICAL_TIMESTAMP, System.currentTimeMillis())
+            .commit()
         writeMode(Mode.CRITICAL_RECOVERY_REQUIRED)
         pauseAllWorkers()
     }
@@ -188,12 +192,17 @@ class RestoreMaintenanceMode @Inject constructor(
         Mode.NORMAL -> AppOperationalState.Normal
         Mode.BACKUP_EXPORTING -> AppOperationalState.BackupExporting
         Mode.RESTORE_COMPLETE_RESTART_REQUIRED -> AppOperationalState.RestartRequiredAfterRestore
-        Mode.CRITICAL_RECOVERY_REQUIRED -> AppOperationalState.CriticalRecoveryRequired
+        Mode.CRITICAL_RECOVERY_REQUIRED -> AppOperationalState.CriticalRecoveryRequired(
+            reason = prefs.getString(KEY_CRITICAL_REASON, null),
+            timestamp = prefs.getLong(KEY_CRITICAL_TIMESTAMP, 0L).takeIf { it > 0L }
+        )
         else -> AppOperationalState.RestoreInProgress(mode)
     }
 
     companion object {
         private const val PREFS_NAME = "restore_maintenance_mode"
         private const val KEY_MAINTENANCE_MODE = "current_mode"
+        private const val KEY_CRITICAL_REASON = "critical_recovery_reason"
+        private const val KEY_CRITICAL_TIMESTAMP = "critical_recovery_timestamp"
     }
 }

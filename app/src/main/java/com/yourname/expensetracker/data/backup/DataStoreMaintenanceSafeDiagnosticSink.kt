@@ -5,12 +5,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -36,52 +32,50 @@ data class MaintenanceDiagnosticRecord(
 /**
  * DataStore-backed ring-buffer implementation of [MaintenanceSafeDiagnosticSink].
  * Survives process death. Bounded to [MAX_RECORDS] entries.
+ * [recordBlockedOperation] is suspend — it awaits DataStore commit before returning.
  */
 @Singleton
 class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
     @ApplicationContext private val context: Context
 ) : MaintenanceSafeDiagnosticSink {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    override fun recordBlockedOperation(
+    override suspend fun recordBlockedOperation(
         operation: String,
         mode: RestoreMaintenanceMode.Mode,
         pipeline: String?,
-        entity: String?
+        entity: String?,
+        reason: MaintenanceBlockedReason
     ) {
-        Timber.w("BLOCKED[%s] op=%s pipeline=%s entity=%s", mode.label, operation, pipeline ?: "-", entity ?: "-")
-        scope.launch {
-            try {
-                context.maintenanceDiagnosticsStore.edit { prefs ->
-                    val existing = prefs[KEY_RECORDS]?.let { parseRecords(it) } ?: mutableListOf()
-                    existing.add(
-                        MaintenanceDiagnosticRecord(
-                            id = UUID.randomUUID().toString(),
-                            operation = operation,
-                            mode = mode.label,
-                            pipeline = pipeline,
-                            entity = entity,
-                            reason = "BLOCKED",
-                            timestamp = System.currentTimeMillis()
-                        )
+        Timber.w("BLOCKED[%s/%s] op=%s pipeline=%s entity=%s",
+            mode.label, reason, operation, pipeline ?: "-", entity ?: "-")
+        try {
+            context.maintenanceDiagnosticsStore.edit { prefs ->
+                val existing = prefs[KEY_RECORDS]?.let { parseRecords(it) } ?: mutableListOf()
+                existing.add(
+                    MaintenanceDiagnosticRecord(
+                        id = UUID.randomUUID().toString(),
+                        operation = operation,
+                        mode = mode.label,
+                        pipeline = pipeline,
+                        entity = entity,
+                        reason = reason.name,
+                        timestamp = System.currentTimeMillis()
                     )
-                    // Ring buffer: drop oldest if over limit
-                    val trimmed = if (existing.size > MAX_RECORDS) existing.takeLast(MAX_RECORDS) else existing
-                    prefs[KEY_RECORDS] = serializeRecords(trimmed)
-                }
-            } catch (e: Exception) {
-                Timber.w(e, "DataStoreMaintenanceSafeDiagnosticSink: failed to persist record")
+                )
+                val trimmed = if (existing.size > MAX_RECORDS) existing.takeLast(MAX_RECORDS) else existing
+                prefs[KEY_RECORDS] = serializeRecords(trimmed)
             }
+        } catch (e: Exception) {
+            Timber.w(e, "DataStoreMaintenanceSafeDiagnosticSink: failed to persist record")
         }
     }
 
-    fun observeRecent(): Flow<List<MaintenanceDiagnosticRecord>> =
+    override fun observeRecent(): Flow<List<MaintenanceDiagnosticRecord>> =
         context.maintenanceDiagnosticsStore.data.map { prefs ->
             prefs[KEY_RECORDS]?.let { parseRecords(it) } ?: emptyList()
         }
 
-    suspend fun clearOlderThan(cutoffMs: Long) {
+    override suspend fun clearOlderThan(cutoffMs: Long) {
         context.maintenanceDiagnosticsStore.edit { prefs ->
             val existing = prefs[KEY_RECORDS]?.let { parseRecords(it) } ?: return@edit
             prefs[KEY_RECORDS] = serializeRecords(existing.filter { it.timestamp >= cutoffMs })
@@ -92,13 +86,10 @@ class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
         val arr = JSONArray()
         records.forEach { r ->
             arr.put(JSONObject().apply {
-                put("id", r.id)
-                put("op", r.operation)
-                put("mode", r.mode)
+                put("id", r.id); put("op", r.operation); put("mode", r.mode)
                 if (r.pipeline != null) put("pipeline", r.pipeline)
                 if (r.entity != null) put("entity", r.entity)
-                put("reason", r.reason)
-                put("ts", r.timestamp)
+                put("reason", r.reason); put("ts", r.timestamp)
             })
         }
         return arr.toString()
@@ -115,12 +106,10 @@ class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
                     mode = o.getString("mode"),
                     pipeline = o.optString("pipeline").takeIf { it.isNotEmpty() },
                     entity = o.optString("entity").takeIf { it.isNotEmpty() },
-                    reason = o.optString("reason", "BLOCKED"),
+                    reason = o.optString("reason", "UNKNOWN"),
                     timestamp = o.getLong("ts")
                 )
             }.toMutableList()
-        } catch (e: Exception) {
-            mutableListOf()
-        }
+        } catch (e: Exception) { mutableListOf() }
     }
 }

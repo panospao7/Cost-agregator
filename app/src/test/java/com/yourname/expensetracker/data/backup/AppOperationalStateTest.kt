@@ -29,7 +29,7 @@ class AppOperationalStateTest {
     fun critical_recovery_required_maps_to_correct_state() {
         val mm = modeManager(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED)
         val state = mm.operationalStateFlow.value
-        assertEquals(AppOperationalState.CriticalRecoveryRequired, state)
+        assertEquals(AppOperationalState.CriticalRecoveryRequired(), state)
     }
 
     @Test
