@@ -26,6 +26,12 @@ import javax.inject.Singleton
 import timber.log.Timber
 import kotlin.math.abs
 
+sealed interface ReminderActionResult {
+    data object Updated : ReminderActionResult
+    data class NoOp(val reason: String) : ReminderActionResult
+    data object NotFound : ReminderActionResult
+}
+
 /**
  * Orchestrates the full lifecycle of recurring-expense occurrences:
  * expansion, conflict resolution, materialization, and linkage.
@@ -55,6 +61,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         /** Default reminder windows applied when no explicit windows are provided and reminders are enabled. */
         val DEFAULT_REMINDER_WINDOWS = listOf("3_DAYS_BEFORE", "DUE_DAY", "OVERDUE")
+
+        /** Statuses from which dismiss/snooze are no-ops. */
+        val TERMINAL_STATUSES = setOf("DISMISSED", "CANCELLED", "FAILED_FINAL", "SENT")
     }
 
     /**
@@ -429,25 +438,31 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Dismisses a reminder delivery. Called from [DismissReminderReceiver] via goAsync.
      * Checks write barrier inside the transaction.
      */
-    suspend fun dismissReminderDelivery(deliveryId: Long) {
+    suspend fun dismissReminderDelivery(deliveryId: Long): ReminderActionResult {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.dismissReminderDelivery")
         val now = timeProvider.now()
-        database.withTransaction {
+        return database.withTransaction {
             writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.dismissReminderDelivery.tx")
-            val delivery = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction
-            reminderDeliveryDao.update(delivery.copy(status = "DISMISSED", dismissedAt = now))
-            runCatching {
-                lifecycleEventDao.insert(
-                    RecurringLifecycleEvent(
-                        occurrenceId = delivery.occurrenceId,
-                        eventType = "REMINDER_DISMISSED",
-                        occurredAt = now,
-                        oldStatus = null,
-                        newStatus = null,
-                        metadata = """{"deliveryId":$deliveryId}"""
-                    )
-                )
+            val delivery = reminderDeliveryDao.getById(deliveryId)
+                ?: return@withTransaction ReminderActionResult.NotFound
+
+            // Only transition from non-terminal states
+            if (delivery.status in TERMINAL_STATUSES) {
+                return@withTransaction ReminderActionResult.NoOp("Already in terminal state: ${delivery.status}")
             }
+
+            reminderDeliveryDao.update(delivery.copy(status = "DISMISSED", dismissedAt = now))
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = delivery.occurrenceId,
+                    eventType = "REMINDER_DISMISSED",
+                    occurredAt = now,
+                    oldStatus = delivery.status,
+                    newStatus = "DISMISSED",
+                    metadata = """{"deliveryId":$deliveryId}"""
+                )
+            )
+            ReminderActionResult.Updated
         }
     }
 
@@ -455,26 +470,34 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Snoozes a reminder delivery for [snoozeMs] milliseconds. Called from [SnoozeReminderReceiver] via goAsync.
      * Checks write barrier inside the transaction.
      */
-    suspend fun snoozeReminderDelivery(deliveryId: Long, snoozeMs: Long = 24L * 60L * 60L * 1000L) {
+    suspend fun snoozeReminderDelivery(
+        deliveryId: Long,
+        snoozeMs: Long = 24L * 60L * 60L * 1000L
+    ): ReminderActionResult {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.snoozeReminderDelivery")
         val now = timeProvider.now()
         val snoozedUntil = now + snoozeMs
-        database.withTransaction {
+        return database.withTransaction {
             writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.snoozeReminderDelivery.tx")
-            val delivery = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction
-            reminderDeliveryDao.update(delivery.copy(status = "SNOOZED", snoozedUntil = snoozedUntil))
-            runCatching {
-                lifecycleEventDao.insert(
-                    RecurringLifecycleEvent(
-                        occurrenceId = delivery.occurrenceId,
-                        eventType = "REMINDER_SNOOZED",
-                        occurredAt = now,
-                        oldStatus = null,
-                        newStatus = null,
-                        metadata = """{"deliveryId":$deliveryId,"snoozedUntil":$snoozedUntil}"""
-                    )
-                )
+            val delivery = reminderDeliveryDao.getById(deliveryId)
+                ?: return@withTransaction ReminderActionResult.NotFound
+
+            if (delivery.status in TERMINAL_STATUSES) {
+                return@withTransaction ReminderActionResult.NoOp("Already in terminal state: ${delivery.status}")
             }
+
+            reminderDeliveryDao.update(delivery.copy(status = "SNOOZED", snoozedUntil = snoozedUntil))
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = delivery.occurrenceId,
+                    eventType = "REMINDER_SNOOZED",
+                    occurredAt = now,
+                    oldStatus = delivery.status,
+                    newStatus = "SNOOZED",
+                    metadata = """{"deliveryId":$deliveryId,"snoozedUntil":$snoozedUntil}"""
+                )
+            )
+            ReminderActionResult.Updated
         }
     }
 

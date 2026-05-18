@@ -57,3 +57,8 @@ build/reports/testing/
 # Misc
 .cxx/
 nul
+
+
+# Python
+__pycache__/
+*.pyc

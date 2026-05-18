@@ -67,11 +67,12 @@ class WorkerRunLoggerImpl @Inject constructor(
                     workerName = workerName,
                     startedAt = startedAt,
                     finishedAt = timeProvider.now(),
-                    status = "SKIPPED_$reason",
+                    status = "SKIPPED",
+                    statusReason = reason,
                     rowsScanned = 0,
                     rowsUpdated = 0,
                     notificationsSent = 0,
-                    retryReason = reason,
+                    retryReason = null,
                     errorMessage = null
                 )
             )
@@ -119,10 +120,11 @@ class WorkerRunLoggerImpl @Inject constructor(
                     startedAt = startedAt,
                     finishedAt = timeProvider.now(),
                     status = "CANCELLED",
+                    statusReason = reason,
                     rowsScanned = 0,
                     rowsUpdated = 0,
                     notificationsSent = 0,
-                    retryReason = reason,
+                    retryReason = null,
                     errorMessage = null
                 )
             )

@@ -153,7 +153,7 @@ class AppStartupCoordinator @Inject constructor(
                         entry,
                         "Startup crash recovery: safety backup copy succeeded but DB verification failed"
                     )
-                    restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED)
+                    restoreMaintenanceMode.enterCriticalRecoveryRequired("startup crash recovery failed")
                     Timber.e("Startup: CRITICAL — safety-restored DB failed verification; blocking app")
                     return
                 }
@@ -165,7 +165,7 @@ class AppStartupCoordinator @Inject constructor(
 
             is RestoreJournal.RecoveryResult.CriticalRecoveryRequired -> {
                 Timber.e("Startup: CRITICAL — safety backup and live DB are both corrupt")
-                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED)
+                restoreMaintenanceMode.enterCriticalRecoveryRequired("startup crash recovery failed")
                 Timber.e("Startup: maintenance mode blocks writes until manual recovery and app restart")
                 return
             }
@@ -186,24 +186,35 @@ class AppStartupCoordinator @Inject constructor(
             Timber.e("Startup: verifySafetyRestoredDb — live DB file missing")
             return false
         }
-        // 1. SQLite integrity_check
-        try {
-            val db = android.database.sqlite.SQLiteDatabase.openDatabase(
+        // 1. SQLite integrity_check + foreign_key_check
+        val db = try {
+            android.database.sqlite.SQLiteDatabase.openDatabase(
                 liveDbFile.absolutePath, null,
                 android.database.sqlite.SQLiteDatabase.OPEN_READONLY
             )
+        } catch (e: Exception) {
+            Timber.e(e, "Startup: safety-restored DB could not be opened")
+            return false
+        }
+        try {
             val integrity = db.rawQuery("PRAGMA integrity_check", null).use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0) else "unknown"
             }
-            db.close()
             if (!integrity.equals("ok", ignoreCase = true)) {
                 Timber.e("Startup: safety-restored DB integrity_check failed: %s", integrity)
                 return false
             }
-            Timber.d("Startup: safety-restored DB integrity_check passed")
+            val fkViolations = db.rawQuery("PRAGMA foreign_key_check", null).use { it.count }
+            if (fkViolations > 0) {
+                Timber.e("Startup: safety-restored DB has %d foreign key violation(s)", fkViolations)
+                return false
+            }
+            Timber.d("Startup: safety-restored DB integrity + FK checks passed")
         } catch (e: Exception) {
-            Timber.e(e, "Startup: safety-restored DB integrity_check threw exception")
+            Timber.e(e, "Startup: safety-restored DB PRAGMA check threw exception")
             return false
+        } finally {
+            runCatching { db.close() }
         }
         // 2. Room open attempt (triggers migration validation)
         try {

@@ -20,6 +20,26 @@ class MaintenanceOperationRunner @Inject constructor(
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val workerDrain: WorkerDrainController
 ) {
+    /**
+     * Enters [mode] and drains workers. Throws [WorkerDrainTimeoutException] on timeout
+     * if [failOnTimeout] is true. Caller is responsible for calling [RestoreMaintenanceMode.exit].
+     */
+    suspend fun enterAndDrain(
+        mode: RestoreMaintenanceMode.Mode,
+        operationName: String,
+        failOnTimeout: Boolean = true
+    ) {
+        restoreMaintenanceMode.enter(mode)
+        val drained = workerDrain.requestStopAndAwaitDrain(operationName)
+        if (!drained && failOnTimeout) {
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
+            throw WorkerDrainTimeoutException(operationName)
+        }
+        if (!drained) {
+            Timber.w("MaintenanceOperationRunner: drain timed out for $operationName — proceeding")
+        }
+    }
+
     suspend fun <T> runExclusive(
         mode: RestoreMaintenanceMode.Mode,
         operationName: String,

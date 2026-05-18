@@ -88,6 +88,17 @@ class RestoreMaintenanceMode @Inject constructor(
     }
 
     /**
+     * Enters [Mode.CRITICAL_RECOVERY_REQUIRED] for unrecoverable states
+     * (rollback failure, corrupt safety backup, etc.).
+     * Writes remain blocked until manual intervention and process restart.
+     */
+    fun enterCriticalRecoveryRequired(reason: String) {
+        Timber.e("Maintenance mode: entering CRITICAL_RECOVERY_REQUIRED — %s", reason)
+        writeMode(Mode.CRITICAL_RECOVERY_REQUIRED)
+        pauseAllWorkers()
+    }
+
+    /**
      * Exits maintenance mode, re-enabling workers and notification ingestion.
      *
      * If [forceRestartRequired] is true, the mode transitions to

@@ -69,7 +69,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val restoreJournal: RestoreJournal,
     private val workerDrain: com.yourname.expensetracker.domain.workers.WorkerDrainController,
-    private val restoreDatabaseOpener: RestoreDatabaseOpener
+    private val restoreDatabaseOpener: RestoreDatabaseOpener,
+    private val maintenanceOperationRunner: com.yourname.expensetracker.data.backup.MaintenanceOperationRunner
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -97,7 +98,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         backupEncryptionService, exportAnonymizer, secureKeyStorage,
         receiptAssetStore, restoreMaintenanceMode, restoreJournal,
         com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController(),
-        object : RestoreDatabaseOpener { override fun openFreshDatabase() = database }
+        object : RestoreDatabaseOpener { override fun openFreshDatabase() = database },
+        com.yourname.expensetracker.data.backup.MaintenanceOperationRunner(
+            restoreMaintenanceMode,
+            com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController()
+        )
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -467,11 +472,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
 
             // P1-05: Enter backup maintenance mode + drain workers for point-in-time consistency
-            enterMaintenanceAndDrain(
-                RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
-                "createCostBackup",
-                failOnTimeout = true
-            )
+            maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING,
+            "createCostBackup",
+            failOnTimeout = true)
             Timber.d("BackupOperationEvent.BACKUP_STARTED: entering BACKUP_EXPORTING mode")
 
             // WAL checkpoint
@@ -519,6 +522,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
                 } finally {
                     snapshotDb.close()
+                }
+
+                // Verify snapshot integrity before bundling
+                val snapshotVerification = BackupVerifier.verify(tempDb, tableCounts)
+                if (!snapshotVerification.passed) {
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    return@withContext Result.failure(
+                        Exception("Backup snapshot verification failed: ${snapshotVerification.errors.joinToString("; ")}")
+                    )
                 }
 
                 // Collect receipt assets
@@ -575,11 +587,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     ): Result<DatabaseImportResult> = withContext(ioDispatcher) {
         try {
             // 1. Enter maintenance mode + drain workers — RESTORE_PREPARING, blocks all writes
-            enterMaintenanceAndDrain(
-                RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
-                "restoreCostBackup",
-                failOnTimeout = true
-            )
+            maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
+            "restoreCostBackup",
+            failOnTimeout = true)
             Timber.w("Restore: entered maintenance mode, workers drained")
 
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
@@ -838,8 +848,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 if (!rollbackOk) {
                     // Critical: both live and safety backup may be corrupt
                     restoreJournal.failJournal(journalEntry, "Verification failed and rollback also failed")
-                    // P7-CURRENT-002: Keep app blocked until restart when rollback fails
-                    restoreMaintenanceMode.exit(forceRestartRequired = true)
+                    restoreMaintenanceMode.enterCriticalRecoveryRequired(
+                        "Restore verification failed and safety backup rollback also failed"
+                    )
                     tempDir.deleteRecursively()
                     return@withContext Result.failure(
                         Exception("CRITICAL: Restore failed and safety backup rollback also failed. " +
@@ -906,7 +917,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private suspend fun restoreReceiptAssets(
         assetsDir: java.io.File,
         manifest: CostbackupBundle.BackupManifest,
-        db: com.yourname.expensetracker.data.database.AppDatabase = database
+        db: com.yourname.expensetracker.data.database.AppDatabase
     ): List<String> {
         val warnings = mutableListOf<String>()
         val receiptsDir = java.io.File(context.filesDir, "receipts")
@@ -929,41 +940,46 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
         for (assetFile in receiptFiles) {
             try {
-                // Generate new UUID-based filename to avoid path conflicts
-                val extension = assetFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
-                val newFileName = "${UUID.randomUUID()}.$extension"
-                val destFile = java.io.File(receiptsDir, newFileName)
-
-                // Copy file
-                assetFile.inputStream().use { input ->
-                    destFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-
-                // Parse receipt ID from backup filename format: "{receiptId}_{originalFilename}"
+                // 1. Parse receipt ID first — skip copy if ID is invalid
                 val receiptId = assetFile.nameWithoutExtension
                     .substringBefore("_")
                     .toLongOrNull()
 
-                if (receiptId != null && receiptId > 0L) {
-                    // Look up the receipt in the (restored) database by its original ID
-                    val receipt = dao.getById(receiptId)
-                    if (receipt != null) {
-                        dao.update(receipt.copy(imagePath = destFile.absolutePath))
-                        Timber.d(
-                            "Restored and updated receipt image path: %s -> %s (receiptId=%d)",
-                            assetFile.name, destFile.absolutePath, receiptId
-                        )
-                    } else {
-                        val msg = "Receipt record not found for restored asset (id=$receiptId, file=${assetFile.name})"
-                        warnings.add(msg)
-                        Timber.w(msg)
-                    }
-                } else {
+                if (receiptId == null || receiptId <= 0L) {
                     val msg = "Could not parse receipt ID from filename: ${assetFile.name}"
                     warnings.add(msg)
                     Timber.w(msg)
+                    continue
+                }
+
+                // 2. Validate receipt row exists before copying asset
+                val receipt = dao.getById(receiptId)
+                if (receipt == null) {
+                    val msg = "Receipt record not found for restored asset (id=$receiptId, file=${assetFile.name})"
+                    warnings.add(msg)
+                    Timber.w(msg)
+                    continue
+                }
+
+                // 3. Copy asset to temp, then update DB, then rename to final
+                val extension = assetFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
+                val finalFile = java.io.File(receiptsDir, "${UUID.randomUUID()}.$extension")
+                val tempFile = java.io.File(receiptsDir, "${finalFile.name}.tmp")
+                try {
+                    assetFile.inputStream().use { input ->
+                        tempFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    dao.update(receipt.copy(imagePath = finalFile.absolutePath))
+                    if (!tempFile.renameTo(finalFile)) {
+                        tempFile.copyTo(finalFile, overwrite = true)
+                        tempFile.delete()
+                    }
+                    Timber.d("Restored receipt asset: %s -> %s (receiptId=%d)",
+                        assetFile.name, finalFile.absolutePath, receiptId)
+                } catch (e: Exception) {
+                    runCatching { tempFile.delete() }
+                    runCatching { finalFile.delete() }
+                    throw e
                 }
                 restoredCount++
             } catch (e: Exception) {
@@ -1051,11 +1067,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
 
         // Enter maintenance mode + drain workers — blocks all concurrent writes during the swap
-        enterMaintenanceAndDrain(
-            RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
-            "importDatabase",
-            failOnTimeout = true
-        )
+        maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
+        "importDatabase",
+        failOnTimeout = true)
         Timber.w("Legacy import: entered maintenance mode, workers drained")
         try {
             // Validate source file exists and is readable
@@ -1206,9 +1220,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
 
                     restoreJournal.failJournal(journalEntry, importError.message ?: "Import failed after swap")
-                    // If rollback succeeded, safe to return to NORMAL.
-                    // If rollback failed, DB state is unknown — keep writes blocked.
-                    restoreMaintenanceMode.exit(forceRestartRequired = !rollbackResult.isSuccess)
+                    if (rollbackResult.isSuccess) {
+                        restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    } else {
+                        restoreMaintenanceMode.enterCriticalRecoveryRequired(
+                            "Import failed after swap and rollback also failed"
+                        )
+                    }
 
                     return@withContext if (rollbackResult.isSuccess) {
                         Result.failure(
@@ -1399,27 +1417,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
     
-    /**
-     * Enters [mode] and drains active workers before a destructive DB operation.
-     * @param failOnTimeout if true, throws [WorkerDrainTimeoutException] and exits maintenance
-     *   if workers do not drain within 5 seconds.
-     */
-    private suspend fun enterMaintenanceAndDrain(
-        mode: RestoreMaintenanceMode.Mode,
-        operationName: String,
-        failOnTimeout: Boolean = true
-    ) {
-        restoreMaintenanceMode.enter(mode)
-        val drained = workerDrain.requestStopAndAwaitDrain(operationName)
-        if (!drained && failOnTimeout) {
-            restoreMaintenanceMode.exit(forceRestartRequired = false)
-            throw com.yourname.expensetracker.data.backup.WorkerDrainTimeoutException(operationName)
-        }
-        if (!drained) {
-            Timber.w("Worker drain timed out for $operationName — proceeding with backup")
-        }
-    }
-
     private fun closeLiveDatabaseForFileSwap() {
         runCatching { database.close() }
             .onFailure { Timber.w(it, "Failed to close Room database before import") }
@@ -1855,8 +1852,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
             }
 
-            database.openHelper.writableDatabase
-            refreshInvalidationTrackerSafelyForVerification(database)
+            // Use fresh Room — injected singleton is stale after DB file copy
+            val freshDb = restoreDatabaseOpener.openFreshDatabase()
+            try {
+                freshDb.openHelper.writableDatabase
+                refreshInvalidationTrackerSafelyForVerification(freshDb)
+            } finally {
+                runCatching { freshDb.close() }
+            }
         }.onSuccess {
             Timber.w("Import rollback succeeded using safety backup: ${safetyBackupFile.absolutePath}")
         }.onFailure {
@@ -1927,11 +1930,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     override suspend fun resetDatabase(): Result<Unit> = withContext(ioDispatcher) {
         try {
             // Enter maintenance mode + drain workers — blocks all writes for the duration of the reset
-            enterMaintenanceAndDrain(
-                RestoreMaintenanceMode.Mode.RESETTING_DATABASE,
-                "resetDatabase",
-                failOnTimeout = true
-            )
+            maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.RESETTING_DATABASE,
+            "resetDatabase",
+            failOnTimeout = true)
             Timber.w("Reset: entered RESETTING_DATABASE maintenance mode, workers drained")
 
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)

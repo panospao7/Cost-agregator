@@ -3,7 +3,7 @@ package com.yourname.expensetracker.di
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpenerImpl
-import com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink
+import com.yourname.expensetracker.data.backup.DataStoreMaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import dagger.Binds
@@ -18,7 +18,7 @@ import javax.inject.Singleton
 abstract class BackupRepositoryModule {
 
     @Binds @Singleton
-    abstract fun bindMaintenanceSafeDiagnosticSink(impl: TimberMaintenanceSafeDiagnosticSink): MaintenanceSafeDiagnosticSink
+    abstract fun bindMaintenanceSafeDiagnosticSink(impl: DataStoreMaintenanceSafeDiagnosticSink): MaintenanceSafeDiagnosticSink
 
     @Binds @Singleton
     abstract fun bindRestoreDatabaseOpener(impl: RestoreDatabaseOpenerImpl): RestoreDatabaseOpener

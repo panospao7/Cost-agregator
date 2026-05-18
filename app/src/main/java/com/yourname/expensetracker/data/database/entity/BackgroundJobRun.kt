@@ -44,5 +44,7 @@ data class BackgroundJobRun(
     /** If retrying, the reason for the retry. */
     val retryReason: String? = null,
     /** If failed, the error message. */
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /** Typed reason for SKIPPED/CANCELLED status (e.g. RESTORE_BLOCKED, DISABLED, NO_WORK). */
+    val statusReason: String? = null
 )

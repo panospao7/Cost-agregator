@@ -54,13 +54,12 @@ class WorkerExecutionGuard @Inject constructor(
         block: suspend () -> T
     ): WorkerGuardResult<T> {
         val mode = restoreMaintenanceMode.currentMode()
+        val allowedReadOnly = mode == RestoreMaintenanceMode.Mode.BACKUP_EXPORTING &&
+            request.allowDuringBackupExport &&
+            !request.requiresDatabaseWrite
 
         // Barrier check — before acquiring lease or logging a run
         if (mode != RestoreMaintenanceMode.Mode.NORMAL) {
-            val allowedReadOnly = !request.requiresDatabaseWrite &&
-                request.allowDuringBackupExport &&
-                mode == RestoreMaintenanceMode.Mode.BACKUP_EXPORTING
-
             if (allowedReadOnly) {
                 try {
                     readBarrier.checkReadAllowed(
@@ -73,7 +72,6 @@ class WorkerExecutionGuard @Inject constructor(
                     return WorkerGuardResult.Skipped("Read barrier denied during backup: ${e.message}")
                 }
             } else {
-                // Write worker or non-backup mode — skip and record to safe sink
                 diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9")
                 return WorkerGuardResult.Skipped("Blocked in mode $mode")
             }
@@ -88,44 +86,52 @@ class WorkerExecutionGuard @Inject constructor(
         }
 
         val lease = leaseRegistry.acquire(request.workerName)
-        val run = workerRunLogger.start(request.workerName)
         try {
-            val spec = WorkerSpec.DEFAULTS[request.workerName]
-            if (spec != null && !spec.enabled) {
-                run.skipped("DISABLED")
-                return WorkerGuardResult.Skipped("Worker disabled by spec")
+            // Read-only backup-export path: no Room logging (BackgroundJobRun is a DB write)
+            if (allowedReadOnly) {
+                val result = block()
+                return WorkerGuardResult.Success(result)
             }
 
-            for (capability in request.requiredCapabilities) {
-                when (val decision = privacyGate.check(capability)) {
-                    is PrivacyDecision.Denied -> {
-                        run.skipped("PRIVACY_$capability")
-                        return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
-                    }
-                    is PrivacyDecision.FailClosed -> {
-                        run.skipped("PRIVACY_FAIL_CLOSED_$capability")
-                        return WorkerGuardResult.Skipped("Privacy check failed (fail-closed): $capability - ${decision.reason}")
-                    }
-                    else -> { }
+            // Normal path: start run log inside try so lease is always released
+            val run = workerRunLogger.start(request.workerName)
+            try {
+                val spec = WorkerSpec.DEFAULTS[request.workerName]
+                if (spec != null && !spec.enabled) {
+                    run.skipped("DISABLED")
+                    return WorkerGuardResult.Skipped("Worker disabled by spec")
                 }
-            }
 
-            val result = block()
-            run.success()
-            return WorkerGuardResult.Success(result)
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) {
-                // Finalize run as CANCELLED before rethrowing
-                run.cancelled("coroutine_cancelled_or_maintenance_stop")
-                throw e
-            }
-            Timber.w(e, "Worker ${request.workerName} failed")
-            return if (classifyTransient(e)) {
-                run.retry(e.message ?: "Transient error", e)
-                WorkerGuardResult.Retry(e.message ?: "Transient error", e)
-            } else {
-                run.failure(e.message ?: "Permanent error", e)
-                WorkerGuardResult.Failed(e.message ?: "Permanent error", e)
+                for (capability in request.requiredCapabilities) {
+                    when (val decision = privacyGate.check(capability)) {
+                        is PrivacyDecision.Denied -> {
+                            run.skipped("PRIVACY_$capability")
+                            return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
+                        }
+                        is PrivacyDecision.FailClosed -> {
+                            run.skipped("PRIVACY_FAIL_CLOSED_$capability")
+                            return WorkerGuardResult.Skipped("Privacy check failed (fail-closed): $capability - ${decision.reason}")
+                        }
+                        else -> { }
+                    }
+                }
+
+                val result = block()
+                run.success()
+                return WorkerGuardResult.Success(result)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) {
+                    run.cancelled("coroutine_cancelled_or_maintenance_stop")
+                    throw e
+                }
+                Timber.w(e, "Worker ${request.workerName} failed")
+                return if (classifyTransient(e)) {
+                    run.retry(e.message ?: "Transient error", e)
+                    WorkerGuardResult.Retry(e.message ?: "Transient error", e)
+                } else {
+                    run.failure(e.message ?: "Permanent error", e)
+                    WorkerGuardResult.Failed(e.message ?: "Permanent error", e)
+                }
             }
         } finally {
             lease.close()

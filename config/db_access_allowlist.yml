@@ -141,7 +141,8 @@ allowed_writers:
 
   - class: DatabaseBackupRepositoryImpl
     daos: []
-    reason: "file-level backup/restore operations under maintenance mode — no app-wide DAO use after DB file swap"
+    requires_write_barrier: false
+    reason: "file-level backup/restore operations under maintenance mode — restore-internal DAO writes use fresh Room"
 
   # ── Workers ─────────────────────────────────────────────────────
   # Workers must NOT write DAOs directly.

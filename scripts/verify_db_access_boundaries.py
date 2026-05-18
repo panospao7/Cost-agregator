@@ -163,6 +163,9 @@ def load_allowlist(path: str) -> dict:
     return entries
 
 
+LOCAL_DAO_ASSIGN = re.compile(r'\bval\s+(\w+)\s*=\s*\w+\.(\w+Dao)\s*\(')
+
+
 def _extract_method_body(lines: list, start: int) -> str:
     """Extract the body of the function starting at line index `start`."""
     depth = 0
@@ -179,7 +182,19 @@ def _extract_method_body(lines: list, start: int) -> str:
         body_lines.append(line)
         if started and depth == 0:
             break
+        # Expression-bodied: no braces — single line
+        if not started and '=' in line and i == start:
+            body_lines.append(line)
+            break
     return "".join(body_lines)
+
+
+def _barrier_before_line(lines: list, fun_start: int, mutation_lineno: int) -> bool:
+    """Return True if a writeBarrier call appears between fun_start and mutation_lineno."""
+    for i in range(fun_start, min(mutation_lineno - 1, len(lines))):
+        if WRITE_BARRIER_PATTERN.search(lines[i]):
+            return True
+    return False
 
 
 # ── Scan ──────────────────────────────────────────────────────────────────────
@@ -226,25 +241,39 @@ def scan(source_dir: str, allowlist: dict) -> list:
             # ── DAO mutation guard ────────────────────────────────────────
             current_fun = None
             current_fun_start = 0
+            # Track local DAO variable names: var_name -> True
+            local_dao_vars: set = set()
 
             for lineno, line in enumerate(lines, start=1):
                 s = line.strip()
                 if s.startswith("//") or s.startswith("*"):
                     continue
 
-                # Track current function name
+                # Track local DAO variable assignments: val dao = database.scannedReceiptDao()
+                m_assign = LOCAL_DAO_ASSIGN.search(line)
+                if m_assign:
+                    local_dao_vars.add(m_assign.group(1))
+
+                # Track current function name (including expression-bodied)
                 m = FUN_PATTERN.match(line)
                 if m:
                     current_fun = m.group(1)
                     current_fun_start = lineno - 1
+                    local_dao_vars.clear()  # reset per function
 
-                if "Dao" not in line:
+                # Check for DAO mutation — either via "Dao" reference or local dao var
+                has_dao_ref = "Dao" in line
+                has_local_dao = any(
+                    re.search(r'\b' + re.escape(v) + r'\s*\.', line)
+                    for v in local_dao_vars
+                ) if local_dao_vars else False
+
+                if not has_dao_ref and not has_local_dao:
                     continue
                 if not MUTATION_PATTERN.search(line):
                     continue
 
                 if entry is None:
-                    # Not in allowlist at all
                     violations.append((rel_path, lineno, line.rstrip(), "UNALLOWLISTED_CLASS"))
                     continue
 
@@ -266,13 +295,12 @@ def scan(source_dir: str, allowlist: dict) -> list:
                             f"MISSING_DEBUG_GUARD: {class_name}.{current_fun} is debug_only but lacks BuildConfig.DEBUG"
                         ))
 
-                # Check writeBarrier presence for non-coordinator allowlisted methods
+                # Check writeBarrier appears BEFORE mutation line
                 if entry.get("requires_write_barrier", True):
-                    method_body = _extract_method_body(lines, current_fun_start)
-                    if not WRITE_BARRIER_PATTERN.search(method_body):
+                    if not _barrier_before_line(lines, current_fun_start, lineno):
                         violations.append((
                             rel_path, lineno, line.rstrip(),
-                            f"MISSING_WRITE_BARRIER: {class_name}.{current_fun} has DAO mutation but no writeBarrier call"
+                            f"MISSING_WRITE_BARRIER: {class_name}.{current_fun} has DAO mutation but no writeBarrier before it"
                         ))
 
     return violations
