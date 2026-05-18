@@ -290,17 +290,31 @@ class RoomOperationRunRecorder @Inject constructor(
                         errorSummary = summary ?: sanitizer.sanitizeExceptionMessage(error?.message)
                     )
                     if (updated > 0) {
+                        // DDL-C67-03: preserve reasonCode and summary in terminal event
+                        val parsedReason = summary?.let { runCatching { DiagnosticReasonCode.valueOf(it) }.getOrNull() }
                         runCatching {
                             event(
                                 stage = status,
                                 outcome = statusToOutcome(status),
-                                severity = if (status.startsWith("FAILED")) EventSeverity.ERROR else EventSeverity.INFO,
+                                severity = severityForStatus(status),
+                                reasonCode = parsedReason,
+                                metadata = SafeEventMetadata.builder()
+                                    .put("statusReason", summary)
+                                    .put("operationType", operationType)
+                                    .build(),
+                                exception = error,
                                 isTerminal = true
                             )
                         }.onFailure { Timber.w(it, "Failed to write terminal operation event for run $runId") }
                     }
                 }.onFailure { Timber.w(it, "Failed to finalize operation run $runId") }
             }
+        }
+
+        private fun severityForStatus(status: String): EventSeverity = when {
+            status.startsWith("FAILED") -> EventSeverity.ERROR
+            status == "CANCELLED" || status == "PARTIAL_SUCCESS" -> EventSeverity.WARNING
+            else -> EventSeverity.INFO
         }
 
         private fun statusToOutcome(status: String): EventOutcome = when (status) {

@@ -122,8 +122,27 @@ class SafeSinkOperationRunHandle(
         severity: EventSeverity, metadata: SafeEventMetadata,
         entityType: String?, entityId: Long?, exception: Throwable?, isTerminal: Boolean
     ) {
-        // DDL-F876-04: direct terminal event must also mark the handle terminal (single terminal policy)
+        // DDL-C67-01/DDL-F876-04: direct terminal event marks handle terminal; skip if already terminal
         if (isTerminal && !_isTerminal.compareAndSet(false, true)) return
+        emitSafeEvent(stage, outcome, reasonCode, severity, metadata, exception, isTerminal)
+    }
+
+    // DDL-C67-01: terminalOnce must NOT call event() — that would double-CAS and skip emission.
+    // Instead it sets terminal state then calls emitSafeEvent directly.
+    private suspend fun terminalOnce(
+        stage: String, outcome: EventOutcome, severity: EventSeverity = EventSeverity.INFO,
+        reasonCode: DiagnosticReasonCode? = null, exception: Throwable? = null
+    ) {
+        if (!_isTerminal.compareAndSet(false, true)) return
+        emitSafeEvent(stage, outcome, reasonCode, severity, SafeEventMetadata.empty(), exception, isTerminal = true)
+    }
+
+    /** Lower-level emission that does NOT touch _isTerminal state. */
+    private suspend fun emitSafeEvent(
+        stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode?,
+        severity: EventSeverity, metadata: SafeEventMetadata, exception: Throwable?,
+        isTerminal: Boolean
+    ) {
         try {
             safeSink.recordDiagnosticEvent(
                 event = DiagnosticEvent(
@@ -132,8 +151,6 @@ class SafeSinkOperationRunHandle(
                     outcome = outcome,
                     severity = severity,
                     reasonCode = reasonCode,
-                    entityType = entityType,
-                    entityId = entityId,
                     correlationId = correlationId,
                     metadata = metadata,
                     exception = exception,
@@ -142,15 +159,6 @@ class SafeSinkOperationRunHandle(
                 mode = restoreMaintenanceMode.currentMode()
             )
         } catch (_: Exception) {}
-    }
-
-    private suspend fun terminalOnce(
-        stage: String, outcome: EventOutcome, severity: EventSeverity = EventSeverity.INFO,
-        reasonCode: DiagnosticReasonCode? = null, exception: Throwable? = null
-    ) {
-        if (!_isTerminal.compareAndSet(false, true)) return
-        event(stage = stage, outcome = outcome, severity = severity, reasonCode = reasonCode,
-            exception = exception, isTerminal = true)
     }
 
     override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) = Unit

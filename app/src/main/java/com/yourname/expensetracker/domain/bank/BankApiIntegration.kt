@@ -147,10 +147,11 @@ class BankApiIntegration @Inject constructor(
             try {
                 writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions")
             } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                // DDL-C67-02: WRITE_BARRIER is a stage event (non-terminal); CANCELLED is the single terminal
                 run.event("WRITE_BARRIER", com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
-                    exception = e, isTerminal = true)
+                    exception = e, isTerminal = false)
                 run.cancelled(com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED.name)
                 return@runOperation
             }

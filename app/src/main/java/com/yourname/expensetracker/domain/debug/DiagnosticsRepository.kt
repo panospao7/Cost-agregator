@@ -123,8 +123,13 @@ class DiagnosticsRepositoryImpl @Inject constructor(
         // Safe sink records
         runCatching {
             val failureOutcomes = setOf("FAILED_RETRYABLE", "FAILED_FINAL", "BLOCKED", "DROPPED", "CANCELLED", "SIDE_EFFECT_FAILED")
+            val failureSeverities = setOf("WARNING", "ERROR", "CRITICAL")
             safeSink.observeRecent().first()
-                .filter { r -> r.outcome != null && r.outcome in failureOutcomes }
+                // DDL-C67-12: include severity-only failures (e.g. ERROR outcome=COMPLETED)
+                .filter { r ->
+                    (r.outcome != null && r.outcome in failureOutcomes) ||
+                    (r.severity != null && r.severity in failureSeverities)
+                }
                 .forEach { r ->
                     all.add(DiagnosticFailureSummary(
                         source = "safe_sink", correlationId = r.correlationId,
