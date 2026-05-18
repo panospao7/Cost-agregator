@@ -36,7 +36,9 @@ class BudgetMonitorTest {
             timeProvider = timeProvider,
             notificationService = notificationService,
             ioDispatcher = testDispatcher,
-            diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true)
+            diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true),
+            writeBarrier = mockk(relaxed = true),
+            diagnosticSink = mockk(relaxed = true)
         )
     }
 

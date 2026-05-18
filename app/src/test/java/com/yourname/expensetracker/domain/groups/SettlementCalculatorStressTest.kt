@@ -17,7 +17,7 @@ class SettlementCalculatorStressTest {
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).apply {
         every { homeCurrency() } returns flowOf("EUR")
     }
-    private val calculator = SettlementCalculator(currencySettingsRepository = currencySettingsRepository)
+    private val calculator = SettlementCalculator(currencySettingsRepository = currencySettingsRepository, writeBarrier = mockk(relaxed = true))
 
     @Test
     fun `15 member alternating plus minus one completes within solver budget without fallback bug B_03`() = runTest {

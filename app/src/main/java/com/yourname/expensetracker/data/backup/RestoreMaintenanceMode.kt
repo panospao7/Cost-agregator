@@ -27,6 +27,22 @@ class RestoreMaintenanceMode @Inject constructor(
     @ApplicationContext private val context: Context,
     private val workerLeaseRegistry: dagger.Lazy<WorkerLeaseRegistry>
 ) {
+    /** Test-only constructor — uses a no-op WorkerLeaseRegistry. */
+    constructor(context: Context) : this(
+        context,
+        dagger.Lazy { com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController().let {
+            object : WorkerLeaseRegistry {
+                override suspend fun acquire(workerName: String) = object : com.yourname.expensetracker.domain.workers.WorkerLease {
+                    override suspend fun checkpoint(operation: String) {}
+                    override fun close() {}
+                }
+                override suspend fun requestStopAll(reason: String) {}
+                override suspend fun awaitNoActiveWorkers(timeoutMs: Long) = true
+                override fun isStopRequested() = false
+                override fun resetStopFlag() {}
+            }
+        }}
+    )
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

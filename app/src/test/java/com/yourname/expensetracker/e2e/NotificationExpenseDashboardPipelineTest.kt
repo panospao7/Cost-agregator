@@ -441,6 +441,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
             cashFlowCalculator = mockk(),
+            writeBarrier = mockk(relaxed = true),
         )
 
         dashboardUseCase = ComputeDashboardWidgetsUseCase(

@@ -28,7 +28,7 @@ class MainViewModelStressTest : ViewModelTestUtils() {
         super.setup()
         reviewQueueRepository = mockk(relaxed = true)
         every { reviewQueueRepository.getPendingReviewCount() } returns flowOf(0)
-        viewModel = MainViewModel(reviewQueueRepository)
+        viewModel = MainViewModel(reviewQueueRepository, mockk(relaxed = true))
     }
 
     @Test

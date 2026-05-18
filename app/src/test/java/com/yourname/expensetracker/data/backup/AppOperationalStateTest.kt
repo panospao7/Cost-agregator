@@ -10,12 +10,21 @@ import org.junit.Test
 class AppOperationalStateTest {
 
     private fun modeManager(initial: RestoreMaintenanceMode.Mode): RestoreMaintenanceMode {
-        val flow = MutableStateFlow(initial)
+        val state = modeToState(initial)
+        val flow = MutableStateFlow(state)
         return mockk<RestoreMaintenanceMode>(relaxed = true).also {
             every { it.operationalStateFlow } returns flow
             every { it.currentMode() } returns initial
             every { it.isWritesAllowed() } returns (initial == RestoreMaintenanceMode.Mode.NORMAL)
         }
+    }
+
+    private fun modeToState(mode: RestoreMaintenanceMode.Mode): AppOperationalState = when (mode) {
+        RestoreMaintenanceMode.Mode.NORMAL -> AppOperationalState.Normal
+        RestoreMaintenanceMode.Mode.BACKUP_EXPORTING -> AppOperationalState.BackupExporting
+        RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED -> AppOperationalState.RestartRequiredAfterRestore
+        RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED -> AppOperationalState.CriticalRecoveryRequired()
+        else -> AppOperationalState.RestoreInProgress(mode)
     }
 
     @Test

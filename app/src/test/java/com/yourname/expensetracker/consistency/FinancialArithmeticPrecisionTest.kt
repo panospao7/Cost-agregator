@@ -28,7 +28,7 @@ class FinancialArithmeticPrecisionTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
 
-        settlementCalculator = SettlementCalculator(currencySettingsRepository = mockk())
+        settlementCalculator = SettlementCalculator(currencySettingsRepository = mockk(), writeBarrier = mockk(relaxed = true))
         sharedExpenseManager = SharedExpenseManager(
             sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true),
             timeProvider = timeProvider,

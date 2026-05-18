@@ -26,7 +26,7 @@ import org.junit.Test
 class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
 
     private val splitCalculator = SplitCalculator
-    private val settlementCalculator = SettlementCalculator(mockk())
+    private val settlementCalculator = SettlementCalculator(mockk(), writeBarrier = mockk(relaxed = true))
     private lateinit var sharedExpenseManager: SharedExpenseManager
     private val dataPort = mockk<SharedExpenseDataPort>(relaxed = true)
 

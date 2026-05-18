@@ -89,7 +89,8 @@ class GroupTransactionCoordinatorTest {
             ApplicationProvider.getApplicationContext()
         ).build()
         every { timeProvider.now() } returns TEST_DATE
-        every { writeBarrier.checkWritesAllowed(any()) } returns Unit
+        every { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
+        every { writeBarrier.checkWritesAllowed(any<com.yourname.expensetracker.data.backup.DatabaseAccessOperation>()) } returns Unit
 
         groupDao = database.expenseGroupDao()
         memberDao = database.groupMemberDao()

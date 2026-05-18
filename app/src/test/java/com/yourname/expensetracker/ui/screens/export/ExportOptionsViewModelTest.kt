@@ -68,7 +68,6 @@ class ExportOptionsViewModelTest {
             xeroExporter = XeroCSVExporter(),
             quickBooksExporter = QuickBooksIIFExporter(),
             freshBooksExporter = FreshBooksExporter(),
-            restoreMaintenanceMode = restoreMaintenanceMode,
             readBarrier = readBarrier,
             privacyGate = privacyGate
         )

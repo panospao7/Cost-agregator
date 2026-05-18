@@ -68,7 +68,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
                 currencyConverter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>(relaxed = true),
                 currencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true),
             ),
-            timeProvider = mockk<TimeProvider>(relaxed = true)
+            timeProvider = mockk<TimeProvider>(relaxed = true),
+            readBarrier = mockk(relaxed = true)
         )
 
         tempCacheDir = createTempDir("export_test_cache")

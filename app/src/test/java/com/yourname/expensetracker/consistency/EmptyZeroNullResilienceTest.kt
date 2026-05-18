@@ -48,7 +48,7 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
     private lateinit var financialHealthScoreV2: FinancialHealthScoreV2
     private lateinit var currencyConverter: CurrencyConverter
-    private val settlementCalculator = SettlementCalculator(currencySettingsRepository = mockk())
+    private val settlementCalculator = SettlementCalculator(currencySettingsRepository = mockk(), writeBarrier = mockk(relaxed = true))
 
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var expenseRepository: ExpenseRepository
@@ -94,6 +94,7 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
             cashFlowCalculator = mockk(),
+            writeBarrier = mockk(relaxed = true),
         )
 
         currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider = mockk(relaxed = true))

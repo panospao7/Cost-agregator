@@ -40,7 +40,7 @@ class BudgetMonitorStressTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         every { timeProvider.now() } returns System.currentTimeMillis()
-        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher, diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true))
+        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher, diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true), writeBarrier = mockk(relaxed = true), diagnosticSink = mockk(relaxed = true))
     }
 
     @After

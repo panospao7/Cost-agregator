@@ -34,7 +34,7 @@ class SharedExpenseTest {
     fun setUp() {
         coEvery { sharedExpenseDataPort.getGroupOnce(any()) } returns null
         manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, mockk(), ioDispatcher = Dispatchers.Unconfined)
-        settlementCalculator = SettlementCalculator(mockk())
+        settlementCalculator = SettlementCalculator(mockk(), writeBarrier = mockk(relaxed = true))
     }
 
     @Test

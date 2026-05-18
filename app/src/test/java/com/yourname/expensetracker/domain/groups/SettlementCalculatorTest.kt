@@ -10,7 +10,7 @@ import org.junit.Test
 
 class SettlementCalculatorTest {
 
-    private val calculator = SettlementCalculator(currencySettingsRepository = mockk())
+    private val calculator = SettlementCalculator(currencySettingsRepository = mockk(), writeBarrier = mockk(relaxed = true))
 
     @Test
     fun `crash test 4_6 triangle debt yields two transactions totaling 50`() = runTest {

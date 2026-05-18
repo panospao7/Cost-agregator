@@ -94,7 +94,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
-            cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
+            cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true),
+            writeBarrier = mockk(relaxed = true)
         )
     }
 
