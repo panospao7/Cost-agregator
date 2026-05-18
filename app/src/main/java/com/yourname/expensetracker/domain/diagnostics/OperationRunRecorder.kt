@@ -173,7 +173,7 @@ class RoomOperationRunRecorder @Inject constructor(
                     runCatching {
                         safeSink.recordDiagnosticEvent(
                             event = DiagnosticEvent(
-                                pipeline = AppPipeline.BACKUP_RESTORE,
+                                pipeline = pipelineForOperationType(run.operationType),
                                 stage = "stale_recovery_event_write_failed",
                                 outcome = EventOutcome.SIDE_EFFECT_FAILED,
                                 severity = EventSeverity.WARNING,
@@ -245,7 +245,7 @@ class RoomOperationRunRecorder @Inject constructor(
                 runCatching {
                     safeSink.recordDiagnosticEvent(
                         event = DiagnosticEvent(
-                            pipeline = AppPipeline.BACKUP_RESTORE,
+                            pipeline = pipelineForOperationType(operationType),
                             stage = "operation_event_write_failed",
                             outcome = EventOutcome.SIDE_EFFECT_FAILED,
                             severity = EventSeverity.WARNING,
@@ -276,7 +276,7 @@ class RoomOperationRunRecorder @Inject constructor(
                 runCatching {
                     safeSink.recordDiagnosticEvent(
                         event = DiagnosticEvent(
-                            pipeline = AppPipeline.BACKUP_RESTORE,
+                            pipeline = pipelineForOperationType(operationType),
                             stage = "operation_increment_failed",
                             outcome = EventOutcome.SIDE_EFFECT_FAILED,
                             severity = EventSeverity.WARNING,
@@ -348,9 +348,25 @@ class RoomOperationRunRecorder @Inject constructor(
             "CANCELLED" -> EventOutcome.CANCELLED
             else -> EventOutcome.FAILED_FINAL
         }
+
+        private fun pipelineForOperationType(type: String): AppPipeline = when {
+            type.contains("BACKUP") || type.contains("RESTORE") || type.contains("RESET") -> AppPipeline.BACKUP_RESTORE
+            type.contains("BANK") -> AppPipeline.BANK
+            type.contains("EMAIL") -> AppPipeline.EMAIL
+            type.contains("EXPORT") || type.contains("IMPORT") -> AppPipeline.EXPORT_IMPORT
+            else -> AppPipeline.BACKUP_RESTORE
+        }
     }
 
     companion object {
         const val STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000L
+
+        private fun pipelineForOperationType(type: String): AppPipeline = when {
+            type.contains("BACKUP") || type.contains("RESTORE") || type.contains("RESET") -> AppPipeline.BACKUP_RESTORE
+            type.contains("BANK") -> AppPipeline.BANK
+            type.contains("EMAIL") -> AppPipeline.EMAIL
+            type.contains("EXPORT") || type.contains("IMPORT") -> AppPipeline.EXPORT_IMPORT
+            else -> AppPipeline.BACKUP_RESTORE
+        }
     }
 }

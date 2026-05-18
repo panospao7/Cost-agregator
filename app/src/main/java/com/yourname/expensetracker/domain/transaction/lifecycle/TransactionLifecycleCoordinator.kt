@@ -709,7 +709,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         expenseId: Long,
         newCategoryId: Long?,
         reason: String? = null,
-        source: String = "USER_EDIT"
+        source: String = "USER_EDIT",
+        correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
@@ -737,7 +738,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = beforeSnapshot,
                     afterSnapshot = expenseToSnapshot(expenseId, updated),
                     metadata = null,
-                    reason = reason
+                    reason = reason,
+                    correlationId = correlationId
                 )
             )
         }
@@ -904,7 +906,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         expenseId: Long,
         newMerchant: String,
         reason: String? = null,
-        source: String = "USER_EDIT"
+        source: String = "USER_EDIT",
+        correlationId: String? = null
     ) {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             throw IllegalStateException("Database writes blocked during restore")
@@ -991,7 +994,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         expenseId: Long,
         newType: TransactionType,
         reason: String? = null,
-        source: String = "USER_EDIT"
+        source: String = "USER_EDIT",
+        correlationId: String? = null
     ) {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             throw IllegalStateException("Database writes blocked during restore")

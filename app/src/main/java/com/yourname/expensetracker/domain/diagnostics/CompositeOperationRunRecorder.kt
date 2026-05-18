@@ -122,6 +122,8 @@ class SafeSinkOperationRunHandle(
     private val _succeeded = java.util.concurrent.atomic.AtomicInteger(0)
     private val _failed = java.util.concurrent.atomic.AtomicInteger(0)
     private val _skipped = java.util.concurrent.atomic.AtomicInteger(0)
+    private val _warnings = java.util.concurrent.atomic.AtomicInteger(0)
+    private val _errors = java.util.concurrent.atomic.AtomicInteger(0)
 
     override suspend fun event(
         stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode?,
@@ -137,18 +139,20 @@ class SafeSinkOperationRunHandle(
     // Instead it sets terminal state then calls emitSafeEvent directly.
     private suspend fun terminalOnce(
         stage: String, outcome: EventOutcome, severity: EventSeverity = EventSeverity.INFO,
-        reasonCode: DiagnosticReasonCode? = null, exception: Throwable? = null
+        reasonCode: DiagnosticReasonCode? = null, exception: Throwable? = null,
+        statusReason: String? = null
     ) {
         if (!_isTerminal.compareAndSet(false, true)) return
-        // DDL-C67-09: include accumulated counters in terminal metadata
         val meta = SafeEventMetadata.builder()
             .put("operationType", operationType)
             .put("rowsProcessed", _processed.get())
             .put("rowsSucceeded", _succeeded.get())
             .put("rowsFailed", _failed.get())
             .put("rowsSkipped", _skipped.get())
-            .build()
-        emitSafeEvent(stage, outcome, reasonCode, severity, meta, exception, isTerminal = true)
+            .put("warningCount", _warnings.get())
+            .put("errorCount", _errors.get())
+        if (statusReason != null) meta.put("statusReason", statusReason)
+        emitSafeEvent(stage, outcome, reasonCode, severity, meta.build(), exception, isTerminal = true)
     }
 
     /** Lower-level emission that does NOT touch _isTerminal state. */
@@ -176,23 +180,24 @@ class SafeSinkOperationRunHandle(
     }
 
     override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) {
-        // DDL-C67-09: accumulate counts for terminal summary
         _processed.addAndGet(processed)
         _succeeded.addAndGet(succeeded)
         _failed.addAndGet(failed)
         _skipped.addAndGet(skipped)
+        _warnings.addAndGet(warnings)
+        _errors.addAndGet(errors)
     }
 
     override suspend fun success() = terminalOnce("SUCCESS", EventOutcome.COMPLETED)
-    override suspend fun partialSuccess(summary: String?) = terminalOnce("PARTIAL_SUCCESS", EventOutcome.COMPLETED)
-    override suspend fun failedFinal(reason: String, error: Throwable?) = terminalOnce("FAILED_FINAL", EventOutcome.FAILED_FINAL, EventSeverity.ERROR, exception = error)
-    override suspend fun failedRetryable(reason: String, error: Throwable?) = terminalOnce("FAILED_RETRYABLE", EventOutcome.FAILED_RETRYABLE, EventSeverity.WARNING, exception = error)
-    // DDL-F876-05: preserve caller-supplied reason code instead of always using CANCELLED_BY_SYSTEM
+    override suspend fun partialSuccess(summary: String?) = terminalOnce("PARTIAL_SUCCESS", EventOutcome.COMPLETED, statusReason = summary)
+    override suspend fun failedFinal(reason: String, error: Throwable?) = terminalOnce("FAILED_FINAL", EventOutcome.FAILED_FINAL, EventSeverity.ERROR, exception = error, statusReason = reason)
+    override suspend fun failedRetryable(reason: String, error: Throwable?) = terminalOnce("FAILED_RETRYABLE", EventOutcome.FAILED_RETRYABLE, EventSeverity.WARNING, exception = error, statusReason = reason)
     override suspend fun cancelled(reason: String?) = terminalOnce(
         stage = "CANCELLED",
         outcome = EventOutcome.CANCELLED,
         reasonCode = reason?.let { runCatching { DiagnosticReasonCode.valueOf(it) }.getOrNull() }
-            ?: DiagnosticReasonCode.CANCELLED_BY_SYSTEM
+            ?: DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+        statusReason = reason
     )
 
     private fun operationTypeToPipeline(type: String): AppPipeline = when {
