@@ -137,11 +137,23 @@ class BankApiIntegration @Inject constructor(
         since: Long? = null
     ): SyncResult = withContext(Dispatchers.IO) {
         requireStubMode()
-        writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions")
+        // DDL-016-14: operation run must start BEFORE barrier check so blocked sync has a durable record
 
         var syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 0, errors = emptyList())
         operationRunRecorder.runOperation("BANK_SYNC", actor = "system") { run ->
             run.event("SYNC_STARTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
+
+            // Check write barrier inside operation so blocking is durable
+            try {
+                writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions")
+            } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                run.event("WRITE_BARRIER", com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
+                    exception = e, isTerminal = true)
+                run.cancelled(com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED.name)
+                return@runOperation
+            }
 
             // I3: Token refresh with finalization
             if (connection.tokenExpiry != null && connection.tokenExpiry < timeProvider.now()) {
@@ -171,6 +183,7 @@ class BankApiIntegration @Inject constructor(
             for (transaction in mockTransactions) {
                 try {
                     val request = mapTransactionToExpense(transaction, connection)
+                        .copy(correlationId = run.correlationId)  // DDL-016-15: propagate bank sync correlation
                     @Suppress("DEPRECATION_ERROR")
                     when (val result = coordinator.createExpense(request)) {
                         is CreateExpenseResult.Created -> {

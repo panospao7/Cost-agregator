@@ -106,5 +106,7 @@ data class CreateExpenseRequest(
     // ── Policy fields ───────────────────────────────────────────────────────────
     val deduplicationMode: DeduplicationMode = DeduplicationMode.STANDARD,
     val skipDeduplication: Boolean = false,
-    val idempotencyKey: String? = null
+    val idempotencyKey: String? = null,
+    /** Optional correlation ID propagated from the triggering input (notification/bank/email). */
+    val correlationId: String? = null
 )

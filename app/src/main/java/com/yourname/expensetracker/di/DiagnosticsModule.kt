@@ -4,6 +4,8 @@ import com.yourname.expensetracker.domain.diagnostics.CompositeDiagnosticEventWr
 import com.yourname.expensetracker.domain.diagnostics.CompositeOperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
+import com.yourname.expensetracker.domain.debug.DiagnosticsRepository
+import com.yourname.expensetracker.domain.debug.DiagnosticsRepositoryImpl
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter
 import com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter
@@ -39,4 +41,7 @@ abstract class DiagnosticsModule {
 
     @Binds @Singleton
     abstract fun bindWorkerRunLogger(impl: WorkerRunLoggerImpl): WorkerRunLogger
+
+    @Binds @Singleton
+    abstract fun bindDiagnosticsRepository(impl: DiagnosticsRepositoryImpl): DiagnosticsRepository
 }

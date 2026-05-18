@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.debug
 
 import com.yourname.expensetracker.data.backup.MaintenanceDiagnosticRecord
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
+import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.dao.OperationRunDao
 import com.yourname.expensetracker.data.database.dao.OperationRunEventDao
@@ -10,7 +11,7 @@ import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.data.database.entity.OperationRun
 import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,7 +21,8 @@ data class DiagnosticTrace(
     val operationRuns: List<OperationRun>,
     val operationRunEvents: List<OperationRunEvent>,
     val workerRuns: List<BackgroundJobRun>,
-    val safeSinkEvents: List<MaintenanceDiagnosticRecord>
+    val safeSinkEvents: List<MaintenanceDiagnosticRecord>,
+    val restoreJournalEvents: List<RestoreJournal.RestoreJournalEvent> = emptyList()
 )
 
 interface DiagnosticsRepository {
@@ -34,7 +36,8 @@ class DiagnosticsRepositoryImpl @Inject constructor(
     private val operationRunDao: OperationRunDao,
     private val operationRunEventDao: OperationRunEventDao,
     private val backgroundJobRunDao: BackgroundJobRunDao,
-    private val safeSink: MaintenanceSafeDiagnosticSink
+    private val safeSink: MaintenanceSafeDiagnosticSink,
+    private val restoreJournal: RestoreJournal
 ) : DiagnosticsRepository {
 
     override suspend fun getTraceByCorrelationId(correlationId: String): DiagnosticTrace {
@@ -43,10 +46,13 @@ class DiagnosticsRepositoryImpl @Inject constructor(
         val operationRuns = if (operationRun != null) listOf(operationRun) else emptyList()
         val operationRunEvents = runCatching { operationRunEventDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
         val workerRuns = runCatching { backgroundJobRunDao.getByCorrelationId(correlationId) }.getOrDefault(emptyList())
+        // DDL-016-16: use .first() to avoid endless Flow collection
         val safeSinkEvents = runCatching {
-            var result = emptyList<MaintenanceDiagnosticRecord>()
-            safeSink.observeRecent().collect { records -> result = records; return@collect }
-            result.filter { it.correlationId == correlationId }
+            safeSink.observeRecent().first().filter { it.correlationId == correlationId }
+        }.getOrDefault(emptyList())
+        // DDL-016-17: include restore journal events in trace
+        val journalEvents = runCatching {
+            restoreJournal.getEventsByCorrelationId(correlationId)
         }.getOrDefault(emptyList())
 
         return DiagnosticTrace(
@@ -55,7 +61,8 @@ class DiagnosticsRepositoryImpl @Inject constructor(
             operationRuns = operationRuns,
             operationRunEvents = operationRunEvents,
             workerRuns = workerRuns,
-            safeSinkEvents = safeSinkEvents
+            safeSinkEvents = safeSinkEvents,
+            restoreJournalEvents = journalEvents
         )
     }
 

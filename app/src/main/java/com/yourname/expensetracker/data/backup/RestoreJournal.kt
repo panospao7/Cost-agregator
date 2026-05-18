@@ -100,14 +100,15 @@ class RestoreJournal @Inject constructor(
                     }
                 },
                 startedAt = json.optLong("startedAt", System.currentTimeMillis()),
-                sourceBackupPath = json.optString("sourceBackupPath", null)
-                    ?.takeIf { it != "null" },
-                stagedDbPath = json.optString("stagedDbPath", null)
-                    ?.takeIf { it != "null" },
-                safetyBackupPath = json.optString("safetyBackupPath", null)
-                    ?.takeIf { it != "null" },
-                liveDbPath = json.optString("liveDbPath", null)
-                    ?.takeIf { it != "null" },
+                // DDL-016-05: read both old name and new _prefixed name for recovery paths
+                sourceBackupPath = (json.optString("_sourceBackupPath").takeIf { it.isNotEmpty() && it != "null" }
+                    ?: json.optString("sourceBackupPath", null)?.takeIf { it != "null" }),
+                stagedDbPath = (json.optString("_stagedDbPath").takeIf { it.isNotEmpty() && it != "null" }
+                    ?: json.optString("stagedDbPath", null)?.takeIf { it != "null" }),
+                safetyBackupPath = (json.optString("_safetyBackupPath").takeIf { it.isNotEmpty() && it != "null" }
+                    ?: json.optString("safetyBackupPath", null)?.takeIf { it != "null" }),
+                liveDbPath = (json.optString("_liveDbPath").takeIf { it.isNotEmpty() && it != "null" }
+                    ?: json.optString("liveDbPath", null)?.takeIf { it != "null" }),
                 error = json.optString("error", null)
                     ?.takeIf { it != "null" },
                 assetTasks = json.optJSONArray("assetTasks")?.let { arr ->
@@ -118,7 +119,9 @@ class RestoreJournal @Inject constructor(
                                 receiptId = o.getLong("receiptId"),
                                 sourceRelativePath = o.getString("src"),
                                 status = AssetRestoreStatus.valueOf(o.getString("status")),
-                                targetPath = o.optString("target").takeIf { it.isNotEmpty() && it != "null" },
+                                // DDL-016-05: read both "target" (old) and "targetName" (new basenames-only)
+                                targetPath = (o.optString("target").takeIf { it.isNotEmpty() && it != "null" }
+                                    ?: o.optString("targetName").takeIf { it.isNotEmpty() && it != "null" }),
                                 error = o.optString("error").takeIf { it.isNotEmpty() && it != "null" }
                             )
                         }.getOrNull()
@@ -144,7 +147,130 @@ class RestoreJournal @Inject constructor(
     private val journalFile: File
         get() = File(context.filesDir, JOURNAL_FILENAME)
 
+    // ── RestoreJournalEvent (append-only stage trail) ─────────────
+
+    /** Privacy-safe append-only event record for a restore stage. */
+    data class RestoreJournalEvent(
+        val eventId: String = UUID.randomUUID().toString(),
+        val correlationId: String,
+        val stage: String,
+        val outcome: String,
+        val severity: String,
+        val reasonCode: String?,
+        val occurredAt: Long,
+        val metadataJson: String?,
+        val exceptionClass: String?,
+        val exceptionMessageSafe: String?,
+        val isTerminal: Boolean
+    )
+
+    /** Append a stage event to the current journal's event history. */
+    fun appendEvent(
+        correlationId: String,
+        stage: String,
+        outcome: String,
+        severity: String = "INFO",
+        reasonCode: String? = null,
+        exceptionClass: String? = null,
+        exceptionMessageSafe: String? = null,
+        isTerminal: Boolean = false
+    ) {
+        try {
+            val entry = readJournal() ?: return
+            val event = RestoreJournalEvent(
+                correlationId = correlationId,
+                stage = stage, outcome = outcome, severity = severity,
+                reasonCode = reasonCode, occurredAt = System.currentTimeMillis(),
+                metadataJson = null,
+                exceptionClass = exceptionClass, exceptionMessageSafe = exceptionMessageSafe,
+                isTerminal = isTerminal
+            )
+            val events = parseEvents(entry.toJson())
+            val updatedEvents = events + event
+            val json = entry.toJson()
+            json.put("events", serializeEvents(updatedEvents))
+            val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
+            tmpFile.writeText(json.toString(2))
+            tmpFile.renameTo(journalFile)
+        } catch (e: Exception) {
+            Timber.w(e, "RestoreJournal: failed to append event stage=$stage")
+        }
+    }
+
+    /** Read all events from the diagnostics journal at [correlationId]. */
+    fun getEventsByCorrelationId(correlationId: String): List<RestoreJournalEvent> {
+        return try {
+            val json = readJournalJson() ?: return emptyList()
+            parseEvents(json).filter { it.correlationId == correlationId }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    /** Read all events from the success journal. */
+    fun getSuccessJournalEvents(): List<RestoreJournalEvent> {
+        return try {
+            val file = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
+            if (!file.exists()) return emptyList()
+            val json = JSONObject(file.readText())
+            parseEvents(json)
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun readJournalJson(): JSONObject? = try {
+        if (!journalFile.exists()) null else JSONObject(journalFile.readText())
+    } catch (_: Exception) { null }
+
+    private fun serializeEvents(events: List<RestoreJournalEvent>): org.json.JSONArray {
+        val arr = org.json.JSONArray()
+        events.forEach { e ->
+            arr.put(JSONObject().apply {
+                put("eventId", e.eventId); put("corrId", e.correlationId)
+                put("stage", e.stage); put("outcome", e.outcome); put("severity", e.severity)
+                if (e.reasonCode != null) put("reasonCode", e.reasonCode)
+                put("occurredAt", e.occurredAt)
+                if (e.exceptionClass != null) put("excClass", e.exceptionClass)
+                if (e.exceptionMessageSafe != null) put("excMsg", e.exceptionMessageSafe)
+                put("terminal", e.isTerminal)
+            })
+        }
+        return arr
+    }
+
+    private fun parseEvents(json: JSONObject): List<RestoreJournalEvent> {
+        val arr = json.optJSONArray("events") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            runCatching {
+                val o = arr.getJSONObject(i)
+                RestoreJournalEvent(
+                    eventId = o.optString("eventId", UUID.randomUUID().toString()),
+                    correlationId = o.optString("corrId", ""),
+                    stage = o.getString("stage"), outcome = o.getString("outcome"),
+                    severity = o.optString("severity", "INFO"),
+                    reasonCode = o.optString("reasonCode").takeIf { it.isNotEmpty() },
+                    occurredAt = o.optLong("occurredAt", 0L),
+                    metadataJson = null,
+                    exceptionClass = o.optString("excClass").takeIf { it.isNotEmpty() },
+                    exceptionMessageSafe = o.optString("excMsg").takeIf { it.isNotEmpty() },
+                    isTerminal = o.optBoolean("terminal", false)
+                )
+            }.getOrNull()
+        }
+    }
+
     // ── Read / Write ──────────────────────────────────────────────
+
+    /** Read the last-success journal (written after a successful restore + restart). */
+    fun readSuccessJournal(): JournalEntry? {
+        return try {
+            val file = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
+            if (!file.exists()) return null
+            val text = file.readText()
+            if (text.isBlank()) return null
+            JournalEntry.fromJson(JSONObject(text))
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to read success journal")
+            null
+        }
+    }
 
     /**
      * Reads the current journal entry, or null if no journal exists.

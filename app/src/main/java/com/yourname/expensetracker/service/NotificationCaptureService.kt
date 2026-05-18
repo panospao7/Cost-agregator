@@ -436,7 +436,8 @@ class NotificationCaptureService : NotificationListenerService() {
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
-            serviceScope.launch {
+            // DDL-016-12: use workTracker for ordered/durable delivery
+            workTracker.launch(serviceScope) {
                 try {
                     diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                         pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -453,9 +454,8 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
-        // E8: shutting down terminal event
         if (isShuttingDown) {
-            serviceScope.launch {
+            workTracker.launch(serviceScope) {
                 try {
                     diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                         pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -476,8 +476,7 @@ class NotificationCaptureService : NotificationListenerService() {
         val coarseDedupeKey = notificationKey
         val lastProcessed = processedNotifications[coarseDedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
-            // E5: dedupe window terminal event
-            serviceScope.launch {
+            workTracker.launch(serviceScope) {
                 try {
                     diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                         pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -501,7 +500,7 @@ class NotificationCaptureService : NotificationListenerService() {
         // P1-05: Fast privacy gate check BEFORE extracting text from extras.
         if (isPrivacyDeniedFast()) {
             Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
-            serviceScope.launch {
+            workTracker.launch(serviceScope) {
                 try {
                     diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                         pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -523,23 +522,8 @@ class NotificationCaptureService : NotificationListenerService() {
         val extras = sbn.notification.extras
         val parts = NotificationTextParts.extract(extras)
 
-        // E3: RECEIVED before filter
         workTracker.launch(serviceScope) {
-            try {
-                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                    stage = "listener",
-                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
-                    correlationId = correlationId,
-                    sourceType = "notification",
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .putHashed("packageName", packageName)
-                        .putHashed("notificationKey", notificationKey)
-                        .put("postTime", sbn.postTime)
-                        .build()
-                ))
-            } catch (_: Exception) {}
-
+            // DDL-016-11: RECEIVED already emitted at entry. Start with filter check.
             // E7: filter terminal event
             if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
                 try {

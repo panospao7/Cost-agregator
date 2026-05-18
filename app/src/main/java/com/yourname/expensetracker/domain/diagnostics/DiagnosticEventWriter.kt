@@ -9,6 +9,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 data class DiagnosticEvent(
+    val eventId: String = CorrelationIds.newId(),
     val pipeline: AppPipeline,
     val stage: String,
     val outcome: EventOutcome,
@@ -47,7 +48,7 @@ class RoomDiagnosticEventWriter @Inject constructor(
                 stage = event.stage,
                 outcome = event.outcome.name,
                 timestamp = timeProvider.now(),
-                eventId = UUID.randomUUID().toString(),
+                eventId = event.eventId,
                 correlationId = event.correlationId,
                 causationId = event.causationId,
                 severity = event.severity.name,

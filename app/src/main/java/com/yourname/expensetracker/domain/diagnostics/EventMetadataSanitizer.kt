@@ -30,7 +30,7 @@ class EventMetadataSanitizer @Inject constructor() {
             "stage", "status", "count", "rowcount", "rows",
             "rowssucceeded", "rowsfailed", "rowsskipped",
             "duration", "elapsed", "elapsedms",
-            "source", "sourcetype", "sourceidhash",
+            "source", "sourcetype",
             "pipeline", "reason", "reasoncode",
             "sideeffect",
             "packagehash", "packagenamehash",
@@ -39,11 +39,27 @@ class EventMetadataSanitizer @Inject constructor() {
             "externalhash", "matchedentityid", "duplicateentityid",
             "retryable", "causationid", "correlationid", "eventid",
             "isterminal", "delivered", "partial", "percent",
-            "spent", "limit", "confidence", "parsersource",
+            "confidence", "parsersource",
             "transactionsfound", "reviewscreated", "duplicatesskipped",
             "pagecount", "itemcount", "currency", "classifier",
             "provider", "dedupewindowms", "hasattachments", "posttime",
-            "errorcount", "warningcount", "retryable"
+            "errorcount", "warningcount"
+        )
+
+        /** DDL-016-09: exact known hash keys — no arbitrary endsWith("hash") allowed */
+        private val SAFE_HASH_KEYS = setOf(
+            "sourceidhash",
+            "notificationkeyhash",
+            "packagenamehash",
+            "messageidhash",
+            "providerhash",
+            "providertransactionidhash",
+            "externalhash",
+            "payloadhash",
+            "contentfingerprinthash",
+            "filehash",
+            "backuphash",
+            "assetrelativepathhash"
         )
 
         /** Exact canonical keys that are always blocked. */
@@ -80,8 +96,8 @@ class EventMetadataSanitizer @Inject constructor() {
         // Exact safe keys are always allowed
         if (canonical in SAFE_EXACT_KEYS) return false
 
-        // Keys that are clearly hashed values are safe (e.g. sourceIdHash, providerTransactionIdHash)
-        if (canonical.endsWith("hash") || canonical.endsWith("idhash")) return false
+        // DDL-016-09: only exact known hash keys are safe — no arbitrary endsWith("hash") bypass
+        if (canonical in SAFE_HASH_KEYS) return false
 
         // Exact blocked keys
         if (canonical in BLOCKED_EXACT) return true
@@ -107,14 +123,21 @@ class EventMetadataSanitizer @Inject constructor() {
     fun sanitizeMap(raw: Map<String, Any?>): Map<String, Any?> =
         raw.entries.associate { (k, v) -> k to sanitizeValue(k, v) }
 
-    private fun sanitizeList(list: List<Any?>): List<Any?> =
-        list.map { item ->
-            when (item) {
-                is Map<*, *> -> sanitizeMap(item.entries.associate { (k, v) -> k.toString() to v })
-                is String -> sanitizeStringValue(item)
-                else -> item
-            }
-        }
+    /** DDL-016-10: fully recursive sanitization for any value type at any nesting depth. */
+    private fun sanitizeAny(value: Any?): Any? = when (value) {
+        null -> null
+        is Boolean, is Number -> value
+        is Enum<*> -> value.name
+        is String -> sanitizeStringValue(value)
+        is JSONObject -> sanitizeJsonObject(value)
+        is JSONArray -> sanitizeJsonArray(value)
+        is Map<*, *> -> sanitizeMap(value.entries.associate { (k, v) -> k.toString() to v })
+        is Iterable<*> -> value.map { sanitizeAny(it) }
+        is Array<*> -> value.map { sanitizeAny(it) }
+        else -> sanitizeStringValue(value.toString())
+    }
+
+    private fun sanitizeList(list: List<Any?>): List<Any?> = list.map { sanitizeAny(it) }
 
     internal fun sanitizeStringValue(value: String): String {
         if (value.length > MAX_STRING_LENGTH * 2) return REDACTED
@@ -155,11 +178,7 @@ class EventMetadataSanitizer @Inject constructor() {
     private fun sanitizeJsonArray(arr: JSONArray): JSONArray {
         val result = JSONArray()
         for (i in 0 until arr.length()) {
-            when (val v = arr.get(i)) {
-                is JSONObject -> result.put(sanitizeJsonObject(v))
-                is String -> result.put(sanitizeStringValue(v))
-                else -> result.put(v)
-            }
+            result.put(sanitizeAny(arr.opt(i)))
         }
         return result
     }

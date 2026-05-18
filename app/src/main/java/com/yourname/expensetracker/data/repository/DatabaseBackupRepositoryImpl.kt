@@ -7,6 +7,7 @@ import android.os.Environment
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
+import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
@@ -73,7 +74,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val maintenanceOperationRunner: com.yourname.expensetracker.data.backup.MaintenanceOperationRunner,
     private val snapshotCreator: com.yourname.expensetracker.data.backup.SqliteSnapshotCreator,
     private val restoreInternalWriteScope: com.yourname.expensetracker.data.backup.RestoreInternalWriteScope,
-    private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
+    private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder,
+    private val diagnosticSink: MaintenanceSafeDiagnosticSink
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -114,7 +116,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             override suspend fun <T> runOperation(operationType: String, actor: String?, metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata, block: suspend (com.yourname.expensetracker.domain.diagnostics.OperationRunHandle) -> T): T =
                 block(com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle)
             override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) = Unit
-        }
+        },
+        com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink()
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -632,13 +635,21 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         password: String
     ): Result<DatabaseImportResult> = withContext(ioDispatcher) {
         val run = operationRunRecorder.start("RESTORE_COSTBACKUP", actor = "user")
+        // DDL-016-01: wrap in RestoreDiagnosticsSink so post-swap events never use Room
+        val restoreEvents = com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink(
+            operationRunHandle = run,
+            safeSink = diagnosticSink,
+            maintenanceMode = restoreMaintenanceMode,
+            correlationId = run.correlationId,
+            operationType = "RESTORE_COSTBACKUP"
+        )
         try {
             // 1. Enter maintenance mode + drain workers — RESTORE_PREPARING, blocks all writes
             maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
             "restoreCostBackup",
             failOnTimeout = true)
             Timber.w("Restore: entered maintenance mode, workers drained")
-            run.event("MAINTENANCE_ENTERED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+            restoreEvents.event("MAINTENANCE_ENTERED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             val liveDbPath = liveDbFile.absolutePath
@@ -654,7 +665,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 liveDbPath = liveDbPath
             )
             Timber.d("Restore journal created: %s", journalEntry.operationId)
-            run.event("JOURNAL_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+            restoreEvents.event("JOURNAL_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             // 3. Extract bundle to temp workspace
             val tempDir = File(context.cacheDir, "costbackup_extract_${System.currentTimeMillis()}")
@@ -663,6 +674,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // Wrong password or corrupt bundle — exit maintenance, live DB never touched
                     restoreMaintenanceMode.exit(forceRestartRequired = false)
                     restoreJournal.failJournal(journalEntry, error.message ?: "Extraction failed")
+                    // DDL-016-18: finalize operation run for pre-swap failures
+                    restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                        exception = error as? Exception, isTerminal = true)
+                    restoreEvents.finalizeRunFailed(error.message ?: "Extraction failed", error as? Exception)
                     tempDir.deleteRecursively()
                     return@withContext when (error) {
                         is CostbackupBundle.WrongBackupPasswordException ->
@@ -679,13 +696,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             val manifest = extractionResult.manifest
             journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.STAGED)
-            run.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+            restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             // 4. Verify manifest has data
             val manifestTableCounts = manifest.tableCounts
             if (manifestTableCounts.values.all { it == 0 }) {
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "Backup contains no data")
+                // DDL-016-18: finalize operation run
+                restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
+                restoreEvents.finalizeRunFailed("Backup contains no data")
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
                     Exception("Backup contains no data. Restore blocked.")
@@ -703,6 +725,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "Staged verification failed: ${e.message}")
+                // DDL-016-18
+                restoreEvents.event("STAGED_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR, exception = e, isTerminal = true)
+                restoreEvents.finalizeRunFailed("Staged verification failed", e)
                 stagedDbFile.delete()
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
@@ -778,16 +804,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 RestoreJournal.JournalState.SAFETY_BACKUP_CREATED,
                 safetyBackupPath = safetyBackupFile.absolutePath
             )
-            run.event("SAFETY_BACKUP_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+            restoreEvents.event("SAFETY_BACKUP_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
             // Swap live DB with staged DB
             journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
-            run.event("LIVE_DB_SWAPPING", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
+            restoreEvents.event("LIVE_DB_SWAPPING", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
             val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
             val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
             val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
             val stagedDbShmFile = File(stagedDbFile.parentFile, "$stagedDbName-shm")
 
             closeLiveDatabaseForFileSwap()
+            // DDL-016-01: after this point, Room operation events are disabled — journal/safe sink only
+            restoreEvents.markLiveDbSwapStarted()
 
             val preRestoreFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}.pre_restore")
             try {
@@ -833,7 +861,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     if (!verificationResult.passed) {
                         throw Exception("Live verification failed: ${verificationResult.errors.joinToString("; ")}")
                     }
-                    run.event("LIVE_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+                    restoreEvents.event("LIVE_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
                     verifySummaryPreservedForVerification(
                         DatabaseImportSummary(
@@ -872,7 +900,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // F6: DB was swapped — do NOT call run.success() on old Room handle.
                     // Record completion in journal only.
                     restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.COMPLETE)
-                    run.event("RESTART_REQUIRED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
+                    restoreEvents.event("RESTART_REQUIRED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
                     Result.success(
                         DatabaseImportResult.SuccessNeedsRestart(
                             DatabaseImportSummary(
@@ -900,7 +928,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
                 runCatching { database.close() }
                 runCatching { database.openHelper.close() }
-                run.event("ROLLBACK_STARTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
+                restoreEvents.event("ROLLBACK_STARTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
 
                 val rollbackOk = restoreFromSafetyBackup(
                     safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile
@@ -908,7 +936,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 if (!rollbackOk) {
                     // Critical: both live and safety backup may be corrupt
-                    run.event("ROLLBACK_FAILED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    restoreEvents.event("ROLLBACK_FAILED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.CRITICAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
                         isTerminal = true)
@@ -926,7 +954,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreJournal.failJournal(journalEntry, "Verification failed, rolled back: ${e.message}")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 tempDir.deleteRecursively()
-                run.event("ROLLBACK_COMPLETED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
+                restoreEvents.event("ROLLBACK_COMPLETED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
 
                 // F6: DB was swapped — do not use old run handle. Journal is authoritative.
                 Result.failure(Exception("Restore verification failed and was rolled back: ${e.message}"))
@@ -934,8 +962,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             Timber.e(e, "Failed to restore .costbackup bundle")
             restoreMaintenanceMode.exit(forceRestartRequired = false)
-            // Only finalize run if DB was NOT swapped (run handle may still be valid)
-            run.failedFinal(e.message ?: "Exception", e)
+            // Use finalizeRunFailed which respects roomAllowed flag
+            restoreEvents.finalizeRunFailed(e.message ?: "Exception", e)
             Result.failure(e)
         }
     }

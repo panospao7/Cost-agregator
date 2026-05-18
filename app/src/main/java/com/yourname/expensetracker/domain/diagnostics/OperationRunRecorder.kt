@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.diagnostics
 
+import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.OperationRunDao
 import com.yourname.expensetracker.data.database.dao.OperationRunEventDao
 import com.yourname.expensetracker.data.database.entity.OperationRun
@@ -84,7 +86,9 @@ class RoomOperationRunRecorder @Inject constructor(
     private val runDao: OperationRunDao,
     private val eventDao: OperationRunEventDao,
     private val sanitizer: EventMetadataSanitizer,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val safeSink: MaintenanceSafeDiagnosticSink,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : OperationRunRecorder {
 
     override suspend fun start(
@@ -104,10 +108,11 @@ class RoomOperationRunRecorder @Inject constructor(
                 metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson())
             )
         )
-        val handle = Handle(id, correlationId, operationType, runDao, eventDao, sanitizer, timeProvider)
-        // D2: emit STARTED event automatically
-        handle.event(stage = "STARTED", outcome = EventOutcome.ATTEMPTED,
-            severity = EventSeverity.INFO)
+        val handle = Handle(id, correlationId, operationType, runDao, eventDao, sanitizer, timeProvider, safeSink, restoreMaintenanceMode)
+        // DDL-016-03: STARTED failure must not orphan the RUNNING row — best-effort only
+        runCatching {
+            handle.event(stage = "STARTED", outcome = EventOutcome.ATTEMPTED, severity = EventSeverity.INFO)
+        }.onFailure { Timber.w(it, "Failed to write STARTED event for operation run $id") }
         return handle
     }
 
@@ -168,7 +173,9 @@ class RoomOperationRunRecorder @Inject constructor(
         private val runDao: OperationRunDao,
         private val eventDao: OperationRunEventDao,
         private val sanitizer: EventMetadataSanitizer,
-        private val timeProvider: TimeProvider
+        private val timeProvider: TimeProvider,
+        private val safeSink: MaintenanceSafeDiagnosticSink,
+        private val restoreMaintenanceMode: RestoreMaintenanceMode
     ) : OperationRunHandle {
 
         override suspend fun event(
@@ -182,25 +189,49 @@ class RoomOperationRunRecorder @Inject constructor(
             exception: Throwable?,
             isTerminal: Boolean
         ) {
-            eventDao.insert(
-                OperationRunEvent(
-                    operationRunId = runId,
-                    correlationId = correlationId,
-                    operationType = operationType,
-                    stage = stage,
-                    eventType = "${operationType}_${stage}".uppercase(),
-                    outcome = outcome.name,
-                    severity = severity.name,
-                    reasonCode = reasonCode?.name,
-                    occurredAt = timeProvider.now(),
-                    entityType = entityType,
-                    entityId = entityId,
-                    metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson()),
-                    exceptionClass = exception?.javaClass?.simpleName,
-                    exceptionMessage = sanitizer.sanitizeExceptionMessage(exception?.message),
-                    isTerminal = isTerminal
+            // DDL-016-02: event() is best-effort — failure must not fail business operation
+            runCatching {
+                eventDao.insert(
+                    OperationRunEvent(
+                        operationRunId = runId,
+                        correlationId = correlationId,
+                        operationType = operationType,
+                        stage = stage,
+                        eventType = "${operationType}_${stage}".uppercase(),
+                        outcome = outcome.name,
+                        severity = severity.name,
+                        reasonCode = reasonCode?.name,
+                        occurredAt = timeProvider.now(),
+                        entityType = entityType,
+                        entityId = entityId,
+                        metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson()),
+                        exceptionClass = exception?.javaClass?.simpleName,
+                        exceptionMessage = sanitizer.sanitizeExceptionMessage(exception?.message),
+                        isTerminal = isTerminal
+                    )
                 )
-            )
+            }.onFailure { error ->
+                Timber.w(error, "Failed to write operation event (stage=$stage, operation=$operationType)")
+                runCatching {
+                    safeSink.recordDiagnosticEvent(
+                        event = DiagnosticEvent(
+                            pipeline = AppPipeline.BACKUP_RESTORE,
+                            stage = "operation_event_write_failed",
+                            outcome = EventOutcome.SIDE_EFFECT_FAILED,
+                            severity = EventSeverity.WARNING,
+                            correlationId = correlationId,
+                            metadata = SafeEventMetadata.builder()
+                                .put("operationType", operationType)
+                                .put("failedStage", stage)
+                                .build(),
+                            exception = error,
+                            isTerminal = false
+                        ),
+                        mode = restoreMaintenanceMode.currentMode(),
+                        writeFailure = error
+                    )
+                }
+            }
         }
 
         override suspend fun increment(

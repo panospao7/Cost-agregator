@@ -32,7 +32,7 @@ class CompositeOperationRunRecorder @Inject constructor(
         metadata: SafeEventMetadata
     ): OperationRunHandle {
         if (restoreMaintenanceMode.currentMode() != RestoreMaintenanceMode.Mode.NORMAL) {
-            return safeHandle(operationType)
+            return safeHandle(operationType, metadata)
         }
         return try {
             writeBarrier.checkWritesAllowed("OperationRunRecorder.start")
@@ -41,7 +41,7 @@ class CompositeOperationRunRecorder @Inject constructor(
             throw e
         } catch (e: Exception) {
             Timber.w(e, "OperationRunRecorder: falling back to safe handle for $operationType")
-            safeHandle(operationType)
+            safeHandle(operationType, metadata)
         }
     }
 
@@ -81,14 +81,26 @@ class CompositeOperationRunRecorder @Inject constructor(
         }
     }
 
-    private fun safeHandle(operationType: String): OperationRunHandle =
-        SafeSinkOperationRunHandle(
+    private suspend fun safeHandle(operationType: String, metadata: SafeEventMetadata = SafeEventMetadata.empty()): OperationRunHandle {
+        val handle = SafeSinkOperationRunHandle(
             correlationId = CorrelationIds.newId(),
             operationType = operationType,
             safeSink = safeSink,
             restoreMaintenanceMode = restoreMaintenanceMode,
             timeProvider = timeProvider
         )
+        // DDL-016-04: safe handle must emit STARTED to satisfy STARTED -> terminal contract
+        runCatching {
+            handle.event(
+                stage = "STARTED",
+                outcome = EventOutcome.ATTEMPTED,
+                severity = EventSeverity.INFO,
+                metadata = metadata,
+                isTerminal = false
+            )
+        }
+        return handle
+    }
 }
 
 /** No-op handle that records terminal status to safe sink. */
