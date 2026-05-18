@@ -46,7 +46,8 @@ class RoomTransactionLifecycleEventWriter @Inject constructor(
                 beforeSnapshot = null,
                 afterSnapshot = null,
                 metadata = metaJson,
-                reason = event.reason
+                reason = event.reason,
+                correlationId = event.correlationId  // DDL-A8-15: propagate for traceability
             )
         )
     }

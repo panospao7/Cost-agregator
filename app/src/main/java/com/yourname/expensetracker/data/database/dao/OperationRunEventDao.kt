@@ -23,4 +23,7 @@ interface OperationRunEventDao {
         ORDER BY occurredAt DESC LIMIT :limit
     """)
     suspend fun getRecentFailures(limit: Int = 50): List<OperationRunEvent>
+
+    @Query("SELECT COUNT(*) FROM operation_run_events WHERE eventId = :eventId")
+    suspend fun existsByEventId(eventId: String): Int
 }

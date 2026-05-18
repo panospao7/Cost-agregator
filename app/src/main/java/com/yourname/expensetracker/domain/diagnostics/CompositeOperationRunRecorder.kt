@@ -113,6 +113,10 @@ class SafeSinkOperationRunHandle(
     private val timeProvider: TimeProvider
 ) : OperationRunHandle {
 
+    // DDL-A8-09: terminal-once — prevents multiple terminal events
+    private val _isTerminal = java.util.concurrent.atomic.AtomicBoolean(false)
+    override val isTerminal: Boolean get() = _isTerminal.get()
+
     override suspend fun event(
         stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode?,
         severity: EventSeverity, metadata: SafeEventMetadata,
@@ -138,12 +142,21 @@ class SafeSinkOperationRunHandle(
         } catch (_: Exception) {}
     }
 
+    private suspend fun terminalOnce(
+        stage: String, outcome: EventOutcome, severity: EventSeverity = EventSeverity.INFO,
+        reasonCode: DiagnosticReasonCode? = null, exception: Throwable? = null
+    ) {
+        if (!_isTerminal.compareAndSet(false, true)) return
+        event(stage = stage, outcome = outcome, severity = severity, reasonCode = reasonCode,
+            exception = exception, isTerminal = true)
+    }
+
     override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) = Unit
-    override suspend fun success() = event("SUCCESS", EventOutcome.COMPLETED, isTerminal = true)
-    override suspend fun partialSuccess(summary: String?) = event("PARTIAL_SUCCESS", EventOutcome.COMPLETED, isTerminal = true)
-    override suspend fun failedFinal(reason: String, error: Throwable?) = event("FAILED_FINAL", EventOutcome.FAILED_FINAL, severity = EventSeverity.ERROR, exception = error, isTerminal = true)
-    override suspend fun failedRetryable(reason: String, error: Throwable?) = event("FAILED_RETRYABLE", EventOutcome.FAILED_RETRYABLE, severity = EventSeverity.WARNING, exception = error, isTerminal = true)
-    override suspend fun cancelled(reason: String?) = event("CANCELLED", EventOutcome.CANCELLED, reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM, isTerminal = true)
+    override suspend fun success() = terminalOnce("SUCCESS", EventOutcome.COMPLETED)
+    override suspend fun partialSuccess(summary: String?) = terminalOnce("PARTIAL_SUCCESS", EventOutcome.COMPLETED)
+    override suspend fun failedFinal(reason: String, error: Throwable?) = terminalOnce("FAILED_FINAL", EventOutcome.FAILED_FINAL, EventSeverity.ERROR, exception = error)
+    override suspend fun failedRetryable(reason: String, error: Throwable?) = terminalOnce("FAILED_RETRYABLE", EventOutcome.FAILED_RETRYABLE, EventSeverity.WARNING, exception = error)
+    override suspend fun cancelled(reason: String?) = terminalOnce("CANCELLED", EventOutcome.CANCELLED, reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM)
 
     private fun operationTypeToPipeline(type: String): AppPipeline = when {
         type.contains("BACKUP") || type.contains("RESTORE") -> AppPipeline.BACKUP_RESTORE

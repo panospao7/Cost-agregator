@@ -178,7 +178,8 @@ class NotificationProcessingPipeline @Inject constructor(
         return process(notification, notification)
     }
 
-    suspend fun process(notification: RawNotification, storageNotification: RawNotification): NotificationPipelineOutcome {
+    suspend fun process(notification: RawNotification, storageNotification: RawNotification,
+                        correlationId: String? = null): NotificationPipelineOutcome {
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.process")
         processMutex.withLock {
             return try {

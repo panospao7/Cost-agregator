@@ -84,6 +84,8 @@ class EventMetadataSanitizer @Inject constructor() {
         private val FILE_PATH_PATTERN = Regex("""(/[^\s]{10,}|[A-Za-z]:\\[^\s]{10,})""")
         private val IBAN_PATTERN = Regex("""[A-Z]{2}\d{2}[A-Z0-9]{4,30}""")
         private val LONG_DIGITS_PATTERN = Regex("""\d{12,}""")
+        // DDL-A8-17: only allow hex strings in hash-key slots
+        private val HASH_VALUE_PATTERN = Regex("^[a-fA-F0-9]{8,128}$")
     }
 
     /** Canonical key: lowercase, strip non-alphanumeric. */
@@ -96,8 +98,8 @@ class EventMetadataSanitizer @Inject constructor() {
         // Exact safe keys are always allowed
         if (canonical in SAFE_EXACT_KEYS) return false
 
-        // DDL-016-09: only exact known hash keys are safe — no arbitrary endsWith("hash") bypass
-        if (canonical in SAFE_HASH_KEYS) return false
+        // DDL-016-09 / DDL-A8-17: only exact known hash keys are safe — value must also be validated
+        if (canonical in SAFE_HASH_KEYS) return false  // value validated separately in sanitizeValue
 
         // Exact blocked keys
         if (canonical in BLOCKED_EXACT) return true
@@ -108,6 +110,11 @@ class EventMetadataSanitizer @Inject constructor() {
 
     fun sanitizeValue(key: String, value: Any?): Any? {
         if (isDangerousKey(key)) return REDACTED
+        val canonical = canonicalizeKey(key)
+        // DDL-A8-17: validate hash-key values — only allow hex strings, redact plain text
+        if (canonical in SAFE_HASH_KEYS) {
+            return if (value is String && HASH_VALUE_PATTERN.matches(value)) value else REDACTED
+        }
         return when (value) {
             null -> null
             is Boolean, is Number -> value
@@ -116,7 +123,8 @@ class EventMetadataSanitizer @Inject constructor() {
             is Map<*, *> -> sanitizeMap(value.entries.associate { (k, v) -> k.toString() to v })
             is Iterable<*> -> sanitizeList(value.toList())
             is Array<*> -> sanitizeList(value.toList())
-            else -> value.toString().take(MAX_STRING_LENGTH)
+            // DDL-A8-18: unknown objects must go through full string sanitizer, not raw .take()
+            else -> sanitizeStringValue(value.toString())
         }
     }
 

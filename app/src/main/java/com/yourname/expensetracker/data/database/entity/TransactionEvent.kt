@@ -62,7 +62,8 @@ import androidx.room.PrimaryKey
         Index(value = ["expenseId"]),
         Index(value = ["source"]),
         Index(value = ["occurredAt"]),
-        Index(value = ["eventType"])
+        Index(value = ["eventType"]),
+        Index(value = ["correlationId"])
     ]
 )
 data class TransactionEvent(
@@ -78,5 +79,7 @@ data class TransactionEvent(
     val beforeSnapshot: String?,  // JSON snapshot before update/delete
     val afterSnapshot: String?,   // JSON snapshot after create/update
     val metadata: String?,        // JSON map for extra data
-    val reason: String?
+    val reason: String?,
+    val correlationId: String? = null,  // DDL-A8-15: trace from input (notification/bank/email)
+    val causationId: String? = null
 )

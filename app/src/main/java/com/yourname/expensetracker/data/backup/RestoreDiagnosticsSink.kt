@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.backup
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.EventSeverity
 import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
@@ -10,21 +11,21 @@ import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import timber.log.Timber
 
 /**
- * DDL-016-01: Restore-phase diagnostic sink that prevents Room operation event writes
- * after the live DB has been swapped.
+ * DDL-016-01 / DDL-A8-01: Restore-phase diagnostic sink that:
+ *  - Appends every event to RestoreJournal (always, best-effort)
+ *  - Writes to safe sink (always, best-effort)
+ *  - Writes to Room OperationRunHandle only BEFORE DB swap
  *
- * Before swap: writes to both Room OperationRunHandle AND restore journal.
- * After [markLiveDbSwapStarted]: Room writes are disabled; journal + safe sink only.
- *
- * This ensures a failed diagnostic insert after a successful restore cannot enter
- * the rollback path or otherwise corrupt the restore result.
+ * After [markLiveDbSwapStarted]: Room writes disabled; journal + safe sink only.
  */
 class RestoreDiagnosticsSink(
     private val operationRunHandle: OperationRunHandle?,
+    private val restoreJournal: RestoreJournal,
     private val safeSink: MaintenanceSafeDiagnosticSink,
     private val maintenanceMode: RestoreMaintenanceMode,
     val correlationId: String,
-    private val operationType: String
+    private val operationType: String,
+    private val sanitizer: EventMetadataSanitizer = EventMetadataSanitizer()
 ) {
     @Volatile
     private var roomAllowed: Boolean = true
@@ -43,7 +44,23 @@ class RestoreDiagnosticsSink(
         exception: Throwable? = null,
         isTerminal: Boolean = false
     ) {
-        // Always record to safe sink
+        // DDL-A8-01: always append to restore journal first
+        runCatching {
+            restoreJournal.appendEvent(
+                correlationId = correlationId,
+                stage = stage,
+                outcome = outcome.name,
+                severity = severity.name,
+                reasonCode = reasonCode?.name,
+                exceptionClass = exception?.javaClass?.simpleName,
+                exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
+                isTerminal = isTerminal
+            )
+        }.onFailure { journalError ->
+            Timber.w(journalError, "RestoreDiagnosticsSink: journal append failed (stage=$stage)")
+        }
+
+        // Always write to safe sink
         runCatching {
             safeSink.recordDiagnosticEvent(
                 event = DiagnosticEvent(
@@ -75,7 +92,7 @@ class RestoreDiagnosticsSink(
                     isTerminal = isTerminal
                 )
             }.onFailure { error ->
-                Timber.w(error, "RestoreDiagnosticsSink: operation event write failed (stage=$stage) — already recorded to safe sink")
+                Timber.w(error, "RestoreDiagnosticsSink: operation event write failed (stage=$stage)")
             }
         }
     }

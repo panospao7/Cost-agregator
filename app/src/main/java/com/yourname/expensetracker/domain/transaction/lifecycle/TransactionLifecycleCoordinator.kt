@@ -124,7 +124,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = null,
                     afterSnapshot = null,
                     metadata = null,
-                    reason = "Attempting create for ${request.merchant} ${request.amount} ${request.currency}"
+                    reason = "Attempting create for ${request.merchant} ${request.amount} ${request.currency}",
+                    correlationId = request.correlationId  // DDL-A8-15
                 )
             )
         }

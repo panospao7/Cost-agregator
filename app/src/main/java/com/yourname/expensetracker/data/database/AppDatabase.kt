@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 127
+const val APP_DATABASE_SCHEMA_VERSION = 129
 
 @Database(
     entities = [
@@ -7779,6 +7779,21 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_127_128 = object : androidx.room.migration.Migration(127, 128) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE operation_run_events ADD COLUMN eventId TEXT")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_eventId ON operation_run_events(eventId)")
+            }
+        }
+
+        val MIGRATION_128_129 = object : androidx.room.migration.Migration(128, 129) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE transaction_events ADD COLUMN correlationId TEXT")
+                database.execSQL("ALTER TABLE transaction_events ADD COLUMN causationId TEXT")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_transaction_events_correlationId ON transaction_events(correlationId)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7941,7 +7956,9 @@ MIGRATION_91_92,
         MIGRATION_123_124,
         MIGRATION_124_125,
         MIGRATION_125_126,
-        MIGRATION_126_127
+        MIGRATION_126_127,
+        MIGRATION_127_128,
+        MIGRATION_128_129
     )
 }
 }

@@ -16,6 +16,7 @@ import javax.inject.Singleton
 interface OperationRunHandle {
     val runId: Long
     val correlationId: String
+    val isTerminal: Boolean get() = false
 
     suspend fun event(
         stage: String,
@@ -125,8 +126,10 @@ class RoomOperationRunRecorder @Inject constructor(
         val run = start(operationType, actor, metadata)
         try {
             val result = block(run)
-            // DDL-81-07: success finalization is best-effort — must not fail business result
-            withContext(NonCancellable) { runCatching { run.success() } }
+            // DDL-A8-16: skip success if block already finalized the handle (bank blocked, etc.)
+            if (!run.isTerminal) {
+                withContext(NonCancellable) { runCatching { run.success() } }
+            }
             return result
         } catch (e: kotlinx.coroutines.CancellationException) {
             withContext(NonCancellable) { runCatching { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) } }
@@ -149,18 +152,21 @@ class RoomOperationRunRecorder @Inject constructor(
                 errorSummary = "Recovered stale RUNNING operation after process death"
             )
             if (updated > 0) {
-                eventDao.insert(OperationRunEvent(
-                    operationRunId = run.id,
-                    correlationId = run.correlationId,
-                    operationType = run.operationType,
-                    stage = "STALE_RECOVERY",
-                    eventType = "${run.operationType}_STALE_RECOVERY",
-                    outcome = EventOutcome.CANCELLED.name,
-                    severity = EventSeverity.WARNING.name,
-                    reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name,
-                    occurredAt = timeProvider.now(),
-                    isTerminal = true
-                ))
+                // DDL-A8-11: best-effort — event insert failure must not abort startup recovery
+                runCatching {
+                    eventDao.insert(OperationRunEvent(
+                        operationRunId = run.id,
+                        correlationId = run.correlationId,
+                        operationType = run.operationType,
+                        stage = "STALE_RECOVERY",
+                        eventType = "${run.operationType}_STALE_RECOVERY",
+                        outcome = EventOutcome.CANCELLED.name,
+                        severity = EventSeverity.WARNING.name,
+                        reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name,
+                        occurredAt = timeProvider.now(),
+                        isTerminal = true
+                    ))
+                }.onFailure { Timber.w(it, "Failed to write stale recovery event for run ${run.id}") }
             }
         }
         if (stale.isNotEmpty()) Timber.w("Recovered ${stale.size} stale RUNNING operation run(s) as STALE_ABORTED")
@@ -238,8 +244,10 @@ class RoomOperationRunRecorder @Inject constructor(
             processed: Int, succeeded: Int, failed: Int,
             skipped: Int, warnings: Int, errors: Int
         ) {
-            // D3: persist immediately to survive process death
-            runDao.incrementCounters(runId, processed, succeeded, failed, skipped, warnings, errors)
+            // DDL-A8-10: best-effort — increment failure must not fail bank sync or other operations
+            runCatching {
+                runDao.incrementCounters(runId, processed, succeeded, failed, skipped, warnings, errors)
+            }.onFailure { Timber.w(it, "Failed to persist operation counters for run $runId") }
         }
 
         override suspend fun success() = finalizeNonCancellable("SUCCESS", null, null)

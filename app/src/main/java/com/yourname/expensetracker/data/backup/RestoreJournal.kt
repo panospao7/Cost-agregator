@@ -88,6 +88,13 @@ class RestoreJournal @Inject constructor(
             })
         }
 
+        /** DDL-A8-06: privacy-safe version — strips internal path fields before debug/export. */
+        fun toDiagnosticsJson(): JSONObject {
+            val json = toJson()
+            listOf("_sourceBackupPath", "_stagedDbPath", "_safetyBackupPath", "_liveDbPath").forEach { json.remove(it) }
+            return json
+        }
+
         companion object {
             fun fromJson(json: JSONObject): JournalEntry = JournalEntry(
                 operationId = json.optString("operationId", UUID.randomUUID().toString()),
@@ -176,8 +183,10 @@ class RestoreJournal @Inject constructor(
         isTerminal: Boolean = false
     ) {
         try {
-            val entry = readJournal() ?: return
-            val event = RestoreJournalEvent(
+            // DDL-A8-02: read raw JSON — not JournalEntry — to preserve existing events
+            val json = readJournalJson() ?: return
+            val existingEvents = parseEvents(json)
+            val newEvent = RestoreJournalEvent(
                 correlationId = correlationId,
                 stage = stage, outcome = outcome, severity = severity,
                 reasonCode = reasonCode, occurredAt = System.currentTimeMillis(),
@@ -185,10 +194,7 @@ class RestoreJournal @Inject constructor(
                 exceptionClass = exceptionClass, exceptionMessageSafe = exceptionMessageSafe,
                 isTerminal = isTerminal
             )
-            val events = parseEvents(entry.toJson())
-            val updatedEvents = events + event
-            val json = entry.toJson()
-            json.put("events", serializeEvents(updatedEvents))
+            json.put("events", serializeEvents(existingEvents + newEvent))
             val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
             tmpFile.writeText(json.toString(2))
             tmpFile.renameTo(journalFile)
@@ -272,6 +278,51 @@ class RestoreJournal @Inject constructor(
         }
     }
 
+    /** DDL-A8-08: mark success journal as imported by adding importedAt timestamp. */
+    fun markSuccessJournalImported(correlationId: String) {
+        try {
+            val file = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
+            if (!file.exists()) return
+            val json = JSONObject(file.readText())
+            json.put("importedAt", System.currentTimeMillis())
+            json.put("importedCorrelationId", correlationId)
+            file.writeText(json.toString(2))
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to mark success journal imported")
+        }
+    }
+
+    /** DDL-A8-08: true if success journal has been fully imported. */
+    fun isSuccessJournalImported(correlationId: String): Boolean {
+        return try {
+            val file = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
+            if (!file.exists()) return false
+            val json = JSONObject(file.readText())
+            json.has("importedAt") && json.optString("importedCorrelationId") == correlationId
+        } catch (_: Exception) { false }
+    }
+
+    /** DDL-A8-19: read events from active, success, and failure journals. */
+    fun getAllDiagnosticEventsByCorrelationId(correlationId: String): List<RestoreJournalEvent> {
+        val all = mutableListOf<RestoreJournalEvent>()
+        runCatching { all += getEventsByCorrelationId(correlationId) }
+        runCatching {
+            val successFile = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
+            if (successFile.exists()) {
+                val json = JSONObject(successFile.readText())
+                all += parseEvents(json).filter { it.correlationId == correlationId }
+            }
+        }
+        runCatching {
+            val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+            if (failureFile.exists()) {
+                val json = JSONObject(failureFile.readText())
+                all += parseEvents(json).filter { it.correlationId == correlationId }
+            }
+        }
+        return all.distinctBy { it.eventId }
+    }
+
     /**
      * Reads the current journal entry, or null if no journal exists.
      */
@@ -293,10 +344,15 @@ class RestoreJournal @Inject constructor(
     fun writeJournal(entry: JournalEntry) {
         try {
             journalFile.parentFile?.mkdirs()
-            val text = entry.toJson().toString(2)
-            // Atomic write: write to temp file then rename (crash-safe)
+            // DDL-A8-02: preserve existing events when overwriting journal state
+            val oldJson = readJournalJson()
+            val newJson = entry.toJson()
+            val existingEvents = oldJson?.optJSONArray("events")
+            if (existingEvents != null && existingEvents.length() > 0) {
+                newJson.put("events", existingEvents)
+            }
             val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
-            tmpFile.writeText(text)
+            tmpFile.writeText(newJson.toString(2))
             tmpFile.renameTo(journalFile)
             Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
         } catch (e: Exception) {

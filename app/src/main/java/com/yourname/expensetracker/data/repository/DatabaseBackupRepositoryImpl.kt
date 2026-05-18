@@ -638,6 +638,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         // DDL-016-01: wrap in RestoreDiagnosticsSink so post-swap events never use Room
         val restoreEvents = com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink(
             operationRunHandle = run,
+            restoreJournal = restoreJournal,
             safeSink = diagnosticSink,
             maintenanceMode = restoreMaintenanceMode,
             correlationId = run.correlationId,
@@ -756,6 +757,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         Timber.e(error, "Post-migration staged DB verification failed — aborting restore")
                         restoreMaintenanceMode.exit(forceRestartRequired = false)
                         restoreJournal.failJournal(journalEntry, "Post-migration verification failed: ${error.message}")
+                        // DDL-A8-05
+                        restoreEvents.event("STAGED_DB_POST_MIGRATION_VERIFIED",
+                            com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                            severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                            exception = error as? Exception, isTerminal = true)
+                        restoreEvents.finalizeRunFailed("Post-migration verification failed", error as? Exception)
                         stagedDbFile.delete()
                         File(stagedDbPath + "-wal").delete()
                         File(stagedDbPath + "-shm").delete()
@@ -772,6 +779,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "Staged migration failed: ${e.message}")
+                // DDL-A8-05
+                restoreEvents.event("STAGED_DB_MIGRATED",
+                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    exception = e, isTerminal = true)
+                restoreEvents.finalizeRunFailed("Staged migration failed", e)
                 stagedDbFile.delete()
                 tempDir.deleteRecursively()
                 // Delete any migrated WAL/SHM files Room may have created
@@ -788,14 +801,26 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown error"
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "Safety backup failed: $reason")
+                // DDL-A8-05
+                restoreEvents.event("SAFETY_BACKUP_CREATED",
+                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    exception = safetyBackupResult.exceptionOrNull(), isTerminal = true)
+                restoreEvents.finalizeRunFailed("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
                 stagedDbFile.delete()
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
                     Exception("Restore cancelled because safety backup failed: $reason")
                 )
             }
-            val safetyBackupFile = safetyBackupResult.getOrNull()
-                ?: return@withContext Result.failure(Exception("Safety backup created but path unavailable"))
+            val safetyBackupFile = safetyBackupResult.getOrNull() ?: run {
+                // DDL-A8-05: safety backup path unavailable
+                restoreEvents.event("SAFETY_BACKUP_CREATED",
+                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR, isTerminal = true)
+                restoreEvents.finalizeRunFailed("Safety backup path unavailable")
+                return@withContext Result.failure(Exception("Safety backup created but path unavailable"))
+            }
 
             // 8. Persist safety backup path in journal before swap, so crash recovery
             //    can restore from it if the process dies during the swap.
@@ -838,7 +863,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreFromSafetyBackup(safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "Swap failed: ${e.message}")
-                run.failedFinal("Database swap failed", e)
+                // DDL-A8-04: after markLiveDbSwapStarted(), use restoreEvents not run directly
+                restoreEvents.event("LIVE_DB_SWAP_FAILED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
+                    exception = e, isTerminal = true)
+                restoreEvents.finalizeRunFailed("Database swap failed", e)
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
                     Exception("Database swap failed and was rolled back: ${e.message}")
@@ -893,14 +923,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     stagedDbShmFile.delete()
                     tempDir.deleteRecursively()
 
+                    // DDL-A8-03: RESTART_REQUIRED must be in the success journal — emit before commit
+                    restoreEvents.event("RESTART_REQUIRED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING, isTerminal = true)
+
+                    journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.COMPLETE)
                     restoreJournal.commitJournal(journalEntry)
                     restoreMaintenanceMode.exit(forceRestartRequired = true)
 
                     Timber.w("Restore completed successfully. Restart required.")
-                    // F6: DB was swapped — do NOT call run.success() on old Room handle.
-                    // Record completion in journal only.
-                    restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.COMPLETE)
-                    restoreEvents.event("RESTART_REQUIRED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
                     Result.success(
                         DatabaseImportResult.SuccessNeedsRestart(
                             DatabaseImportSummary(

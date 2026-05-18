@@ -10,8 +10,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * DDL-016-07: Imports the last successful restore journal into the restored DB
- * so the restore operation trail is queryable after app restart.
+ * Imports the last successful restore journal into the restored DB.
+ * Idempotent per event — retries missing events on subsequent startups.
  */
 @Singleton
 class RestoreJournalImporter @Inject constructor(
@@ -20,34 +20,40 @@ class RestoreJournalImporter @Inject constructor(
     private val operationRunEventDao: OperationRunEventDao,
     private val timeProvider: TimeProvider
 ) {
-    /** Call on app startup after the DB is healthy. Idempotent. */
+    /** Call on app startup after the DB is healthy. */
     suspend fun importLastSuccessJournalIfPresent() {
         val entry = restoreJournal.readSuccessJournal() ?: return
         val correlationId = entry.operationCorrelationId
         if (correlationId.isBlank()) return
 
+        // DDL-A8-08: skip if already fully imported
+        if (restoreJournal.isSuccessJournalImported(correlationId)) return
+
+        val events = restoreJournal.getSuccessJournalEvents()
+        if (events.isEmpty()) return
+
         try {
-            // Idempotent: skip if already imported
-            val existing = operationRunDao.getByCorrelationId(correlationId)
-            if (existing != null) {
-                Timber.d("RestoreJournalImporter: correlationId $correlationId already imported")
-                return
-            }
-
-            val runId = operationRunDao.insert(
-                OperationRun(
-                    correlationId = correlationId,
-                    operationType = "RESTORE_COSTBACKUP",
-                    status = "SUCCESS",
-                    startedAt = entry.startedAt,
-                    finishedAt = timeProvider.now(),
-                    actor = "user",
-                    errorSummary = null
+            // DDL-A8-07: get-or-insert run — don't skip if run exists (events may be missing)
+            val runId = operationRunDao.getByCorrelationId(correlationId)?.id
+                ?: operationRunDao.insert(
+                    OperationRun(
+                        correlationId = correlationId,
+                        operationType = "RESTORE_COSTBACKUP",
+                        status = "SUCCESS",
+                        startedAt = entry.startedAt,
+                        finishedAt = timeProvider.now(),
+                        actor = "user",
+                        errorSummary = null
+                    )
                 )
-            )
 
-            val events = restoreJournal.getSuccessJournalEvents()
-            events.forEach { event ->
+            // DDL-A8-07: idempotent per event — check each eventId before inserting
+            var allSucceeded = true
+            val existingEventIds = operationRunEventDao.getByRunId(runId)
+                .mapNotNull { it.eventId }.toSet()
+
+            for (event in events) {
+                if (event.eventId in existingEventIds) continue
                 runCatching {
                     operationRunEventDao.insert(
                         OperationRunEvent(
@@ -62,16 +68,25 @@ class RestoreJournalImporter @Inject constructor(
                             occurredAt = event.occurredAt,
                             exceptionClass = event.exceptionClass,
                             exceptionMessage = event.exceptionMessageSafe,
-                            isTerminal = event.isTerminal
+                            isTerminal = event.isTerminal,
+                            eventId = event.eventId
                         )
                     )
-                }.onFailure { Timber.w(it, "RestoreJournalImporter: failed to insert event ${event.stage}") }
+                }.onFailure {
+                    Timber.w(it, "RestoreJournalImporter: failed to insert event ${event.stage}")
+                    allSucceeded = false
+                }
             }
 
-            Timber.i("RestoreJournalImporter: imported restore operation run correlationId=$correlationId, ${events.size} events")
+            // DDL-A8-08: only mark imported after ALL events inserted
+            if (allSucceeded) {
+                restoreJournal.markSuccessJournalImported(correlationId)
+                Timber.i("RestoreJournalImporter: imported correlationId=$correlationId, ${events.size} events")
+            } else {
+                Timber.w("RestoreJournalImporter: partial import for $correlationId — will retry on next startup")
+            }
         } catch (e: Exception) {
             Timber.w(e, "RestoreJournalImporter: import failed, keeping journal for next attempt")
-            return // Do not delete journal on failure
         }
     }
 }

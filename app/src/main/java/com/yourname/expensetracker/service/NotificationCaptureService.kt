@@ -681,7 +681,7 @@ class NotificationCaptureService : NotificationListenerService() {
         }
 
         try {
-            repository.processAndSave(processingNotification, storageNotification)
+            repository.processAndSave(processingNotification, storageNotification, correlationId = correlationId)
             Timber.d("Processed notification from: $packageName")
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) {

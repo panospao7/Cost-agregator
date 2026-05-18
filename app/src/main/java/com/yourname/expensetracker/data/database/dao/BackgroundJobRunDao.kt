@@ -57,4 +57,7 @@ interface BackgroundJobRunDao {
 
     @Query("SELECT * FROM background_job_runs WHERE correlationId = :correlationId ORDER BY startedAt ASC")
     suspend fun getByCorrelationId(correlationId: String): List<BackgroundJobRun>
+
+    @Query("SELECT * FROM background_job_runs WHERE status IN ('FAILED','RETRY','CANCELLED','STALE_ABORTED') ORDER BY startedAt DESC LIMIT :limit")
+    suspend fun getRecentFailedRuns(limit: Int = 50): List<BackgroundJobRun>
 }
