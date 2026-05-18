@@ -1,6 +1,6 @@
 # ExpenseTracker ViewModel Injection Reference
 
-**Generated:** May 12, 2026 (updated from May 7)  
+**Generated:** May 18, 2026  
 **Total ViewModels:** 38 (37 screen ViewModels + MainViewModel)  
 **Architecture:** Hilt @HiltViewModel with constructor injection
 
@@ -12,7 +12,7 @@
 2. [Shell Tab ViewModels (6)](#2-shell-tab-viewmodels)
 3. [Overlay ViewModels (5)](#3-overlay-viewmodels)
 4. [Feature Screen ViewModels (23)](#4-feature-screen-viewmodels)
-5. [Management Screen ViewModels (2)](#5-management-screen-viewmodels)
+5. [Management Screen ViewModels (3)](#5-management-screen-viewmodels)
 6. [Debug ViewModels (2)](#6-debug-viewmodels)
 7. [Injection Complexity Heatmap](#7-injection-complexity-heatmap)
 

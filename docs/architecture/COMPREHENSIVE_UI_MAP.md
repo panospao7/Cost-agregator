@@ -1,8 +1,8 @@
 # ExpenseTracker Frontend UI/UX Comprehensive Mapping
 
-**Refreshed**: May 12, 2026 (updated from May 7)  
+**Refreshed**: May 18, 2026  
 **Scope**: Current frontend inventory including screens, components, navigation, integration, and theming
-**Total Files**: 154 UI source files (38 ViewModels, 59 components incl. PrivacyBlockedCard)
+**Total Files**: 164 UI source files (38 ViewModels, 59 components, 38 screens, 5 nav, 3 mappers, 2 theme, 4 model, 7 util, 8 other)
 
 ---
 
@@ -173,6 +173,7 @@ Pending transaction review/approval workflow
 
 #### Navigation:
 - `onNavigateToForecast(budget)` → BudgetForecasting feature
+- `NavigationDestination.BudgetCreate` → Opens Budget tab with create dialog pre-opened (added S2-008R)
 
 ---
 
@@ -336,7 +337,7 @@ These appear over main tabs via `NavigationDestination` sealed class.
 
 ---
 
-## 4. FEATURE SCREENS (24 Config-Driven Features)
+## 4. FEATURE SCREENS (23 Config-Driven Features)
 
 All features accessible from:
 1. Home screen widgets/cards
@@ -656,15 +657,6 @@ All features accessible from:
 
 ---
 
-### Feature 23: Privacy Settings
-**File**: `ui/screens/privacysettings/PrivacySettingsScreen.kt` + `PrivacySettingsViewModel.kt`
-**Navigation**: *(no standalone route — accessible from Settings)*
-
-#### Features:
-- 10 privacy toggles (notification capture, cloud AI, geocoding, etc.)
-- 2 retention day settings
-- Privacy audit log viewer
-
 ---
 
 ## 5. MANAGEMENT SCREENS
@@ -695,6 +687,19 @@ All features accessible from:
 
 #### Sub-Screens (Dialogs):
 - **AddCategoryDialog**: Create/edit category
+
+---
+
+### Privacy Settings Screen
+**File**: `ui/screens/privacysettings/PrivacySettingsScreen.kt` + `PrivacySettingsViewModel.kt`
+**Navigation**: *(no standalone route — accessible from Settings gear icon)*
+
+#### Features:
+- 10 privacy toggles (notification capture, cloud AI, geocoding, etc.)
+- 2 retention day settings
+- Privacy audit log viewer
+- Raw storage mode indicators
+- Risky action confirmation dialogs
 
 ---
 
@@ -762,8 +767,7 @@ All features accessible from:
 |-----------|------|---------|
 | **FeatureIntegration** | `integration/FeatureIntegration.kt` | Feature menu and routing integration |
 | **UiTextExtensions** | `components/UiTextExtensions.kt` | UI text helpers and formatting |
-| **EmptyStatePresentationModule** | `components/emptystate/EmptyStatePresentationModule.kt` | Empty-state wiring for UI support |
-| **DefaultEmptyStateRegistryInitializer** | `components/emptystate/DefaultEmptyStateRegistryInitializer.kt` | Empty-state registry bootstrap |
+| *(empty state components listed in §7.11)* | | |
 
 ### 7.3 Chart & Visualization Components
 
@@ -801,7 +805,7 @@ All features accessible from:
 | **EnhancedEmptyState** | `common/EnhancedEmptyState.kt` | Rich empty state with actions |
 | **ErrorState** | `common/ErrorState.kt` | Error display with retry |
 | **LoadingSkeleton** | `common/LoadingSkeleton.kt` | Placeholder loading animation |
-| **ListSkeleton** | (in HomeScreen) | List item skeleton loader |
+| **ListSkeleton** | `common/LoadingSkeleton.kt` (inline composable) | List item skeleton loader |
 
 ### 7.6 Dialog/Sheet Components
 
@@ -826,7 +830,7 @@ All features accessible from:
 | **AppNavigationBar** | `AppNavigationBar.kt` | Bottom navigation bar (6 tabs) |
 | **SmartFAB** | `MainActivity.kt` (inline) | Context-aware floating action button (add, scan, approve, clipboard, assistant) |
 
-### 7.8 Feature Components
+### 7.9 Feature Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -837,10 +841,11 @@ All features accessible from:
 | **RetroBudgetBlockPartyCard** | `RetroBudgetBlockPartyCard.kt` | Alternative budget card UI |
 | **RetroTopCategoriesCard** | `RetroTopCategoriesCard.kt` | Alternative top categories card |
 | **RetroTotalsDashboardCard** | `RetroTotalsDashboardCard.kt` | Alternative totals card |
+| **DataQualityWarningChip** | `DataQualityWarningChip.kt` | Data quality warning chip (used on HomeScreen, BudgetScreen) |
 | **PersonalityProfileCard** | `analytics/PersonalityProfileCard.kt` | Spending personality |
 | **StatisticalVisualizations** | `analytics/StatisticalVisualizations.kt` | Advanced stat charts |
 
-### 7.9 Feature Components (Form/Utility)
+### 7.10 Feature Components (Form/Utility)
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -848,7 +853,7 @@ All features accessible from:
 | **FormComponents** | `feature/FormComponents.kt` | Form inputs (text, dropdown, etc.) |
 | **MetricComponents** | `feature/MetricComponents.kt` | Metric display components |
 
-### 7.10 Empty State Components
+### 7.11 Empty State Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -890,7 +895,7 @@ Index 5: Map         (Spending Map)
 - Switching tabs clears feature back stack
 - Can navigate back from feature to last main tab
 
-### 8.3 Feature Navigation (22 Features)
+### 8.3 Feature Navigation (23 Features)
 
 All features accessible via:
 1. **Home Screen Widgets**: Tap widget → feature
@@ -1119,7 +1124,8 @@ Handles configuration-driven feature display and integration with Home screen, F
 
 ## 15. ORPHANED SCREENS (Non-Navigated)
 
-All screens are currently navigated to via NavigationDestination. No orphaned screens detected.
+All screens are navigated to via NavigationDestination with one exception:
+- **PrivacySettingsScreen** has no standalone `NavigationDestination` entry — it is accessible only from the Settings gear icon (treated as a management sub-screen).
 
 ---
 
@@ -1130,16 +1136,19 @@ All screens are currently navigated to via NavigationDestination. No orphaned sc
 | **Main Tabs** | 6 |
 | **Feature Screens** | 23 |
 | **Overlay Screens** | 6 |
-| **Management Screens** | 4 |
-| **Debug Screens** | 5 |
-| **Total Screen Files** | 35 packages, 81 files |
-| **Component Files** | 58 |
-| **Total UI Files** | 154 |
-| **ViewModels** | 39 (incl. MainViewModel) |
-| **Dialog/Sheet Variants** | 20+ |
+| **Management Screens** | 3 (AiSettings, CategoryManagement, PrivacySettings—settings-only) |
+| **Debug Screens** | 3 |
+| **Total Screen Files** | 38 |
+| **Component Files** | 59 |
+| **Total UI Files** | 164 |
+| **ViewModels** | 38 (incl. MainViewModel) |
+| **Navigation Files** | 5 |
 | **Deep Link Hosts** | 8 |
 | **UI Mapper Files** | 3 |
-| **UI Utility Files** | 4 |
+| **UI Theme Files** | 2 |
+| **UI Model Files** | 4 |
+| **UI Utility Files** | 7 |
+| **Screenshots/Sheets** | 3 (AddExpenseSheet, AssistantSheet, TransactionFilterSheet) |
 
 ---
 

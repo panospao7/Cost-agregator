@@ -526,7 +526,6 @@ Modal Sheet (Bottom-up animation)
 │  │  ├─ ScanReceipt                                             │
 │  │  ├─ RecurringExpenses                                       │
 │  │  ├─ ManualRecurringExpense                                  │
-│  │  ├─ BudgetForecasting(budget)                               │
 │  │  └─ Assistant                                               │
 │  │                                                              │
 │  ├─ Feature Screens (23)                                       │
@@ -554,12 +553,12 @@ Modal Sheet (Bottom-up animation)
 │  │  ├─ BackupRestore                                           │
 │  │  └─ BudgetForecasting                                       │
 │  │                                                              │
-│  ├─ Management Screens (2)                                     │
+│  ├─ Management Screens (3)                                     │
 │  │  ├─ AiSettings                                              │
 │  │  ├─ CategoryManagement                                      │
-│  │  └─ PrivacySettings                                         │
+│  │  └─ PrivacySettings (no standalone route)                   │
 │  │                                                              │
-│  └─ Parametric Screens (2)                                     │
+│  └─ Parametric Destinations (sub-set of Features)              │
 │     ├─ BudgetForecasting(budget)                               │
 │     └─ VisualSplitEditor(expense, templateId)                  │
 │                                                                 │
@@ -661,8 +660,8 @@ ui/
 │   ├── NavigationDestination.kt      ← Sealed class: all destinations
 │   ├── NavigationController.kt        ← Navigation state machine
 │   ├── FeatureConfig.kt              ← Feature menu configuration
-│   ├── FeatureIntegration.kt         ← Feature integration logic
-│   └── UiTextExtensions.kt           ← UI text helpers
+│   ├── DestinationPersistencePolicy.kt ← Restore-per-route classification
+│   └── DeepLinkParser.kt             ← Deep link URI parser
 │
 ├── theme/
 │   ├── Theme.kt                      ← Color scheme, typography
@@ -793,12 +792,12 @@ ui/
 │
 ├── components/
 │   ├── AppNavigationBar.kt
-│   ├── AppFabMenu.kt
 │   ├── BentoCard.kt
 │   ├── BudgetBlockPartyCard.kt
 │   ├── CategoryBreakdownSheet.kt
 │   ├── CategoryDonutChart.kt
 │   ├── ChartMarker.kt
+│   ├── DataQualityWarningChip.kt
 │   ├── FinancialRunwayCard.kt
 │   ├── FinancialStressForecastCard.kt
 │   ├── FinancialWeatherCard.kt
@@ -864,16 +863,28 @@ ui/
 │       ├── FinancialHealthScoreV2Widget.kt
 │       └── HealthScoreWidget.kt
 │
+├── integration/
+│   └── FeatureIntegration.kt         ← Feature menu + routing integration
+│
 ├── mappers/
 │   ├── DashboardWidgetUiMapper.kt
 │   ├── MonteCarloBudgetImpactUiMapper.kt
 │   └── TransactionFilterUiMapper.kt
 │
+├── model/
+│   ├── LoadableUiState.kt
+│   ├── MoneyDisplayUi.kt
+│   ├── MutationState.kt
+│   └── RouteContentPattern.kt
+│
 └── util/
+    ├── AmountInputSanitizer.kt
     ├── ClipboardAmountParser.kt
     ├── ColorExtensions.kt
     ├── HapticFeedback.kt
-    └── ModifierExtensions.kt
+    ├── ModifierExtensions.kt
+    ├── OwnershipValidator.kt
+    └── UiTimeUtils.kt
 ```
 
 ---

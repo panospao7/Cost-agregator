@@ -1,6 +1,6 @@
 # ExpenseTracker Frontend UI/UX - Quick Reference Index
 
-**Scout Analysis Complete** | Generated: May 12, 2026 (updated from May 7)
+**Scout Analysis Complete** | Generated: May 18, 2026
 
 ---
 
@@ -164,7 +164,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 
 ---
 
-## 📊 COMPONENT INVENTORY (58 Components)
+## 📊 COMPONENT INVENTORY (59 Components)
 
 ### Dashboard Widgets (Home Screen)
 - TotalsDashboardCard
@@ -209,7 +209,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 
 ### Navigation Components
 - AppNavigationBar (6 tabs)
-- AppFabMenu (FAB with submenu)
+- SmartFAB (inline in MainActivity.kt, context-aware)
 
 ### Support Components
 - FeatureIntegration
@@ -230,9 +230,10 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - TransferDirectionBadge
 - PulseDot
 - PrivacyBlockedCard                  ← Displays privacy-denied states with lock icon (status indicator)
+- DataQualityWarningChip             ← Data quality warning chip (HomeScreen, BudgetScreen)
 - BentoCard
 
-**Total**: 58 component files
+**Total**: 59 component files
 
 ---
 
@@ -354,16 +355,19 @@ Scaffold(
 | Metric | Count |
 |--------|-------|
 | Screen Packages | 35 |
-| Screen Files | 81 |
-| Component Files | 58 |
+| Screen Files | 38 |
+| Component Files | 59 |
 | ViewModels | 38 (incl. MainViewModel) |
-| Dialog/Sheet Variants | 20+ |
+| Navigation Files | 5 |
 | Feature Destinations | 23 |
-| Management Screens | 4 |
+| Management Screens | 3 |
 | Main Tabs | 6 |
+| Overlay Screens | 6 |
 | Deep Links | 8 |
 | UI Mapper Files | 3 |
-| UI Utility Files | 4 |
+| UI Theme Files | 2 |
+| UI Model Files | 4 |
+| UI Utility Files | 7 |
 
 ---
 
@@ -468,16 +472,10 @@ Column {
    data object NewFeature : NavigationDestination()
    ```
 
-3. **Add to Feature Menu** (if feature):
+3. **Add to FeatureConfig.allFeatures** (if feature):
    ```kotlin
-   FeatureConfig.allFeatures.add(
-       FeatureConfig(
-           id = "new-feature",
-           titleRes = R.string.feature_new_feature,
-           icon = Icons.Rounded.Star,
-           destination = NavigationDestination.NewFeature
-       )
-   )
+   // FeatureConfig.allFeatures is immutable — add entry to the list literal
+   // in NavigationDestination companion object's featureDestinations
    ```
 
 4. **Route in MainActivity**:
@@ -535,10 +533,9 @@ Column {
 
 ## 📝 SUMMARY
 
-**Total UI Files**: 154 (81 screen files, 58 components, 3 mappers, 4 utils, 5 nav/theme, 3 integration)  
-**Architecture**: Pure Compose with type-safe navigation  
-**Color Scheme**: Midnight Navy with semantic tokens  
-**Features**: 23 config-driven features + 4 management screens  
+**Total UI Files**: 164 (38 screen files, 59 components, 3 mappers, 7 utils, 5 nav/theme, 4 model, 2 theme, 3 sheets, 3 integration/debug)
+
+**Features**: 23 config-driven features + 3 management screens  
 **Accessibility**: Material 3 standards compliant  
 **State Management**: ViewModel + StateFlow pattern  
 **Navigation**: Sealed class + CompositionLocal  

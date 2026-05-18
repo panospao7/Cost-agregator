@@ -1,7 +1,7 @@
 # ExpenseTracker UI Component Library
 
-**Generated:** May 12, 2026 (updated from May 7)  
-**Total Components:** 59 across 8 categories + root level  
+**Generated:** May 18, 2026  
+**Total Components:** 59 across 9 categories + root level  
 **Framework:** Jetpack Compose with Material 3
 
 ---
@@ -41,6 +41,7 @@
 | **PlaceInsightCard** | `components/PlaceInsightCard.kt` | Location-based spending insights | HomeScreen, SpendingMapScreen | Dashboard + Map |
 | **NearbyShopSuggestionCard** | `components/NearbyShopSuggestionCard.kt` | Nearby store suggestions | SpendingMapScreen | Map-only |
 | **NoSpendStreakWidget** | `components/analytics/NoSpendStreakWidget.kt` | Spending streaks counter | HomeScreen | Dashboard-only |
+| **DataQualityWarningChip** | `components/DataQualityWarningChip.kt` | Data quality warning chip | HomeScreen, BudgetScreen | Cross-screen |
 
 ---
 
@@ -164,7 +165,7 @@
 
 ---
 
-## 9. Component Usage Heatmap
+## 10. Component Usage Heatmap
 
 | Component | # Screens Using | Risk Level |
 |-----------|----------------|------------|
