@@ -183,8 +183,10 @@ class NotificationProcessingPipeline @Inject constructor(
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.process")
         processMutex.withLock {
             return try {
-                val outcome = processInternal(notification, storageNotification, initializeClassifier = true)
-                writePipelineDiagnosticEvent(outcome, notification.packageName)
+                // DDL-512-05: generate or reuse correlationId for full pipeline traceability
+                val cid = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+                val outcome = processInternal(notification, storageNotification, initializeClassifier = true, correlationId = cid)
+                writePipelineDiagnosticEvent(outcome, notification.packageName, correlationId = cid)
                 outcome
             } catch (e: CancellationException) {
                 throw e
@@ -226,7 +228,7 @@ class NotificationProcessingPipeline @Inject constructor(
         return results
     }
 
-    private suspend fun processInternal(notification: RawNotification, storageNotification: RawNotification = notification, initializeClassifier: Boolean): NotificationPipelineOutcome {
+    private suspend fun processInternal(notification: RawNotification, storageNotification: RawNotification = notification, initializeClassifier: Boolean, correlationId: String? = null): NotificationPipelineOutcome {
         if (initializeClassifier) {
             classifier.initialize()
         }
@@ -452,13 +454,15 @@ class NotificationProcessingPipeline @Inject constructor(
                     notification = notification,
                     rawId = rawId,
                     preDb = preDbContext,
-                    sourceStatsTimestamp = sourceStatsTimestamp
+                    sourceStatsTimestamp = sourceStatsTimestamp,
+                    correlationId = correlationId
                 )
                 RoutingDecision.NEEDS_REVIEW -> handleNeedsReviewInTransaction(
                     notification = notification,
                     rawId = rawId,
                     preDb = preDbContext,
-                    sourceStatsTimestamp = sourceStatsTimestamp
+                    sourceStatsTimestamp = sourceStatsTimestamp,
+                    correlationId = correlationId
                 )
                 RoutingDecision.AUTO_REJECT -> {
                     if (notification.packageName in FINANCIAL_PACKAGES) {
@@ -467,7 +471,8 @@ class NotificationProcessingPipeline @Inject constructor(
                             notification = notification,
                             rawId = rawId,
                             preDb = preDbContext,
-                            sourceStatsTimestamp = sourceStatsTimestamp
+                            sourceStatsTimestamp = sourceStatsTimestamp,
+                            correlationId = correlationId
                         )
                     } else {
                         dao.markRelevance(rawId, false)
@@ -516,7 +521,7 @@ class NotificationProcessingPipeline @Inject constructor(
         return outcome
     }
 
-    private suspend fun writePipelineDiagnosticEvent(outcome: NotificationPipelineOutcome, packageName: String) {
+    private suspend fun writePipelineDiagnosticEvent(outcome: NotificationPipelineOutcome, packageName: String, correlationId: String? = null) {
         runCatching {
             val (stage, outcomeStr) = when (outcome) {
                 is NotificationPipelineOutcome.AutoAccepted -> "create" to "AUTO_ACCEPTED"
@@ -545,6 +550,8 @@ class NotificationProcessingPipeline @Inject constructor(
                     is NotificationPipelineOutcome.Dropped -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED
                     else -> null
                 },
+                // DDL-512-05: propagate listener correlationId into pipeline diagnostic event
+                correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
                 entityType = when (outcome) {
                     is NotificationPipelineOutcome.AutoAccepted -> "Expense"
                     is NotificationPipelineOutcome.NeedsReview -> "PendingReview"
@@ -911,7 +918,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         notification: RawNotification,
         rawId: Long,
         preDb: PreDbContext,
-        sourceStatsTimestamp: Long
+        sourceStatsTimestamp: Long,
+        correlationId: String? = null
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
@@ -973,7 +981,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             longitude = preDb.deviceGps?.second,
             locationSource = if (preDb.deviceGps != null) "DEVICE_GPS" else null,
             rawNotificationId = rawId,
-            skipDeduplication = true
+            skipDeduplication = true,
+            correlationId = correlationId  // DDL-512-05: propagate notification listener correlation
         )
 
         @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
@@ -1002,6 +1011,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                             eventType = "AI_AUTO_ACCEPT",
                             source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
                             actor = "system:ai_auto_accept",
+                            correlationId = correlationId,  // DDL-512-05
                             dedupeKey = preDb.dedupeKey,
                             metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                                 .putHashed("packageName", notification.packageName)
@@ -1060,7 +1070,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         notification: RawNotification,
         rawId: Long,
         preDb: PreDbContext,
-        sourceStatsTimestamp: Long
+        sourceStatsTimestamp: Long,
+        correlationId: String? = null
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {

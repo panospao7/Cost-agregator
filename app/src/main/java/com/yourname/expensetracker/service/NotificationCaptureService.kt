@@ -416,59 +416,47 @@ class NotificationCaptureService : NotificationListenerService() {
         val notificationKey = sbn.key
         val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
-        // DDL-81-08: RECEIVED at true listener entry — before ALL early exits
-        serviceScope.launch {
-            try {
-                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                    stage = "listener",
-                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
-                    correlationId = correlationId,
-                    sourceType = "notification",
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .putHashed("packageName", packageName)
-                        .putHashed("notificationKey", notificationKey)
-                        .put("postTime", sbn.postTime)
-                        .build()
-                ))
-            } catch (_: Exception) {}
-        }
+        // DDL-512-14: build RECEIVED event once and use in ordered helper
+        val receivedEvent = com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+            stage = "listener",
+            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
+            correlationId = correlationId,
+            sourceType = "notification",
+            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                .putHashed("packageName", packageName)
+                .putHashed("notificationKey", notificationKey)
+                .put("postTime", sbn.postTime)
+                .build()
+        )
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
-            // DDL-016-12: use workTracker for ordered/durable delivery
-            workTracker.launch(serviceScope) {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "listener",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
-                        correlationId = correlationId,
-                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                            .putHashed("packageName", packageName).build(),
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            // DDL-512-14: RECEIVED emitted before BLOCKED in the same work-tracked coroutine
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "listener",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
+                correlationId = correlationId,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName).build(),
+                isTerminal = true
+            ))
             return
         }
 
         if (isShuttingDown) {
-            workTracker.launch(serviceScope) {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "listener",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
-                        correlationId = correlationId,
-                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                            .putHashed("packageName", packageName).build(),
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "listener",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+                correlationId = correlationId,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName).build(),
+                isTerminal = true
+            ))
             return
         }
 
@@ -476,22 +464,18 @@ class NotificationCaptureService : NotificationListenerService() {
         val coarseDedupeKey = notificationKey
         val lastProcessed = processedNotifications[coarseDedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
-            workTracker.launch(serviceScope) {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "dedupe",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
-                        correlationId = correlationId,
-                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                            .putHashed("packageName", packageName)
-                            .put("dedupeWindowMs", DEDUP_WINDOW_MS)
-                            .build(),
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "dedupe",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                correlationId = correlationId,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName)
+                    .put("dedupeWindowMs", DEDUP_WINDOW_MS)
+                    .build(),
+                isTerminal = true
+            ))
             return
         }
         processedNotifications[coarseDedupeKey] = now
@@ -500,22 +484,18 @@ class NotificationCaptureService : NotificationListenerService() {
         // P1-05: Fast privacy gate check BEFORE extracting text from extras.
         if (isPrivacyDeniedFast()) {
             Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
-            workTracker.launch(serviceScope) {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "privacy_gate_fast",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                        correlationId = correlationId,
-                        sourceType = "notification",
-                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                            .putHashed("packageName", packageName).build(),
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "privacy_gate_fast",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                correlationId = correlationId,
+                sourceType = "notification",
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName).build(),
+                isTerminal = true
+            ))
             return
         }
 
@@ -523,7 +503,11 @@ class NotificationCaptureService : NotificationListenerService() {
         val parts = NotificationTextParts.extract(extras)
 
         workTracker.launch(serviceScope) {
-            // DDL-016-11: RECEIVED already emitted at entry. Start with filter check.
+            // DDL-512-14: emit RECEIVED as first thing inside the work-tracked coroutine
+            // so it is always written before any terminal event for this notification
+            runCatching {
+                diagnosticEventWriter.emit(receivedEvent)
+            }
             // E7: filter terminal event
             if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
                 try {
@@ -590,6 +574,20 @@ class NotificationCaptureService : NotificationListenerService() {
      * allows rejecting notifications BEFORE any text extraction from extras.
      */
     private fun isPrivacyDeniedFast(): Boolean = capturePrivacyDenied
+
+    /**
+     * DDL-512-14: Emit RECEIVED then terminal in a single work-tracked coroutine so
+     * ordering is guaranteed and neither event can be cancelled independently.
+     */
+    private fun emitOrderedNotificationEvents(
+        received: com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent,
+        terminal: com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+    ) {
+        workTracker.launch(serviceScope) {
+            runCatching { diagnosticEventWriter.emit(received) }
+            runCatching { diagnosticEventWriter.emit(terminal) }
+        }
+    }
 
     private suspend fun processNotification(
         sbn: StatusBarNotification,
@@ -738,54 +736,42 @@ class NotificationCaptureService : NotificationListenerService() {
         val notificationKey = sbn.key
         val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
-        // DDL-81-09: RECEIVED at refresh entry
-        serviceScope.launch {
-            try {
-                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                    stage = "refresh",
-                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
-                    correlationId = correlationId,
-                    sourceType = "notification",
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .putHashed("packageName", packageName)
-                        .putHashed("notificationKey", notificationKey)
-                        .build()
-                ))
-            } catch (_: Exception) {}
-        }
+        // DDL-512-14: build RECEIVED event for ordered emission
+        val receivedEvent = com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+            stage = "refresh",
+            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
+            correlationId = correlationId,
+            sourceType = "notification",
+            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                .putHashed("packageName", packageName)
+                .putHashed("notificationKey", notificationKey)
+                .build()
+        )
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — skipping refresh notification from %s", packageName)
-            serviceScope.launch {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "refresh",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
-                        correlationId = correlationId,
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "refresh",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
+                correlationId = correlationId,
+                isTerminal = true
+            ))
             return
         }
 
         if (isPrivacyDeniedFast()) {
             Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction, refresh path)")
-            serviceScope.launch {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "refresh_privacy_fast",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                        correlationId = correlationId,
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "refresh_privacy_fast",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                correlationId = correlationId,
+                isTerminal = true
+            ))
             return
         }
 
@@ -794,38 +780,32 @@ class NotificationCaptureService : NotificationListenerService() {
 
         if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
             Timber.d("Skipping (shouldCapture=false): $packageName")
-            serviceScope.launch {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "refresh_filter",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
-                        correlationId = correlationId,
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "refresh_filter",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
+                correlationId = correlationId,
+                isTerminal = true
+            ))
             return
         }
 
         if (isShuttingDown) {
-            serviceScope.launch {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "refresh",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
-                        correlationId = correlationId,
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
-            }
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "refresh",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+                correlationId = correlationId,
+                isTerminal = true
+            ))
             return
         }
 
         workTracker.launch(serviceScope) {
+            // DDL-512-14: emit RECEIVED first in the work-tracked coroutine
+            runCatching { diagnosticEventWriter.emit(receivedEvent) }
             when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                 is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                     Timber.d("Privacy gate denied notification capture from $packageName")

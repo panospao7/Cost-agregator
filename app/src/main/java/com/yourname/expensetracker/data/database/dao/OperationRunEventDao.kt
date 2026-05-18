@@ -19,7 +19,11 @@ interface OperationRunEventDao {
 
     @Query("""
         SELECT * FROM operation_run_events
-        WHERE outcome IN ('FAILED_RETRYABLE','FAILED_FINAL','CANCELLED')
+        WHERE outcome IN (
+            'FAILED_RETRYABLE','FAILED_FINAL','CANCELLED',
+            'BLOCKED','DROPPED','SIDE_EFFECT_FAILED'
+        )
+        OR severity IN ('WARNING','ERROR','CRITICAL')
         ORDER BY occurredAt DESC LIMIT :limit
     """)
     suspend fun getRecentFailures(limit: Int = 50): List<OperationRunEvent>

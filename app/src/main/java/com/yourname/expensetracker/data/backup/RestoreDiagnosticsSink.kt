@@ -44,18 +44,38 @@ class RestoreDiagnosticsSink(
         exception: Throwable? = null,
         isTerminal: Boolean = false
     ) {
-        // DDL-A8-01: always append to restore journal first
+        // DDL-512-03: serialize metadata for the journal
+        val safeMetadataJson = if (metadata.isEmpty()) null else
+            sanitizer.sanitizeJsonString(metadata.toJson())
+
+        // DDL-512-01: append to the right journal file (active if present, else failure journal)
         runCatching {
-            restoreJournal.appendEvent(
-                correlationId = correlationId,
-                stage = stage,
-                outcome = outcome.name,
-                severity = severity.name,
-                reasonCode = reasonCode?.name,
-                exceptionClass = exception?.javaClass?.simpleName,
-                exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
-                isTerminal = isTerminal
-            )
+            if (restoreJournal.hasJournal()) {
+                restoreJournal.appendEvent(
+                    correlationId = correlationId,
+                    stage = stage,
+                    outcome = outcome.name,
+                    severity = severity.name,
+                    reasonCode = reasonCode?.name,
+                    metadataJson = safeMetadataJson,
+                    exceptionClass = exception?.javaClass?.simpleName,
+                    exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    isTerminal = isTerminal
+                )
+            } else {
+                // Active journal was already renamed to failure journal by failJournal()
+                restoreJournal.appendEventToFailureJournal(
+                    correlationId = correlationId,
+                    stage = stage,
+                    outcome = outcome.name,
+                    severity = severity.name,
+                    reasonCode = reasonCode?.name,
+                    metadataJson = safeMetadataJson,
+                    exceptionClass = exception?.javaClass?.simpleName,
+                    exceptionMessageSafe = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    isTerminal = isTerminal
+                )
+            }
         }.onFailure { journalError ->
             Timber.w(journalError, "RestoreDiagnosticsSink: journal append failed (stage=$stage)")
         }

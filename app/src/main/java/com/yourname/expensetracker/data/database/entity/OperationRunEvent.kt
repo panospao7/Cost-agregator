@@ -13,7 +13,8 @@ import androidx.room.PrimaryKey
         Index(value = ["operationRunId"]),
         Index(value = ["correlationId"]),
         Index(value = ["eventType"]),
-        Index(value = ["occurredAt"])
+        Index(value = ["occurredAt"]),
+        Index(value = ["eventId"])  // DDL-512-04: match migration index for schema consistency
     ]
 )
 data class OperationRunEvent(

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 129,
-    "identityHash": "fc4db19e8eb290c58ae843c116e0e4a7",
+    "identityHash": "e29d8b4018cc4eb4c89929deef9be22c",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -8331,13 +8331,22 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_operation_run_events_occurredAt` ON `${TABLE_NAME}` (`occurredAt`)"
+          },
+          {
+            "name": "index_operation_run_events_eventId",
+            "unique": false,
+            "columnNames": [
+              "eventId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_operation_run_events_eventId` ON `${TABLE_NAME}` (`eventId`)"
           }
         ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fc4db19e8eb290c58ae843c116e0e4a7')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e29d8b4018cc4eb4c89929deef9be22c')"
     ]
   }
 }

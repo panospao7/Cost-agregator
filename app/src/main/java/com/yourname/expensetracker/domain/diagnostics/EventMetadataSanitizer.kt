@@ -173,11 +173,11 @@ class EventMetadataSanitizer @Inject constructor() {
         val result = JSONObject()
         for (key in obj.keys()) {
             if (isDangerousKey(key)) { result.put(key, REDACTED); continue }
-            when (val v = obj.get(key)) {
+            when (val v = obj.opt(key)) {
                 is JSONObject -> result.put(key, sanitizeJsonObject(v))
                 is JSONArray -> result.put(key, sanitizeJsonArray(v))
-                is String -> result.put(key, sanitizeStringValue(v))
-                else -> result.put(key, v)
+                // DDL-512-07: use sanitizeValue(key, v) so hash-key validation applies
+                else -> result.put(key, sanitizeValue(key, v))
             }
         }
         return result

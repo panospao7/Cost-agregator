@@ -178,28 +178,76 @@ class RestoreJournal @Inject constructor(
         outcome: String,
         severity: String = "INFO",
         reasonCode: String? = null,
+        metadataJson: String? = null,
         exceptionClass: String? = null,
         exceptionMessageSafe: String? = null,
         isTerminal: Boolean = false
     ) {
+        appendEventToFile(
+            targetFile = journalFile,
+            correlationId = correlationId, stage = stage, outcome = outcome,
+            severity = severity, reasonCode = reasonCode, metadataJson = metadataJson,
+            exceptionClass = exceptionClass, exceptionMessageSafe = exceptionMessageSafe,
+            isTerminal = isTerminal
+        )
+    }
+
+    /**
+     * DDL-512-01: Append a stage event to the failure journal.
+     * Use this when emitting a terminal event AFTER [failJournal] has already
+     * renamed the active journal to the failure file.
+     */
+    fun appendEventToFailureJournal(
+        correlationId: String,
+        stage: String,
+        outcome: String,
+        severity: String = "ERROR",
+        reasonCode: String? = null,
+        metadataJson: String? = null,
+        exceptionClass: String? = null,
+        exceptionMessageSafe: String? = null,
+        isTerminal: Boolean = false
+    ) {
+        val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+        appendEventToFile(
+            targetFile = failureFile,
+            correlationId = correlationId, stage = stage, outcome = outcome,
+            severity = severity, reasonCode = reasonCode, metadataJson = metadataJson,
+            exceptionClass = exceptionClass, exceptionMessageSafe = exceptionMessageSafe,
+            isTerminal = isTerminal
+        )
+    }
+
+    private fun appendEventToFile(
+        targetFile: File,
+        correlationId: String,
+        stage: String,
+        outcome: String,
+        severity: String,
+        reasonCode: String?,
+        metadataJson: String?,
+        exceptionClass: String?,
+        exceptionMessageSafe: String?,
+        isTerminal: Boolean
+    ) {
         try {
-            // DDL-A8-02: read raw JSON — not JournalEntry — to preserve existing events
-            val json = readJournalJson() ?: return
+            if (!targetFile.exists()) return
+            val json = runCatching { JSONObject(targetFile.readText()) }.getOrNull() ?: return
             val existingEvents = parseEvents(json)
             val newEvent = RestoreJournalEvent(
                 correlationId = correlationId,
                 stage = stage, outcome = outcome, severity = severity,
                 reasonCode = reasonCode, occurredAt = System.currentTimeMillis(),
-                metadataJson = null,
+                metadataJson = metadataJson,
                 exceptionClass = exceptionClass, exceptionMessageSafe = exceptionMessageSafe,
                 isTerminal = isTerminal
             )
             json.put("events", serializeEvents(existingEvents + newEvent))
-            val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
+            val tmpFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
             tmpFile.writeText(json.toString(2))
-            tmpFile.renameTo(journalFile)
+            tmpFile.renameTo(targetFile)
         } catch (e: Exception) {
-            Timber.w(e, "RestoreJournal: failed to append event stage=$stage")
+            Timber.w(e, "RestoreJournal: failed to append event to ${targetFile.name} stage=$stage")
         }
     }
 
@@ -221,6 +269,30 @@ class RestoreJournal @Inject constructor(
         } catch (_: Exception) { emptyList() }
     }
 
+    /**
+     * DDL-512-10: Read events from all three journal files (active, success, failure).
+     * Returns a deduplicated list suitable for getRecentFailures().
+     */
+    fun getAllDiagnosticEvents(): List<RestoreJournalEvent> {
+        val all = mutableListOf<RestoreJournalEvent>()
+        // active journal
+        runCatching {
+            val json = readJournalJson()
+            if (json != null) all += parseEvents(json)
+        }
+        // success journal
+        runCatching {
+            val file = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
+            if (file.exists()) all += parseEvents(JSONObject(file.readText()))
+        }
+        // failure journal
+        runCatching {
+            val file = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+            if (file.exists()) all += parseEvents(JSONObject(file.readText()))
+        }
+        return all.distinctBy { it.eventId }
+    }
+
     private fun readJournalJson(): JSONObject? = try {
         if (!journalFile.exists()) null else JSONObject(journalFile.readText())
     } catch (_: Exception) { null }
@@ -233,6 +305,8 @@ class RestoreJournal @Inject constructor(
                 put("stage", e.stage); put("outcome", e.outcome); put("severity", e.severity)
                 if (e.reasonCode != null) put("reasonCode", e.reasonCode)
                 put("occurredAt", e.occurredAt)
+                // DDL-512-03: persist metadataJson
+                if (e.metadataJson != null) put("metadataJson", e.metadataJson)
                 if (e.exceptionClass != null) put("excClass", e.exceptionClass)
                 if (e.exceptionMessageSafe != null) put("excMsg", e.exceptionMessageSafe)
                 put("terminal", e.isTerminal)
@@ -253,7 +327,8 @@ class RestoreJournal @Inject constructor(
                     severity = o.optString("severity", "INFO"),
                     reasonCode = o.optString("reasonCode").takeIf { it.isNotEmpty() },
                     occurredAt = o.optLong("occurredAt", 0L),
-                    metadataJson = null,
+                    // DDL-512-03: restore metadataJson
+                    metadataJson = o.optString("metadataJson").takeIf { it.isNotEmpty() },
                     exceptionClass = o.optString("excClass").takeIf { it.isNotEmpty() },
                     exceptionMessageSafe = o.optString("excMsg").takeIf { it.isNotEmpty() },
                     isTerminal = o.optBoolean("terminal", false)

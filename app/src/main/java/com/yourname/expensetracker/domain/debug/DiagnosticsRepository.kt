@@ -138,10 +138,16 @@ class DiagnosticsRepositoryImpl @Inject constructor(
 
         // Restore journal (active + success + failure)
         runCatching {
-            val terminalFailures = setOf("FAILED_FINAL", "FAILED_RETRYABLE", "ROLLBACK_FAILED")
-            restoreJournal.getSuccessJournalEvents()
-                .plus(restoreJournal.getEventsByCorrelationId(""))
-                .filter { it.outcome in terminalFailures }
+            // DDL-512-10: read all three journal files instead of only success + blank-corrId active
+            val failureLikeOutcomes = setOf(
+                "FAILED_FINAL", "FAILED_RETRYABLE", "BLOCKED", "DROPPED",
+                "CANCELLED", "SIDE_EFFECT_FAILED"
+            )
+            val failureLikeSeverities = setOf("WARNING", "ERROR", "CRITICAL")
+            restoreJournal.getAllDiagnosticEvents()
+                .filter { e ->
+                    e.outcome in failureLikeOutcomes || e.severity in failureLikeSeverities
+                }
                 .forEach { e ->
                     all.add(DiagnosticFailureSummary(
                         source = "restore_journal", correlationId = e.correlationId.takeIf { it.isNotBlank() },

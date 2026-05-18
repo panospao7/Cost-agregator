@@ -100,6 +100,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
+        // DDL-512-06: use a single correlationId for every event in this create attempt
+        val correlationId = request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+
         // 1. Write CREATE_ATTEMPTED event before validation
         // TODO P2-CURRENT-012: For STRICT_EXTERNAL_ID mode, attemptDedupeKey should be
         // "idem:${source}:${idempotencyKey}" to match the actual key used at insert time.
@@ -125,7 +128,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     afterSnapshot = null,
                     metadata = null,
                     reason = "Attempting create for ${request.merchant} ${request.amount} ${request.currency}",
-                    correlationId = request.correlationId  // DDL-A8-15
+                    correlationId = correlationId
                 )
             )
         }
@@ -148,7 +151,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         metadata = org.json.JSONObject().apply {
                             put("errors", errors.joinToString("; "))
                         }.toString(),
-                        reason = "Validation failed: ${errors.first()}"
+                        reason = "Validation failed: ${errors.first()}",
+                        correlationId = correlationId  // DDL-512-06
                     )
                 )
             }
@@ -281,7 +285,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                     metadata = JSONObject().apply {
                                         put("errors", "STRICT_EXTERNAL_ID mode requires idempotencyKey or externalFingerprint")
                                     }.toString(),
-                                    reason = "STRICT_EXTERNAL_ID missing key"
+                                    reason = "STRICT_EXTERNAL_ID missing key",
+                                    correlationId = correlationId  // DDL-512-06
                                 )
                             )
                         }
@@ -388,7 +393,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = null,
                     afterSnapshot = expenseToSnapshot(id, expense),
                     metadata = null,
-                    reason = null
+                    reason = null,
+                    correlationId = correlationId  // DDL-512-06
                 )
             )
             id
@@ -412,7 +418,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             put("dedupMode", dedupMode.name)
                             put("dedupeKey", expense.dedupeKey ?: "unknown")
                         }.toString(),
-                        reason = "Insert conflict for dedupeKey=${expense.dedupeKey}"
+                        reason = "Insert conflict for dedupeKey=${expense.dedupeKey}",
+                        correlationId = correlationId  // DDL-512-06
                     )
                 )
             }
@@ -436,7 +443,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                     put("reason", "Idempotent STRICT_EXTERNAL_ID duplicate resolved")
                                     put("existingExpenseId", existingId)
                                 }.toString(),
-                                reason = "STRICT_EXTERNAL_ID idempotent retry resolved to existing expense"
+                                reason = "STRICT_EXTERNAL_ID idempotent retry resolved to existing expense",
+                                correlationId = correlationId  // DDL-512-06
                             )
                         )
                         true
@@ -1713,6 +1721,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
             put("attemptedMerchantKey", expense.merchantKey)
         }.toString()
 
+        // DDL-512-06: propagate correlationId so duplicate skips are traceable
+        val correlationId = request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+
         return try {
             transactionEventDao.insert(
                 TransactionEvent(
@@ -1726,7 +1737,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = null,
                     afterSnapshot = null,
                     metadata = metadata,
-                    reason = reason
+                    reason = reason,
+                    correlationId = correlationId
                 )
             )
             true
