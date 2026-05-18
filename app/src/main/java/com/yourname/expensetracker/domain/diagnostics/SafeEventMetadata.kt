@@ -18,6 +18,14 @@ class SafeEventMetadata private constructor(
 
     fun isEmpty(): Boolean = values.isEmpty()
 
+    /** Merge another SafeEventMetadata into this one, returning a new instance. Sanitization applied. */
+    fun merge(other: SafeEventMetadata): SafeEventMetadata {
+        if (other.isEmpty()) return this
+        val merged = values.toMutableMap()
+        other.values.forEach { (k, v) -> merged[k] = v }
+        return SafeEventMetadata(merged)
+    }
+
     companion object {
         private val sanitizer = EventMetadataSanitizer()
 

@@ -10,8 +10,10 @@ import javax.inject.Singleton
  *
  * Key policy:
  * - Canonical key = lowercase, non-alphanumeric stripped
+ * - Exact safe-key allowlist checked first (no broad prefix bypass)
+ * - Keys ending in "hash" or "idhash" are allowed (values are already hashed)
  * - Blocked by exact canonical key OR dangerous substring
- * - Recursive sanitization of nested maps/lists
+ * - Recursive sanitization of nested maps/lists/JSON
  * - Value scanning for tokens, paths, IBANs, large blobs
  */
 @Singleton
@@ -20,6 +22,29 @@ class EventMetadataSanitizer @Inject constructor() {
     companion object {
         const val MAX_STRING_LENGTH = 256
         private const val REDACTED = "[REDACTED]"
+
+        /** Exact canonical keys that are always safe. No prefix matching — exact only. */
+        private val SAFE_EXACT_KEYS = setOf(
+            "expenseid", "receiptid", "entityid", "entitytype",
+            "operationtype", "operationid", "operationrunid",
+            "stage", "status", "count", "rowcount", "rows",
+            "rowssucceeded", "rowsfailed", "rowsskipped",
+            "duration", "elapsed", "elapsedms",
+            "source", "sourcetype", "sourceidhash",
+            "pipeline", "reason", "reasoncode",
+            "sideeffect",
+            "packagehash", "packagenamehash",
+            "notificationkeyhash", "messageidhash",
+            "providerhash", "providertransactionidhash",
+            "externalhash", "matchedentityid", "duplicateentityid",
+            "retryable", "causationid", "correlationid", "eventid",
+            "isterminal", "delivered", "partial", "percent",
+            "spent", "limit", "confidence", "parsersource",
+            "transactionsfound", "reviewscreated", "duplicatesskipped",
+            "pagecount", "itemcount", "currency", "classifier",
+            "provider", "dedupewindowms", "hasattachments", "posttime",
+            "errorcount", "warningcount", "retryable"
+        )
 
         /** Exact canonical keys that are always blocked. */
         private val BLOCKED_EXACT = setOf(
@@ -31,28 +56,13 @@ class EventMetadataSanitizer @Inject constructor() {
             "emailsubject", "sender"
         )
 
-        /** Substrings in canonical key that trigger redaction. */
+        /** Substrings in canonical key that trigger redaction (after safe-key check). */
         private val BLOCKED_SUBSTRINGS = listOf(
             "raw", "ocr", "prompt", "token", "auth", "password",
             "secret", "path", "iban", "account", "card", "cvv",
             "pin", "body", "subject", "sender", "bearer"
         )
 
-        /** Safe key prefixes that are never blocked even if they contain a substring match. */
-        private val SAFE_PREFIXES = setOf(
-            "expenseid", "receiptid", "operationtype", "operationid",
-            "stage", "status", "count", "rows", "duration", "elapsed",
-            "source", "pipeline", "reason", "sideeffect", "packagehash",
-            "notificationkeyhash", "messageidhash", "providerhash",
-            "externalhash", "matchedentityid", "duplicateentityid",
-            "retryable", "entityid", "entitytype", "causationid",
-            "correlationid", "delivered", "partial", "percent",
-            "spent", "limit", "confidence", "parsersource",
-            "transactionsfound", "reviewscreated", "duplicatesskipped",
-            "pagecount", "itemcount", "currency", "classifier"
-        )
-
-        // Value patterns to redact
         private val BEARER_PATTERN = Regex("""(?i)bearer\s+\S{8,}""")
         private val JWT_PATTERN = Regex("""[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}""")
         private val FILE_PATH_PATTERN = Regex("""(/[^\s]{10,}|[A-Za-z]:\\[^\s]{10,})""")
@@ -66,8 +76,17 @@ class EventMetadataSanitizer @Inject constructor() {
 
     fun isDangerousKey(key: String): Boolean {
         val canonical = canonicalizeKey(key)
-        if (SAFE_PREFIXES.any { canonical.startsWith(it) }) return false
+
+        // Exact safe keys are always allowed
+        if (canonical in SAFE_EXACT_KEYS) return false
+
+        // Keys that are clearly hashed values are safe (e.g. sourceIdHash, providerTransactionIdHash)
+        if (canonical.endsWith("hash") || canonical.endsWith("idhash")) return false
+
+        // Exact blocked keys
         if (canonical in BLOCKED_EXACT) return true
+
+        // Dangerous substring check — no prefix bypass
         return BLOCKED_SUBSTRINGS.any { canonical.contains(it) }
     }
 
@@ -97,8 +116,8 @@ class EventMetadataSanitizer @Inject constructor() {
             }
         }
 
-    private fun sanitizeStringValue(value: String): String {
-        if (value.length > MAX_STRING_LENGTH * 2) return REDACTED // large blob
+    internal fun sanitizeStringValue(value: String): String {
+        if (value.length > MAX_STRING_LENGTH * 2) return REDACTED
         val v = value
             .replace(BEARER_PATTERN, REDACTED)
             .replace(JWT_PATTERN, REDACTED)
@@ -108,10 +127,6 @@ class EventMetadataSanitizer @Inject constructor() {
         return v.take(MAX_STRING_LENGTH)
     }
 
-    /**
-     * Sanitizes a JSON string produced by [SafeEventMetadata.toJson].
-     * Returns null if input is null or empty.
-     */
     fun sanitizeJsonString(json: String?): String? {
         if (json.isNullOrBlank() || json == "{}") return null
         return try {
@@ -119,17 +134,14 @@ class EventMetadataSanitizer @Inject constructor() {
             val sanitized = sanitizeJsonObject(obj)
             if (sanitized.length() == 0) null else sanitized.toString()
         } catch (_: Exception) {
-            null // malformed JSON — drop it
+            null
         }
     }
 
     private fun sanitizeJsonObject(obj: JSONObject): JSONObject {
         val result = JSONObject()
         for (key in obj.keys()) {
-            if (isDangerousKey(key)) {
-                result.put(key, REDACTED)
-                continue
-            }
+            if (isDangerousKey(key)) { result.put(key, REDACTED); continue }
             when (val v = obj.get(key)) {
                 is JSONObject -> result.put(key, sanitizeJsonObject(v))
                 is JSONArray -> result.put(key, sanitizeJsonArray(v))
@@ -152,12 +164,9 @@ class EventMetadataSanitizer @Inject constructor() {
         return result
     }
 
+    /** Reuses full string sanitizer — same privacy policy as metadata values. */
     fun sanitizeExceptionMessage(message: String?): String? {
         if (message == null) return null
-        return message
-            .replace(FILE_PATH_PATTERN, "[PATH]")
-            .replace(BEARER_PATTERN, REDACTED)
-            .replace(JWT_PATTERN, REDACTED)
-            .take(MAX_STRING_LENGTH)
+        return sanitizeStringValue(message)
     }
 }

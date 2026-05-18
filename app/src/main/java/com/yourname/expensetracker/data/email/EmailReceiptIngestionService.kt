@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.MatchStatus
+import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
@@ -345,7 +346,11 @@ class EmailReceiptIngestionService(
                             pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
                             stage = "coordinator",
                             outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
                             correlationId = correlationId,
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .put("retryable", false)
+                                .build(),
                             isTerminal = true
                         ))
                     } catch (_: Exception) {}
@@ -355,7 +360,21 @@ class EmailReceiptIngestionService(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Error processing email receipt from $sender")
-            return EmailReceiptResult.ParseError("Processing error: ${e.message}")
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                    stage = "ingestion",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
+                    correlationId = correlationId,
+                    sourceType = "email",
+                    sourceIdHash = messageId.let { it.sha256Prefix(16) },
+                    exception = e,
+                    isTerminal = true
+                ))
+            } catch (_: Exception) {}
+            return EmailReceiptResult.ParseError("Processing error")
         }
     }
 

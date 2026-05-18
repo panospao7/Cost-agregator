@@ -32,10 +32,10 @@ class SideEffectDiagnosticRecorder @Inject constructor(
         metadata: SafeEventMetadata = SafeEventMetadata.empty(),
         block: suspend () -> T
     ): T? {
-        emit(context, name, EventOutcome.SIDE_EFFECT_STARTED, EventSeverity.DEBUG, metadata)
+        emit(context, name, EventOutcome.SIDE_EFFECT_STARTED, EventSeverity.DEBUG, metadata, isTerminal = false)
         return try {
             val result = block()
-            emit(context, name, EventOutcome.SIDE_EFFECT_COMPLETED, EventSeverity.DEBUG, metadata)
+            emit(context, name, EventOutcome.SIDE_EFFECT_COMPLETED, EventSeverity.DEBUG, metadata, isTerminal = true)
             result
         } catch (e: kotlinx.coroutines.CancellationException) {
             withContext(NonCancellable) {
@@ -48,7 +48,7 @@ class SideEffectDiagnosticRecorder @Inject constructor(
             withContext(NonCancellable) {
                 emit(context, name, EventOutcome.SIDE_EFFECT_FAILED, EventSeverity.WARNING,
                     metadata, reasonCode = DiagnosticReasonCode.SIDE_EFFECT_EXCEPTION,
-                    exception = e, isTerminal = false)
+                    exception = e, isTerminal = true)  // DDL-81-15: FAILED is terminal
             }
             null
         }
@@ -59,12 +59,19 @@ class SideEffectDiagnosticRecorder @Inject constructor(
         name: String,
         outcome: EventOutcome,
         severity: EventSeverity,
-        metadata: SafeEventMetadata,
+        callerMetadata: SafeEventMetadata,
         reasonCode: DiagnosticReasonCode? = null,
         exception: Throwable? = null,
         isTerminal: Boolean = false
     ) {
         try {
+            // DDL-81-14: merge caller metadata with recorder metadata
+            val combined = callerMetadata.merge(
+                SafeEventMetadata.builder()
+                    .put("sideEffect", name)
+                    .put("source", context.source ?: "")
+                    .build()
+            )
             writer.emit(DiagnosticEvent(
                 pipeline = context.pipeline,
                 stage = "side_effect",
@@ -75,10 +82,7 @@ class SideEffectDiagnosticRecorder @Inject constructor(
                 entityId = context.entityId,
                 correlationId = context.correlationId,
                 causationId = context.causationId,
-                metadata = SafeEventMetadata.builder()
-                    .put("sideEffect", name)
-                    .put("source", context.source ?: "")
-                    .build(),
+                metadata = combined,
                 exception = exception,
                 isTerminal = isTerminal
             ))

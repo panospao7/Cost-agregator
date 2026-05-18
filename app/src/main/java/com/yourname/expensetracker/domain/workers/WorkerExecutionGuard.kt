@@ -100,7 +100,11 @@ class WorkerExecutionGuard @Inject constructor(
                 return WorkerGuardResult.Success(result)
             }
 
-            val run = workerRunLogger.start(request.workerName)
+            val run = when (val startResult = startRunSafely(request)) {
+                is StartRunResult.Started -> startResult.run
+                is StartRunResult.Skipped -> return WorkerGuardResult.Skipped(startResult.reason)
+                is StartRunResult.Retry -> return WorkerGuardResult.Retry(startResult.reason)
+            }
             try {
                 val spec = WorkerSpec.DEFAULTS[request.workerName]
                 if (spec != null && !spec.enabled) {
@@ -200,7 +204,11 @@ class WorkerExecutionGuard @Inject constructor(
         val ctx = WorkerRunContext(checkpointDelegate = ::checkpoint)
         val lease = leaseRegistry.acquire(request.workerName)
         try {
-            val run = workerRunLogger.start(request.workerName)
+            val run = when (val startResult = startRunSafely(request)) {
+                is StartRunResult.Started -> startResult.run
+                is StartRunResult.Skipped -> return WorkerGuardResult.Skipped(startResult.reason)
+                is StartRunResult.Retry -> return WorkerGuardResult.Retry(startResult.reason)
+            }
             try {
                 val spec = WorkerSpec.DEFAULTS[request.workerName]
                 if (spec != null && !spec.enabled) {
@@ -247,6 +255,30 @@ class WorkerExecutionGuard @Inject constructor(
             }
         } finally {
             lease.close()
+        }
+    }
+
+    private sealed interface StartRunResult {
+        data class Started(val run: WorkerRunHandle) : StartRunResult
+        data class Skipped(val reason: String) : StartRunResult
+        data class Retry(val reason: String) : StartRunResult
+    }
+
+    /** DDL-81-04: wraps workerRunLogger.start() so failures are classified, not raw exceptions. */
+    private suspend fun startRunSafely(request: WorkerGuardRequest): StartRunResult {
+        return try {
+            StartRunResult.Started(workerRunLogger.start(request.workerName))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+            diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9",
+                reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED)
+            StartRunResult.Skipped(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
+        } catch (e: Exception) {
+            Timber.w(e, "WorkerExecutionGuard: failed to start run for ${request.workerName}")
+            diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9")
+            if (classifyTransient(e)) StartRunResult.Retry(e.message ?: "Transient start failure")
+            else StartRunResult.Retry(DiagnosticReasonCode.UNKNOWN_ERROR.name)
         }
     }
 

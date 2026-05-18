@@ -414,15 +414,40 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val packageName = sbn.packageName
         val notificationKey = sbn.key
-        // E2: generate correlationId at very entry — before any early exit
         val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+
+        // DDL-81-08: RECEIVED at true listener entry — before ALL early exits
+        serviceScope.launch {
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "listener",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName)
+                        .putHashed("notificationKey", notificationKey)
+                        .put("postTime", sbn.postTime)
+                        .build()
+                ))
+            } catch (_: Exception) {}
+        }
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
             serviceScope.launch {
                 try {
-                    diagnosticSink.recordBlockedOperation(packageName, restoreMaintenanceMode.currentMode(), "P1",
-                        reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "listener",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
+                        correlationId = correlationId,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .putHashed("packageName", packageName).build(),
+                        isTerminal = true
+                    ))
                 } catch (_: Exception) {}
             }
             return
@@ -675,7 +700,38 @@ class NotificationCaptureService : NotificationListenerService() {
             repository.processAndSave(processingNotification, storageNotification)
             Timber.d("Processed notification from: $packageName")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    try {
+                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                            stage = "repository",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+                            correlationId = correlationId,
+                            isTerminal = true
+                        ))
+                    } catch (_: Exception) {}
+                }
+                throw e
+            }
             Timber.e(e, "Failed to process notification")
+            try {
+                val retryable = e is java.io.IOException ||
+                    e.message?.contains("database is locked", ignoreCase = true) == true
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "repository",
+                    outcome = if (retryable) com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE
+                              else com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    exception = e,
+                    isTerminal = true
+                ))
+            } catch (_: Exception) {}
         }
     }
 
@@ -695,47 +751,116 @@ class NotificationCaptureService : NotificationListenerService() {
 
     private fun processNotificationBypassDedupe(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
+        val notificationKey = sbn.key
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
-        // Guard: block writes during restore (was missing before — NEW-3 fix)
+        // DDL-81-09: RECEIVED at refresh entry
+        serviceScope.launch {
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "refresh",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName)
+                        .putHashed("notificationKey", notificationKey)
+                        .build()
+                ))
+            } catch (_: Exception) {}
+        }
+
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — skipping refresh notification from %s", packageName)
+            serviceScope.launch {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "refresh",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+            }
             return
         }
 
-        // PR1: Fast privacy gate check BEFORE extracting text from extras.
-        // Avoids reading any PII from notification extras when capture is disabled.
         if (isPrivacyDeniedFast()) {
             Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction, refresh path)")
+            serviceScope.launch {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "refresh_privacy_fast",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+            }
             return
         }
 
         val extras = sbn.notification.extras
         val parts = NotificationTextParts.extract(extras)
 
-        if (!NotificationFilter.shouldCapture(
-                packageName,
-                parts.title,
-                parts.text,
-                parts.combinedBody
-            )) {
+        if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
             Timber.d("Skipping (shouldCapture=false): $packageName")
+            serviceScope.launch {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "refresh_filter",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+            }
             return
         }
-        
-        Timber.d("Processing notification from: $packageName, title: ${parts.title}")
 
-        if (isShuttingDown) return
+        if (isShuttingDown) {
+            serviceScope.launch {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "refresh",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+            }
+            return
+        }
+
         workTracker.launch(serviceScope) {
             when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                 is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                     Timber.d("Privacy gate denied notification capture from $packageName")
+                    try {
+                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                            stage = "refresh_privacy_gate",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                            correlationId = correlationId,
+                            isTerminal = true
+                        ))
+                    } catch (_: Exception) {}
                     return@launch
                 }
                 is PrivacyDecision.Allowed -> { /* proceed */ }
                 else -> { /* NotApplicable — proceed with capture */ }
             }
-            processNotification(sbn, packageName, parts, extras,
-                com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId())
+            processNotification(sbn, packageName, parts, extras, correlationId)
         }
     }
 

@@ -63,10 +63,16 @@ class RestoreJournal @Inject constructor(
             put("operationCorrelationId", operationCorrelationId)
             put("state", state.name)
             put("startedAt", startedAt)
-            put("sourceBackupPath", sourceBackupPath ?: JSONObject.NULL)
-            put("stagedDbPath", stagedDbPath ?: JSONObject.NULL)
-            put("safetyBackupPath", safetyBackupPath ?: JSONObject.NULL)
-            put("liveDbPath", liveDbPath ?: JSONObject.NULL)
+            // DDL-81-12: store only basenames/hashes — no full local paths in diagnostics journal
+            put("sourceBackupName", sourceBackupPath?.let { java.io.File(it).name } ?: JSONObject.NULL)
+            put("stagedDbName", stagedDbPath?.let { java.io.File(it).name } ?: JSONObject.NULL)
+            put("safetyBackupName", safetyBackupPath?.let { java.io.File(it).name } ?: JSONObject.NULL)
+            put("liveDbName", liveDbPath?.let { java.io.File(it).name } ?: JSONObject.NULL)
+            // Internal paths kept in separate fields for crash recovery only (not exported)
+            put("_sourceBackupPath", sourceBackupPath ?: JSONObject.NULL)
+            put("_stagedDbPath", stagedDbPath ?: JSONObject.NULL)
+            put("_safetyBackupPath", safetyBackupPath ?: JSONObject.NULL)
+            put("_liveDbPath", liveDbPath ?: JSONObject.NULL)
             put("error", error ?: JSONObject.NULL)
             put("assetTasks", org.json.JSONArray().also { arr ->
                 assetTasks.forEach { t ->
@@ -74,7 +80,8 @@ class RestoreJournal @Inject constructor(
                         put("receiptId", t.receiptId)
                         put("src", t.sourceRelativePath)
                         put("status", t.status.name)
-                        if (t.targetPath != null) put("target", t.targetPath)
+                        // Store only basename for asset target path
+                        if (t.targetPath != null) put("targetName", java.io.File(t.targetPath).name)
                         if (t.error != null) put("error", t.error)
                     })
                 }
@@ -222,21 +229,22 @@ class RestoreJournal @Inject constructor(
     }
 
     /**
-     * BAK-ND-FIXED: Skip terminal-state write before deletion.
-     *
-     * Writing a terminal state (COMPLETE/FAILED) and then immediately deleting
-     * the journal file is redundant — the delete makes the write invisible.
-     * Since no crash recovery path reads these terminal states (COMPLETE is
-     * handled by [checkAndRecover] via `deleteJournal()` and FAILED is treated
-     * the same as PREPARING/STAGED), we skip the write entirely and go straight
-     * to deletion. This eliminates a pointless I/O cycle.
-     *
-     * The terminal-state copy is still returned for API consistency (callers may
-     * use it for in-memory logging).
+     * DDL-81-11: Preserve successful restore trail after DB swap.
+     * Renames journal to [SUCCESS_JOURNAL_FILENAME] so the operation trail
+     * survives restart and can be imported into the restored DB.
      */
     fun commitJournal(entry: JournalEntry): JournalEntry {
         val updated = entry.copy(state = JournalState.COMPLETE)
-        deleteJournal()
+        writeJournal(updated)
+        try {
+            val successFile = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
+            successFile.delete()
+            journalFile.renameTo(successFile)
+            Timber.d("Restore journal preserved as %s", SUCCESS_JOURNAL_FILENAME)
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to preserve success journal; deleting instead")
+            deleteJournal()
+        }
         return updated
     }
 
@@ -371,5 +379,6 @@ class RestoreJournal @Inject constructor(
     companion object {
         private const val JOURNAL_FILENAME = "restore_journal.json"
         private const val FAILURE_JOURNAL_FILENAME = "restore_journal_last_failure.json"
+        const val SUCCESS_JOURNAL_FILENAME = "restore_journal_last_success.json"
     }
 }

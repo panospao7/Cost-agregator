@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.diagnostics
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
-import com.yourname.expensetracker.data.backup.MaintenanceBlockedReason
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import kotlinx.coroutines.CancellationException
 import timber.log.Timber
@@ -16,6 +15,7 @@ import javax.inject.Singleton
  * - Normal mode: writes to Room via [RoomDiagnosticEventWriter].
  * - Maintenance/restore mode or write-barrier denied: falls back to [MaintenanceSafeDiagnosticSink].
  * - Room insert failure: falls back to safe sink.
+ * - Safe sink preserves full event details (correlationId, outcome, reasonCode, isTerminal, etc.).
  * - Never throws (except CancellationException which is rethrown).
  */
 @Singleton
@@ -27,7 +27,8 @@ class CompositeDiagnosticEventWriter @Inject constructor(
 ) : DiagnosticEventWriter {
 
     override suspend fun emit(event: DiagnosticEvent) {
-        if (restoreMaintenanceMode.currentMode() != RestoreMaintenanceMode.Mode.NORMAL) {
+        val mode = restoreMaintenanceMode.currentMode()
+        if (mode != RestoreMaintenanceMode.Mode.NORMAL) {
             recordToSafeSink(event, null)
             return
         }
@@ -45,12 +46,10 @@ class CompositeDiagnosticEventWriter @Inject constructor(
 
     private suspend fun recordToSafeSink(event: DiagnosticEvent, cause: Throwable?) {
         try {
-            safeSink.recordBlockedOperation(
-                operation = "${event.pipeline.name}.${event.stage}",
+            safeSink.recordDiagnosticEvent(
+                event = event,
                 mode = restoreMaintenanceMode.currentMode(),
-                pipeline = event.pipeline.name,
-                entity = event.entityType,
-                reason = MaintenanceBlockedReason.RESTORE_IN_PROGRESS
+                writeFailure = cause
             )
         } catch (e: CancellationException) {
             throw e

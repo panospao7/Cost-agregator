@@ -54,4 +54,7 @@ interface BackgroundJobRunDao {
         """
     )
     suspend fun getStaleRunningRuns(staleThresholdMs: Long): List<BackgroundJobRun>
+
+    @Query("SELECT * FROM background_job_runs WHERE correlationId = :correlationId ORDER BY startedAt ASC")
+    suspend fun getByCorrelationId(correlationId: String): List<BackgroundJobRun>
 }

@@ -72,7 +72,11 @@ interface OperationRunRecorder {
     ): T
 
     /** Mark stale RUNNING operation runs as STALE_ABORTED. Call on app startup. */
-    suspend fun recoverStaleRunningOperationRuns(staleThresholdMs: Long = Long.MAX_VALUE)
+    suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long = DEFAULT_STALE_OPERATION_AGE_MS)
+
+    companion object {
+        const val DEFAULT_STALE_OPERATION_AGE_MS = 6 * 60 * 60 * 1000L // 6 hours
+    }
 }
 
 @Singleton
@@ -116,23 +120,22 @@ class RoomOperationRunRecorder @Inject constructor(
         val run = start(operationType, actor, metadata)
         try {
             val result = block(run)
-            withContext(NonCancellable) {
-                // Only finalize if still RUNNING (idempotent)
-                run.success()
-            }
+            // DDL-81-07: success finalization is best-effort — must not fail business result
+            withContext(NonCancellable) { runCatching { run.success() } }
             return result
         } catch (e: kotlinx.coroutines.CancellationException) {
-            withContext(NonCancellable) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+            withContext(NonCancellable) { runCatching { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) } }
             throw e
         } catch (e: Exception) {
-            withContext(NonCancellable) { run.failedFinal(e.message ?: "Exception", e) }
+            withContext(NonCancellable) { runCatching { run.failedFinal(e.message ?: "Exception", e) } }
             throw e
         }
     }
 
     /** Recover stale RUNNING operation runs after process death. */
-    override suspend fun recoverStaleRunningOperationRuns(staleThresholdMs: Long) {
-        val stale = runDao.getStaleRunning(staleThresholdMs)
+    override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) {
+        val cutoff = timeProvider.now() - staleAgeMs
+        val stale = runDao.getStaleRunning(cutoff)
         for (run in stale) {
             val updated = runDao.finalizeIfRunning(
                 id = run.id,
@@ -216,21 +219,25 @@ class RoomOperationRunRecorder @Inject constructor(
 
         private suspend fun finalizeNonCancellable(status: String, summary: String?, error: Throwable?) {
             withContext(NonCancellable) {
-                // D4: idempotent — only first terminal wins
-                val updated = runDao.finalizeIfRunning(
-                    id = runId,
-                    status = status,
-                    finishedAt = timeProvider.now(),
-                    errorSummary = summary ?: sanitizer.sanitizeExceptionMessage(error?.message)
-                )
-                if (updated > 0) {
-                    event(
-                        stage = status,
-                        outcome = statusToOutcome(status),
-                        severity = if (status.startsWith("FAILED")) EventSeverity.ERROR else EventSeverity.INFO,
-                        isTerminal = true
+                // DDL-81-07: best-effort — diagnostic finalization must not fail business success
+                runCatching {
+                    val updated = runDao.finalizeIfRunning(
+                        id = runId,
+                        status = status,
+                        finishedAt = timeProvider.now(),
+                        errorSummary = summary ?: sanitizer.sanitizeExceptionMessage(error?.message)
                     )
-                }
+                    if (updated > 0) {
+                        runCatching {
+                            event(
+                                stage = status,
+                                outcome = statusToOutcome(status),
+                                severity = if (status.startsWith("FAILED")) EventSeverity.ERROR else EventSeverity.INFO,
+                                isTerminal = true
+                            )
+                        }.onFailure { Timber.w(it, "Failed to write terminal operation event for run $runId") }
+                    }
+                }.onFailure { Timber.w(it, "Failed to finalize operation run $runId") }
             }
         }
 

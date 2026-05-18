@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.SyncFrequency
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.security.BankTokenCipher
+import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -193,7 +194,8 @@ class BankApiIntegration @Inject constructor(
                             run.increment(processed = 1, skipped = 1)
                         }
                         is CreateExpenseResult.ValidationFailed -> {
-                            errors.add("Validation failed for transaction ${transaction.id}: ${result.errors.joinToString(", ")}")
+                            val hashId = transaction.id.sha256Prefix(8)
+                            errors.add("Transaction validation failed [hash=$hashId, errors=${result.errors.size}]")
                             run.event("TRANSACTION_FAILED",
                                 com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                                 reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
@@ -206,19 +208,39 @@ class BankApiIntegration @Inject constructor(
                             skippedCount++
                             run.event("TRANSACTION_DUPLICATE_SKIPPED",
                                 com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
-                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE)
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("providerTransactionId", transaction.id)
+                                    .put("currency", transaction.currency)
+                                    .build())
                             run.increment(processed = 1, skipped = 1)
                         }
                         is CreateExpenseResult.Error -> {
-                            errors.add("Failed to import transaction ${transaction.id}: ${result.exception.message}")
+                            val hashId = transaction.id.sha256Prefix(8)
+                            errors.add("Transaction import failed [hash=$hashId, reason=ERROR]")
                             run.event("TRANSACTION_FAILED",
                                 com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
-                                exception = result.exception)
+                                exception = result.exception,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("providerTransactionId", transaction.id)
+                                    .put("currency", transaction.currency)
+                                    .build())
                             run.increment(processed = 1, failed = 1, errors = 1)
                         }
                     }
                 } catch (e: Exception) {
-                    errors.add("Failed to import transaction ${transaction.id}: ${e.message}")
+                    // DDL-81-19: generic per-transaction exception needs a TRANSACTION_FAILED event
+                    val hashId = transaction.id.sha256Prefix(8)
+                    errors.add("Transaction import failed [hash=$hashId, reason=EXCEPTION]")
+                    run.event("TRANSACTION_FAILED",
+                        com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                        exception = e,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .putHashed("providerTransactionId", transaction.id)
+                            .put("currency", transaction.currency)
+                            .build())
                     run.increment(processed = 1, failed = 1, errors = 1)
                     Timber.e(e, "Failed to import transaction")
                 }

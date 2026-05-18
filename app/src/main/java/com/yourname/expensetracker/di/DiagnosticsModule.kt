@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.domain.diagnostics.CompositeDiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.CompositeOperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
-import com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter
 import com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter
@@ -35,7 +35,7 @@ abstract class DiagnosticsModule {
     abstract fun bindRecurringLifecycleEventWriter(impl: RoomRecurringLifecycleEventWriter): RecurringLifecycleEventWriter
 
     @Binds @Singleton
-    abstract fun bindOperationRunRecorder(impl: RoomOperationRunRecorder): OperationRunRecorder
+    abstract fun bindOperationRunRecorder(impl: CompositeOperationRunRecorder): OperationRunRecorder
 
     @Binds @Singleton
     abstract fun bindWorkerRunLogger(impl: WorkerRunLoggerImpl): WorkerRunLogger
