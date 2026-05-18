@@ -32,5 +32,6 @@ data class OperationRunEvent(
     val entityId: Long? = null,
     val metadataJson: String? = null,
     val exceptionClass: String? = null,
-    val exceptionMessage: String? = null
+    val exceptionMessage: String? = null,
+    val isTerminal: Boolean = false
 )

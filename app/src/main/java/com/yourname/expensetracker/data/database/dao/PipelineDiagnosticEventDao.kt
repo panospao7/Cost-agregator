@@ -24,6 +24,14 @@ interface PipelineDiagnosticEventDao {
     @Query("SELECT * FROM pipeline_diagnostic_events WHERE entityType = :entityType AND entityId = :entityId ORDER BY timestamp DESC")
     suspend fun getByEntity(entityType: String, entityId: Long): List<PipelineDiagnosticEvent>
 
+    @Query("""
+        SELECT * FROM pipeline_diagnostic_events
+        WHERE severity IN ('WARNING','ERROR','CRITICAL')
+           OR outcome IN ('FAILED_RETRYABLE','FAILED_FINAL','BLOCKED','DROPPED','CANCELLED','SIDE_EFFECT_FAILED')
+        ORDER BY timestamp DESC LIMIT :limit
+    """)
+    suspend fun getRecentFailures(limit: Int = 50): List<PipelineDiagnosticEvent>
+
     @Query("SELECT * FROM pipeline_diagnostic_events ORDER BY timestamp DESC LIMIT :limit")
     fun observeRecent(limit: Int = 50): Flow<List<PipelineDiagnosticEvent>>
 }

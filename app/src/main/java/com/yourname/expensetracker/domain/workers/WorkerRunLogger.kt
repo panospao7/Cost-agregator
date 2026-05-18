@@ -71,7 +71,7 @@ class WorkerRunLoggerImpl @Inject constructor(
         }
 
         override suspend fun cancelled(reason: String) {
-            update("CANCELLED", cancellationReason = reason)
+            update("CANCELLED", statusReason = reason, cancellationReason = reason)
         }
 
         override suspend fun staleAborted() {

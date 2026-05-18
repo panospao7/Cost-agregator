@@ -1,0 +1,17 @@
+# Event writer allowlist
+# Format: filename # reason
+# Files listed here are exempt from the direct entity construction guard.
+
+# Writers — these ARE the designated construction points
+DiagnosticEventWriter.kt # owns PipelineDiagnosticEvent construction
+OperationRunRecorder.kt # owns OperationRun and OperationRunEvent construction
+WorkerRunLogger.kt # owns BackgroundJobRun construction
+TransactionLifecycleEventWriter.kt # owns TransactionEvent construction
+ReceiptLifecycleEventWriter.kt # owns ReceiptEvent construction
+RecurringLifecycleEventWriter.kt # owns RecurringLifecycleEvent construction
+
+# Coordinators — own atomic transaction boundary with lifecycle events
+TransactionLifecycleCoordinator.kt # owns TransactionEvent in same DB transaction as mutation
+ReceiptLifecycleCoordinator.kt # owns ReceiptEvent in same DB transaction as mutation
+ReceiptSideEffectDispatcher.kt # owns ReceiptEvent for side-effect outcomes (writeReceiptEvent helper)
+BankStatementLifecycleProcessor.kt # uses ReceiptLifecycleEventWriter — allowlisted for transition period

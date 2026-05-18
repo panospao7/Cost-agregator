@@ -5,6 +5,9 @@ import com.yourname.expensetracker.data.database.dao.OperationRunEventDao
 import com.yourname.expensetracker.data.database.entity.OperationRun
 import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,7 +20,11 @@ interface OperationRunHandle {
         outcome: EventOutcome,
         reasonCode: DiagnosticReasonCode? = null,
         severity: EventSeverity = EventSeverity.INFO,
-        metadata: SafeEventMetadata = SafeEventMetadata.empty()
+        metadata: SafeEventMetadata = SafeEventMetadata.empty(),
+        entityType: String? = null,
+        entityId: Long? = null,
+        exception: Throwable? = null,
+        isTerminal: Boolean = false
     )
 
     suspend fun increment(
@@ -40,7 +47,7 @@ interface OperationRunHandle {
 object NoOpOperationRunHandle : OperationRunHandle {
     override val runId: Long = -1L
     override val correlationId: String = "noop"
-    override suspend fun event(stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode?, severity: EventSeverity, metadata: SafeEventMetadata) = Unit
+    override suspend fun event(stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode?, severity: EventSeverity, metadata: SafeEventMetadata, entityType: String?, entityId: Long?, exception: Throwable?, isTerminal: Boolean) = Unit
     override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) = Unit
     override suspend fun success() = Unit
     override suspend fun partialSuccess(summary: String?) = Unit
@@ -55,6 +62,17 @@ interface OperationRunRecorder {
         actor: String? = null,
         metadata: SafeEventMetadata = SafeEventMetadata.empty()
     ): OperationRunHandle
+
+    /** Convenience: start, run block, guarantee terminal status in finally. */
+    suspend fun <T> runOperation(
+        operationType: String,
+        actor: String? = null,
+        metadata: SafeEventMetadata = SafeEventMetadata.empty(),
+        block: suspend (OperationRunHandle) -> T
+    ): T
+
+    /** Mark stale RUNNING operation runs as STALE_ABORTED. Call on app startup. */
+    suspend fun recoverStaleRunningOperationRuns(staleThresholdMs: Long = Long.MAX_VALUE)
 }
 
 @Singleton
@@ -79,10 +97,65 @@ class RoomOperationRunRecorder @Inject constructor(
                 status = "RUNNING",
                 startedAt = now,
                 actor = actor,
-                metadataJson = if (metadata.isEmpty()) null else metadata.toJson()
+                metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson())
             )
         )
-        return Handle(id, correlationId, operationType, runDao, eventDao, sanitizer, timeProvider)
+        val handle = Handle(id, correlationId, operationType, runDao, eventDao, sanitizer, timeProvider)
+        // D2: emit STARTED event automatically
+        handle.event(stage = "STARTED", outcome = EventOutcome.ATTEMPTED,
+            severity = EventSeverity.INFO)
+        return handle
+    }
+
+    override suspend fun <T> runOperation(
+        operationType: String,
+        actor: String?,
+        metadata: SafeEventMetadata,
+        block: suspend (OperationRunHandle) -> T
+    ): T {
+        val run = start(operationType, actor, metadata)
+        try {
+            val result = block(run)
+            withContext(NonCancellable) {
+                // Only finalize if still RUNNING (idempotent)
+                run.success()
+            }
+            return result
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            withContext(NonCancellable) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+            throw e
+        } catch (e: Exception) {
+            withContext(NonCancellable) { run.failedFinal(e.message ?: "Exception", e) }
+            throw e
+        }
+    }
+
+    /** Recover stale RUNNING operation runs after process death. */
+    override suspend fun recoverStaleRunningOperationRuns(staleThresholdMs: Long) {
+        val stale = runDao.getStaleRunning(staleThresholdMs)
+        for (run in stale) {
+            val updated = runDao.finalizeIfRunning(
+                id = run.id,
+                status = "STALE_ABORTED",
+                finishedAt = timeProvider.now(),
+                errorSummary = "Recovered stale RUNNING operation after process death"
+            )
+            if (updated > 0) {
+                eventDao.insert(OperationRunEvent(
+                    operationRunId = run.id,
+                    correlationId = run.correlationId,
+                    operationType = run.operationType,
+                    stage = "STALE_RECOVERY",
+                    eventType = "${run.operationType}_STALE_RECOVERY",
+                    outcome = EventOutcome.CANCELLED.name,
+                    severity = EventSeverity.WARNING.name,
+                    reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name,
+                    occurredAt = timeProvider.now(),
+                    isTerminal = true
+                ))
+            }
+        }
+        if (stale.isNotEmpty()) Timber.w("Recovered ${stale.size} stale RUNNING operation run(s) as STALE_ABORTED")
     }
 
     private class Handle(
@@ -95,19 +168,16 @@ class RoomOperationRunRecorder @Inject constructor(
         private val timeProvider: TimeProvider
     ) : OperationRunHandle {
 
-        private var processed = 0
-        private var succeeded = 0
-        private var failed = 0
-        private var skipped = 0
-        private var warnings = 0
-        private var errors = 0
-
         override suspend fun event(
             stage: String,
             outcome: EventOutcome,
             reasonCode: DiagnosticReasonCode?,
             severity: EventSeverity,
-            metadata: SafeEventMetadata
+            metadata: SafeEventMetadata,
+            entityType: String?,
+            entityId: Long?,
+            exception: Throwable?,
+            isTerminal: Boolean
         ) {
             eventDao.insert(
                 OperationRunEvent(
@@ -120,7 +190,12 @@ class RoomOperationRunRecorder @Inject constructor(
                     severity = severity.name,
                     reasonCode = reasonCode?.name,
                     occurredAt = timeProvider.now(),
-                    metadataJson = if (metadata.isEmpty()) null else metadata.toJson()
+                    entityType = entityType,
+                    entityId = entityId,
+                    metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson()),
+                    exceptionClass = exception?.javaClass?.simpleName,
+                    exceptionMessage = sanitizer.sanitizeExceptionMessage(exception?.message),
+                    isTerminal = isTerminal
                 )
             )
         }
@@ -129,35 +204,47 @@ class RoomOperationRunRecorder @Inject constructor(
             processed: Int, succeeded: Int, failed: Int,
             skipped: Int, warnings: Int, errors: Int
         ) {
-            this.processed += processed
-            this.succeeded += succeeded
-            this.failed += failed
-            this.skipped += skipped
-            this.warnings += warnings
-            this.errors += errors
+            // D3: persist immediately to survive process death
+            runDao.incrementCounters(runId, processed, succeeded, failed, skipped, warnings, errors)
         }
 
-        override suspend fun success() = finalize("SUCCESS", null, null)
-        override suspend fun partialSuccess(summary: String?) = finalize("PARTIAL_SUCCESS", summary, null)
-        override suspend fun failedFinal(reason: String, error: Throwable?) = finalize("FAILED_FINAL", reason, error)
-        override suspend fun failedRetryable(reason: String, error: Throwable?) = finalize("FAILED_RETRYABLE", reason, error)
-        override suspend fun cancelled(reason: String?) = finalize("CANCELLED", reason, null)
+        override suspend fun success() = finalizeNonCancellable("SUCCESS", null, null)
+        override suspend fun partialSuccess(summary: String?) = finalizeNonCancellable("PARTIAL_SUCCESS", summary, null)
+        override suspend fun failedFinal(reason: String, error: Throwable?) = finalizeNonCancellable("FAILED_FINAL", reason, error)
+        override suspend fun failedRetryable(reason: String, error: Throwable?) = finalizeNonCancellable("FAILED_RETRYABLE", reason, error)
+        override suspend fun cancelled(reason: String?) = finalizeNonCancellable("CANCELLED", reason, null)
 
-        private suspend fun finalize(status: String, summary: String?, error: Throwable?) {
-            val current = runDao.getById(runId) ?: return
-            runDao.update(
-                current.copy(
+        private suspend fun finalizeNonCancellable(status: String, summary: String?, error: Throwable?) {
+            withContext(NonCancellable) {
+                // D4: idempotent — only first terminal wins
+                val updated = runDao.finalizeIfRunning(
+                    id = runId,
                     status = status,
                     finishedAt = timeProvider.now(),
-                    rowsProcessed = processed,
-                    rowsSucceeded = succeeded,
-                    rowsFailed = failed,
-                    rowsSkipped = skipped,
-                    warningCount = warnings,
-                    errorCount = errors,
                     errorSummary = summary ?: sanitizer.sanitizeExceptionMessage(error?.message)
                 )
-            )
+                if (updated > 0) {
+                    event(
+                        stage = status,
+                        outcome = statusToOutcome(status),
+                        severity = if (status.startsWith("FAILED")) EventSeverity.ERROR else EventSeverity.INFO,
+                        isTerminal = true
+                    )
+                }
+            }
         }
+
+        private fun statusToOutcome(status: String): EventOutcome = when (status) {
+            "SUCCESS" -> EventOutcome.COMPLETED
+            "PARTIAL_SUCCESS" -> EventOutcome.COMPLETED
+            "FAILED_FINAL" -> EventOutcome.FAILED_FINAL
+            "FAILED_RETRYABLE" -> EventOutcome.FAILED_RETRYABLE
+            "CANCELLED" -> EventOutcome.CANCELLED
+            else -> EventOutcome.FAILED_FINAL
+        }
+    }
+
+    companion object {
+        const val STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000L
     }
 }

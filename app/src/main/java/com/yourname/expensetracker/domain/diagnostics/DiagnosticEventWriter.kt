@@ -38,6 +38,9 @@ class RoomDiagnosticEventWriter @Inject constructor(
 ) : DiagnosticEventWriter {
 
     override suspend fun emit(event: DiagnosticEvent) {
+        val safeMetadataJson = sanitizer.sanitizeJsonString(
+            if (event.metadata.isEmpty()) null else event.metadata.toJson()
+        )
         dao.insert(
             PipelineDiagnosticEvent(
                 pipeline = event.pipeline.name,
@@ -57,7 +60,7 @@ class RoomDiagnosticEventWriter @Inject constructor(
                 elapsedMs = event.elapsedMs,
                 exceptionClass = event.exception?.javaClass?.simpleName,
                 exceptionMessage = sanitizer.sanitizeExceptionMessage(event.exception?.message),
-                metadataJson = if (event.metadata.isEmpty()) null else event.metadata.toJson(),
+                metadataJson = safeMetadataJson,
                 metadataSchemaVersion = 1
             )
         )

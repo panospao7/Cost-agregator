@@ -50,6 +50,9 @@ jobs:
       - name: Verify no ignored-test growth
         run: ./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=310 --no-daemon --stacktrace
 
+      - name: Verify event writer boundaries
+        run: python3 scripts/verify_event_writers.py --fail-on-violation
+
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@v4

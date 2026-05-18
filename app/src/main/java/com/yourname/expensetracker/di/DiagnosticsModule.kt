@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.domain.diagnostics.CompositeDiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
-import com.yourname.expensetracker.domain.diagnostics.RoomDiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter
 import com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter
@@ -23,7 +23,7 @@ import javax.inject.Singleton
 abstract class DiagnosticsModule {
 
     @Binds @Singleton
-    abstract fun bindDiagnosticEventWriter(impl: RoomDiagnosticEventWriter): DiagnosticEventWriter
+    abstract fun bindDiagnosticEventWriter(impl: CompositeDiagnosticEventWriter): DiagnosticEventWriter
 
     @Binds @Singleton
     abstract fun bindTransactionLifecycleEventWriter(impl: RoomTransactionLifecycleEventWriter): TransactionLifecycleEventWriter

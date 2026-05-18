@@ -52,7 +52,8 @@ class ReceiptSideEffectDispatcher @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptEventDao: ReceiptEventDao,
     private val timeProvider: TimeProvider,
-    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+    private val sideEffectRecorder: com.yourname.expensetracker.domain.diagnostics.SideEffectDiagnosticRecorder
 ) {
 
     /**
@@ -64,7 +65,11 @@ class ReceiptSideEffectDispatcher @Inject constructor(
      *
      * @param receipt The newly-saved receipt whose side effects should run.
      */
-    suspend fun dispatchAfterSave(receipt: ScannedReceipt) {
+    suspend fun dispatchAfterSave(
+        receipt: ScannedReceipt,
+        correlationId: String = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
+        causationId: String? = null
+    ) {
         val docType = try {
             ReceiptDocumentType.valueOf(receipt.documentType)
         } catch (_: Exception) {
@@ -77,21 +82,25 @@ class ReceiptSideEffectDispatcher @Inject constructor(
             ReceiptProcessingStatus.CAPTURED
         }
 
-        Timber.d("dispatchAfterSave: receiptId=%d, docType=%s, status=%s",
-            receipt.id, docType, status)
+        Timber.d("dispatchAfterSave: receiptId=%d, docType=%s, status=%s", receipt.id, docType, status)
 
-        // P2-20: Write RECEIVED event when a receipt enters the side-effect dispatcher
+        val ctx = com.yourname.expensetracker.domain.diagnostics.SideEffectContext(
+            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECEIPT,
+            correlationId = correlationId,
+            causationId = causationId,
+            entityType = "receipt",
+            entityId = receipt.id,
+            source = receipt.sourceType
+        )
+
         writeReceiptEvent(receipt, "RECEIVED", "Receipt received for side-effect dispatch",
             oldStatus = null, newStatus = status.name)
 
-        // P2-20: Write VALIDATION_FAILED event for unsupported document types
         if (docType == ReceiptDocumentType.UNKNOWN) {
             writeReceiptEvent(receipt, "VALIDATION_FAILED",
                 "Unknown document type: ${receipt.documentType}",
                 oldStatus = null, newStatus = status.name)
         }
-
-        // P2-20 (FUTURE): OCR_STARTED and PARSE_STARTED events are planned for
         // future work. OCR starts inside ReceiptRepository.processReceipt() and
         // parsing is owned by ReceiptParser — neither currently emits lifecycle
         // events. When instrumentation is added, these events should be written
@@ -102,22 +111,12 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                 if (status != ReceiptProcessingStatus.OCR_FAILED &&
                     status != ReceiptProcessingStatus.PARSE_FAILED
                 ) {
-                    // Warranty extraction from OCR text
-                    try {
+                    sideEffectRecorder.runSideEffect(ctx, "warranty_extraction") {
                         autoCreateWarrantyUseCase.execute(receipt.id, receipt.rawOcrText)
-                    } catch (e: Exception) {
-                        Timber.w(e, "Warranty extraction failed for receipt %d", receipt.id)
-                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
-                            "Warranty extraction failed", errorDetails = e.message)
                     }
 
-                    // Item categorization via AI
-                    try {
+                    sideEffectRecorder.runSideEffect(ctx, "receipt_item_categorization") {
                         categorizeReceiptItemsUseCase(receipt.id)
-                    } catch (e: Exception) {
-                        Timber.w(e, "Item categorization failed for receipt %d", receipt.id)
-                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
-                            "Item categorization failed", errorDetails = e.message)
                     }
 
                     // P3-P1-03: Transaction matching against recent expenses — persist results
@@ -125,7 +124,6 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                         val matchResult = receiptTransactionMatcher.findBestMatch(receipt)
                         when (matchResult) {
                             is MatchResult.AutoMatch -> {
-                                // Strong match: auto-link receipt to matched expense
                                 val linkResult = receiptLinkService.linkReceiptToExpense(
                                     receiptId = receipt.id,
                                     expenseId = matchResult.transaction.id,
@@ -146,8 +144,6 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                                 }
                             }
                             is MatchResult.Suggested -> {
-                                // Medium match: save suggestion without automatic linking
-                                // P3-CURRENT-013: Atomic update+event via transaction
                                 writeBarrier.checkWritesAllowed("ReceiptSideEffectDispatcher.suggestedMatch")
                                 val now = timeProvider.now()
                                 database.withTransaction {
@@ -201,15 +197,9 @@ class ReceiptSideEffectDispatcher @Inject constructor(
 
             ReceiptDocumentType.EMAIL_RECEIPT -> {
                 if (status != ReceiptProcessingStatus.OCR_FAILED) {
-                    // Item categorization
-                    try {
+                    sideEffectRecorder.runSideEffect(ctx, "receipt_item_categorization") {
                         categorizeReceiptItemsUseCase(receipt.id)
-                    } catch (e: Exception) {
-                        Timber.w(e, "Item categorization failed for email receipt %d", receipt.id)
-                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
-                            "Email receipt item categorization failed", errorDetails = e.message)
                     }
-                    // Skip price protection and warranty unless content supports it
                 }
             }
 
@@ -281,31 +271,6 @@ class ReceiptSideEffectDispatcher @Inject constructor(
 
     /** Wraps a side-effect call with STARTED/COMPLETED/FAILED diagnostic events. */
     private suspend fun runSideEffect(receipt: ScannedReceipt, name: String, block: suspend () -> Unit) {
-        try {
-            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECEIPT,
-                stage = "side_effect",
-                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_STARTED,
-                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.DEBUG,
-                entityType = "receipt", entityId = receipt.id,
-                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder().put("sideEffect", name).build()
-            ))
-        } catch (_: Exception) {}
-        try {
-            block()
-            try {
-                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECEIPT,
-                    stage = "side_effect",
-                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SIDE_EFFECT_COMPLETED,
-                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.DEBUG,
-                    entityType = "receipt", entityId = receipt.id,
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder().put("sideEffect", name).build()
-                ))
-            } catch (_: Exception) {}
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED", "$name failed", errorDetails = e.message)
-        }
+        // Delegated to SideEffectDiagnosticRecorder — kept for binary compatibility
     }
 }

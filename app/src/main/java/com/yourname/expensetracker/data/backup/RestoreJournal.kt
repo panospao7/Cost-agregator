@@ -48,6 +48,7 @@ class RestoreJournal @Inject constructor(
 
     data class JournalEntry(
         val operationId: String = UUID.randomUUID().toString(),
+        val operationCorrelationId: String = UUID.randomUUID().toString(),
         val state: JournalState = JournalState.PREPARING,
         val startedAt: Long = System.currentTimeMillis(),
         val sourceBackupPath: String? = null,
@@ -59,6 +60,7 @@ class RestoreJournal @Inject constructor(
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("operationId", operationId)
+            put("operationCorrelationId", operationCorrelationId)
             put("state", state.name)
             put("startedAt", startedAt)
             put("sourceBackupPath", sourceBackupPath ?: JSONObject.NULL)
@@ -82,6 +84,7 @@ class RestoreJournal @Inject constructor(
         companion object {
             fun fromJson(json: JSONObject): JournalEntry = JournalEntry(
                 operationId = json.optString("operationId", UUID.randomUUID().toString()),
+                operationCorrelationId = json.optString("operationCorrelationId", UUID.randomUUID().toString()),
                 state = json.optString("state", "PREPARING").let { stateName ->
                     try {
                         JournalState.valueOf(stateName)

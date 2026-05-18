@@ -26,4 +26,38 @@ interface OperationRunDao {
 
     @Query("SELECT * FROM operation_runs WHERE status = 'RUNNING' AND startedAt < :staleThresholdMs")
     suspend fun getStaleRunning(staleThresholdMs: Long): List<OperationRun>
+
+    /** Persist counter increments immediately — prevents loss on process death. */
+    @Query("""
+        UPDATE operation_runs
+        SET rowsProcessed = rowsProcessed + :processed,
+            rowsSucceeded = rowsSucceeded + :succeeded,
+            rowsFailed    = rowsFailed    + :failed,
+            rowsSkipped   = rowsSkipped   + :skipped,
+            warningCount  = warningCount  + :warnings,
+            errorCount    = errorCount    + :errors
+        WHERE id = :id AND status = 'RUNNING'
+    """)
+    suspend fun incrementCounters(
+        id: Long,
+        processed: Int,
+        succeeded: Int,
+        failed: Int,
+        skipped: Int,
+        warnings: Int,
+        errors: Int
+    )
+
+    /** Idempotent finalization — only first terminal state wins. Returns rows updated. */
+    @Query("""
+        UPDATE operation_runs
+        SET status = :status, finishedAt = :finishedAt, errorSummary = :errorSummary
+        WHERE id = :id AND status = 'RUNNING'
+    """)
+    suspend fun finalizeIfRunning(
+        id: Long,
+        status: String,
+        finishedAt: Long,
+        errorSummary: String?
+    ): Int
 }

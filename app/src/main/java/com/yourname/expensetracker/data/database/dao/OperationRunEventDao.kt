@@ -16,4 +16,11 @@ interface OperationRunEventDao {
 
     @Query("SELECT * FROM operation_run_events WHERE correlationId = :correlationId ORDER BY occurredAt ASC")
     suspend fun getByCorrelationId(correlationId: String): List<OperationRunEvent>
+
+    @Query("""
+        SELECT * FROM operation_run_events
+        WHERE outcome IN ('FAILED_RETRYABLE','FAILED_FINAL','CANCELLED')
+        ORDER BY occurredAt DESC LIMIT :limit
+    """)
+    suspend fun getRecentFailures(limit: Int = 50): List<OperationRunEvent>
 }

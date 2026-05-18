@@ -111,6 +111,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         object : com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder {
             override suspend fun start(operationType: String, actor: String?, metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata): com.yourname.expensetracker.domain.diagnostics.OperationRunHandle =
                 com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
+            override suspend fun <T> runOperation(operationType: String, actor: String?, metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata, block: suspend (com.yourname.expensetracker.domain.diagnostics.OperationRunHandle) -> T): T =
+                block(com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle)
+            override suspend fun recoverStaleRunningOperationRuns(staleThresholdMs: Long) = Unit
         }
     ) {
         this.stagedImportVerifier = stagedImportVerifier
@@ -500,6 +503,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             "createCostBackup",
             failOnTimeout = true)
             Timber.d("BackupOperationEvent.BACKUP_STARTED: entering BACKUP_EXPORTING mode")
+            run.event("MAINTENANCE_ENTERED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             // WAL checkpoint
             val checkpointResult = checkpointWal()
@@ -538,6 +542,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // Use VACUUM INTO if supported, otherwise drained file-copy
                 val snapshotResult = snapshotCreator.createSnapshot(dbFile, tempDb, liveCountsBeforeCopy)
                 Timber.d("Snapshot created via %s", snapshotResult.method)
+                run.event("SNAPSHOT_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
                 // Sanitize if redacted
                 if (resolvedRedacted) {
@@ -605,6 +610,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
                 }
 
+                run.event("ENCRYPTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
                 Timber.d("Created .costbackup: %s", outputFile.absolutePath)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
@@ -632,6 +638,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             "restoreCostBackup",
             failOnTimeout = true)
             Timber.w("Restore: entered maintenance mode, workers drained")
+            run.event("MAINTENANCE_ENTERED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             val liveDbPath = liveDbFile.absolutePath
@@ -647,6 +654,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 liveDbPath = liveDbPath
             )
             Timber.d("Restore journal created: %s", journalEntry.operationId)
+            run.event("JOURNAL_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             // 3. Extract bundle to temp workspace
             val tempDir = File(context.cacheDir, "costbackup_extract_${System.currentTimeMillis()}")
@@ -771,6 +779,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             )
             // Swap live DB with staged DB
             journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
+            run.event("LIVE_DB_SWAPPING", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
             val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
             val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
             val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
@@ -799,11 +808,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreFromSafetyBackup(safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "Swap failed: ${e.message}")
+                run.failedFinal("Database swap failed", e)
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
                     Exception("Database swap failed and was rolled back: ${e.message}")
                 )
             }
+            // F6: After live DB swap, do NOT use run handle for Room writes — DB is replaced.
+            // All further diagnostics go to the restore journal only.
 
             // 9. Verify live DB using a FRESH Room instance — the injected singleton is stale after swap
             journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
@@ -854,7 +866,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     restoreMaintenanceMode.exit(forceRestartRequired = true)
 
                     Timber.w("Restore completed successfully. Restart required.")
-                    run.success()
+                    // F6: DB was swapped — do NOT call run.success() on old Room handle.
+                    // Record completion in journal only.
+                    restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.COMPLETE)
                     Result.success(
                         DatabaseImportResult.SuccessNeedsRestart(
                             DatabaseImportSummary(
@@ -904,12 +918,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 tempDir.deleteRecursively()
 
-                run.failedFinal("Restore verification failed and was rolled back", e)
+                // F6: DB was swapped — do not use old run handle. Journal is authoritative.
                 Result.failure(Exception("Restore verification failed and was rolled back: ${e.message}"))
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to restore .costbackup bundle")
             restoreMaintenanceMode.exit(forceRestartRequired = false)
+            // Only finalize run if DB was NOT swapped (run handle may still be valid)
             run.failedFinal(e.message ?: "Exception", e)
             Result.failure(e)
         }

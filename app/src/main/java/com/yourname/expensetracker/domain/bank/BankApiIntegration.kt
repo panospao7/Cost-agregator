@@ -137,83 +137,104 @@ class BankApiIntegration @Inject constructor(
     ): SyncResult = withContext(Dispatchers.IO) {
         requireStubMode()
         writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions")
-        val run = operationRunRecorder.start("BANK_SYNC", actor = "system")
 
-        // In real implementation, this would:
-        // 1. Check token validity and refresh if needed
-        // 2. Call bank API to fetch transactions
-        // 3. Map API response to BankTransaction objects
-        // 4. Convert to Expense entities
-        // 5. Handle duplicates
-        // TODO: BankTransactionClassifier — Route low-confidence transactions
-        // to PendingReview instead of auto-creating expenses. A classifier
-        // should evaluate merchant name match quality, amount plausibility,
-        // and description coherence before auto-import.
-        
-        try {
-            // Check if token is expired
+        var syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 0, errors = emptyList())
+        operationRunRecorder.runOperation("BANK_SYNC", actor = "system") { run ->
+            run.event("SYNC_STARTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
+
+            // I3: Token refresh with finalization
             if (connection.tokenExpiry != null && connection.tokenExpiry < timeProvider.now()) {
+                run.event("TOKEN_REFRESH_STARTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
                 val refreshed = refreshToken(connection)
                 if (!refreshed) {
-                    return@withContext SyncResult(
-                        success = false,
-                        importedCount = 0,
-                        skippedCount = 0,
-                        errorCount = 1,
-                        errors = listOf("Token expired and refresh failed")
-                    )
+                    run.event("TOKEN_REFRESH_FAILED",
+                        com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TOKEN_INVALID)
+                    run.failedFinal("Token expired and refresh failed")
+                    syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 1,
+                        errors = listOf("Token expired and refresh failed"))
+                    return@runOperation
                 }
+                run.event("TOKEN_REFRESHED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
             }
-            
-            // Placeholder: Simulate fetching transactions
+
             val mockTransactions = generateMockTransactions(connection.bankId, since)
-            
+            run.event("PAGE_FETCHED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("itemCount", mockTransactions.size).build())
+
             var importedCount = 0
             var skippedCount = 0
             val errors = mutableListOf<String>()
-            
+
             for (transaction in mockTransactions) {
                 try {
                     val request = mapTransactionToExpense(transaction, connection)
-                    @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
+                    @Suppress("DEPRECATION_ERROR")
                     when (val result = coordinator.createExpense(request)) {
-                        is CreateExpenseResult.Created -> importedCount++
-                        is CreateExpenseResult.DuplicateSkipped -> skippedCount++
-                        is CreateExpenseResult.ValidationFailed ->
+                        is CreateExpenseResult.Created -> {
+                            importedCount++
+                            run.event("TRANSACTION_IMPORTED",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
+                                entityType = "expense", entityId = result.expenseId,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("providerTransactionId", transaction.id)
+                                    .put("currency", transaction.currency)
+                                    .build())
+                            run.increment(processed = 1, succeeded = 1)
+                        }
+                        is CreateExpenseResult.DuplicateSkipped -> {
+                            skippedCount++
+                            run.event("TRANSACTION_DUPLICATE_SKIPPED",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("providerTransactionId", transaction.id).build())
+                            run.increment(processed = 1, skipped = 1)
+                        }
+                        is CreateExpenseResult.ValidationFailed -> {
                             errors.add("Validation failed for transaction ${transaction.id}: ${result.errors.joinToString(", ")}")
-                        is CreateExpenseResult.InsertConflict ->
-                            errors.add("Insert conflict for transaction ${transaction.id}: dedupeKey=${result.dedupeKey}")
-                        is CreateExpenseResult.Error ->
+                            run.event("TRANSACTION_FAILED",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("providerTransactionId", transaction.id)
+                                    .put("errorCount", result.errors.size).build())
+                            run.increment(processed = 1, failed = 1, errors = 1)
+                        }
+                        is CreateExpenseResult.InsertConflict -> {
+                            skippedCount++
+                            run.event("TRANSACTION_DUPLICATE_SKIPPED",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE)
+                            run.increment(processed = 1, skipped = 1)
+                        }
+                        is CreateExpenseResult.Error -> {
                             errors.add("Failed to import transaction ${transaction.id}: ${result.exception.message}")
+                            run.event("TRANSACTION_FAILED",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
+                                exception = result.exception)
+                            run.increment(processed = 1, failed = 1, errors = 1)
+                        }
                     }
                 } catch (e: Exception) {
                     errors.add("Failed to import transaction ${transaction.id}: ${e.message}")
+                    run.increment(processed = 1, failed = 1, errors = 1)
                     Timber.e(e, "Failed to import transaction")
                 }
             }
-            
-            val syncResult = SyncResult(
+
+            syncResult = SyncResult(
                 success = errors.isEmpty(),
                 importedCount = importedCount,
                 skippedCount = skippedCount,
                 errorCount = errors.size,
                 errors = errors
             )
-            run.increment(processed = importedCount + skippedCount + errors.size, succeeded = importedCount, failed = errors.size, skipped = skippedCount)
-            if (errors.isEmpty()) run.success() else run.partialSuccess("${errors.size} errors")
-            syncResult
-            
-        } catch (e: Exception) {
-            Timber.e(e, "Sync failed for bank ${connection.bankId}")
-            run.failedFinal(e.message ?: "Exception", e)
-            SyncResult(
-                success = false,
-                importedCount = 0,
-                skippedCount = 0,
-                errorCount = 1,
-                errors = listOf("Sync failed: ${e.message}")
-            )
+            if (errors.isNotEmpty()) run.partialSuccess("${errors.size} errors")
+            // success() called automatically by runOperation if still RUNNING
         }
+        syncResult
     }
     
     /**

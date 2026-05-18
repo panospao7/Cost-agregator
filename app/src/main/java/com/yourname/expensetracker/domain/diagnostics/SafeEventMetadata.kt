@@ -6,8 +6,9 @@ import org.json.JSONObject
 /**
  * Privacy-safe key/value bag for event metadata.
  *
- * Construction is only possible via [builder] or [empty] to enforce the
- * allowlist/blocklist policy at build time.
+ * Construction is only possible via [builder] or [empty].
+ * The builder is **non-throwing** by default: blocked keys are silently
+ * redacted rather than throwing, so diagnostics never crash production flow.
  */
 class SafeEventMetadata private constructor(
     private val values: Map<String, Any?>
@@ -18,13 +19,7 @@ class SafeEventMetadata private constructor(
     fun isEmpty(): Boolean = values.isEmpty()
 
     companion object {
-        private val BLOCKED_KEYS = setOf(
-            "body", "rawbody", "rawtext", "rawocrtext", "prompt",
-            "token", "accesstoken", "refreshtoken", "authorization",
-            "password", "fullpath", "iban", "accountnumber"
-        )
-
-        private const val MAX_STRING_LENGTH = 256
+        private val sanitizer = EventMetadataSanitizer()
 
         fun empty(): SafeEventMetadata = SafeEventMetadata(emptyMap())
 
@@ -34,16 +29,12 @@ class SafeEventMetadata private constructor(
     class Builder {
         private val map = mutableMapOf<String, Any?>()
 
-        /** Store a plain app-internal value (string truncated to 256 chars). */
+        /**
+         * Store a plain app-internal value.
+         * Blocked keys are silently redacted; no exception is thrown.
+         */
         fun put(key: String, value: Any?): Builder {
-            val normalizedKey = key.lowercase()
-            require(normalizedKey !in BLOCKED_KEYS) {
-                "Key '$key' is blocked from event metadata"
-            }
-            map[key] = when (value) {
-                is String -> value.take(MAX_STRING_LENGTH)
-                else -> value
-            }
+            map[key] = sanitizer.sanitizeValue(key, value)
             return this
         }
 

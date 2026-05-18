@@ -219,6 +219,17 @@ class EmailReceiptIngestionService(
             // Step 1: Detect provider
             val provider = detectProvider(sender, subject, emailBody)
             Timber.d("Email receipt detected provider: $provider from sender: $sender")
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                    stage = "provider_detection",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                    correlationId = correlationId,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("provider", provider)
+                        .build()
+                ))
+            } catch (_: Exception) {}
 
             // Step 2: Parse email body based on provider
             val parsedReceipt = parseEmailReceipt(emailBody, receivedAt, provider)
@@ -300,15 +311,44 @@ class EmailReceiptIngestionService(
                             Timber.w(e, "Non-critical: failed to dispatch post-creation side effects for expense $expenseId")
                         }
                     }
-                    EmailReceiptResult.Success(
-                        coordinatorResult.receiptId,
-                        coordinatorResult.expenseIds
-                    )
+                    try {
+                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                            stage = "outcome",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
+                            correlationId = correlationId,
+                            entityType = "receipt",
+                            entityId = coordinatorResult.receiptId,
+                            isTerminal = true
+                        ))
+                    } catch (_: Exception) {}
+                    EmailReceiptResult.Success(coordinatorResult.receiptId, coordinatorResult.expenseIds)
                 }
                 is EmailReceiptProcessResult.Duplicate -> {
+                    try {
+                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                            stage = "dedupe",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                            correlationId = correlationId,
+                            entityType = "receipt",
+                            entityId = coordinatorResult.existingReceiptId,
+                            isTerminal = true
+                        ))
+                    } catch (_: Exception) {}
                     EmailReceiptResult.Duplicate(coordinatorResult.existingReceiptId)
                 }
                 is EmailReceiptProcessResult.Error -> {
+                    try {
+                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                            stage = "coordinator",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                            correlationId = correlationId,
+                            isTerminal = true
+                        ))
+                    } catch (_: Exception) {}
                     EmailReceiptResult.ParseError(coordinatorResult.message)
                 }
             }

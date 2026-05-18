@@ -413,6 +413,9 @@ class NotificationCaptureService : NotificationListenerService() {
         sbn ?: return
 
         val packageName = sbn.packageName
+        val notificationKey = sbn.key
+        // E2: generate correlationId at very entry — before any early exit
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
@@ -425,16 +428,46 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
-        if (isShuttingDown) return
+        // E8: shutting down terminal event
+        if (isShuttingDown) {
+            serviceScope.launch {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "listener",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+                        correlationId = correlationId,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .putHashed("packageName", packageName).build(),
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+            }
+            return
+        }
 
         val now = timeProvider.now()
-        val dedupeKeyRaw = sbn.key
-        // TODO P1-CURRENT-004: sbn.key is coarse — it includes package+tag+id but not content.
-        // Two different transactions reusing the same notification ID within DEDUP_WINDOW_MS
-        // would be incorrectly deduped. Consider incorporating a content hash.
-        val coarseDedupeKey = dedupeKeyRaw
+        val coarseDedupeKey = notificationKey
         val lastProcessed = processedNotifications[coarseDedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
+            // E5: dedupe window terminal event
+            serviceScope.launch {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "dedupe",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                        correlationId = correlationId,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .putHashed("packageName", packageName)
+                            .put("dedupeWindowMs", DEDUP_WINDOW_MS)
+                            .build(),
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+            }
             return
         }
         processedNotifications[coarseDedupeKey] = now
@@ -447,14 +480,14 @@ class NotificationCaptureService : NotificationListenerService() {
                 try {
                     diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                         pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "listener",
+                        stage = "privacy_gate_fast",
                         outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
                         severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                        correlationId = correlationId,
                         sourceType = "notification",
                         metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                            .putHashed("packageName", packageName)
-                            .build(),
+                            .putHashed("packageName", packageName).build(),
                         isTerminal = true
                     ))
                 } catch (_: Exception) {}
@@ -462,22 +495,11 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
-        // Single extraction pass — every downstream consumer (filter, hash,
-        // fingerprint, entity, parser) sees the same resolved fields.
         val extras = sbn.notification.extras
         val parts = NotificationTextParts.extract(extras)
 
-        if (!NotificationFilter.shouldCapture(
-                packageName,
-                parts.title,
-                parts.text,
-                parts.combinedBody
-            )) return
-
-        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
-
+        // E3: RECEIVED before filter
         workTracker.launch(serviceScope) {
-            // Emit RECEIVED before any further processing
             try {
                 diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -487,9 +509,29 @@ class NotificationCaptureService : NotificationListenerService() {
                     sourceType = "notification",
                     metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                         .putHashed("packageName", packageName)
+                        .putHashed("notificationKey", notificationKey)
+                        .put("postTime", sbn.postTime)
                         .build()
                 ))
             } catch (_: Exception) {}
+
+            // E7: filter terminal event
+            if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
+                try {
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "filter",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
+                        correlationId = correlationId,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .putHashed("packageName", packageName).build(),
+                        isTerminal = true
+                    ))
+                } catch (_: Exception) {}
+                return@launch
+            }
+
             try {
                 when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                     is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
@@ -511,9 +553,9 @@ class NotificationCaptureService : NotificationListenerService() {
                         Timber.d("Privacy check inconclusive for $packageName — proceeding with capture")
                     }
                 }
-                processNotification(sbn, packageName, parts, extras)
+                // E9: pass correlationId to processNotification
+                processNotification(sbn, packageName, parts, extras, correlationId)
             } finally {
-                // P1-07: Remove dedupe key on cancellation/failure so retry is possible.
                 synchronized(processedNotifications) {
                     processedNotifications.remove(coarseDedupeKey)
                 }
@@ -544,10 +586,23 @@ class NotificationCaptureService : NotificationListenerService() {
         sbn: StatusBarNotification,
         packageName: String,
         parts: NotificationTextParts,
-        extras: android.os.Bundle
+        extras: android.os.Bundle,
+        correlationId: String
     ) {
         if (repository.isPackageBlocked(packageName)) {
             Timber.d("Ignoring blocked package: $packageName")
+            try {
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "package_policy",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE,
+                    correlationId = correlationId,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName).build(),
+                    isTerminal = true
+                ))
+            } catch (_: Exception) {}
             return
         }
 
@@ -679,7 +734,8 @@ class NotificationCaptureService : NotificationListenerService() {
                 is PrivacyDecision.Allowed -> { /* proceed */ }
                 else -> { /* NotApplicable — proceed with capture */ }
             }
-            processNotification(sbn, packageName, parts, extras)
+            processNotification(sbn, packageName, parts, extras,
+                com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId())
         }
     }
 

@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
 verify_event_writers.py
-Static guard for durable diagnostics / lifecycle events — PR 9 (CI failure mode)
+Static guard for durable diagnostics / lifecycle events — PR 10 (CI failure mode)
 
 Rules enforced:
-  1. No direct PipelineDiagnosticEvent(...) construction outside DiagnosticEventWriter
-     or test/migration files.
-  2. No direct TransactionEvent(...) construction outside TransactionLifecycleEventWriter
-     or TransactionLifecycleCoordinator or test/migration files.
-  3. No direct ReceiptEvent(...) construction outside ReceiptLifecycleEventWriter
-     or ReceiptLifecycleCoordinator or ReceiptSideEffectDispatcher or test/migration files.
-  4. No direct BackgroundJobRun(...) construction outside WorkerRunLogger or test/migration files.
-  5. No direct OperationRun(...) construction outside RoomOperationRunRecorder or test/migration files.
+  1. No direct PipelineDiagnosticEvent(...) construction outside DiagnosticEventWriter or allowlist.
+  2. No direct TransactionEvent(...) construction outside TransactionLifecycleEventWriter/Coordinator or allowlist.
+  3. No direct ReceiptEvent(...) construction outside ReceiptLifecycleEventWriter/Coordinator/SideEffectDispatcher or allowlist.
+  4. No direct BackgroundJobRun(...) construction outside WorkerRunLogger or allowlist.
+  5. No direct OperationRun(...) / OperationRunEvent(...) construction outside OperationRunRecorder or allowlist.
+  6. No direct pipelineDiagnosticEventDao.insert/update outside DiagnosticEventWriter or allowlist.
+  7. No direct operationRunDao.insert/update outside OperationRunRecorder or allowlist.
+  8. No direct operationRunEventDao.insert outside OperationRunRecorder or allowlist.
+  9. No direct backgroundJobRunDao.insert/update outside WorkerRunLogger or allowlist.
+  10. No direct transactionEventDao.insert outside TransactionLifecycleEventWriter/Coordinator or allowlist.
+  11. No direct receiptEventDao.insert outside ReceiptLifecycleEventWriter/Coordinator/SideEffectDispatcher or allowlist.
 
 Exit codes:
   0 — no violations
@@ -32,66 +35,95 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # ── Rules ─────────────────────────────────────────────────────────────────────
 
-# Each rule: (entity_name, construction_pattern, allowed_file_substrings)
-RULES = [
+ENTITY_RULES = [
     (
         "PipelineDiagnosticEvent",
         re.compile(r'\bPipelineDiagnosticEvent\s*\('),
-        [
-            "DiagnosticEventWriter.kt",
-            "RoomDiagnosticEventWriter",
-            # migrations are in AppDatabase.kt but use SQL, not Kotlin constructors
-        ],
+        ["DiagnosticEventWriter.kt"],
     ),
     (
         "TransactionEvent",
         re.compile(r'\bTransactionEvent\s*\('),
-        [
-            "TransactionLifecycleEventWriter.kt",
-            "TransactionLifecycleCoordinator.kt",
-        ],
+        ["TransactionLifecycleEventWriter.kt", "TransactionLifecycleCoordinator.kt"],
     ),
     (
         "ReceiptEvent",
         re.compile(r'\bReceiptEvent\s*\('),
-        [
-            "ReceiptLifecycleEventWriter.kt",
-            "ReceiptLifecycleCoordinator.kt",
-            "ReceiptSideEffectDispatcher.kt",
-        ],
+        ["ReceiptLifecycleEventWriter.kt", "ReceiptLifecycleCoordinator.kt", "ReceiptSideEffectDispatcher.kt"],
     ),
     (
         "BackgroundJobRun",
         re.compile(r'\bBackgroundJobRun\s*\('),
-        [
-            "WorkerRunLogger.kt",
-        ],
+        ["WorkerRunLogger.kt"],
     ),
     (
         "OperationRun",
         re.compile(r'\bOperationRun\s*\('),
-        [
-            "OperationRunRecorder.kt",
-        ],
+        ["OperationRunRecorder.kt"],
     ),
     (
         "OperationRunEvent",
         re.compile(r'\bOperationRunEvent\s*\('),
-        [
-            "OperationRunRecorder.kt",
-        ],
+        ["OperationRunRecorder.kt"],
     ),
 ]
 
-# Paths that are always exempt (tests, migrations, entity definitions)
+DAO_RULES = [
+    (
+        "pipelineDiagnosticEventDao.insert",
+        re.compile(r'\bpipelineDiagnosticEventDao\s*\.\s*(insert|update)\s*\('),
+        ["DiagnosticEventWriter.kt"],
+    ),
+    (
+        "operationRunDao.insert/update",
+        re.compile(r'\boperationRunDao\s*\.\s*(insert|update|incrementCounters|finalizeIfRunning)\s*\('),
+        ["OperationRunRecorder.kt"],
+    ),
+    (
+        "operationRunEventDao.insert",
+        re.compile(r'\boperationRunEventDao\s*\.\s*insert\s*\('),
+        ["OperationRunRecorder.kt"],
+    ),
+    (
+        "backgroundJobRunDao.insert/update",
+        re.compile(r'\bbackgroundJobRunDao\s*\.\s*(insert|update)\s*\('),
+        ["WorkerRunLogger.kt", "WorkerExecutionGuard.kt"],
+    ),
+    (
+        "transactionEventDao.insert",
+        re.compile(r'\btransactionEventDao\s*\.\s*insert\s*\('),
+        ["TransactionLifecycleEventWriter.kt", "TransactionLifecycleCoordinator.kt"],
+    ),
+    (
+        "receiptEventDao.insert",
+        re.compile(r'\breceiptEventDao\s*\.\s*insert\s*\('),
+        ["ReceiptLifecycleEventWriter.kt", "ReceiptLifecycleCoordinator.kt", "ReceiptSideEffectDispatcher.kt"],
+    ),
+]
+
 EXEMPT_PATH_FRAGMENTS = [
     os.sep + "test" + os.sep,
     os.sep + "androidTest" + os.sep,
-    "AppDatabase.kt",          # migration SQL — no Kotlin constructors
-    "entity" + os.sep,         # entity data class definitions themselves
+    "AppDatabase.kt",
+    "entity" + os.sep,
 ]
 
-# ── Scanner ───────────────────────────────────────────────────────────────────
+
+def load_allowlist(script_dir: str) -> set:
+    allowlist_path = os.path.join(script_dir, "event_writer_allowlist.txt")
+    allowed = set()
+    if not os.path.exists(allowlist_path):
+        return allowed
+    with open(allowlist_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            filename = line.split("#")[0].strip()
+            if filename:
+                allowed.add(filename)
+    return allowed
+
 
 def is_exempt(filepath: str) -> bool:
     for fragment in EXEMPT_PATH_FRAGMENTS:
@@ -100,16 +132,21 @@ def is_exempt(filepath: str) -> bool:
     return False
 
 
-def is_allowed(filepath: str, allowed_substrings: list) -> bool:
+def is_allowed(filepath: str, allowed_substrings: list, allowlist_filenames: set) -> bool:
     basename = os.path.basename(filepath)
+    if basename in allowlist_filenames:
+        return True
     for allowed in allowed_substrings:
         if allowed in filepath or allowed in basename:
             return True
     return False
 
 
-def scan(root: str) -> list:
+def scan(root: str, allowlist_filenames: set) -> list:
     violations = []
+    all_rules = [(name, pattern, allowed, "entity") for name, pattern, allowed in ENTITY_RULES] + \
+                [(name, pattern, allowed, "dao") for name, pattern, allowed in DAO_RULES]
+
     for dirpath, _, filenames in os.walk(root):
         for filename in filenames:
             if not filename.endswith(".kt"):
@@ -122,20 +159,20 @@ def scan(root: str) -> list:
                     lines = f.readlines()
             except OSError:
                 continue
-            for entity_name, pattern, allowed_substrings in RULES:
-                if is_allowed(filepath, allowed_substrings):
+            for rule_name, pattern, allowed_substrings, rule_type in all_rules:
+                if is_allowed(filepath, allowed_substrings, allowlist_filenames):
                     continue
                 for lineno, line in enumerate(lines, start=1):
-                    # Skip comment lines
                     stripped = line.lstrip()
                     if stripped.startswith("//") or stripped.startswith("*"):
                         continue
                     if pattern.search(line):
                         violations.append({
-                            "entity": entity_name,
+                            "rule": rule_name,
                             "file": filepath,
                             "line": lineno,
                             "text": line.rstrip(),
+                            "type": rule_type,
                         })
     return violations
 
@@ -148,7 +185,6 @@ def main():
                         help="Root directory to scan (default: auto-detect).")
     args = parser.parse_args()
 
-    # Auto-detect project root
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = args.root or os.path.dirname(script_dir)
     scan_root = os.path.join(project_root, "app", "src", "main", "java")
@@ -157,8 +193,10 @@ def main():
         print(f"[verify_event_writers] Scan root not found: {scan_root}", file=sys.stderr)
         sys.exit(1)
 
+    allowlist = load_allowlist(script_dir)
     print(f"[verify_event_writers] Scanning: {scan_root}")
-    violations = scan(scan_root)
+    print(f"[verify_event_writers] Allowlist: {len(allowlist)} file(s)")
+    violations = scan(scan_root, allowlist)
 
     if not violations:
         print("[verify_event_writers] ✅ No violations found.")
@@ -167,16 +205,11 @@ def main():
     print(f"\n[verify_event_writers] ❌ {len(violations)} violation(s) found:\n")
     for v in violations:
         rel = os.path.relpath(v["file"], project_root)
-        print(f"  {v['entity']} — {rel}:{v['line']}")
+        print(f"  [{v['type'].upper()}] {v['rule']} — {rel}:{v['line']}")
         print(f"    {v['text']}")
         print()
 
-    print("Fix: construct event entities only through their designated writers.")
-    print("  PipelineDiagnosticEvent  → DiagnosticEventWriter")
-    print("  TransactionEvent         → TransactionLifecycleEventWriter / TransactionLifecycleCoordinator")
-    print("  ReceiptEvent             → ReceiptLifecycleEventWriter / ReceiptLifecycleCoordinator / ReceiptSideEffectDispatcher")
-    print("  BackgroundJobRun         → WorkerRunLogger")
-    print("  OperationRun/Event       → OperationRunRecorder")
+    print("Fix: use designated writers. See scripts/event_writer_allowlist.txt to allowlist with reason.")
 
     if args.fail_on_violation:
         sys.exit(1)
