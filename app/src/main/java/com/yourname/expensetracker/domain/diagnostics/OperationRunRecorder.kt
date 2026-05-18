@@ -213,7 +213,8 @@ class RoomOperationRunRecorder @Inject constructor(
                         metadataJson = sanitizer.sanitizeJsonString(if (metadata.isEmpty()) null else metadata.toJson()),
                         exceptionClass = exception?.javaClass?.simpleName,
                         exceptionMessage = sanitizer.sanitizeExceptionMessage(exception?.message),
-                        isTerminal = isTerminal
+                        isTerminal = isTerminal,
+                        eventId = CorrelationIds.newId()  // DDL-F876-14: every event gets a stable ID
                     )
                 )
             }.onFailure { error ->
@@ -244,10 +245,32 @@ class RoomOperationRunRecorder @Inject constructor(
             processed: Int, succeeded: Int, failed: Int,
             skipped: Int, warnings: Int, errors: Int
         ) {
-            // DDL-A8-10: best-effort — increment failure must not fail bank sync or other operations
+            // DDL-A8-10 / DDL-F876-06: failure durably recorded to safe sink
             runCatching {
                 runDao.incrementCounters(runId, processed, succeeded, failed, skipped, warnings, errors)
-            }.onFailure { Timber.w(it, "Failed to persist operation counters for run $runId") }
+            }.onFailure { error ->
+                Timber.w(error, "Failed to persist operation counters for run $runId")
+                runCatching {
+                    safeSink.recordDiagnosticEvent(
+                        event = DiagnosticEvent(
+                            pipeline = AppPipeline.BACKUP_RESTORE,
+                            stage = "operation_increment_failed",
+                            outcome = EventOutcome.SIDE_EFFECT_FAILED,
+                            severity = EventSeverity.WARNING,
+                            reasonCode = DiagnosticReasonCode.SIDE_EFFECT_EXCEPTION,
+                            correlationId = correlationId,
+                            metadata = SafeEventMetadata.builder()
+                                .put("operationType", operationType)
+                                .put("processed", processed)
+                                .put("failed", failed)
+                                .build(),
+                            exception = error,
+                            isTerminal = false
+                        ),
+                        mode = restoreMaintenanceMode.currentMode()
+                    )
+                }
+            }
         }
 
         override suspend fun success() = finalizeNonCancellable("SUCCESS", null, null)

@@ -122,6 +122,8 @@ class SafeSinkOperationRunHandle(
         severity: EventSeverity, metadata: SafeEventMetadata,
         entityType: String?, entityId: Long?, exception: Throwable?, isTerminal: Boolean
     ) {
+        // DDL-F876-04: direct terminal event must also mark the handle terminal (single terminal policy)
+        if (isTerminal && !_isTerminal.compareAndSet(false, true)) return
         try {
             safeSink.recordDiagnosticEvent(
                 event = DiagnosticEvent(
@@ -152,11 +154,18 @@ class SafeSinkOperationRunHandle(
     }
 
     override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) = Unit
+
     override suspend fun success() = terminalOnce("SUCCESS", EventOutcome.COMPLETED)
     override suspend fun partialSuccess(summary: String?) = terminalOnce("PARTIAL_SUCCESS", EventOutcome.COMPLETED)
     override suspend fun failedFinal(reason: String, error: Throwable?) = terminalOnce("FAILED_FINAL", EventOutcome.FAILED_FINAL, EventSeverity.ERROR, exception = error)
     override suspend fun failedRetryable(reason: String, error: Throwable?) = terminalOnce("FAILED_RETRYABLE", EventOutcome.FAILED_RETRYABLE, EventSeverity.WARNING, exception = error)
-    override suspend fun cancelled(reason: String?) = terminalOnce("CANCELLED", EventOutcome.CANCELLED, reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM)
+    // DDL-F876-05: preserve caller-supplied reason code instead of always using CANCELLED_BY_SYSTEM
+    override suspend fun cancelled(reason: String?) = terminalOnce(
+        stage = "CANCELLED",
+        outcome = EventOutcome.CANCELLED,
+        reasonCode = reason?.let { runCatching { DiagnosticReasonCode.valueOf(it) }.getOrNull() }
+            ?: DiagnosticReasonCode.CANCELLED_BY_SYSTEM
+    )
 
     private fun operationTypeToPipeline(type: String): AppPipeline = when {
         type.contains("BACKUP") || type.contains("RESTORE") -> AppPipeline.BACKUP_RESTORE

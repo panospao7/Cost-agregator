@@ -30,7 +30,32 @@ class RestoreJournalImporter @Inject constructor(
         if (restoreJournal.isSuccessJournalImported(correlationId)) return
 
         val events = restoreJournal.getSuccessJournalEvents()
-        if (events.isEmpty()) return
+        // DDL-F876-12: legacy journals from older builds may have zero events; still import summary
+        if (events.isEmpty()) {
+            // Insert a minimal run summary row so startup doesn't keep retrying forever
+            try {
+                val existingRun = operationRunDao.getByCorrelationId(correlationId)
+                if (existingRun == null) {
+                    operationRunDao.insert(
+                        OperationRun(
+                            correlationId = correlationId,
+                            operationType = "RESTORE_COSTBACKUP",
+                            status = "SUCCESS",
+                            startedAt = entry.startedAt,
+                            finishedAt = timeProvider.now(),
+                            actor = "user",
+                            errorSummary = null,
+                            metadataJson = """{"legacyEmptyEvents":true}"""
+                        )
+                    )
+                }
+                restoreJournal.markSuccessJournalImported(correlationId)
+                Timber.i("RestoreJournalImporter: legacy zero-event journal marked imported for $correlationId")
+            } catch (e: Exception) {
+                Timber.w(e, "RestoreJournalImporter: failed to handle legacy empty journal")
+            }
+            return
+        }
 
         try {
             // DDL-A8-07: get-or-insert run — don't skip if run exists (events may be missing)
@@ -48,12 +73,13 @@ class RestoreJournalImporter @Inject constructor(
                 )
 
             // DDL-A8-07: idempotent per event — check each eventId before inserting
+            // DDL-F876-13: use mutable set so duplicate eventIds within same journal are blocked too
             var allSucceeded = true
-            val existingEventIds = operationRunEventDao.getByRunId(runId)
-                .mapNotNull { it.eventId }.toSet()
+            val importedIds = operationRunEventDao.getByRunId(runId)
+                .mapNotNull { it.eventId }.toMutableSet()
 
             for (event in events) {
-                if (event.eventId in existingEventIds) continue
+                if (!importedIds.add(event.eventId)) continue
                 runCatching {
                     operationRunEventDao.insert(
                         OperationRunEvent(

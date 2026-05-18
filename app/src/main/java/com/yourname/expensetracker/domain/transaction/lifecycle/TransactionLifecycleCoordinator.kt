@@ -461,7 +461,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // 6. Side effects — only if IMMEDIATE; DEFER shifts responsibility to caller
         if (sideEffectMode == SideEffectMode.IMMEDIATE) {
-            dispatchPostCreationSideEffects(insertedId, request.source)
+            dispatchPostCreationSideEffects(insertedId, request.source, correlationId)
         }
 
         return CreateExpenseResult.Created(insertedId)
@@ -477,8 +477,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @param expenseId The ID of the just-committed expense.
      * @param source    The [ExpenseSource] that created the expense.
      */
-    suspend fun dispatchPostCreationSideEffects(expenseId: Long, source: ExpenseSource) {
-        sideEffectDispatcher.dispatchOnCreated(expenseId, source)
+    suspend fun dispatchPostCreationSideEffects(
+        expenseId: Long,
+        source: ExpenseSource,
+        correlationId: String = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
+        causationId: String? = null
+    ) {
+        // DDL-F876-11: propagate create-boundary correlation into side effects
+        sideEffectDispatcher.dispatchOnCreated(expenseId, source, correlationId, causationId)
         // Note: recurring occurrence linking is handled inside dispatchOnCreated
     }
 
@@ -532,7 +538,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
     suspend fun updateExpense(
         expense: Expense,
         reason: String? = null,
-        source: String = "USER_EDIT"
+        source: String = "USER_EDIT",
+        correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
@@ -661,7 +668,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = beforeSnapshot,
                     afterSnapshot = afterSnapshot,
                     metadata = null,
-                    reason = reason
+                    reason = reason,
+                    correlationId = correlationId  // DDL-F876-10
                 )
             )
         }
@@ -1464,7 +1472,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         expenseId: Long,
         source: String = "USER_ACTION",
         reason: String? = null,
-        actor: String? = null
+        actor: String? = null,
+        correlationId: String? = null
     ): Result<Unit> {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             return Result.failure(IllegalStateException("Database writes blocked during restore"))
@@ -1489,7 +1498,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         beforeSnapshot = snapshot,
                         afterSnapshot = null,
                         metadata = null,
-                        reason = reason
+                        reason = reason,
+                        correlationId = correlationId  // DDL-F876-10
                     )
                 )
                 expenseDao.delete(loadedExpense!!)

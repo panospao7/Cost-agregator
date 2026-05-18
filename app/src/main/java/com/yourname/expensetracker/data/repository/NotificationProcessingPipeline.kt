@@ -182,9 +182,9 @@ class NotificationProcessingPipeline @Inject constructor(
                         correlationId: String? = null): NotificationPipelineOutcome {
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.process")
         processMutex.withLock {
+            // DDL-F876-08: generate cid OUTSIDE try so the exception catch path reuses it
+            val cid = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
             return try {
-                // DDL-512-05: generate or reuse correlationId for full pipeline traceability
-                val cid = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
                 val outcome = processInternal(notification, storageNotification, initializeClassifier = true, correlationId = cid)
                 writePipelineDiagnosticEvent(outcome, notification.packageName, correlationId = cid)
                 outcome
@@ -192,7 +192,8 @@ class NotificationProcessingPipeline @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, e)
-                writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
+                // DDL-F876-08: use the same cid so exceptions are traceable from listener
+                writePipelineDiagnosticEvent(errorOutcome, notification.packageName, correlationId = cid)
                 errorOutcome
             }
         }
@@ -276,6 +277,8 @@ class NotificationProcessingPipeline @Inject constructor(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                     stage = "parse",
                     outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                    // DDL-F876-07: use listener correlationId so parse traces back to RECEIVED
+                    correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
                     metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                         .putHashed("packageName", notification.packageName)
                         .put("parserSource", parserSource)
@@ -516,7 +519,7 @@ class NotificationProcessingPipeline @Inject constructor(
             )
         }
 
-        runParsedPostCommitActions(notification, preDbContext, dbOutcome)
+        runParsedPostCommitActions(notification, preDbContext, dbOutcome, correlationId)
 
         return outcome
     }
@@ -1128,7 +1131,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
     private suspend fun runParsedPostCommitActions(
         notification: RawNotification,
         preDb: PreDbContext,
-        dbOutcome: ParsedDbOutcome
+        dbOutcome: ParsedDbOutcome,
+        correlationId: String? = null
     ) {
         when (dbOutcome) {
             ParsedDbOutcome.RawDuplicate,
@@ -1153,7 +1157,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 runPostCommitSafely("lifecycle side effects after auto-accept (expenseId=${dbOutcome.expenseId})") {
                     coordinator.dispatchPostCreationSideEffects(
                         dbOutcome.expenseId,
-                        ExpenseSource.NOTIFICATION_AUTO_ACCEPT
+                        ExpenseSource.NOTIFICATION_AUTO_ACCEPT,
+                        correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
                     )
                 }
 

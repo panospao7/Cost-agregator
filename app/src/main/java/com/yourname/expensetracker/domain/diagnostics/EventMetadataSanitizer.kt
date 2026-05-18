@@ -33,10 +33,8 @@ class EventMetadataSanitizer @Inject constructor() {
             "source", "sourcetype",
             "pipeline", "reason", "reasoncode",
             "sideeffect",
-            "packagehash", "packagenamehash",
-            "notificationkeyhash", "messageidhash",
-            "providerhash", "providertransactionidhash",
-            "externalhash", "matchedentityid", "duplicateentityid",
+            // note: keys ending in 'hash' are NOT listed here — they belong in SAFE_HASH_KEYS only
+            "matchedentityid", "duplicateentityid",
             "retryable", "causationid", "correlationid", "eventid",
             "isterminal", "delivered", "partial", "percent",
             "confidence", "parsersource",
@@ -46,11 +44,12 @@ class EventMetadataSanitizer @Inject constructor() {
             "errorcount", "warningcount"
         )
 
-        /** DDL-016-09: exact known hash keys — no arbitrary endsWith("hash") allowed */
+        /** DDL-016-09 / DDL-F876-15: exact known hash keys — no arbitrary endsWith("hash") allowed */
         private val SAFE_HASH_KEYS = setOf(
             "sourceidhash",
             "notificationkeyhash",
             "packagenamehash",
+            "packagehash",      // DDL-F876-15: moved from SAFE_EXACT_KEYS; must validate hex
             "messageidhash",
             "providerhash",
             "providertransactionidhash",
@@ -97,6 +96,12 @@ class EventMetadataSanitizer @Inject constructor() {
 
         // Exact safe keys are always allowed
         if (canonical in SAFE_EXACT_KEYS) return false
+
+        // DDL-F876-15: any key ending in 'hash' or 'idhash' must be in SAFE_HASH_KEYS
+        // If it's not an approved hash key, treat it as dangerous (unknown provenance)
+        if (canonical.endsWith("hash")) {
+            return canonical !in SAFE_HASH_KEYS
+        }
 
         // DDL-016-09 / DDL-A8-17: only exact known hash keys are safe — value must also be validated
         if (canonical in SAFE_HASH_KEYS) return false  // value validated separately in sanitizeValue
