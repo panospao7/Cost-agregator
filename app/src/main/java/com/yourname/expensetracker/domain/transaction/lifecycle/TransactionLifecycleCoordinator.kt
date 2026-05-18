@@ -1302,7 +1302,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         merchant: String,
         newCategoryId: Long,
         source: String = "USER_EDIT",
-        reason: String? = null
+        reason: String? = null,
+        correlationId: String? = null
     ) {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             throw IllegalStateException("Database writes blocked during restore")
@@ -1325,7 +1326,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     put("newCategoryId", newCategoryId)
                     put("affectedCount", affectedCount)
                 }.toString(),
-                reason = reason
+                reason = reason,
+                correlationId = correlationId  // DDL-C67-10
             ))
         }
 
@@ -1392,7 +1394,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         oldMerchant: String,
         newMerchant: String,
         source: String = "USER_EDIT",
-        reason: String? = null
+        reason: String? = null,
+        correlationId: String? = null
     ) {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             throw IllegalStateException("Database writes blocked during restore")
@@ -1429,7 +1432,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 dedupeKey = null, duplicateExpenseId = null,
                 beforeSnapshot = null, afterSnapshot = null,
                 metadata = metadata,
-                reason = reason
+                reason = reason,
+                correlationId = correlationId  // DDL-C67-10
             ))
         }
 
@@ -1537,7 +1541,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         expense: Expense,
         source: String = "USER_ACTION",
         reason: String? = null,
-        actor: String? = null
+        actor: String? = null,
+        correlationId: String? = null
     ): Result<Unit> {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
@@ -1561,7 +1566,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         beforeSnapshot = snapshot,
                         afterSnapshot = null,
                         metadata = null,
-                        reason = reason
+                        reason = reason,
+                        correlationId = correlationId  // DDL-C67-10
                     )
                 )
 

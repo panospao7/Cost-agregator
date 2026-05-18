@@ -245,7 +245,11 @@ class RestoreJournal @Inject constructor(
             json.put("events", serializeEvents(existingEvents + newEvent))
             val tmpFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
             tmpFile.writeText(json.toString(2))
-            tmpFile.renameTo(targetFile)
+            // DDL-C67-07: check rename result; fallback to copy+delete
+            if (!tmpFile.renameTo(targetFile)) {
+                targetFile.writeText(tmpFile.readText())
+                tmpFile.delete()
+            }
         } catch (e: Exception) {
             Timber.w(e, "RestoreJournal: failed to append event to ${targetFile.name} stage=$stage")
         }
@@ -428,7 +432,11 @@ class RestoreJournal @Inject constructor(
             }
             val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
             tmpFile.writeText(newJson.toString(2))
-            tmpFile.renameTo(journalFile)
+            // DDL-C67-07: check rename result
+            if (!tmpFile.renameTo(journalFile)) {
+                journalFile.writeText(tmpFile.readText())
+                tmpFile.delete()
+            }
             Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
         } catch (e: Exception) {
             Timber.e(e, "Failed to write restore journal")
@@ -496,7 +504,11 @@ class RestoreJournal @Inject constructor(
         try {
             val successFile = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
             successFile.delete()
-            journalFile.renameTo(successFile)
+            // DDL-C67-07: check rename; fallback to copy+delete
+            if (!journalFile.renameTo(successFile)) {
+                journalFile.copyTo(successFile, overwrite = true)
+                journalFile.delete()
+            }
             Timber.d("Restore journal preserved as %s", SUCCESS_JOURNAL_FILENAME)
         } catch (e: Exception) {
             Timber.w(e, "Failed to preserve success journal; deleting instead")
@@ -527,7 +539,11 @@ class RestoreJournal @Inject constructor(
         if (!journalFile.exists()) return
         val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
         try {
-            journalFile.renameTo(failureFile)
+            // DDL-C67-07: check rename; fallback to copy+delete
+            if (!journalFile.renameTo(failureFile)) {
+                journalFile.copyTo(failureFile, overwrite = true)
+                journalFile.delete()
+            }
             Timber.d("Restore journal preserved as %s", FAILURE_JOURNAL_FILENAME)
         } catch (e: Exception) {
             Timber.e(e, "Failed to preserve restore journal as %s", FAILURE_JOURNAL_FILENAME)

@@ -91,6 +91,10 @@ class EventMetadataSanitizer @Inject constructor() {
     fun canonicalizeKey(key: String): String =
         key.lowercase().replace(Regex("[^a-z0-9]"), "")
 
+    /** DDL-C67-11: check if a key is an approved hash key (for putHashed validation). */
+    fun isApprovedHashKey(key: String): Boolean =
+        canonicalizeKey(key) in SAFE_HASH_KEYS
+
     fun isDangerousKey(key: String): Boolean {
         val canonical = canonicalizeKey(key)
 

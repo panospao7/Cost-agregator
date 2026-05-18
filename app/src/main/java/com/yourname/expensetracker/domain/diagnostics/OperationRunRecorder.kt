@@ -164,9 +164,32 @@ class RoomOperationRunRecorder @Inject constructor(
                         severity = EventSeverity.WARNING.name,
                         reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name,
                         occurredAt = timeProvider.now(),
-                        isTerminal = true
+                        isTerminal = true,
+                        eventId = CorrelationIds.newId()  // DDL-C67-08
                     ))
-                }.onFailure { Timber.w(it, "Failed to write stale recovery event for run ${run.id}") }
+                }.onFailure { error ->
+                    Timber.w(error, "Failed to write stale recovery event for run ${run.id}")
+                    // DDL-C67-08: durable safe-sink diagnostic for event insert failure
+                    runCatching {
+                        safeSink.recordDiagnosticEvent(
+                            event = DiagnosticEvent(
+                                pipeline = AppPipeline.BACKUP_RESTORE,
+                                stage = "stale_recovery_event_write_failed",
+                                outcome = EventOutcome.SIDE_EFFECT_FAILED,
+                                severity = EventSeverity.WARNING,
+                                reasonCode = DiagnosticReasonCode.SIDE_EFFECT_EXCEPTION,
+                                correlationId = run.correlationId,
+                                metadata = SafeEventMetadata.builder()
+                                    .put("operationType", run.operationType)
+                                    .put("operationRunId", run.id)
+                                    .build(),
+                                exception = error,
+                                isTerminal = false
+                            ),
+                            mode = restoreMaintenanceMode.currentMode()
+                        )
+                    }
+                }
             }
         }
         if (stale.isNotEmpty()) Timber.w("Recovered ${stale.size} stale RUNNING operation run(s) as STALE_ABORTED")

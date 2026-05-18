@@ -117,6 +117,12 @@ class SafeSinkOperationRunHandle(
     private val _isTerminal = java.util.concurrent.atomic.AtomicBoolean(false)
     override val isTerminal: Boolean get() = _isTerminal.get()
 
+    // DDL-C67-09: accumulate counters for terminal summary
+    private val _processed = java.util.concurrent.atomic.AtomicInteger(0)
+    private val _succeeded = java.util.concurrent.atomic.AtomicInteger(0)
+    private val _failed = java.util.concurrent.atomic.AtomicInteger(0)
+    private val _skipped = java.util.concurrent.atomic.AtomicInteger(0)
+
     override suspend fun event(
         stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode?,
         severity: EventSeverity, metadata: SafeEventMetadata,
@@ -134,7 +140,15 @@ class SafeSinkOperationRunHandle(
         reasonCode: DiagnosticReasonCode? = null, exception: Throwable? = null
     ) {
         if (!_isTerminal.compareAndSet(false, true)) return
-        emitSafeEvent(stage, outcome, reasonCode, severity, SafeEventMetadata.empty(), exception, isTerminal = true)
+        // DDL-C67-09: include accumulated counters in terminal metadata
+        val meta = SafeEventMetadata.builder()
+            .put("operationType", operationType)
+            .put("rowsProcessed", _processed.get())
+            .put("rowsSucceeded", _succeeded.get())
+            .put("rowsFailed", _failed.get())
+            .put("rowsSkipped", _skipped.get())
+            .build()
+        emitSafeEvent(stage, outcome, reasonCode, severity, meta, exception, isTerminal = true)
     }
 
     /** Lower-level emission that does NOT touch _isTerminal state. */
@@ -161,7 +175,13 @@ class SafeSinkOperationRunHandle(
         } catch (_: Exception) {}
     }
 
-    override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) = Unit
+    override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) {
+        // DDL-C67-09: accumulate counts for terminal summary
+        _processed.addAndGet(processed)
+        _succeeded.addAndGet(succeeded)
+        _failed.addAndGet(failed)
+        _skipped.addAndGet(skipped)
+    }
 
     override suspend fun success() = terminalOnce("SUCCESS", EventOutcome.COMPLETED)
     override suspend fun partialSuccess(summary: String?) = terminalOnce("PARTIAL_SUCCESS", EventOutcome.COMPLETED)

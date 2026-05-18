@@ -184,6 +184,30 @@ class DDL512RegressionTest {
     }
 
     @Test
+    fun `DDL-C67-01 success emits exactly one terminal event`() = runTest {
+        val emitted = mutableListOf<DiagnosticEvent>()
+        val handle = makeTrackingHandle(emitted)
+
+        handle.success()
+
+        val terminalEvents = emitted.filter { it.isTerminal }
+        assertEquals("success() must emit exactly one terminal event", 1, terminalEvents.size)
+        assertEquals(EventOutcome.COMPLETED, terminalEvents[0].outcome)
+    }
+
+    @Test
+    fun `DDL-C67-01 failedFinal emits exactly one terminal event`() = runTest {
+        val emitted = mutableListOf<DiagnosticEvent>()
+        val handle = makeTrackingHandle(emitted)
+
+        handle.failedFinal("test reason", null)
+
+        val terminalEvents = emitted.filter { it.isTerminal }
+        assertEquals("failedFinal() must emit exactly one terminal event", 1, terminalEvents.size)
+        assertEquals(EventOutcome.FAILED_FINAL, terminalEvents[0].outcome)
+    }
+
+    @Test
     fun `DDL-F876-04 direct terminal then cancelled produces one terminal event`() = runTest {
         val emitted = mutableListOf<DiagnosticEvent>()
         val handle = makeTrackingHandle(emitted)
@@ -371,7 +395,7 @@ class DDL512RegressionTest {
 
     private fun makeTrackingHandle(emitted: MutableList<DiagnosticEvent>): TrackingHandle = TrackingHandle(emitted)
 
-    /** JVM-safe test double that mirrors SafeSinkOperationRunHandle terminal-once policy (DDL-F876-04). */
+    /** JVM-safe test double that mirrors SafeSinkOperationRunHandle terminal-once policy (DDL-C67-01 fixed). */
     private class TrackingHandle(private val emitted: MutableList<DiagnosticEvent>) : OperationRunHandle {
         override val runId: Long = 0L
         override val correlationId: String = CorrelationIds.newId()
@@ -383,13 +407,9 @@ class DDL512RegressionTest {
             severity: EventSeverity, metadata: SafeEventMetadata,
             entityType: String?, entityId: Long?, exception: Throwable?, isTerminal: Boolean
         ) {
-            // DDL-F876-04: direct terminal event must mark handle terminal — skip if already terminal
+            // DDL-C67-01 fixed: direct terminal event marks handle terminal; skip if already terminal
             if (isTerminal && !_isTerminal.compareAndSet(false, true)) return
-            emitted.add(DiagnosticEvent(
-                pipeline = AppPipeline.BACKUP_RESTORE, stage = stage,
-                outcome = outcome, reasonCode = reasonCode, correlationId = correlationId,
-                isTerminal = isTerminal
-            ))
+            emitEvent(stage, outcome, reasonCode, isTerminal)
         }
 
         override suspend fun increment(processed: Int, succeeded: Int, failed: Int, skipped: Int, warnings: Int, errors: Int) = Unit
@@ -398,19 +418,23 @@ class DDL512RegressionTest {
         override suspend fun partialSuccess(summary: String?) = terminalOnce("PARTIAL_SUCCESS", EventOutcome.COMPLETED)
         override suspend fun failedFinal(reason: String, error: Throwable?) = terminalOnce("FAILED_FINAL", EventOutcome.FAILED_FINAL)
         override suspend fun failedRetryable(reason: String, error: Throwable?) = terminalOnce("FAILED_RETRYABLE", EventOutcome.FAILED_RETRYABLE)
-        // DDL-F876-05: preserve caller-supplied reason code
         override suspend fun cancelled(reason: String?) {
             val rc = reason?.let { runCatching { DiagnosticReasonCode.valueOf(it) }.getOrNull() }
                 ?: DiagnosticReasonCode.CANCELLED_BY_SYSTEM
             terminalOnce("CANCELLED", EventOutcome.CANCELLED, rc)
         }
 
+        // DDL-C67-01 fix: terminalOnce calls emitEvent directly, NOT event()
         private suspend fun terminalOnce(stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode? = null) {
             if (!_isTerminal.compareAndSet(false, true)) return
+            emitEvent(stage, outcome, reasonCode, isTerminal = true)
+        }
+
+        private fun emitEvent(stage: String, outcome: EventOutcome, reasonCode: DiagnosticReasonCode?, isTerminal: Boolean) {
             emitted.add(DiagnosticEvent(
                 pipeline = AppPipeline.BACKUP_RESTORE, stage = stage,
                 outcome = outcome, reasonCode = reasonCode, correlationId = correlationId,
-                isTerminal = true
+                isTerminal = isTerminal
             ))
         }
     }

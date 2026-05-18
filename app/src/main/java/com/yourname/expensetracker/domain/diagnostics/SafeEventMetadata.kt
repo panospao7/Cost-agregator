@@ -49,6 +49,12 @@ class SafeEventMetadata private constructor(
         /** Store a SHA-256 hash prefix of an external identifier. */
         fun putHashed(key: String, value: String?): Builder {
             if (value == null) return this
+            // DDL-C67-11: reject unapproved hash-like keys at construction time
+            val canonical = sanitizer.canonicalizeKey(key)
+            if (canonical.endsWith("hash") && !sanitizer.isApprovedHashKey(key)) {
+                map[key] = "[REDACTED]"
+                return this
+            }
             map[key] = value.sha256Prefix(16)
             return this
         }
