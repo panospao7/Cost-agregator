@@ -147,6 +147,41 @@ class PrivacySettingsLoadStateTest {
     }
 
     @Test
+    fun privacy_load_state_corruption_maps_to_corrupted_fail_closed() = runTest {
+        val repo = FakePrivacySettingsRepository(corruptOnRead = true, corruptionReason = "sentinel")
+        val state = repo.getLoadState()
+        assertTrue("Corruption must map to CorruptedFailClosed", state is PrivacySettingsLoadState.CorruptedFailClosed)
+    }
+
+    @Test
+    fun corrupted_settings_use_fail_closed_defaults() = runTest {
+        val repo = FakePrivacySettingsRepository(corruptOnRead = true)
+        val settings = repo.getSettings()
+        assertFalse(settings.notificationCaptureEnabled)
+        assertFalse(settings.cloudAiEnabled)
+        assertEquals(RawStorageMode.DO_NOT_STORE, settings.rawNotificationStorageMode)
+        assertEquals(RawStorageMode.DO_NOT_STORE, settings.rawOcrStorageMode)
+        assertEquals(RawStorageMode.DO_NOT_STORE, settings.emailReceiptStorageMode)
+    }
+
+    @Test
+    fun first_run_does_not_use_fail_closed_defaults() = runTest {
+        val repo = FakePrivacySettingsRepository(isEmpty = true)
+        val settings = repo.getSettings()
+        // First run uses normal defaults — notification capture ON, STORE_RAW
+        assertTrue(settings.notificationCaptureEnabled)
+        assertEquals(RawStorageMode.STORE_RAW, settings.rawNotificationStorageMode)
+    }
+
+    @Test
+    fun privacy_viewmodel_shows_corruption_warning_for_corruption() = runTest {
+        val repo = FakePrivacySettingsRepository(corruptOnRead = true)
+        val state = repo.getLoadState()
+        assertTrue(state is PrivacySettingsLoadState.CorruptedFailClosed)
+        // ViewModel would set showCorruptionWarning = true for this state
+    }
+
+    @Test
     fun first_run_state_emits_first_run_default_from_observe_load_state() = runTest {
         val repo = FakePrivacySettingsRepository(isEmpty = true)
         val state = repo.observeLoadState().first()

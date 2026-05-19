@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-verify_privacy_boundaries.py — PR10 Static Privacy Guards
+verify_privacy_boundaries.py — Static Privacy Guards
 
 Scans the Kotlin source tree for privacy boundary violations.
 
@@ -20,6 +20,8 @@ Guard rules enforced:
     G6  No PendingReview creation with raw notification/email/OCR body without sanitizer.
     G7  No debug export of rawOcrText/rawNotification/email body without PrivacyGate(DEBUG_RAW_EXPORT).
     G8  encryptedBackupEnabled=false must NOT allow raw export (logic guard, checked for pattern).
+    G9  PrivacySettingsRepositoryImpl corruption handler must use mutablePreferencesOf sentinel.
+    G10 SafePrivacyMetadata.put() must not store values without sanitization (value-safety check).
 """
 
 import os
@@ -203,6 +205,42 @@ def rule_g8_encrypted_disabled_implies_raw(filepath: str, lines: List[str]) -> L
     return violations
 
 
+def rule_g9_corruption_handler_uses_sentinel(filepath: str, lines: List[str]) -> List[Violation]:
+    """G9: PrivacySettingsRepositoryImpl corruption handler must use mutablePreferencesOf sentinel."""
+    violations = []
+    if "PrivacySettingsRepositoryImpl" not in filepath:
+        return violations
+    content = "".join(lines)
+    # Must use mutablePreferencesOf with the CORRUPTED sentinel
+    if "ReplaceFileCorruptionHandler" in content:
+        if "mutablePreferencesOf" not in content or "CORRUPTED" not in content:
+            violations.append(Violation(
+                rule="G9",
+                file=filepath,
+                line_no=1,
+                line="",
+                message="PrivacySettingsRepositoryImpl corruption handler must use mutablePreferencesOf(LOAD_STATE_KEY to CORRUPTED)"
+            ))
+    return violations
+
+
+def rule_g10_safe_metadata_value_sanitization(filepath: str, lines: List[str]) -> List[Violation]:
+    """G10: SafePrivacyMetadata must have value-level sanitization (SENSITIVE_VALUE_PATTERNS)."""
+    violations = []
+    if "SafePrivacyMetadata" not in filepath:
+        return violations
+    content = "".join(lines)
+    if "SENSITIVE_VALUE_PATTERNS" not in content:
+        violations.append(Violation(
+            rule="G10",
+            file=filepath,
+            line_no=1,
+            line="",
+            message="SafePrivacyMetadata must define SENSITIVE_VALUE_PATTERNS for value-level sanitization"
+        ))
+    return violations
+
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 ALL_RULES = [
@@ -213,6 +251,8 @@ ALL_RULES = [
     rule_g5b_hashcode_in_sanitizer,
     rule_g7_raw_ocr_debug_export,
     rule_g8_encrypted_disabled_implies_raw,
+    rule_g9_corruption_handler_uses_sentinel,
+    rule_g10_safe_metadata_value_sanitization,
 ]
 
 
