@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -12,6 +15,8 @@ import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -35,51 +40,63 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 @Singleton
-// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+// PRIV-441-01: Now uses CloudPayloadPolicy for all payload preparation — no direct redactBeforeCloud access
 class CloudDashboardBriefingService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val promptFormatter: DashboardBriefingPromptFormatter,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val policyResolver: EffectiveCloudAiPolicyResolver
+    private val cloudPayloadPolicy: CloudPayloadPolicy
 ) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        fun noOpGate() = object : PrivacyGate {
+        fun failClosedGate() = object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         }
     }
 
-    constructor(secureKeyStorage: SecureKeyStorage) : this(
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage = secureKeyStorage,
         client = OkHttpClient(),
         promptFormatter = DashboardBriefingPromptFormatter(),
         aiSettingsRepository = null,
-        privacyGate = noOpGate(),
-        policyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        privacyGate = failClosedGate(),
+        cloudPayloadPolicy = DefaultCloudPayloadPolicy(
+            EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+            DefaultCloudPayloadRedactor()
+        )
     )
 
-    constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
         secureKeyStorage = secureKeyStorage,
         client = client,
         promptFormatter = DashboardBriefingPromptFormatter(),
         aiSettingsRepository = null,
-        privacyGate = noOpGate(),
-        policyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        privacyGate = failClosedGate(),
+        cloudPayloadPolicy = DefaultCloudPayloadPolicy(
+            EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+            DefaultCloudPayloadRedactor()
+        )
     )
 
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
         secureKeyStorage = secureKeyStorage,
         client = OkHttpClient(),
         promptFormatter = DashboardBriefingPromptFormatter(),
         aiSettingsRepository = null,
-        privacyGate = noOpGate(),
-        policyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        privacyGate = failClosedGate(),
+        cloudPayloadPolicy = DefaultCloudPayloadPolicy(
+            EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+            DefaultCloudPayloadRedactor()
+        )
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -114,14 +131,11 @@ class CloudDashboardBriefingService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
         }
 
-        val shouldRedact = policyResolver.resolve().redactBeforeCloud
-
         // HIGH-13 FIX: Remove API key length logging (information disclosure)
         Timber.d("CloudDashboardBriefingService: API key configured: ${apiKey.isNotBlank()}")
 
-        val requestBody = buildRequestBody(input, shouldRedact)
-        Timber.d("CloudDashboardBriefingService: Request body built, length=${requestBody.length}")
-        
+        val requestBody = buildRequestBody(input, cloudPayloadPolicy)
+        Timber.d("CloudDashboardBriefingService: Request body built, length=${requestBody.length}")        
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL}:generateContent"
         Timber.d("CloudDashboardBriefingService: URL: ${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL}:generateContent")
         
@@ -234,8 +248,10 @@ class CloudDashboardBriefingService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: DashboardBriefingInput, shouldRedact: Boolean): String {
-        val prompt = promptFormatter.buildPrompt(input, shouldRedact)
+    private suspend fun buildRequestBody(input: DashboardBriefingInput, policy: CloudPayloadPolicy): String {
+        val rawPrompt = promptFormatter.buildPrompt(input, shouldRedact = false)
+        val prepared = policy.prepareText(CloudPayloadPurpose.DASHBOARD_BRIEFING, rawPrompt)
+        val prompt = prepared.text
         return JSONObject().apply {
             put(
                 "contents",

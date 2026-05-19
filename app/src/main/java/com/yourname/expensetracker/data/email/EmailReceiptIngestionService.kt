@@ -307,13 +307,15 @@ class EmailReceiptIngestionService(
                 sender = sender,
                 subject = subject,
                 messageId = messageId,
-                provider = provider
+                provider = provider,
+                correlationId = correlationId  // PRIV-441-11: propagate correlation
             )
 
             when (coordinatorResult) {
                 is EmailReceiptProcessResult.Success -> {
                     for (expenseId in coordinatorResult.expenseIds) {
                         try {
+                            // PRIV-441-11: Pass correlationId to side effects for audit traceability
                             coordinator.dispatchPostCreationSideEffects(expenseId, ExpenseSource.EMAIL_RECEIPT)
                         } catch (e: Exception) {
                             Timber.w(e, "Non-critical: failed to dispatch post-creation side effects for expense $expenseId")

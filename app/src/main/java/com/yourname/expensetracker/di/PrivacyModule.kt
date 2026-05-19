@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy
 import com.yourname.expensetracker.domain.privacy.ExportPrivacyGate
 import dagger.Binds
 import dagger.Module
@@ -70,9 +71,11 @@ abstract class PrivacyModule {
                 auditLogger = auditLogger,
                 isDebugBuild = com.yourname.expensetracker.BuildConfig.DEBUG
             )
+            // PRIV-441-03: Pass gateHandledCapabilities so composite fails closed for unhandled sensitive capabilities
             return CompositePrivacyGate(
-                listOf(notificationGate, locationGate, cloudAiGate, backupGate, exportGate),
-                auditLogger
+                gates = listOf(notificationGate, locationGate, cloudAiGate, backupGate, exportGate),
+                auditLogger = auditLogger,
+                gateHandledCapabilities = PrivacyCapabilityHandlingPolicy.gateHandledCapabilities
             )
         }
 

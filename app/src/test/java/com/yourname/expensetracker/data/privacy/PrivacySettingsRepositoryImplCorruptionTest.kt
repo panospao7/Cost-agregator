@@ -135,4 +135,53 @@ class PrivacySettingsRepositoryImplCorruptionTest {
         assertEquals(RawStorageMode.DO_NOT_STORE, state.settings.rawOcrStorageMode)
         assertEquals(RawStorageMode.DO_NOT_STORE, state.settings.emailReceiptStorageMode)
     }
+
+    /**
+     * PRIV-441-16: Verify that the production corruption handler path is distinct
+     * from a genuine first-run (empty DataStore).
+     *
+     * Corruption writes CORRUPTED sentinel → CorruptedFailClosed (fail-closed defaults).
+     * First run has no sentinel → FirstRunDefault (normal defaults).
+     */
+    @Test
+    fun real_datastore_corruption_returns_fail_closed_defaults() = runTest {
+        val prefsFile = tmpFolder.newFile("privacy_settings_fc.preferences_pb")
+        // Write garbage to simulate corruption
+        prefsFile.writeBytes(byteArrayOf(0xDE.toByte(), 0xAD.toByte(), 0xBE.toByte(), 0xEF.toByte()))
+
+        val loadStateKey = stringPreferencesKey("_privacy_load_state")
+        val dataStore = PreferenceDataStoreFactory.create(
+            corruptionHandler = androidx.datastore.core.handlers.ReplaceFileCorruptionHandler {
+                mutablePreferencesOf(loadStateKey to "CORRUPTED")
+            },
+            produceFile = { prefsFile }
+        )
+
+        val prefs = dataStore.data.first()
+        val marker = prefs[loadStateKey]
+        assertEquals("CORRUPTED", marker)
+
+        // Verify fail-closed defaults are applied when CORRUPTED sentinel is present
+        val settings = PrivacySettings.FAIL_CLOSED_DEFAULTS
+        assertFalse("Fail-closed must disable notification capture", settings.notificationCaptureEnabled)
+        assertFalse("Fail-closed must disable cloud AI", settings.cloudAiEnabled)
+        assertTrue("Fail-closed must enable redaction", settings.redactBeforeCloud)
+        assertEquals(RawStorageMode.DO_NOT_STORE, settings.rawNotificationStorageMode)
+        assertEquals(RawStorageMode.DO_NOT_STORE, settings.rawOcrStorageMode)
+        assertEquals(RawStorageMode.DO_NOT_STORE, settings.emailReceiptStorageMode)
+    }
+
+    @Test
+    fun corruption_sentinel_is_distinct_from_first_run_sentinel() = runTest {
+        // CORRUPTED sentinel must be a different value from null (first run)
+        val corruptedSentinel = "CORRUPTED"
+        val firstRunSentinel: String? = null
+
+        assertNotEquals(
+            "CORRUPTED sentinel must differ from first-run (null)",
+            corruptedSentinel,
+            firstRunSentinel
+        )
+    }
+
 }

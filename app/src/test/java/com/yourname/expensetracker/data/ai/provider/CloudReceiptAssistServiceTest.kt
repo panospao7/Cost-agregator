@@ -224,8 +224,10 @@ class CloudReceiptAssistServiceTest {
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
             privacyGate = mockk<PrivacyGate>(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedForTest(settingsRepository)
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedForTest(settingsRepository),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = kotlinx.coroutines.runBlocking {

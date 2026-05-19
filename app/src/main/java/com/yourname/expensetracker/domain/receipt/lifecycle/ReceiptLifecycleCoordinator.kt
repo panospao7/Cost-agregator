@@ -567,7 +567,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         sender: String,
         subject: String,
         messageId: String,
-        provider: String
+        provider: String,
+        correlationId: String? = null
     ): EmailReceiptProcessResult {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null)
@@ -575,18 +576,17 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         }
 
         // Check messageId dedup
-        // P3-CURRENT-010: Query using the same sanitization applied when storing,
-        // so the comparison is consistent regardless of storage mode.
+        // PRIV-441-09: Use the hash from emailData.messageId (already hashed by ingestion service)
+        // for dedup in all modes — never use raw messageId for persistence lookup
+        val messageIdHash = emailData.messageId  // already HMAC hash from EmailReceiptIngestionService
         val settings = privacySettingsRepository.getSettings()
         val emailStorageMode = settings.emailReceiptStorageMode
-        if (messageId.isNotBlank()) {
-            val sanitizedMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailStorageMode)
-            if (sanitizedMessageId != null && sanitizedMessageId != "[REDACTED]") {
-                val existing = scannedReceiptDao.getBySourceFingerprint(sanitizedMessageId)
-                if (existing != null) {
-                    emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "messageId_duplicate", "ScannedReceipt", existing.id)
-                    return EmailReceiptProcessResult.Duplicate(existing.id)
-                }
+        if (messageIdHash.isNotBlank()) {
+            // Look up by hash in all modes — hash is always stored
+            val existing = scannedReceiptDao.getBySourceFingerprint(messageIdHash)
+            if (existing != null) {
+                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "messageId_hash_duplicate", "ScannedReceipt", existing.id)
+                return EmailReceiptProcessResult.Duplicate(existing.id)
             }
         }
         // Check fingerprint dedup
@@ -637,7 +637,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 parsedTotal = emailData.amount,
                 parsedMerchant = emailData.merchant,
                 parsedDate = emailData.date,
-                parsedItems = emailData.items,
+                // PRIV-441-10: Sanitize parsed items by storage mode
+                parsedItems = when (emailStorageMode) {
+                    RawStorageMode.STORE_RAW -> emailData.items
+                    RawStorageMode.STORE_REDACTED -> emailData.items?.let { "[REDACTED_ITEMS]" }
+                    RawStorageMode.STORE_METADATA_ONLY, RawStorageMode.DO_NOT_STORE -> null
+                },
                 parsedTaxAmount = null,
                 currency = emailData.currency ?: homeCurrency,
                 confidence = 0.7f,
@@ -645,7 +650,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
                 processingStatus = if (emailData.merchant != null) ReceiptProcessingStatus.PARSED.name
                                    else ReceiptProcessingStatus.CAPTURED.name,
-                sourceFingerprint = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailStorageMode) ?: "",
+                // PRIV-441-09: Use messageIdHash as sourceFingerprint — never empty when hash available
+                sourceFingerprint = messageIdHash.ifBlank { fingerprint },
                 textFingerprint = emailTextFingerprint,
                 semanticFingerprint = emailSemanticFingerprint,
                 createdAt = now,
@@ -661,7 +667,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 receiptId = savedId,
                 emailSender = sanitizedSender,
                 emailSubject = sanitizedSubject,
-                emailMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailStorageMode),
+                // PRIV-441-09: Store hash in all modes — never raw messageId in restricted modes
+                emailMessageId = when (emailStorageMode) {
+                    RawStorageMode.STORE_RAW -> messageId  // raw only in STORE_RAW
+                    else -> messageIdHash.ifBlank { null }  // hash for dedup in all other modes
+                },
                 parsedAt = now,
                 provider = provider,
                 confidence = 1.0,
@@ -705,7 +715,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     source = ExpenseSource.EMAIL_RECEIPT,
                     notes = "Email receipt from ${provider.ifBlank { "unknown" }}",
                     scannedReceiptId = savedId,
-                    deduplicationMode = DeduplicationMode.STANDARD
+                    deduplicationMode = DeduplicationMode.STANDARD,
+                    correlationId = correlationId  // PRIV-441-11: propagate email correlation
                 )
                 @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
                 when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {

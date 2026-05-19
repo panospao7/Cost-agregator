@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.domain.privacy.RetentionTarget
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
+import com.yourname.expensetracker.domain.privacy.RetentionRegistry
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -47,7 +48,8 @@ class DataRetentionWorker @AssistedInject constructor(
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val appDatabase: AppDatabase,
     private val timeProvider: TimeProvider,
-    private val executionGuard: WorkerExecutionGuard
+    private val executionGuard: WorkerExecutionGuard,
+    private val retentionRegistry: RetentionRegistry
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -66,57 +68,30 @@ class DataRetentionWorker @AssistedInject constructor(
             val ocrCutoff = now - TimeUnit.DAYS.toMillis(settings.rawOcrRetentionDays.toLong())
             val emailCutoff = now - TimeUnit.DAYS.toMillis(30)
 
-            val notificationDao = appDatabase.rawNotificationDao()
-            val receiptDao = appDatabase.scannedReceiptDao()
-            val auditDao = appDatabase.privacyAuditDao()
-            val aiArtifactDao = appDatabase.aiArtifactDao()
-            val emailReceiptDao = appDatabase.emailReceiptDao()
-
-            // PR9: RetentionTarget registry — each target is named and reports per-target counts
-            val targets: List<RetentionTarget> = listOf(
-                object : RetentionTarget {
-                    override val name = "raw_notifications"
-                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
-                        val count = purgeRawNotifications(notificationDao, cutoffMs, now)
-                        RetentionPurgeResult(name, count, true)
-                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
-                },
-                object : RetentionTarget {
-                    override val name = "scanned_receipts.rawOcrText"
-                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
-                        val count = purgeRawOcrText(receiptDao, cutoffMs, now)
-                        RetentionPurgeResult(name, count, true)
-                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
-                },
-                object : RetentionTarget {
-                    override val name = "ai_artifacts"
-                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
-                        aiArtifactDao.deleteExpired(cutoffMs)
-                        RetentionPurgeResult(name, 0, true)  // deleteExpired doesn't return count
-                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
-                },
-                object : RetentionTarget {
-                    override val name = "email_receipt_sources"
-                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
-                        emailReceiptDao.deleteOlderThan(cutoffMs)
-                        RetentionPurgeResult(name, 0, true)
-                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
-                }
-            )
-
+            // PRIV-441-12: Use injectable RetentionRegistry instead of inline list
+            val allTargets = retentionRegistry.allTargets()
             val results = mutableListOf<RetentionPurgeResult>()
 
             // Notification target uses its own cutoff
             executionGuard.checkpoint("data_retention_notifications")
-            results += targets[0].purge(notificationCutoff)
+            allTargets.firstOrNull { it.name == "raw_notifications" }?.let {
+                results += it.purge(notificationCutoff)
+            }
 
             // OCR target uses its own cutoff
             executionGuard.checkpoint("data_retention_ocr")
-            results += targets[1].purge(ocrCutoff)
+            allTargets.firstOrNull { it.name == "scanned_receipts.rawOcrText" }?.let {
+                results += it.purge(ocrCutoff)
+            }
 
-            // AI artifacts and email use now as their TTL-based cutoff
-            results += targets[2].purge(now)
-            results += targets[3].purge(emailCutoff)
+            // All other targets use now as their TTL-based cutoff
+            for (target in allTargets) {
+                if (target.name != "raw_notifications" && target.name != "scanned_receipts.rawOcrText") {
+                    results += target.purge(now)
+                }
+            }
+
+            val auditDao = appDatabase.privacyAuditDao()
 
             // Log per-target counts and audit successes
             for (result in results) {

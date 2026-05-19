@@ -1,13 +1,15 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
@@ -43,42 +45,51 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @Singleton
-// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+// PRIV-441-01: Now uses CloudPayloadPolicy for all payload preparation — no direct redactBeforeCloud access
 class CloudReceiptAssistService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor,
-    private val policyResolver: EffectiveCloudAiPolicyResolver
+    private val cloudPayloadPolicy: CloudPayloadPolicy
 ) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
 
-    // Secondary constructor for tests (fail-closed redaction by default)
-    constructor(
+    // Secondary constructor for tests — fail-closed gate, no allow-all
+    @VisibleForTesting
+    internal constructor(
         aiSettingsRepository: AiSettingsRepository,
         secureKeyStorage: SecureKeyStorage
-    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient(),
+    ) : this(
+        aiSettingsRepository, secureKeyStorage, OkHttpClient(),
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadRedactor(),
-        EffectiveCloudAiPolicyResolver.failClosedForTest(aiSettingsRepository))
+        DefaultCloudPayloadPolicy(
+            EffectiveCloudAiPolicyResolver.failClosedForTest(aiSettingsRepository),
+            DefaultCloudPayloadRedactor()
+        )
+    )
 
-    // Secondary constructor for testing with API key override
-    constructor(
+    // Secondary constructor for testing with API key override — fail-closed gate
+    @VisibleForTesting
+    internal constructor(
         aiSettingsRepository: AiSettingsRepository,
         secureKeyStorage: SecureKeyStorage,
         apiKeyOverride: String
-    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient(),
+    ) : this(
+        aiSettingsRepository, secureKeyStorage, OkHttpClient(),
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadRedactor(),
-        EffectiveCloudAiPolicyResolver.failClosedForTest(aiSettingsRepository)) {
+        DefaultCloudPayloadPolicy(
+            EffectiveCloudAiPolicyResolver.failClosedForTest(aiSettingsRepository),
+            DefaultCloudPayloadRedactor()
+        )
+    ) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -109,9 +120,13 @@ class CloudReceiptAssistService @Inject constructor(
 
         val settings = aiSettingsRepository.settings().first()
 
+        // PRIV-441-01: Use CloudPayloadPolicy — no direct redactBeforeCloud access
         val allowImage = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
-        val shouldRedact = policyResolver.resolve().redactBeforeCloud
-        val requestPayload = buildRequestPayload(input, allowImage, shouldRedact)
+        val prepared = cloudPayloadPolicy.prepareText(
+            purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
+            rawText = input.rawOcrText
+        )
+        val requestPayload = buildRequestPayloadFromPrepared(input, allowImage, prepared)
         val requestBody = requestPayload.jsonBody
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
@@ -240,12 +255,9 @@ class CloudReceiptAssistService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason()))
         }
 
-        // PR6: Redaction authority comes from EffectiveCloudAiPolicyResolver, not AiSettings directly
-        val safePrompt = if (policyResolver.resolve().redactBeforeCloud) {
-            redactor.redactText(prompt, CloudPayloadPurpose.RECEIPT_ASSIST).text
-        } else {
-            prompt
-        }
+        // PRIV-441-01: Use CloudPayloadPolicy for bank statement validation — no direct redactBeforeCloud
+        val prepared = cloudPayloadPolicy.prepareBankStatementValidation(prompt)
+        val safePrompt = prepared.text
 
         val parts = JSONArray().put(JSONObject().put("text", safePrompt))
         val requestJson = JSONObject().apply {
@@ -344,12 +356,34 @@ class CloudReceiptAssistService @Inject constructor(
         }
     }
 
-    internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String =
-        buildRequestPayload(input, allowImage, shouldRedact = input.redactBeforeCloud).jsonBody
+    internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String {
+        val prepared = com.yourname.expensetracker.domain.privacy.PreparedCloudPayload(
+            purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
+            text = input.rawOcrText,
+            redactionApplied = false,
+            fieldsRedacted = emptySet(),
+            payloadHash = "",
+            rawTextIncluded = true,
+            rawImageIncluded = false
+        )
+        return buildRequestPayloadFromPrepared(input, allowImage, prepared).jsonBody
+    }
 
-    private fun buildRequestPayload(input: ReceiptAssistInput, allowImage: Boolean, shouldRedact: Boolean): RequestPayload {
-        val inlineImagePart = buildImageInlineData(input, allowImage, shouldRedact)
-        val prompt = buildPrompt(input, hasAttachedImage = inlineImagePart != null, shouldRedact = shouldRedact)
+    private fun buildRequestPayloadFromPrepared(
+        input: ReceiptAssistInput,
+        allowImage: Boolean,
+        prepared: com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
+    ): RequestPayload {
+        // Image upload only allowed when prepared payload says raw image is allowed
+        val inlineImagePart = if (allowImage && !prepared.redactionApplied) {
+            buildImageInlineData(input)
+        } else {
+            if (allowImage && prepared.redactionApplied) {
+                Timber.d("CloudReceiptAssistService: suppressing cloud image upload because redaction is required by policy")
+            }
+            null
+        }
+        val prompt = buildPrompt(input, hasAttachedImage = inlineImagePart != null, safeOcrText = prepared.text)
         val parts = JSONArray().put(JSONObject().put("text", prompt))
         inlineImagePart?.let(parts::put)
 
@@ -357,9 +391,7 @@ class CloudReceiptAssistService @Inject constructor(
             put(
                 "contents",
                 JSONArray().put(
-                    JSONObject().put(
-                        "parts", parts
-                    )
+                    JSONObject().put("parts", parts)
                 )
             )
             put(
@@ -384,24 +416,10 @@ class CloudReceiptAssistService @Inject constructor(
         )
     }
 
-    private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean, shouldRedact: Boolean): String {
-        val safeParsedMerchant = if (shouldRedact) {
-            input.parsedMerchant?.let { redactor.redactMerchant(it).value ?: "Unknown" }
-        } else {
-            input.parsedMerchant
-        }
-        val safeLineItemsJson = if (shouldRedact) {
-            input.lineItemsJson?.let {
-                redactor.redactText(it, CloudPayloadPurpose.RECEIPT_ASSIST).text
-            }
-        } else {
-            input.lineItemsJson
-        }
-        val safeRawOcrText = if (shouldRedact) {
-            redactor.redactText(input.rawOcrText, CloudPayloadPurpose.RECEIPT_ASSIST).text
-        } else {
-            input.rawOcrText
-        }
+    private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean, safeOcrText: String): String {
+        // Merchant and line items are passed through as-is; redaction was applied by CloudPayloadPolicy
+        val safeParsedMerchant = input.parsedMerchant
+        val safeLineItemsJson = input.lineItemsJson
 
         val imageMode = if (hasAttachedImage) {
             """
@@ -463,19 +481,11 @@ class CloudReceiptAssistService @Inject constructor(
             - parsedTaxAmount: ${input.parsedTaxAmount?.toString() ?: "none"}
             - lineItemsJson: ${safeLineItemsJson ?: "none"}
             - rawOcrText:
-            $safeRawOcrText
+            $safeOcrText
         """.trimIndent()
     }
 
-    private fun buildImageInlineData(input: ReceiptAssistInput, allowImage: Boolean, shouldRedact: Boolean): JSONObject? {
-        if (!allowImage) return null
-        // PRIVACY FIX: Respect the user's redaction setting, not the per-call input flag.
-        // If redaction is required, we cannot upload the raw image because images
-        // cannot be meaningfully redacted — we must suppress the upload entirely.
-        if (shouldRedact) {
-            Timber.d("CloudReceiptAssistService: suppressing cloud image upload because redaction is required by settings")
-            return null
-        }
+    private fun buildImageInlineData(input: ReceiptAssistInput): JSONObject? {
         val imagePath = input.imagePath ?: return null
         val mimeType = input.imageMimeType ?: return null
         val file = File(imagePath)

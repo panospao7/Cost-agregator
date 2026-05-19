@@ -217,10 +217,9 @@ abstract class AiModule {
             secureKeyStorage: SecureKeyStorage,
             @CloudAiHttpClient cloudAiClient: OkHttpClient,
             privacyGate: PrivacyGate,
-            redactor: CloudPayloadRedactor,
-            policyResolver: EffectiveCloudAiPolicyResolver
+            cloudPayloadPolicy: com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
         ): CloudReceiptItemCategorizationService =
-            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient, privacyGate, redactor, policyResolver)
+            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient, privacyGate, cloudPayloadPolicy)
 
         @Provides
         @Singleton

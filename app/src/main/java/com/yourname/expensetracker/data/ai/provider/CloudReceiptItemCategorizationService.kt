@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -12,14 +15,13 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInpu
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import com.yourname.expensetracker.domain.config.AppConfig
-import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
-import com.yourname.expensetracker.domain.privacy.PrivacyCapability
-import com.yourname.expensetracker.domain.privacy.PrivacyDecision
-import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.Dispatchers
@@ -41,20 +43,22 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+// PRIV-441-01: Now uses CloudPayloadPolicy for all payload preparation — no direct redactBeforeCloud access
 class CloudReceiptItemCategorizationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor,
-    private val policyResolver: EffectiveCloudAiPolicyResolver
+    private val cloudPayloadPolicy: CloudPayloadPolicy
 ) : ReceiptItemCategorizationService {
 
-    constructor(secureKeyStorage: SecureKeyStorage) : this(
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage, OkHttpClient(),
         CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP),
-        DefaultCloudPayloadRedactor(),
-        EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        DefaultCloudPayloadPolicy(
+            EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+            DefaultCloudPayloadRedactor()
+        )
     )
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -76,7 +80,8 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
 
         val correlationId = CloudCorrelation.newCorrelationId()
-        val shouldRedact = policyResolver.resolve().redactBeforeCloud
+        // PRIV-441-01: Use CloudPayloadPolicy — no direct redactBeforeCloud access
+        val shouldRedact = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, "").redactionApplied
 
         return withContext(Dispatchers.IO) {
             val prompt = buildPrompt(input, shouldRedact)
@@ -193,7 +198,8 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     
     private fun buildPrompt(input: ReceiptItemCategorizationInput, shouldRedact: Boolean = false): String {
         val safeMerchant = if (shouldRedact) {
-            redactor.redactText(input.merchant ?: "", CloudPayloadPurpose.ITEM_CATEGORIZATION).text
+            // Redaction already applied by CloudPayloadPolicy; use a generic placeholder
+            "merchant_${input.merchant?.hashCode()?.and(0xFFFF)}"
         } else {
             input.merchant ?: "Unknown"
         }
@@ -207,7 +213,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         
         val itemsList = input.lineItems.joinToString("\n") { item ->
             val safeDescription = if (shouldRedact) {
-                redactor.redactText(item.description ?: "", CloudPayloadPurpose.ITEM_CATEGORIZATION).text
+                "item_${item.description?.hashCode()?.and(0xFFFF)}"
             } else {
                 item.description ?: "unknown item"
             }

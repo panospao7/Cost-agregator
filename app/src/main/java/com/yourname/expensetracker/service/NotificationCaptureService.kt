@@ -226,6 +226,9 @@ class NotificationCaptureService : NotificationListenerService() {
     @Inject
     lateinit var diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 
+    @Inject
+    lateinit var blockedPackageDao: com.yourname.expensetracker.data.database.dao.BlockedPackageDao
+
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     private val workTracker = NotificationServiceWorkTracker()
@@ -248,6 +251,13 @@ class NotificationCaptureService : NotificationListenerService() {
      */
     @Volatile
     private var capturePrivacyDenied = true  // fail-closed until first settings emission confirms capture allowed
+
+    /**
+     * PRIV-441-06: In-memory blocked-package cache for pre-extraction package check.
+     * Updated reactively from [BlockedPackageDao.getAllPackageNamesFlow].
+     */
+    @Volatile
+    private var blockedPackagesCache: Set<String> = emptySet()
     
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
@@ -295,6 +305,17 @@ class NotificationCaptureService : NotificationListenerService() {
             } catch (e: Exception) {
                 Timber.e(e, "Failed to observe privacy settings, defaulting to allowed")
                 capturePrivacyDenied = true  // fail-closed on observer error
+            }
+        }
+        // PRIV-441-06: Observe blocked packages for pre-extraction cache
+        serviceScope.launch {
+            try {
+                blockedPackageDao.getAllPackageNamesFlow().collect { packages ->
+                    blockedPackagesCache = packages.toSet()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to observe blocked packages cache")
+                // Keep existing cache on error — fail-safe (don't clear)
             }
         }
     }
@@ -460,6 +481,41 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
+        // PRIV-441-07: Fast privacy gate BEFORE dedupe cache insertion to prevent poisoning
+        if (isPrivacyDeniedFast()) {
+            Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "privacy_gate_fast",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                correlationId = correlationId,
+                sourceType = "notification",
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName).build(),
+                isTerminal = true
+            ))
+            return
+        }
+
+        // PRIV-441-06: Blocked-package pre-extraction check using in-memory cache
+        if (isPackageBlockedFast(packageName)) {
+            Timber.d("Blocked package pre-extraction drop: $packageName")
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "package_policy_fast",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE,
+                correlationId = correlationId,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName).build(),
+                isTerminal = true
+            ))
+            return
+        }
+
+        // PRIV-441-07: Dedupe cache insertion AFTER privacy/package gate — no poisoning
         val now = timeProvider.now()
         val coarseDedupeKey = notificationKey
         val lastProcessed = processedNotifications[coarseDedupeKey]
@@ -480,24 +536,6 @@ class NotificationCaptureService : NotificationListenerService() {
         }
         processedNotifications[coarseDedupeKey] = now
         cleanupCacheIfNeeded()
-
-        // P1-05: Fast privacy gate check BEFORE extracting text from extras.
-        if (isPrivacyDeniedFast()) {
-            Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
-            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "privacy_gate_fast",
-                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
-                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                correlationId = correlationId,
-                sourceType = "notification",
-                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                    .putHashed("packageName", packageName).build(),
-                isTerminal = true
-            ))
-            return
-        }
 
         val extras = sbn.notification.extras
         val parts = NotificationTextParts.extract(extras)
@@ -576,6 +614,13 @@ class NotificationCaptureService : NotificationListenerService() {
     private fun isPrivacyDeniedFast(): Boolean = capturePrivacyDenied
 
     /**
+     * PRIV-441-06: Fast in-memory blocked-package check using a cached set.
+     * Checked BEFORE extras extraction to prevent raw text from being read.
+     */
+    private fun isPackageBlockedFast(packageName: String): Boolean =
+        packageName in blockedPackagesCache
+
+    /**
      * DDL-512-14: Emit RECEIVED then terminal in a single work-tracked coroutine so
      * ordering is guaranteed and neither event can be cancelled independently.
      */
@@ -596,22 +641,8 @@ class NotificationCaptureService : NotificationListenerService() {
         extras: android.os.Bundle,
         correlationId: String
     ) {
-        if (repository.isPackageBlocked(packageName)) {
-            Timber.d("Ignoring blocked package: $packageName")
-            try {
-                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                    stage = "package_policy",
-                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE,
-                    correlationId = correlationId,
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .putHashed("packageName", packageName).build(),
-                    isTerminal = true
-                ))
-            } catch (_: Exception) {}
-            return
-        }
+        // Note: package-block check is done pre-extraction via isPackageBlockedFast().
+        // The DB check below is defense-in-depth for cache staleness.
 
         val extrasJson = try {
             buildExtrasJson(extras)

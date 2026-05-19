@@ -88,7 +88,10 @@ class CloudReceiptItemCategorizationServiceTest {
             }
             .build()
 
-        val service = CloudReceiptItemCategorizationService(keyStorage, client, mockk<PrivacyGate>(relaxed = true), com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(), com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi())
+        val service = CloudReceiptItemCategorizationService(keyStorage, client, mockk<PrivacyGate>(relaxed = true), com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+            com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+        ))
 
         val input = ReceiptItemCategorizationInput(
             receiptId = 1L,
@@ -156,8 +159,10 @@ class CloudReceiptItemCategorizationServiceTest {
             keyStorage,
             clientRespondingWithModelText(modelText),
             mockk<PrivacyGate>(relaxed = true),
-            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = service.categorizeItems(defaultInput(cloudCategoryOptions = emptyList()))
@@ -196,8 +201,10 @@ class CloudReceiptItemCategorizationServiceTest {
             keyStorage,
             clientRespondingWithModelText(modelText),
             mockk<PrivacyGate>(relaxed = true),
-            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = service.categorizeItems(defaultInput(cloudCategoryOptions = emptyList()))

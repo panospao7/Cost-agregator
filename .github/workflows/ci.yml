@@ -53,6 +53,9 @@ jobs:
       - name: Verify event writer boundaries
         run: python3 scripts/verify_event_writers.py --fail-on-violation
 
+      - name: Verify privacy boundaries
+        run: python3 scripts/verify_privacy_boundaries.py --root .
+
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@v4

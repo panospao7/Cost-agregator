@@ -13,9 +13,9 @@ Exit codes:
 
 Guard rules enforced:
     G1  No cloud provider may use AiSettings.redactBeforeCloud for redaction decisions.
-    G2  No cloud provider may use input.redactBeforeCloud for final policy.
-    G3  No Request.Builder().post(...) in cloud package using a raw String prompt directly.
-    G4  No `object : PrivacyGate { Allowed }` (allow-all gate) in main source.
+    G2  No cloud provider may use policyResolver.resolve().redactBeforeCloud for final policy.
+    G3  No Request.Builder().post(...) in cloud provider package unless body derives from PreparedCloudPayload.
+    G4  No `object : PrivacyGate { ... Allowed }` (allow-all gate) in main source.
     G5  No String.hashCode() for message IDs / provider transaction IDs.
     G6  No PendingReview creation with raw notification/email/OCR body without sanitizer.
     G7  No debug export of rawOcrText/rawNotification/email body without PrivacyGate(DEBUG_RAW_EXPORT).
@@ -90,11 +90,14 @@ def rule_g1_ai_redact_before_cloud(filepath: str, lines: List[str]) -> List[Viol
 
 
 def rule_g2_input_redact_before_cloud(filepath: str, lines: List[str]) -> List[Violation]:
-    """G2: Cloud AI providers must not use caller input.redactBeforeCloud for final policy."""
+    """G2: Cloud AI providers must not use policyResolver.resolve().redactBeforeCloud for final policy."""
     violations = []
     if "data/ai" not in filepath.replace("\\", "/"):
         return violations
-    pattern = re.compile(r'input\.redactBeforeCloud|\.redactBeforeCloud\b')
+    # Allow DefaultCloudPayloadPolicy to inspect effective policy — it IS the policy layer
+    if "DefaultCloudPayloadPolicy" in filepath or "EffectiveCloudAiPolicyResolver" in filepath:
+        return violations
+    pattern = re.compile(r'input\.redactBeforeCloud|policyResolver\.resolve\(\)\.redactBeforeCloud|\.redactBeforeCloud\b')
     for i, line in enumerate(lines):
         if pattern.search(line) and not line.strip().startswith("//"):
             violations.append(Violation(
@@ -102,26 +105,57 @@ def rule_g2_input_redact_before_cloud(filepath: str, lines: List[str]) -> List[V
                 file=filepath,
                 line_no=i + 1,
                 line=line.rstrip(),
-                message="Cloud provider using input.redactBeforeCloud — must use CloudPayloadPolicy"
+                message="Cloud provider using redactBeforeCloud directly — must use CloudPayloadPolicy"
             ))
     return violations
 
 
+def rule_g3_raw_request_post_in_provider(filepath: str, lines: List[str]) -> List[Violation]:
+    """G3: No Request.Builder().post(...) in cloud provider package unless body derives from PreparedCloudPayload."""
+    violations = []
+    norm = filepath.replace("\\", "/")
+    if "data/ai/provider" not in norm:
+        return violations
+    # Allow test source
+    if "src/test" in norm:
+        return violations
+    pattern = re.compile(r'Request\.Builder\(\)')
+    for i, line in enumerate(lines):
+        if pattern.search(line) and not line.strip().startswith("//"):
+            # Check surrounding context for PreparedCloudPayload usage
+            context_start = max(0, i - 20)
+            context_end = min(len(lines), i + 5)
+            context = "".join(lines[context_start:context_end])
+            if "PreparedCloudPayload" not in context and "prepared" not in context.lower():
+                violations.append(Violation(
+                    rule="G3",
+                    file=filepath,
+                    line_no=i + 1,
+                    line=line.rstrip(),
+                    message="Request.Builder() in cloud provider without PreparedCloudPayload — use CloudPayloadPolicy"
+                ))
+    return violations
+
+
 def rule_g4_allow_all_privacy_gate(filepath: str, lines: List[str]) -> List[Violation]:
-    """G4: No object : PrivacyGate { Allowed } in main source (except test constructors)."""
+    """G4: No object : PrivacyGate { ... Allowed } (allow-all) in main source."""
     violations = []
     if "src/test" in filepath.replace("\\", "/"):
         return violations
     pattern = re.compile(r'object\s*:\s*PrivacyGate')
     for i, line in enumerate(lines):
         if pattern.search(line) and not line.strip().startswith("//"):
-            violations.append(Violation(
-                rule="G4",
-                file=filepath,
-                line_no=i + 1,
-                line=line.rstrip(),
-                message="Allow-all PrivacyGate object in main source — use proper PrivacyGate implementation"
-            ))
+            # Check if the gate body returns Allowed (allow-all) — FailClosed is acceptable
+            context_end = min(len(lines), i + 5)
+            context = "".join(lines[i:context_end])
+            if "PrivacyDecision.Allowed" in context and "FailClosed" not in context:
+                violations.append(Violation(
+                    rule="G4",
+                    file=filepath,
+                    line_no=i + 1,
+                    line=line.rstrip(),
+                    message="Allow-all PrivacyGate (returns Allowed) in main source — use FailClosed or proper implementation"
+                ))
     return violations
 
 
@@ -246,6 +280,7 @@ def rule_g10_safe_metadata_value_sanitization(filepath: str, lines: List[str]) -
 ALL_RULES = [
     rule_g1_ai_redact_before_cloud,
     rule_g2_input_redact_before_cloud,
+    rule_g3_raw_request_post_in_provider,
     rule_g4_allow_all_privacy_gate,
     rule_g5_hashcode_for_ids,
     rule_g5b_hashcode_in_sanitizer,
