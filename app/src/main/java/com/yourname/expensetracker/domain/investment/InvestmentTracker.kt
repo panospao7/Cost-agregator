@@ -213,7 +213,7 @@ class InvestmentTracker @Inject constructor(
             .mapValues { (_, list) -> list.sumOf { it.currentPrice * it.quantity } }
 
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         val buckets = byCurrency.map { Pair(it.value, it.key) }
         val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
 
@@ -393,7 +393,7 @@ class InvestmentTracker @Inject constructor(
         }
 
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
 
         val currentValueAggregate = MoneyAggregateBuilder.fromBuckets(
             currentValueBuckets, homeCurrency, currencyConverter

@@ -646,7 +646,7 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private suspend fun resolveDisplayCurrency(fallback: String?): String {
         return fallback ?: runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
     }
 
     /**

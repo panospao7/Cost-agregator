@@ -548,7 +548,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     // P5-P1-05: Spending trend now normalizes expenses to home currency before summing.
     private suspend fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
         // DSH-N2: Deduplicate by expense ID to prevent shared/duplicate expenses
@@ -588,8 +588,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 val amount = if (exp.currency.equals(homeCurrency, ignoreCase = true)) {
                     exp.effectiveAmount
                 } else {
-                    // Never fall back to raw foreign amount — exclude if conversion fails
-                    currencyConverter.convert(exp.effectiveAmount, exp.currency, homeCurrency)
+                    // Use transaction-date rate for historical accuracy
+                    currencyConverter.convertAsOf(exp.effectiveAmount, exp.currency, homeCurrency, exp.date)
                         ?.convertedAmount ?: return@forEach
                 }
                 daily[dayIdx] += amount

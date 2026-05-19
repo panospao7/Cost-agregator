@@ -948,7 +948,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
 
     private fun defaultDisplayCurrency(): String =
         runCatching { java.util.Currency.getInstance(Locale.getDefault()).currencyCode }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
     
     private fun calculateLoyaltyScore(amounts: List<Double>, historicalCount: Int): Float {
         if (amounts.isEmpty()) return 0f

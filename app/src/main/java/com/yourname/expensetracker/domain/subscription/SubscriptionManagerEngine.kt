@@ -581,7 +581,7 @@ class SubscriptionManagerEngine @Inject constructor(
         }
         
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         val buckets = byCurrency.map { Pair(it.value.first, it.key) }
         val counts = byCurrency.map { it.value.second }
         return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)

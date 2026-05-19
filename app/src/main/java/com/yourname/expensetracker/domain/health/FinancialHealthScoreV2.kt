@@ -85,7 +85,7 @@ class FinancialHealthScoreV2 @Inject constructor(
     ): FinancialHealthResult {
         val startTime = System.currentTimeMillis()
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         
         return try {
             // Fetch all necessary data
@@ -373,7 +373,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         }
 
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         val normalized = runCatching {
             analyticsCurrencyNormalizer.normalizeExpenses(historicalExpenses, homeCurrency)
         }.getOrNull()

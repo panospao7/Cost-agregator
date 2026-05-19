@@ -231,7 +231,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
 
     private suspend fun calculateKnownUpcomingObligations(now: Long, monthEndExclusive: Long): Double {
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
 
         // ── Recurring expenses (normalised to home currency) ──────────────────
         val recurringPairs = recurringExpenseRepository.getAllFlow().first()

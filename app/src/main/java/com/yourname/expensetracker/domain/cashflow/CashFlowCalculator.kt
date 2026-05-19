@@ -227,7 +227,7 @@ class CashFlowCalculator @Inject constructor(
                 if (inc.currency.equals(homeCurrency, ignoreCase = true)) {
                     dayIncome += inc.effectiveAmount
                 } else {
-                    val converted = currencyConverter.convert(inc.effectiveAmount, inc.currency, homeCurrency)
+                    val converted = currencyConverter.convertAsOf(inc.effectiveAmount, inc.currency, homeCurrency, inc.date)
                     if (converted != null) {
                         dayIncome += converted.convertedAmount
                     } else {
@@ -241,7 +241,7 @@ class CashFlowCalculator @Inject constructor(
                 if (exp.currency.equals(homeCurrency, ignoreCase = true)) {
                     dayExpensesTotal += exp.effectiveAmount
                 } else {
-                    val converted = currencyConverter.convert(exp.effectiveAmount, exp.currency, homeCurrency)
+                    val converted = currencyConverter.convertAsOf(exp.effectiveAmount, exp.currency, homeCurrency, exp.date)
                     if (converted != null) {
                         dayExpensesTotal += converted.convertedAmount
                     } else {

@@ -61,7 +61,7 @@ class GetExpenseStatisticsUseCase @Inject constructor(
         }
         
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         val normalized = runCatching {
             analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
         }.getOrNull()

@@ -87,6 +87,7 @@ class MultiCurrencyRepository @Inject constructor(
      * with each expense's date. A historical-rate aggregate API is planned for future
      * (TODO: getTotalExpensesInHomeCurrencyHistorical).
      */
+    @Deprecated("Use getHomeCurrencyTotal() which returns MoneyAggregate with conversion quality metadata")
     suspend fun getTotalExpensesInHomeCurrency(
         startDate: Long,
         endDate: Long,
@@ -122,6 +123,7 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
+    @Deprecated("Returns raw Map<String, Double> without conversion quality. Use MoneyAggregate-based APIs instead.")
     suspend fun getExpensesByCurrency(
         startDate: Long,
         endDate: Long
@@ -202,6 +204,7 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
+    @Deprecated("Use getHomeCurrencyCategoryTotals() which returns Map<Long?, MoneyAggregate>")
     suspend fun getCategoryTotalsInHomeCurrency(
         startDate: Long,
         endDate: Long,
@@ -260,6 +263,7 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
+    @Deprecated("Use getHomeCurrencyMerchantTotals() which returns Map<String, MoneyAggregate>")
     suspend fun getMerchantTotalsInHomeCurrency(
         startDate: Long,
         endDate: Long,
@@ -316,6 +320,7 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
+    @Deprecated("Use getHomeCurrencyMonthlyTotals() which returns List<MonthMoneyAggregate>")
     suspend fun getMonthlyTotalsInHomeCurrency(
         startDate: Long,
         endDate: Long,
@@ -376,8 +381,7 @@ class MultiCurrencyRepository @Inject constructor(
         return try {
             currencySettingsRepository.homeCurrency().first()
         } catch (e: Exception) {
-            Timber.w(e, "Failed to read home currency, defaulting to EUR")
-            DEFAULT_HOME_CURRENCY
+            throw IllegalStateException("Home currency unavailable: ${e.message}", e)
         }
     }
 

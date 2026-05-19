@@ -79,7 +79,7 @@ class AnalyticsRepository @Inject constructor(
         val previousEnd = start
 
         return flow {
-            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
+            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
 
             // ── Fetch and normalize expenses per-transaction-date for accuracy ──
             val currentExpenses = expenseDao.getExpensesByTypeBetween(
@@ -162,7 +162,7 @@ class AnalyticsRepository @Inject constructor(
         return flow {
             val categories = categoryRepository.getAll()
             val categoryMap = categories.associateBy { it.id }
-            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
+            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
 
             // ── Normalized per-category totals via per-transaction-date conversion ──
             // E2-004: Uses same normalization basis as spending summary (per-expense date)
@@ -231,7 +231,7 @@ class AnalyticsRepository @Inject constructor(
      */
     suspend fun getDataQualityReport(start: Long, end: Long): DataQualityReport {
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         val expenses = expenseDao.getExpensesByTypeBetween(
             start, end, ExpenseDao.SPENDING_TYPE
         )
@@ -264,7 +264,7 @@ class AnalyticsRepository @Inject constructor(
         val locatedCount = expenseDao.countLocated()
         val unlocatedCount = expenseDao.countUnlocated()
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault(MultiCurrencyRepository.DEFAULT_HOME_CURRENCY)
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
 
         // A14: Use per-currency DAO instead of deprecated raw-sum version
         val merchantCurrencyTotals = expenseDao.getLocatedMerchantTotalsByCurrency()

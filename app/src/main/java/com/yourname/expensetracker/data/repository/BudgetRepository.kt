@@ -256,7 +256,12 @@ class BudgetRepository @Inject constructor(
         } else {
             0f
         }
-        val remaining = (effectiveLimit - spent).coerceAtLeast(0.0)
+        // Do not compute remaining with mixed currencies when limit conversion failed
+        val remaining = if (!budgetConversionFailed) {
+            (effectiveLimit - spent).coerceAtLeast(0.0)
+        } else {
+            0.0
+        }
 
         val health = when {
             // When conversion failed, status is genuinely unknown — do not mislead
@@ -427,8 +432,7 @@ class BudgetRepository @Inject constructor(
         return try {
             currencySettingsRepository.homeCurrency().first()
         } catch (e: Exception) {
-            Timber.w(e, "Failed to read home currency, defaulting to EUR")
-            "EUR"
+            throw IllegalStateException("Home currency unavailable: ${e.message}", e)
         }
     }
 

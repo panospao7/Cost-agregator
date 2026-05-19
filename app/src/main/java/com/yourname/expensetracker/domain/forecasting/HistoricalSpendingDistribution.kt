@@ -65,7 +65,7 @@ class HistoricalSpendingDistribution @Inject constructor(
 
         // Resolve authoritative home currency if the default placeholder was passed
         val resolvedHomeCurrency = if (homeCurrency == "EUR") {
-            runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
+            runCatching { currencySettingsRepository.homeCurrency().first() }.getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         } else {
             homeCurrency
         }

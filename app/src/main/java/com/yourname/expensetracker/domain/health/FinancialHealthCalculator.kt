@@ -73,7 +73,7 @@ class FinancialHealthCalculator @Inject constructor(
     ): HealthScoreResult {
         val homeCurrency = runBlocking {
             runCatching { currencySettingsRepository.homeCurrency().first() }
-                .getOrDefault("EUR")
+                .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         }
         val normalized = runBlocking {
             runCatching {
