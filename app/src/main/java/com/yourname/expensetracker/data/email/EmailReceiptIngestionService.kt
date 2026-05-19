@@ -8,7 +8,6 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.MatchStatus
-import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -265,7 +264,7 @@ class EmailReceiptIngestionService(
                         isTerminal = true
                     ))
                 } catch (_: Exception) {}
-                return EmailReceiptResult.ParseError("Invalid receipt data: amount=${parsedReceipt.amount}, merchant=${parsedReceipt.merchant}")
+                return EmailReceiptResult.ParseError("Invalid receipt data")
             }
 
             val normalizedMerchant = merchantNormalizer.normalize(
@@ -372,7 +371,7 @@ class EmailReceiptIngestionService(
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
                     correlationId = correlationId,
                     sourceType = "email",
-                    sourceIdHash = messageId.let { it.sha256Prefix(16) },
+                    sourceIdHash = hashingService.hmacSha256Prefix(messageId, "emailMessageId", 16),
                     exception = e,
                     isTerminal = true
                 ))
@@ -442,7 +441,7 @@ class EmailReceiptIngestionService(
         val roundedAmount = String.format(Locale.US, "%.2f", amount)
         val dateBucket = date / 300_000L
         val raw = "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
-        return hashingService.sha256Prefix(raw, 32) ?: raw.hashCode().toString(16)
+        return hashingService.sha256Prefix(raw, 32) ?: ""
     }
 
     /**
