@@ -25,10 +25,22 @@ interface ExchangeRateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAll(rates: List<ExchangeRate>)
     
-    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency ORDER BY lastUpdated DESC LIMIT 1")
+    /**
+     * Returns the most recent rate for a currency pair, ordered by [validDate] then [lastUpdated].
+     * This prevents historical backfills (which have today's lastUpdated but an old validDate)
+     * from poisoning latest-rate lookups.
+     */
+    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency ORDER BY validDate DESC, lastUpdated DESC LIMIT 1")
+    suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): ExchangeRate?
+
+    @Deprecated(
+        message = "Use getLatestRateForPair() or getRateAsOf(); getRate() ordered by lastUpdated which allows historical backfills to poison latest-rate lookups.",
+        replaceWith = ReplaceWith("getLatestRateForPair(fromCurrency, toCurrency)")
+    )
+    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency ORDER BY validDate DESC, lastUpdated DESC LIMIT 1")
     suspend fun getRate(fromCurrency: String, toCurrency: String): ExchangeRate?
     
-    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency ORDER BY lastUpdated DESC LIMIT 1")
+    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency ORDER BY validDate DESC, lastUpdated DESC LIMIT 1")
     fun getRateFlow(fromCurrency: String, toCurrency: String): Flow<ExchangeRate?>
     
     /**

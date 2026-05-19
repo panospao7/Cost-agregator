@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 130
+const val APP_DATABASE_SCHEMA_VERSION = 131
 
 @Database(
     entities = [
@@ -7833,6 +7833,17 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_130_131 = object : androidx.room.migration.Migration(130, 131) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Backfill validDate for legacy rows that have validDate = 0.
+                // These rows were inserted before historical-rate support was added.
+                // Using lastUpdated as the best approximation of when the rate was valid.
+                // This prevents historical backfills from poisoning latest-rate lookups
+                // (getRate/getLatestRateForPair now ORDER BY validDate DESC).
+                database.execSQL("UPDATE exchange_rates SET validDate = lastUpdated WHERE validDate = 0 AND lastUpdated > 0")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7998,7 +8009,8 @@ MIGRATION_91_92,
         MIGRATION_126_127,
         MIGRATION_127_128,
         MIGRATION_128_129,
-        MIGRATION_129_130
+        MIGRATION_129_130,
+        MIGRATION_130_131
     )
 }
 }

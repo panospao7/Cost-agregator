@@ -8,7 +8,9 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -94,6 +96,21 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
     override suspend fun clear() {
         context.currencyDataStore.edit { prefs ->
             prefs.clear()
+        }
+    }
+
+    override suspend fun resolveHomeCurrency(): HomeCurrencyResolution {
+        return try {
+            val prefs = context.currencyDataStore.data.first()
+            val code = prefs[HOME_CURRENCY_KEY]
+            if (code.isNullOrBlank()) {
+                HomeCurrencyResolution.FirstRunDefault(CurrencyCode.EUR)
+            } else {
+                HomeCurrencyResolution.Resolved(CurrencyCode(code))
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to resolve home currency from DataStore")
+            HomeCurrencyResolution.Failed(e.message ?: "DataStore read error")
         }
     }
 }

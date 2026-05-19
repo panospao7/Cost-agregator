@@ -259,10 +259,10 @@ class BudgetRepository @Inject constructor(
         val remaining = (effectiveLimit - spent).coerceAtLeast(0.0)
 
         val health = when {
-            // When conversion failed, percent is forced to 0 so health falls
-            // through to ON_TRACK.  The conversionWarning and isPartial flags
-            // on BudgetStatus tell the UI that the status is unreliable.
-            budgetConversionFailed -> BudgetHealthStatus.ON_TRACK
+            // When conversion failed, status is genuinely unknown — do not mislead
+            // the user with a green ON_TRACK indicator. The isPartial and
+            // conversionWarning fields provide additional context for the UI.
+            budgetConversionFailed -> BudgetHealthStatus.UNKNOWN
             percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
             percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
             percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING

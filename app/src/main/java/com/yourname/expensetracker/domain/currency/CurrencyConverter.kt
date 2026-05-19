@@ -1,6 +1,12 @@
 package com.yourname.expensetracker.domain.currency
 
+import com.yourname.expensetracker.domain.core.money.ConversionFailureType
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.ConversionPath
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
+import com.yourname.expensetracker.domain.core.money.StaleRateReference
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -247,6 +253,131 @@ class CurrencyConverter @Inject constructor(
 
         Timber.w("No exchange rate available for $fromCurrency to $toCurrency as of $atMillis")
         null
+    }
+
+    /**
+     * Typed conversion that returns [ConversionOutcome.Converted] or [ConversionOutcome.Failed],
+     * never null. Callers can distinguish missing rate, stale rate, invalid currency, etc.
+     *
+     * @param rateBasis Which temporal basis to use for rate lookup.
+     * @param atMillis Required when [rateBasis] is TRANSACTION_DATE, PERIOD_START, PERIOD_END.
+     * @param stalePolicy Controls when a rate is considered too old.
+     */
+    suspend fun convertOutcome(
+        amount: Double,
+        fromCurrency: String,
+        toCurrency: String,
+        rateBasis: RateBasis,
+        atMillis: Long? = null,
+        stalePolicy: StaleRatePolicy = StaleRatePolicy.Default
+    ): ConversionOutcome = withContext(Dispatchers.IO) {
+        val from = fromCurrency.uppercase()
+        val to = toCurrency.uppercase()
+
+        // Identity
+        if (from == to) {
+            return@withContext ConversionOutcome.Converted(
+                originalAmount = amount,
+                originalCurrency = CurrencyCode(from),
+                convertedAmount = amount,
+                targetCurrency = CurrencyCode(to),
+                rateUsed = 1.0,
+                rateBasis = RateBasis.IDENTITY,
+                rateValidDate = atMillis,
+                rateLastUpdated = timeProvider.now(),
+                rateSource = null,
+                conversionPath = ConversionPath.IDENTITY
+            )
+        }
+
+        // Validate currencies
+        if (SupportedCurrency.fromCode(from) == null) {
+            return@withContext ConversionOutcome.Failed(
+                originalAmount = amount, originalCurrency = from, targetCurrency = to,
+                rateBasis = rateBasis, failureType = ConversionFailureType.INVALID_SOURCE_CURRENCY,
+                message = "Unsupported source currency: $from"
+            )
+        }
+        if (SupportedCurrency.fromCode(to) == null) {
+            return@withContext ConversionOutcome.Failed(
+                originalAmount = amount, originalCurrency = from, targetCurrency = to,
+                rateBasis = rateBasis, failureType = ConversionFailureType.INVALID_TARGET_CURRENCY,
+                message = "Unsupported target currency: $to"
+            )
+        }
+
+        // Lookup rate based on basis
+        val useHistorical = rateBasis in listOf(
+            RateBasis.TRANSACTION_DATE, RateBasis.PERIOD_START,
+            RateBasis.PERIOD_END, RateBasis.FORECAST_DATE
+        )
+
+        data class RateResult(val rate: Double, val validDate: Long?, val lastUpdated: Long, val source: String?, val path: ConversionPath)
+
+        val rateResult: RateResult? = if (useHistorical && atMillis != null) {
+            val direct = exchangeRateStore.getRateAsOf(from, to, atMillis)
+            if (direct != null) {
+                RateResult(direct.rate, direct.validDate, direct.lastUpdated, direct.source, ConversionPath.DIRECT)
+            } else {
+                val toEur = exchangeRateStore.getRateAsOf(from, DEFAULT_BASE_CURRENCY, atMillis)
+                val fromEur = exchangeRateStore.getRateAsOf(DEFAULT_BASE_CURRENCY, to, atMillis)
+                if (toEur != null && fromEur != null) {
+                    RateResult(toEur.rate * fromEur.rate, toEur.validDate ?: fromEur.validDate,
+                        maxOf(toEur.lastUpdated, fromEur.lastUpdated), toEur.source, ConversionPath.VIA_BASE_CURRENCY)
+                } else null
+            }
+        } else {
+            val direct = exchangeRateStore.getLatestRateForPair(from, to)
+            if (direct != null) {
+                RateResult(direct.rate, direct.validDate, direct.lastUpdated, direct.source, ConversionPath.DIRECT)
+            } else {
+                val toEur = exchangeRateStore.getLatestRateForPair(from, DEFAULT_BASE_CURRENCY)
+                val fromEur = exchangeRateStore.getLatestRateForPair(DEFAULT_BASE_CURRENCY, to)
+                if (toEur != null && fromEur != null) {
+                    RateResult(toEur.rate * fromEur.rate, toEur.validDate ?: fromEur.validDate,
+                        maxOf(toEur.lastUpdated, fromEur.lastUpdated), toEur.source, ConversionPath.VIA_BASE_CURRENCY)
+                } else null
+            }
+        }
+
+        if (rateResult == null) {
+            val failureType = if (useHistorical) ConversionFailureType.MISSING_HISTORICAL_RATE else ConversionFailureType.MISSING_RATE
+            return@withContext ConversionOutcome.Failed(
+                originalAmount = amount, originalCurrency = from, targetCurrency = to,
+                rateBasis = rateBasis, failureType = failureType,
+                message = "No exchange rate available for $from to $to"
+            )
+        }
+
+        // Staleness check
+        if (stalePolicy.maxAgeMs != null) {
+            val referenceTime = when (stalePolicy.compareAgainst) {
+                StaleRateReference.NOW -> timeProvider.now()
+                StaleRateReference.TRANSACTION_DATE -> atMillis ?: timeProvider.now()
+                StaleRateReference.RATE_VALID_DATE -> rateResult.validDate ?: rateResult.lastUpdated
+            }
+            val age = referenceTime - rateResult.lastUpdated
+            if (age > stalePolicy.maxAgeMs) {
+                return@withContext ConversionOutcome.Failed(
+                    originalAmount = amount, originalCurrency = from, targetCurrency = to,
+                    rateBasis = rateBasis, failureType = ConversionFailureType.STALE_RATE,
+                    message = "Rate from $from to $to is stale (age: ${age}ms, max: ${stalePolicy.maxAgeMs}ms)"
+                )
+            }
+        }
+
+        ConversionOutcome.Converted(
+            originalAmount = amount,
+            originalCurrency = CurrencyCode(from),
+            convertedAmount = amount * rateResult.rate,
+            targetCurrency = CurrencyCode(to),
+            rateUsed = rateResult.rate,
+            rateBasis = rateBasis,
+            rateValidDate = rateResult.validDate,
+            rateLastUpdated = rateResult.lastUpdated,
+            rateSource = rateResult.source,
+            conversionPath = rateResult.path
+        )
     }
 
     /**

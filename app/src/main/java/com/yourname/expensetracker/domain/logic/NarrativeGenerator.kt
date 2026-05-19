@@ -104,7 +104,7 @@ class NarrativeGenerator @Inject constructor() {
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_BUDGET_ALERTS),
                     icon = "🚨",
-                    items = criticalBudgets.map {
+                    items = criticalBudgets.mapNotNull {
                         when (it.healthStatus) {
                             BudgetHealthStatus.EXCEEDED -> it.categoryName?.let { name ->
                                 UiText.fromKey(
@@ -136,6 +136,7 @@ class NarrativeGenerator @Inject constructor() {
                                 it.categoryName ?: UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false),
                                 UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                             )
+                            BudgetHealthStatus.UNKNOWN -> null
                         }
                     }
                 )

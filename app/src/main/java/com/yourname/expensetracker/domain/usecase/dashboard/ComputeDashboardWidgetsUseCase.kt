@@ -588,8 +588,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 val amount = if (exp.currency.equals(homeCurrency, ignoreCase = true)) {
                     exp.effectiveAmount
                 } else {
+                    // Never fall back to raw foreign amount — exclude if conversion fails
                     currencyConverter.convert(exp.effectiveAmount, exp.currency, homeCurrency)
-                        ?.convertedAmount ?: exp.effectiveAmount
+                        ?.convertedAmount ?: return@forEach
                 }
                 daily[dayIdx] += amount
             }

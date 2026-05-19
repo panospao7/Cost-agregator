@@ -29,7 +29,8 @@ data class MoneyAggregate(
     val sourceBuckets: List<MoneyBucket>,
     val conversionFailures: List<ConversionFailure>,
     val isPartial: Boolean = conversionFailures.isNotEmpty(),
-    val warningMessage: String? = null
+    val warningMessage: String? = null,
+    val rateBasis: RateBasis = RateBasis.LATEST_AVAILABLE
 ) {
 
     init {

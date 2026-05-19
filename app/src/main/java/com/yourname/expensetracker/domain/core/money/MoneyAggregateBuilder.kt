@@ -82,4 +82,78 @@ object MoneyAggregateBuilder {
             } else null
         )
     }
+
+    /**
+     * Rate-basis-aware overload that accepts typed [MoneyBucketInput] and a [RateBasis].
+     * Uses [CurrencyConverter.convertOutcome] for each bucket, respecting the date policy.
+     */
+    suspend fun fromBuckets(
+        buckets: List<MoneyBucketInput>,
+        homeCurrency: CurrencyCode,
+        converter: CurrencyConverter,
+        rateBasis: RateBasis,
+        bucketDatePolicy: BucketDatePolicy
+    ): MoneyAggregate {
+        if (buckets.isEmpty()) return MoneyAggregate.empty(homeCurrency)
+
+        var total = 0.0
+        val sourceBuckets = mutableListOf<MoneyBucket>()
+        val failures = mutableListOf<ConversionFailure>()
+
+        for (bucket in buckets) {
+            if (bucket.currency == homeCurrency) {
+                total += bucket.amount
+                sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
+                continue
+            }
+
+            val atMillis = when (bucketDatePolicy) {
+                is BucketDatePolicy.RequireBucketDate -> bucket.bucketDate
+                is BucketDatePolicy.FixedDate -> bucketDatePolicy.atMillis
+                is BucketDatePolicy.Latest -> null
+            }
+            val effectiveBasis = if (bucketDatePolicy is BucketDatePolicy.Latest) RateBasis.LATEST_AVAILABLE else rateBasis
+
+            val outcome = converter.convertOutcome(
+                amount = bucket.amount,
+                fromCurrency = bucket.currency.code,
+                toCurrency = homeCurrency.code,
+                rateBasis = effectiveBasis,
+                atMillis = atMillis,
+                stalePolicy = StaleRatePolicy.None
+            )
+
+            when (outcome) {
+                is ConversionOutcome.Converted -> {
+                    total += outcome.convertedAmount
+                    sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
+                }
+                is ConversionOutcome.Failed -> {
+                    failures.add(ConversionFailure(
+                        originalAmount = MoneyAmount(bucket.amount, bucket.currency),
+                        targetCurrency = homeCurrency,
+                        reason = when (outcome.failureType) {
+                            ConversionFailureType.STALE_RATE -> FailureReason.RATE_STALE
+                            ConversionFailureType.MISSING_RATE, ConversionFailureType.MISSING_HISTORICAL_RATE -> FailureReason.MISSING_RATE
+                            else -> FailureReason.UNKNOWN
+                        },
+                        transactionCount = bucket.transactionCount
+                    ))
+                }
+            }
+        }
+
+        return MoneyAggregate(
+            displayAmount = total,
+            displayCurrency = homeCurrency,
+            sourceBuckets = sourceBuckets,
+            conversionFailures = failures,
+            isPartial = failures.isNotEmpty(),
+            warningMessage = if (failures.isNotEmpty()) {
+                val txCount = failures.sumOf { it.transactionCount }
+                "Total excludes $txCount transaction(s) across ${failures.size} currency bucket(s)"
+            } else null,
+            rateBasis = rateBasis
+        )
+    }
 }

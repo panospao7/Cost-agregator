@@ -39,7 +39,8 @@ enum class BudgetHealthStatus {
     ON_TRACK,   // Spent < warning threshold
     WARNING,    // Spent >= warning threshold
     CRITICAL,   // Spent >= critical threshold
-    EXCEEDED    // Spent >= 100%
+    EXCEEDED,   // Spent >= 100%
+    UNKNOWN     // Conversion failed — status cannot be determined
 }
 
 data class BudgetSuggestion(

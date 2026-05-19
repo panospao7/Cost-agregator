@@ -18,6 +18,10 @@ class ExchangeRateStoreAdapter @Inject constructor(
         return exchangeRateDao.getRate(fromCurrency, toCurrency)?.toDomain()
     }
 
+    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? {
+        return exchangeRateDao.getLatestRateForPair(fromCurrency, toCurrency)?.toDomain()
+    }
+
     override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
         return exchangeRateDao.getRateAsOf(fromCurrency, toCurrency, atMillis)?.toDomain()
     }

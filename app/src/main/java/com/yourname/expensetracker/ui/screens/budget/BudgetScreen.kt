@@ -472,6 +472,7 @@ fun BudgetCard(
             BudgetHealthStatus.WARNING -> SemanticColors.WarningOrange
             BudgetHealthStatus.CRITICAL -> SemanticColors.WarningOrange
             BudgetHealthStatus.EXCEEDED -> SemanticColors.DangerRed
+            BudgetHealthStatus.UNKNOWN -> SemanticColors.WarningOrange
         }
     }
 

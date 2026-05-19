@@ -61,4 +61,10 @@ interface CurrencySettingsRepository {
      * Clear all currency settings.
      */
     suspend fun clear()
+
+    /**
+     * Resolve the home currency with explicit first-run vs failure distinction.
+     * Implementations should override if they can distinguish "no value set" from "read error".
+     */
+    suspend fun resolveHomeCurrency(): HomeCurrencyResolution
 }
