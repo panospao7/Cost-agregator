@@ -91,8 +91,10 @@ class CloudDedupeJudgeServiceTest {
             client = client,
             aiSettingsRepository = null,
             privacyGate = mockk(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = service.judge(sampleInput())
@@ -122,8 +124,10 @@ class CloudDedupeJudgeServiceTest {
             client = client,
             aiSettingsRepository = null,
             privacyGate = mockk(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = service.judge(sampleInput())
@@ -186,8 +190,10 @@ class CloudDedupeJudgeServiceTest {
             client = client,
             aiSettingsRepository = null,
             privacyGate = mockk(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = service.judge(sampleInput())
@@ -236,8 +242,10 @@ class CloudDedupeJudgeServiceTest {
             client = client,
             aiSettingsRepository = null,
             privacyGate = mockk(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = service.judge(sampleInput())

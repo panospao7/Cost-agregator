@@ -2,9 +2,8 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
-import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -15,6 +14,8 @@ import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -38,32 +39,35 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @Singleton
-// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+// PRIV-43B-01: Now uses CloudPayloadPolicy — no direct redactBeforeCloud access
 class CloudReviewExplanationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor,
-    private val policyResolver: EffectiveCloudAiPolicyResolver
+    private val cloudPayloadPolicy: CloudPayloadPolicy
 ) : ReviewExplanationService {
 
     private var apiKeyOverride: String? = null
 
-    constructor(secureKeyStorage: SecureKeyStorage) : this(
+    @androidx.annotation.VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     )
 
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
+    @androidx.annotation.VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
         secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -83,8 +87,9 @@ class CloudReviewExplanationService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
         }
 
-        val shouldRedact = policyResolver.resolve().redactBeforeCloud
-        val requestBody = buildRequestBody(input, shouldRedact)
+        val rawPrompt = buildRawPrompt(input)
+        val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.REVIEW_EXPLANATION, rawPrompt)
+        val requestBody = buildRequestBody(prepared.text)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -179,52 +184,23 @@ class CloudReviewExplanationService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: ReviewExplanationInput, shouldRedact: Boolean): String {
-        val prompt = buildPrompt(input, shouldRedact)
+    private fun buildRequestBody(promptText: String): String {
         return JSONObject().apply {
-            put(
-                "contents",
-                JSONArray().put(
-                    JSONObject().put(
-                        "parts",
-                        JSONArray().put(JSONObject().put("text", prompt))
-                    )
-                )
-            )
-            put(
-                "generationConfig",
-                JSONObject().apply {
-                    put("temperature", 0.2)
-                    put("maxOutputTokens", AppConfig.Ai.REVIEW_EXPLANATION_MAX_OUTPUT_TOKENS)
-                    put("responseMimeType", "application/json")
-                    put(
-                        "thinkingConfig",
-                        JSONObject().apply {
-                            put("thinkingBudget", 0)
-                        }
-                    )
-                }
-            )
+            put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", promptText)))))
+            put("generationConfig", JSONObject().apply {
+                put("temperature", 0.2)
+                put("maxOutputTokens", AppConfig.Ai.REVIEW_EXPLANATION_MAX_OUTPUT_TOKENS)
+                put("responseMimeType", "application/json")
+                put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
+            })
         }.toString()
     }
 
-    private fun buildPrompt(input: ReviewExplanationInput, shouldRedact: Boolean): String {
-        // PRIVACY FIX: Sanitize PII before sending to cloud
-        val safeMerchant = if (shouldRedact) {
-            redactor.redactMerchant(input.merchant).value ?: "Unknown"
-        } else {
-            input.merchant
-        }
-        val safeNotificationTitle = if (shouldRedact && input.notificationTitle != null) {
-            redactor.redactText(input.notificationTitle, CloudPayloadPurpose.REVIEW_EXPLANATION).text
-        } else {
-            input.notificationTitle ?: "none"
-        }
-        val safeNotificationText = if (shouldRedact && input.notificationText != null) {
-            redactor.redactText(input.notificationText, CloudPayloadPurpose.REVIEW_EXPLANATION).text
-        } else {
-            input.notificationText ?: "none"
-        }
+    private fun buildRawPrompt(input: ReviewExplanationInput): String {
+        // PRIV-43B-01: Raw values — CloudPayloadPolicy will redact if required
+        val safeMerchant = input.merchant
+        val safeNotificationTitle = input.notificationTitle ?: "none"
+        val safeNotificationText = input.notificationText ?: "none"
 
         return """
 You are helping explain why a pending expense review exists inside a finance app.

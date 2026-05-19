@@ -22,6 +22,7 @@ Guard rules enforced:
     G8  encryptedBackupEnabled=false must NOT allow raw export (logic guard, checked for pattern).
     G9  PrivacySettingsRepositoryImpl corruption handler must use mutablePreferencesOf sentinel.
     G10 SafePrivacyMetadata.put() must not store values without sanitization (value-safety check).
+    G11 No .hashCode() in data/ai/provider for prompt redaction pseudonyms.
 """
 
 import os
@@ -275,6 +276,27 @@ def rule_g10_safe_metadata_value_sanitization(filepath: str, lines: List[str]) -
     return violations
 
 
+def rule_g11_hashcode_in_provider_prompt(filepath: str, lines: List[str]) -> List[Violation]:
+    """G11: No .hashCode() in data/ai/provider for prompt redaction pseudonyms."""
+    violations = []
+    norm = filepath.replace("\\", "/")
+    if "data/ai/provider" not in norm:
+        return violations
+    if "src/test" in norm:
+        return violations
+    pattern = re.compile(r'\.hashCode\(\)')
+    for i, line in enumerate(lines):
+        if pattern.search(line) and not line.strip().startswith("//"):
+            violations.append(Violation(
+                rule="G11",
+                file=filepath,
+                line_no=i + 1,
+                line=line.rstrip(),
+                message="hashCode() in cloud provider — use SensitiveHashingService.hmacSha256Prefix() for pseudonyms"
+            ))
+    return violations
+
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 ALL_RULES = [
@@ -288,6 +310,7 @@ ALL_RULES = [
     rule_g8_encrypted_disabled_implies_raw,
     rule_g9_corruption_handler_uses_sentinel,
     rule_g10_safe_metadata_value_sanitization,
+    rule_g11_hashcode_in_provider_prompt,
 ]
 
 

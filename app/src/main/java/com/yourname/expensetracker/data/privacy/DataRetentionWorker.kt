@@ -84,10 +84,12 @@ class DataRetentionWorker @AssistedInject constructor(
                 results += it.purge(ocrCutoff)
             }
 
-            // All other targets use now as their TTL-based cutoff
+            // All other targets use now as their TTL-based cutoff, except email which uses emailCutoff
             for (target in allTargets) {
                 if (target.name != "raw_notifications" && target.name != "scanned_receipts.rawOcrText") {
-                    results += target.purge(now)
+                    // PRIV-43B-12: Email target uses emailCutoff (30 days), not now
+                    val cutoff = if (target.name == "email_receipt_sources") emailCutoff else now
+                    results += target.purge(cutoff)
                 }
             }
 

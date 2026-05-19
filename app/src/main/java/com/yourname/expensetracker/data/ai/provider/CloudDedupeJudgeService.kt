@@ -1,9 +1,10 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
@@ -52,21 +53,23 @@ import timber.log.Timber
  * No edge cases remain where an out-of-range confidence can propagate.
  */
 @Singleton
+// PRIV-43B-01: Now uses CloudPayloadPolicy — no direct redactBeforeCloud access
 class CloudDedupeJudgeService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor,
-    private val policyResolver: EffectiveCloudAiPolicyResolver
+    private val cloudPayloadPolicy: CloudPayloadPolicy
 ) : DedupeJudgeService {
 
-    constructor(secureKeyStorage: SecureKeyStorage) : this(
+    @androidx.annotation.VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     )
 
     /**
@@ -89,8 +92,9 @@ class CloudDedupeJudgeService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
         }
 
-        val shouldRedact = policyResolver.resolve().redactBeforeCloud
-        val requestBody = buildRequestBody(input, shouldRedact)
+        val rawPrompt = buildRawPrompt(input)
+        val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.DEDUPE_JUDGE, rawPrompt)
+        val requestBody = buildRequestBody(prepared.text)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -185,44 +189,24 @@ class CloudDedupeJudgeService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: DedupeJudgeInput, shouldRedact: Boolean): String {
-        val prompt = buildPrompt(input, shouldRedact)
+    private fun buildRequestBody(promptText: String): String {
         return JSONObject().apply {
-            put(
-                "contents",
-                JSONArray().put(
-                    JSONObject().put(
-                        "parts",
-                        JSONArray().put(JSONObject().put("text", prompt))
-                    )
-                )
-            )
-            put(
-                "generationConfig",
-                JSONObject().apply {
-                    put("temperature", 0.1)
-                    put("maxOutputTokens", AppConfig.Ai.DEDUPE_JUDGE_MAX_OUTPUT_TOKENS)
-                    put("responseMimeType", "application/json")
-                    put(
-                        "thinkingConfig",
-                        JSONObject().apply {
-                            put("thinkingBudget", 0)
-                        }
-                    )
-                }
-            )
+            put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", promptText)))))
+            put("generationConfig", JSONObject().apply {
+                put("temperature", 0.1)
+                put("maxOutputTokens", AppConfig.Ai.DEDUPE_JUDGE_MAX_OUTPUT_TOKENS)
+                put("responseMimeType", "application/json")
+                put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
+            })
         }.toString()
     }
 
-    private fun buildPrompt(input: DedupeJudgeInput, shouldRedact: Boolean): String {
+    private fun buildRawPrompt(input: DedupeJudgeInput): String {
+        // PRIV-43B-01: Raw values — CloudPayloadPolicy will redact if required
         val candidates = input.candidates.joinToString("\n") { candidate ->
-            val merchant = redactor.redactMerchant(candidate.merchant).value ?: "Unknown"
-            val preview = candidate.textPreview?.let { redactor.redactText(it, CloudPayloadPurpose.DEDUPE_JUDGE).text } ?: "none"
-            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=$merchant, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=$preview"
+            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
         }
-
-        val subjectMerchant = redactor.redactMerchant(input.subject.merchant).value ?: "Unknown"
-        val subjectPreview = input.subject.textPreview?.let { redactor.redactText(it, CloudPayloadPurpose.DEDUPE_JUDGE).text } ?: "none"
+        val subjectPreview = input.subject.textPreview ?: "none"
 
         return """
 You are helping judge whether a pending finance review is likely a duplicate of one bounded candidate set.
@@ -244,7 +228,7 @@ JSON schema:
 Subject:
 - targetType=${input.subject.targetType}
 - targetId=${input.subject.targetId}
-- merchant=$subjectMerchant
+- merchant=${input.subject.merchant}
 - amount=${input.subject.amount} ${input.subject.currency}
 - date=${input.subject.date}
 - txType=${input.subject.transactionType ?: "UNKNOWN"}

@@ -69,8 +69,8 @@ class PrivacyGuardTest {
                     // identified by being inside a constructor body (indented, not @Inject)
                     // The real @Inject constructor uses the DI-provided PrivacyGate.
                     // Secondary constructors with allow-all gates are acceptable for tests.
-                    val context = file.readLines().drop(maxOf(0, i - 5)).take(10).joinToString("\n")
-                    if (!context.contains("constructor(") && !context.contains("fun noOpGate")) {
+                    val context = file.readLines().drop(maxOf(0, i - 8)).take(15).joinToString("\n")
+                    if (!context.contains("constructor(") && !context.contains("fun noOpGate") && !context.contains("fun failClosedGate")) {
                         violations += "${file.name}:${i + 1}: ${line.trim()}"
                     }
                 }

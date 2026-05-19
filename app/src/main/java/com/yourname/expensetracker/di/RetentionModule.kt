@@ -72,6 +72,7 @@ object RetentionModule {
         object : RetentionTarget {
             override val name = "ai_artifacts"
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                // Note: AiArtifactDao.deleteExpired does not return count; report 0 as best-effort
                 appDatabase.aiArtifactDao().deleteExpired(cutoffMs)
                 RetentionPurgeResult(name, 0, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -80,6 +81,7 @@ object RetentionModule {
         object : RetentionTarget {
             override val name = "ai_chat_messages"
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                // Note: AiChatMessageDao.deleteOlderThan does not return count; report 0 as best-effort
                 appDatabase.aiChatMessageDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, 0, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -87,9 +89,11 @@ object RetentionModule {
 
         object : RetentionTarget {
             override val name = "email_receipt_sources"
+            // PRIV-43B-12: Redact sensitive fields, do NOT delete rows (preserves dedup hashes/links)
+            // cutoffMs is the email-specific cutoff (now - 30 days), passed by DataRetentionWorker
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
-                appDatabase.emailReceiptDao().deleteOlderThan(cutoffMs)
-                RetentionPurgeResult(name, 0, true)
+                val count = appDatabase.emailReceiptDao().redactSensitiveFieldsOlderThan(cutoffMs)
+                RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
         }
     )

@@ -51,10 +51,14 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     private val cloudPayloadPolicy: CloudPayloadPolicy
 ) : ReceiptItemCategorizationService {
 
-    @VisibleForTesting
+    @androidx.annotation.VisibleForTesting
     internal constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage, OkHttpClient(),
-        CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP),
+        CompositePrivacyGate(
+            emptyList(),
+            PrivacyAuditLogger.NO_OP,
+            com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy.gateHandledCapabilities
+        ),
         DefaultCloudPayloadPolicy(
             EffectiveCloudAiPolicyResolver.failClosedNoAi(),
             DefaultCloudPayloadRedactor()
@@ -80,12 +84,12 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
 
         val correlationId = CloudCorrelation.newCorrelationId()
-        // PRIV-441-01: Use CloudPayloadPolicy — no direct redactBeforeCloud access
-        val shouldRedact = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, "").redactionApplied
+        // PRIV-43B-03: Build full raw prompt, then prepare through policy — no empty-string probe
+        val rawPrompt = buildPrompt(input, shouldRedact = false)
+        val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, rawPrompt)
 
         return withContext(Dispatchers.IO) {
-            val prompt = buildPrompt(input, shouldRedact)
-            val requestBody = buildRequestBody(prompt)
+            val requestBody = buildRequestBody(prepared.text)
 
             val request = Request.Builder()
                 .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL}:generateContent")
@@ -197,12 +201,8 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     }
     
     private fun buildPrompt(input: ReceiptItemCategorizationInput, shouldRedact: Boolean = false): String {
-        val safeMerchant = if (shouldRedact) {
-            // Redaction already applied by CloudPayloadPolicy; use a generic placeholder
-            "merchant_${input.merchant?.hashCode()?.and(0xFFFF)}"
-        } else {
-            input.merchant ?: "Unknown"
-        }
+        // PRIV-43B-03: Raw values — CloudPayloadPolicy will redact if required; no hashCode pseudonyms
+        val safeMerchant = input.merchant ?: "Unknown"
 
         val cloudOptions = cloudCategoryOptionsForPrompt(input)
         val categoriesList = if (shouldRedact) {
@@ -212,11 +212,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
         
         val itemsList = input.lineItems.joinToString("\n") { item ->
-            val safeDescription = if (shouldRedact) {
-                "item_${item.description?.hashCode()?.and(0xFFFF)}"
-            } else {
-                item.description ?: "unknown item"
-            }
+            val safeDescription = item.description ?: "unknown item"
             "- $safeDescription: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
         }
         

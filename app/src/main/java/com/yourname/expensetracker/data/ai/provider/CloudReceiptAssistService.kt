@@ -120,11 +120,13 @@ class CloudReceiptAssistService @Inject constructor(
 
         val settings = aiSettingsRepository.settings().first()
 
-        // PRIV-441-01: Use CloudPayloadPolicy — no direct redactBeforeCloud access
+        // PRIV-43B-02: Build full raw prompt first, then prepare entire prompt through policy
         val allowImage = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
+        val hasImage = allowImage && input.imagePath != null
+        val rawPrompt = buildRawPrompt(input, hasAttachedImage = hasImage)
         val prepared = cloudPayloadPolicy.prepareText(
             purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
-            rawText = input.rawOcrText
+            rawText = rawPrompt
         )
         val requestPayload = buildRequestPayloadFromPrepared(input, allowImage, prepared)
         val requestBody = requestPayload.jsonBody
@@ -357,13 +359,17 @@ class CloudReceiptAssistService @Inject constructor(
     }
 
     internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String {
+        val redactionApplied = input.redactBeforeCloud
+        // Image is only included when allowImage=true AND redaction is not required
+        val imageWillBeIncluded = allowImage && !redactionApplied && input.imagePath != null
+        val rawPrompt = buildRawPrompt(input, hasAttachedImage = imageWillBeIncluded)
         val prepared = com.yourname.expensetracker.domain.privacy.PreparedCloudPayload(
             purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
-            text = input.rawOcrText,
-            redactionApplied = false,
+            text = rawPrompt,
+            redactionApplied = redactionApplied,
             fieldsRedacted = emptySet(),
             payloadHash = "",
-            rawTextIncluded = true,
+            rawTextIncluded = !redactionApplied,
             rawImageIncluded = false
         )
         return buildRequestPayloadFromPrepared(input, allowImage, prepared).jsonBody
@@ -383,8 +389,8 @@ class CloudReceiptAssistService @Inject constructor(
             }
             null
         }
-        val prompt = buildPrompt(input, hasAttachedImage = inlineImagePart != null, safeOcrText = prepared.text)
-        val parts = JSONArray().put(JSONObject().put("text", prompt))
+        // PRIV-43B-02: Use prepared.text directly — it IS the full prepared prompt
+        val parts = JSONArray().put(JSONObject().put("text", prepared.text))
         inlineImagePart?.let(parts::put)
 
         val requestJson = JSONObject().apply {
@@ -416,10 +422,11 @@ class CloudReceiptAssistService @Inject constructor(
         )
     }
 
-    private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean, safeOcrText: String): String {
-        // Merchant and line items are passed through as-is; redaction was applied by CloudPayloadPolicy
+    private fun buildRawPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean): String {
+        // PRIV-43B-02: All fields included in raw prompt — CloudPayloadPolicy will redact if required
         val safeParsedMerchant = input.parsedMerchant
         val safeLineItemsJson = input.lineItemsJson
+        val safeRawOcrText = input.rawOcrText
 
         val imageMode = if (hasAttachedImage) {
             """
@@ -481,7 +488,7 @@ class CloudReceiptAssistService @Inject constructor(
             - parsedTaxAmount: ${input.parsedTaxAmount?.toString() ?: "none"}
             - lineItemsJson: ${safeLineItemsJson ?: "none"}
             - rawOcrText:
-            $safeOcrText
+            $safeRawOcrText
         """.trimIndent()
     }
 

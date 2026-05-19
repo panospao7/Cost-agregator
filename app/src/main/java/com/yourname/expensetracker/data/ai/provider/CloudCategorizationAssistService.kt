@@ -1,13 +1,15 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
@@ -34,30 +36,33 @@ import javax.inject.Singleton
 import timber.log.Timber
 
 @Singleton
-// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+// PRIV-43B-01: Now uses CloudPayloadPolicy — no direct redactBeforeCloud access
 class CloudCategorizationAssistService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor,
-    private val policyResolver: EffectiveCloudAiPolicyResolver
+    private val cloudPayloadPolicy: CloudPayloadPolicy
 ) : CategorizationAssistService {
 
-    constructor(secureKeyStorage: SecureKeyStorage) : this(
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     )
 
-    constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
         secureKeyStorage, client, null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     )
 
     private val apiKey: String
@@ -76,8 +81,10 @@ class CloudCategorizationAssistService @Inject constructor(
             return null
         }
 
-        val shouldRedact = policyResolver.resolve().redactBeforeCloud
-        val requestBody = buildRequestBody(input, shouldRedact)
+        val shouldRedact = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, "").redactionApplied
+        val rawPrompt = buildRawPrompt(input)
+        val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, rawPrompt)
+        val requestBody = buildRequestBody(prepared.text)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -150,50 +157,25 @@ class CloudCategorizationAssistService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: CategorizationAssistInput, shouldRedact: Boolean): String {
-        val prompt = buildPrompt(input, shouldRedact)
+    private fun buildRequestBody(promptText: String): String {
         return JSONObject().apply {
-            put(
-                "contents",
-                JSONArray().put(
-                    JSONObject().put(
-                        "parts",
-                        JSONArray().put(JSONObject().put("text", prompt))
-                    )
-                )
-            )
-            put(
-                "generationConfig",
-                JSONObject().apply {
-                    put("temperature", 0.1)
-                    put("maxOutputTokens", AppConfig.Ai.CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS)
-                    put("responseMimeType", "application/json")
-                    put(
-                        "thinkingConfig",
-                        JSONObject().apply {
-                            put("thinkingBudget", 0)
-                        }
-                    )
-                }
-            )
+            put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", promptText)))))
+            put("generationConfig", JSONObject().apply {
+                put("temperature", 0.1)
+                put("maxOutputTokens", AppConfig.Ai.CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS)
+                put("responseMimeType", "application/json")
+                put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
+            })
         }.toString()
     }
 
-    private fun buildPrompt(input: CategorizationAssistInput, shouldRedact: Boolean): String {
+    private fun buildRawPrompt(input: CategorizationAssistInput): String {
         val categories = input.candidateCategories.joinToString("\n") { "- ${it.id}: ${it.cloudLabel}" }
         val merchantContext = buildMerchantContext(input)
 
-        // PRIVACY FIX: Sanitize PII before sending to cloud
-        val safeMerchant = if (shouldRedact) {
-            redactor.redactMerchant(input.merchant).value ?: "Unknown"
-        } else {
-            input.merchant
-        }
-        val safeSupportingText = if (shouldRedact && input.supportingText != null) {
-            redactor.redactText(input.supportingText, CloudPayloadPurpose.ITEM_CATEGORIZATION).text
-        } else {
-            input.supportingText ?: "none"
-        }
+        // PRIV-43B-01: Raw values — CloudPayloadPolicy will redact if required
+        val safeMerchant = input.merchant
+        val safeSupportingText = input.supportingText ?: "none"
 
         return """
 You are helping categorize a pending finance review.

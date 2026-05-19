@@ -571,7 +571,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ): EmailReceiptProcessResult {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
-            emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null)
+            emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null, correlationId)
             return EmailReceiptProcessResult.Error("Database writes blocked during restore")
         }
 
@@ -585,7 +585,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // Look up by hash in all modes — hash is always stored
             val existing = scannedReceiptDao.getBySourceFingerprint(messageIdHash)
             if (existing != null) {
-                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "messageId_hash_duplicate", "ScannedReceipt", existing.id)
+                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "messageId_hash_duplicate", "ScannedReceipt", existing.id, correlationId)
                 return EmailReceiptProcessResult.Duplicate(existing.id)
             }
         }
@@ -593,7 +593,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         if (fingerprint.isNotBlank()) {
             val existing = emailReceiptDao.getByFingerprint(fingerprint)
             if (existing != null) {
-                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "fingerprint_duplicate", "EmailReceiptSource", existing.receiptId)
+                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "fingerprint_duplicate", "EmailReceiptSource", existing.receiptId, correlationId)
                 return EmailReceiptProcessResult.Duplicate(existing.receiptId)
             }
         }
@@ -610,14 +610,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 emailData.currency
             )
         } else null
+        // PRIV-43B-10: Use messageIdHash for duplicate detector — never raw messageId
         val duplicateResult = duplicateDetector.checkDuplicate(
             imageHash = null,
             textFingerprint = emailTextFingerprint,
             semanticFingerprint = emailSemanticFingerprint,
-            externalSourceId = messageId.ifBlank { null }
+            externalSourceId = messageIdHash.ifBlank { null }
         )
         if (duplicateResult.isDuplicate && duplicateResult.existingReceiptId != null) {
-            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "duplicate_detector_${duplicateResult.matchType}", "ScannedReceipt", duplicateResult.existingReceiptId)
+            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "duplicate_detector_${duplicateResult.matchType}", "ScannedReceipt", duplicateResult.existingReceiptId, correlationId)
             return EmailReceiptProcessResult.Duplicate(duplicateResult.existingReceiptId)
         }
 
@@ -745,7 +746,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         // Handle duplicate captured inside the transaction
         if (capturedDuplicate != null) {
-            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "in_transaction_duplicate", "EmailReceiptSource", capturedDuplicate!!.existingReceiptId)
+            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "in_transaction_duplicate", "EmailReceiptSource", capturedDuplicate!!.existingReceiptId, correlationId)
             return capturedDuplicate!!
         }
 
@@ -755,6 +756,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             runCatching { sideEffectDispatcher.dispatchAfterSave(saved) }
             for (expenseId in expenseIds) {
                 runCatching {
+                    // PRIV-43B-09: Pass correlationId to side effects for audit traceability
                     transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
                         expenseId, ExpenseSource.EMAIL_RECEIPT
                     )
@@ -770,7 +772,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         outcome: String,
         reason: String,
         entityType: String? = null,
-        entityId: Long? = null
+        entityId: Long? = null,
+        correlationId: String? = null
     ) {
         try {
             diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
@@ -782,6 +785,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             .firstOrNull { it.name == o }?.name ?: "FAILED_FINAL"
                     }
                 ),
+                correlationId = correlationId ?: "",
                 entityType = entityType,
                 entityId = entityId,
                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()

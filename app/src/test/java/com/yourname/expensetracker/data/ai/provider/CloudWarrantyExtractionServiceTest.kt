@@ -39,8 +39,10 @@ class CloudWarrantyExtractionServiceTest {
             secureKeyStorage = createMockKeyStorage(apiKey = ""),
             client = OkHttpClient(),
             privacyGate = mockk<PrivacyGate>(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = runBlocking {
@@ -84,8 +86,10 @@ class CloudWarrantyExtractionServiceTest {
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
             privacyGate = mockk<PrivacyGate>(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = runBlocking {
@@ -136,8 +140,10 @@ class CloudWarrantyExtractionServiceTest {
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
             privacyGate = mockk<PrivacyGate>(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = runBlocking {
@@ -181,8 +187,10 @@ class CloudWarrantyExtractionServiceTest {
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
             privacyGate = mockk<PrivacyGate>(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
-            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi()
+            cloudPayloadPolicy = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy(
+                com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+                com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            )
         )
 
         val result = runBlocking {

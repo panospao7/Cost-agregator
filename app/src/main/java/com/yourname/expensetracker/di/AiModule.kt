@@ -227,9 +227,8 @@ abstract class AiModule {
             secureKeyStorage: SecureKeyStorage,
             @CloudAiHttpClient cloudAiClient: OkHttpClient,
             privacyGate: PrivacyGate,
-            redactor: CloudPayloadRedactor,
-            policyResolver: EffectiveCloudAiPolicyResolver
+            cloudPayloadPolicy: com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
         ): com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
-            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient, privacyGate, redactor, policyResolver)
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient, privacyGate, cloudPayloadPolicy)
     }
 }

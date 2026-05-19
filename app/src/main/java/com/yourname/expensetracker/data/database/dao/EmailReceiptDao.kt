@@ -67,4 +67,19 @@ interface EmailReceiptDao {
 
     @Query("DELETE FROM email_receipt_sources WHERE parsedAt < :before")
     suspend fun deleteOlderThan(before: Long)
+
+    /**
+     * PRIV-43B-12: Redact sensitive fields rather than deleting rows.
+     * Preserves receiptId, provider, fingerprint, and hash columns for dedup/provenance.
+     * Returns the number of rows updated.
+     */
+    @androidx.room.Query("""
+        UPDATE email_receipt_sources
+        SET emailSender = NULL,
+            emailSubject = NULL,
+            emailMessageId = NULL
+        WHERE parsedAt < :cutoffMs
+          AND (emailSender IS NOT NULL OR emailSubject IS NOT NULL OR emailMessageId IS NOT NULL)
+    """)
+    suspend fun redactSensitiveFieldsOlderThan(cutoffMs: Long): Int
 }

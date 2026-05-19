@@ -2,16 +2,16 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionInput
 import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.config.AppConfig
-import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
-import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -34,65 +34,44 @@ import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig.
- * API key is retrieved from encrypted storage at runtime, not compiled into APK.
- */
+// PRIV-43B-01: Now uses CloudPayloadPolicy — no direct redactBeforeCloud access
 @Singleton
 class CloudWarrantyExtractionService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor,
-    private val policyResolver: EffectiveCloudAiPolicyResolver
+    private val cloudPayloadPolicy: CloudPayloadPolicy
 ) {
     private var apiKeyOverride: String? = null
 
+    @androidx.annotation.VisibleForTesting
     internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage, OkHttpClient(),
-        CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP),
-        DefaultCloudPayloadRedactor(),
-        EffectiveCloudAiPolicyResolver.failClosedNoAi()
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
+        },
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
 
-    /**
-     * CRITICAL: API key is now retrieved from secure storage at runtime.
-     * No longer compiled into BuildConfig, preventing APK extraction.
-     */
     private val apiKey: String
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
-    suspend fun extractWarranty(
-        input: WarrantyExtractionInput
-    ): WarrantyExtractionResult? = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) {
-            Timber.d("CloudWarrantyExtractionService: Gemini API key missing, skipping.")
-            return@withContext null
-        }
+    suspend fun extractWarranty(input: WarrantyExtractionInput): WarrantyExtractionResult? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext null
 
-        // PRIVACY GATE: Check cloud AI privacy gate before proceeding
         val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION)
-        if (gateDecision.blocksExecution()) {
-            Timber.d("CloudWarrantyExtractionService: privacy gate denied: ${gateDecision.reason()}")
-            return@withContext null
-        }
+        if (gateDecision.blocksExecution()) return@withContext null
 
-        val shouldRedactBeforeCloud = policyResolver.resolve().redactBeforeCloud
         val correlationId = CloudCorrelation.newCorrelationId()
-        val prompt = buildPrompt(input, shouldRedactBeforeCloud)
-        
+        // PRIV-43B-01: Build full raw prompt, then prepare through policy
+        val rawPrompt = buildRawPrompt(input)
+        val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.WARRANTY_EXTRACTION, rawPrompt)
+
         val requestBody = JSONObject().apply {
-            put("contents", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("parts", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("text", prompt)
-                        })
-                    })
-                })
-            })
+            put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prepared.text)))))
             put("generationConfig", JSONObject().apply {
                 put("temperature", 0.1)
                 put("maxOutputTokens", 1024)
@@ -184,17 +163,17 @@ class CloudWarrantyExtractionService @Inject constructor(
         null
     }
 
-    private fun buildPrompt(input: WarrantyExtractionInput, shouldRedactBeforeCloud: Boolean): String {
-        val safeReceiptText = if (shouldRedactBeforeCloud) redactor.redactText(input.receiptText, CloudPayloadPurpose.WARRANTY_EXTRACTION).text else input.receiptText
-        val safeMerchant = if (shouldRedactBeforeCloud) redactor.redactMerchant(input.merchant).value ?: "Unknown" else input.merchant ?: "Unknown"
+    private fun buildRawPrompt(input: WarrantyExtractionInput): String {
+        val receiptText = input.receiptText.take(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI)
+        val merchant = input.merchant ?: "Unknown"
 
         return """
             Analyze this receipt and extract warranty information.
             
             Receipt Text:
-            $safeReceiptText
+            $receiptText
             
-            Merchant: $safeMerchant
+            Merchant: $merchant
             Total Amount: ${input.totalAmount ?: "Unknown"}
             Date: ${input.purchaseDate ?: "Unknown"}
             

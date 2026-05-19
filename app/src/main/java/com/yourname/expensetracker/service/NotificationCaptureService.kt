@@ -793,6 +793,19 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
+        // PRIV-43B-05: Mirror normal path — shutdown check before extras extraction
+        if (isShuttingDown) {
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "refresh",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+                correlationId = correlationId,
+                isTerminal = true
+            ))
+            return
+        }
+
         if (isPrivacyDeniedFast()) {
             Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction, refresh path)")
             emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
@@ -801,6 +814,22 @@ class NotificationCaptureService : NotificationListenerService() {
                 outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
                 reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
                 correlationId = correlationId,
+                isTerminal = true
+            ))
+            return
+        }
+
+        // PRIV-43B-06: Blocked-package cache check before extras extraction (mirrors normal path)
+        if (isPackageBlockedFast(packageName)) {
+            Timber.d("Blocked package pre-extraction drop (refresh): $packageName")
+            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "refresh_package_policy_fast",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE,
+                correlationId = correlationId,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName).build(),
                 isTerminal = true
             ))
             return
@@ -816,18 +845,6 @@ class NotificationCaptureService : NotificationListenerService() {
                 stage = "refresh_filter",
                 outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
                 reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
-                correlationId = correlationId,
-                isTerminal = true
-            ))
-            return
-        }
-
-        if (isShuttingDown) {
-            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "refresh",
-                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
-                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
                 correlationId = correlationId,
                 isTerminal = true
             ))
