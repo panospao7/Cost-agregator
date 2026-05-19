@@ -227,8 +227,9 @@ class PrivacyGateContractTest {
         // WHEN: checking a capability not handled by CloudAiPrivacyGate
         val decision = gate.check(PrivacyCapability.NOTIFICATION_CAPTURE)
 
-        // THEN: returns Allowed (gate delegates unrecognised capabilities)
-        assertThat(decision).isEqualTo(PrivacyDecision.Allowed)
+        // THEN: returns NotApplicable (gate does not handle this capability)
+        // NotApplicable means the gate passes through — CompositePrivacyGate handles the final decision
+        assertThat(decision.blocksExecution()).isFalse()
     }
 
     @Test

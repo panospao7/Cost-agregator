@@ -52,8 +52,14 @@ class RawPersistencePolicyResolver @Inject constructor(
             RawSourceType.EMAIL_RECEIPT -> settings.emailReceiptStorageMode
             RawSourceType.BANK_STATEMENT -> settings.rawOcrStorageMode   // bank statement uses OCR mode
             RawSourceType.BANK_API -> settings.rawOcrStorageMode
-            RawSourceType.AI_ARTIFACT -> if (settings.debugDataPersistenceEnabled) RawStorageMode.STORE_REDACTED else RawStorageMode.DO_NOT_STORE
-            RawSourceType.EXPORT_DEBUG -> if (settings.debugDataPersistenceEnabled) RawStorageMode.STORE_RAW else RawStorageMode.DO_NOT_STORE
+            RawSourceType.AI_ARTIFACT -> when {
+                settings.debugDataPersistenceEnabled -> RawStorageMode.STORE_REDACTED
+                else -> RawStorageMode.DO_NOT_STORE
+            }
+            RawSourceType.EXPORT_DEBUG -> when {
+                settings.debugDataPersistenceEnabled -> RawStorageMode.STORE_RAW
+                else -> RawStorageMode.DO_NOT_STORE
+            }
         }}
 
 /** Sources that always need a keyed hash for deduplication even under DO_NOT_STORE. */

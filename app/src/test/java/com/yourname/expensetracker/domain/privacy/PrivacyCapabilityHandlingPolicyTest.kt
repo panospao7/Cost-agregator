@@ -41,7 +41,15 @@ class PrivacyCapabilityHandlingPolicyTest {
         PrivacyCapability.RAW_NOTIFICATION_RETENTION to CapabilityPolicy.LOCAL_ONLY,
         PrivacyCapability.RAW_OCR_RETENTION to CapabilityPolicy.LOCAL_ONLY,
         PrivacyCapability.DEBUG_DATA_PERSISTENCE to CapabilityPolicy.LOCAL_ONLY,
-        PrivacyCapability.TIMBER_PII_LOGGING to CapabilityPolicy.LOCAL_ONLY
+        PrivacyCapability.TIMBER_PII_LOGGING to CapabilityPolicy.LOCAL_ONLY,
+
+        // Export capabilities — gate-handled by ExportPrivacyGate
+        PrivacyCapability.EXPENSE_EXPORT to CapabilityPolicy.GATE_HANDLED,
+        PrivacyCapability.EXPENSE_EXPORT_RAW to CapabilityPolicy.GATE_HANDLED,
+        PrivacyCapability.EXPENSE_EXPORT_REDACTED to CapabilityPolicy.GATE_HANDLED,
+        PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED to CapabilityPolicy.GATE_HANDLED,
+        PrivacyCapability.DEBUG_RAW_EXPORT to CapabilityPolicy.GATE_HANDLED,
+        PrivacyCapability.RAW_DATABASE_EXPORT to CapabilityPolicy.GATE_HANDLED
     )
 
     @Test
