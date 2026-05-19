@@ -17,6 +17,8 @@ import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
+import com.yourname.expensetracker.domain.privacy.RetentionTarget
+import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -62,53 +64,92 @@ class DataRetentionWorker @AssistedInject constructor(
 
             val notificationCutoff = now - TimeUnit.DAYS.toMillis(settings.rawNotificationRetentionDays.toLong())
             val ocrCutoff = now - TimeUnit.DAYS.toMillis(settings.rawOcrRetentionDays.toLong())
+            val emailCutoff = now - TimeUnit.DAYS.toMillis(30)
 
             val notificationDao = appDatabase.rawNotificationDao()
             val receiptDao = appDatabase.scannedReceiptDao()
             val auditDao = appDatabase.privacyAuditDao()
-
-            // 1. Purge raw notification content (title, text, bigText, extrasJson)
-            val notificationPurgeCount = purgeRawNotifications(notificationDao, notificationCutoff, now)
-            if (notificationPurgeCount > 0) {
-                Log.d(TAG, "Purged $notificationPurgeCount raw notifications")
-                auditDao.insert(
-                    PrivacyAuditEvent(
-                        capability = PrivacyCapability.RAW_NOTIFICATION_RETENTION.name,
-                        decision = "ALLOWED",
-                        reason = "Purged $notificationPurgeCount raw notifications older than ${settings.rawNotificationRetentionDays} days",
-                        context = "{\"purgedCount\": $notificationPurgeCount, \"retentionDays\": ${settings.rawNotificationRetentionDays}}",
-                        timestampMs = now,
-                        caller = "DataRetentionWorker"
-                    )
-                )
-            }
-
-            // 2. Purge raw OCR text from scanned_receipts
-            val ocrPurgeCount = purgeRawOcrText(receiptDao, ocrCutoff, now)
-            if (ocrPurgeCount > 0) {
-                Log.d(TAG, "Purged raw OCR text from $ocrPurgeCount scanned receipts")
-                auditDao.insert(
-                    PrivacyAuditEvent(
-                        capability = PrivacyCapability.RAW_OCR_RETENTION.name,
-                        decision = "ALLOWED",
-                        reason = "Purged raw OCR text from $ocrPurgeCount receipts older than ${settings.rawOcrRetentionDays} days",
-                        context = "{\"purgedCount\": $ocrPurgeCount, \"retentionDays\": ${settings.rawOcrRetentionDays}}",
-                        timestampMs = now,
-                        caller = "DataRetentionWorker"
-                    )
-                )
-            }
-
-            // 3. Purge expired AI artifacts (TTL-based, typically 90 days)
             val aiArtifactDao = appDatabase.aiArtifactDao()
-            aiArtifactDao.deleteExpired(now)
-
-            // 4. Purge email receipt source records older than 30 days
-            val emailRetentionCutoff = now - TimeUnit.DAYS.toMillis(30)
             val emailReceiptDao = appDatabase.emailReceiptDao()
-            emailReceiptDao.deleteOlderThan(emailRetentionCutoff)
 
-            Log.d(TAG, "Data retention worker completed: notifications=$notificationPurgeCount ocr=$ocrPurgeCount")
+            // PR9: RetentionTarget registry — each target is named and reports per-target counts
+            val targets: List<RetentionTarget> = listOf(
+                object : RetentionTarget {
+                    override val name = "raw_notifications"
+                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                        val count = purgeRawNotifications(notificationDao, cutoffMs, now)
+                        RetentionPurgeResult(name, count, true)
+                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+                },
+                object : RetentionTarget {
+                    override val name = "scanned_receipts.rawOcrText"
+                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                        val count = purgeRawOcrText(receiptDao, cutoffMs, now)
+                        RetentionPurgeResult(name, count, true)
+                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+                },
+                object : RetentionTarget {
+                    override val name = "ai_artifacts"
+                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                        aiArtifactDao.deleteExpired(cutoffMs)
+                        RetentionPurgeResult(name, 0, true)  // deleteExpired doesn't return count
+                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+                },
+                object : RetentionTarget {
+                    override val name = "email_receipt_sources"
+                    override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                        emailReceiptDao.deleteOlderThan(cutoffMs)
+                        RetentionPurgeResult(name, 0, true)
+                    }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+                }
+            )
+
+            val results = mutableListOf<RetentionPurgeResult>()
+
+            // Notification target uses its own cutoff
+            executionGuard.checkpoint("data_retention_notifications")
+            results += targets[0].purge(notificationCutoff)
+
+            // OCR target uses its own cutoff
+            executionGuard.checkpoint("data_retention_ocr")
+            results += targets[1].purge(ocrCutoff)
+
+            // AI artifacts and email use now as their TTL-based cutoff
+            results += targets[2].purge(now)
+            results += targets[3].purge(emailCutoff)
+
+            // Log per-target counts and audit successes
+            for (result in results) {
+                if (result.rowsPurged > 0 || !result.success) {
+                    Log.d(TAG, "RetentionTarget[${result.targetName}]: purged=${result.rowsPurged} success=${result.success} error=${result.errorMessage}")
+                }
+            }
+
+            val notifCount = results.firstOrNull { it.targetName == "raw_notifications" }?.rowsPurged ?: 0
+            val ocrCount = results.firstOrNull { it.targetName == "scanned_receipts.rawOcrText" }?.rowsPurged ?: 0
+
+            if (notifCount > 0) {
+                auditDao.insert(PrivacyAuditEvent(
+                    capability = PrivacyCapability.RAW_NOTIFICATION_RETENTION.name,
+                    decision = "ALLOWED",
+                    reason = "Purged $notifCount raw notifications older than ${settings.rawNotificationRetentionDays} days",
+                    context = "{\"purgedCount\": $notifCount, \"retentionDays\": ${settings.rawNotificationRetentionDays}}",
+                    timestampMs = now,
+                    caller = "DataRetentionWorker"
+                ))
+            }
+            if (ocrCount > 0) {
+                auditDao.insert(PrivacyAuditEvent(
+                    capability = PrivacyCapability.RAW_OCR_RETENTION.name,
+                    decision = "ALLOWED",
+                    reason = "Purged raw OCR text from $ocrCount receipts older than ${settings.rawOcrRetentionDays} days",
+                    context = "{\"purgedCount\": $ocrCount, \"retentionDays\": ${settings.rawOcrRetentionDays}}",
+                    timestampMs = now,
+                    caller = "DataRetentionWorker"
+                ))
+            }
+
+            Log.d(TAG, "Data retention worker completed: notifications=$notifCount ocr=$ocrCount")
         }
 
         return guardResult.toWorkerResult()

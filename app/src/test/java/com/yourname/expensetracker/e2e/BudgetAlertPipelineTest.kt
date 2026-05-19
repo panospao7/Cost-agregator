@@ -28,7 +28,7 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         budgetRepo = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
         budgetCalculator = BudgetCalculator(timeProvider)
-        budgetMonitor = BudgetMonitor(budgetRepo, timeProvider, notificationService, testDispatcher, diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true), writeBarrier = mockk(relaxed = true), diagnosticSink = mockk(relaxed = true))
+        budgetMonitor = BudgetMonitor(budgetRepo, timeProvider, notificationService, testDispatcher, diagnosticEventWriter = mockk(relaxed = true), writeBarrier = mockk(relaxed = true), diagnosticSink = mockk(relaxed = true))
     }
 
     @Test

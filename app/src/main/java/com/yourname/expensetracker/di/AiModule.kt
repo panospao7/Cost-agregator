@@ -49,6 +49,7 @@ import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
 import com.yourname.expensetracker.domain.privacy.DefaultRedactionSanitizer
 import com.yourname.expensetracker.domain.privacy.RedactionSanitizer
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -216,9 +217,10 @@ abstract class AiModule {
             secureKeyStorage: SecureKeyStorage,
             @CloudAiHttpClient cloudAiClient: OkHttpClient,
             privacyGate: PrivacyGate,
-            redactor: CloudPayloadRedactor
+            redactor: CloudPayloadRedactor,
+            policyResolver: EffectiveCloudAiPolicyResolver
         ): CloudReceiptItemCategorizationService =
-            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient, privacyGate, redactor)
+            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient, privacyGate, redactor, policyResolver)
 
         @Provides
         @Singleton
@@ -226,8 +228,9 @@ abstract class AiModule {
             secureKeyStorage: SecureKeyStorage,
             @CloudAiHttpClient cloudAiClient: OkHttpClient,
             privacyGate: PrivacyGate,
-            redactor: CloudPayloadRedactor
+            redactor: CloudPayloadRedactor,
+            policyResolver: EffectiveCloudAiPolicyResolver
         ): com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
-            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient, privacyGate, redactor)
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient, privacyGate, redactor, policyResolver)
     }
 }

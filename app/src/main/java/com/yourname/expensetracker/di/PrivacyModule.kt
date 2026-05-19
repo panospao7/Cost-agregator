@@ -1,10 +1,13 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
 import com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl
 import com.yourname.expensetracker.data.privacy.PrivacySettingsRepositoryImpl
 import com.yourname.expensetracker.domain.privacy.BackupPrivacyGate
 import com.yourname.expensetracker.domain.privacy.CloudAiPrivacyGate
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
@@ -12,6 +15,8 @@ import com.yourname.expensetracker.domain.privacy.NotificationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
+import com.yourname.expensetracker.domain.privacy.ExportPrivacyGate
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -35,6 +40,18 @@ abstract class PrivacyModule {
         impl: DefaultCloudPayloadRedactor
     ): CloudPayloadRedactor
 
+    @Binds
+    @Singleton
+    abstract fun bindSensitiveHashingService(
+        impl: DefaultSensitiveHashingService
+    ): SensitiveHashingService
+
+    @Binds
+    @Singleton
+    abstract fun bindCloudPayloadPolicy(
+        impl: DefaultCloudPayloadPolicy
+    ): CloudPayloadPolicy
+
     companion object {
 
         @Provides
@@ -44,9 +61,19 @@ abstract class PrivacyModule {
             locationGate: LocationPrivacyGate,
             cloudAiGate: CloudAiPrivacyGate,
             backupGate: BackupPrivacyGate,
+            privacySettingsRepository: PrivacySettingsRepository,
             auditLogger: PrivacyAuditLogger
         ): PrivacyGate {
-            return CompositePrivacyGate(listOf(notificationGate, locationGate, cloudAiGate, backupGate), auditLogger)
+            // PR8: ExportPrivacyGate added — release builds always block RAW_DATABASE_EXPORT
+            val exportGate = ExportPrivacyGate(
+                settingsRepository = privacySettingsRepository,
+                auditLogger = auditLogger,
+                isDebugBuild = com.yourname.expensetracker.BuildConfig.DEBUG
+            )
+            return CompositePrivacyGate(
+                listOf(notificationGate, locationGate, cloudAiGate, backupGate, exportGate),
+                auditLogger
+            )
         }
 
         @Provides

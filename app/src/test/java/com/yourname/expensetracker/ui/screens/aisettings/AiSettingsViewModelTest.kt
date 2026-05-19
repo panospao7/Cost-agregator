@@ -62,7 +62,8 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
             aiRuntimeDiagnostics = aiRuntimeDiagnostics,
             syncProactiveBriefingWorkUseCase = syncProactiveBriefingWorkUseCase,
             secureKeyStorage = secureKeyStorage,
-            privacyGate = mockk(relaxed = true)
+            privacyGate = mockk(relaxed = true),
+            connectionTester = mockk(relaxed = true)
         )
     }
 

@@ -386,8 +386,10 @@ private fun RawStorageModeRow(
     )
     Column(modifier = Modifier.padding(vertical = 6.dp)) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = if (enabled) SemanticColors.TextPrimary else SemanticColors.TextSecondary)
-        if (selected == com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_RAW) {
-            Text(stringResource(R.string.privacy_raw_storage_warning), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        when (selected) {
+            com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_RAW ->
+                Text(stringResource(R.string.privacy_raw_storage_warning), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            else -> Unit
         }
         options.forEach { (mode, label2) ->
             Row(

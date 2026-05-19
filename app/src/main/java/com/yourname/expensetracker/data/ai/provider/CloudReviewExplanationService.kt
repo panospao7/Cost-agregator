@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -43,37 +44,29 @@ class CloudReviewExplanationService @Inject constructor(
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor
+    private val redactor: CloudPayloadRedactor,
+    private val policyResolver: EffectiveCloudAiPolicyResolver
 ) : ReviewExplanationService {
 
     private var apiKeyOverride: String? = null
 
-    // Secondary constructor for tests
     constructor(secureKeyStorage: SecureKeyStorage) : this(
-        secureKeyStorage,
-        OkHttpClient(),
-        null,
+        secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
         },
-        DefaultCloudPayloadRedactor()
+        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
     )
 
-    // Secondary constructor for testing
     constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
-        secureKeyStorage,
-        OkHttpClient(),
-        null,
+        secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
         },
-        DefaultCloudPayloadRedactor()
+        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
-
     private val apiKey: String
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
@@ -90,7 +83,7 @@ class CloudReviewExplanationService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
         }
 
-        val shouldRedact = aiSettingsRepository?.settings()?.first()?.redactBeforeCloud ?: true
+        val shouldRedact = policyResolver.resolve().redactBeforeCloud
         val requestBody = buildRequestBody(input, shouldRedact)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()

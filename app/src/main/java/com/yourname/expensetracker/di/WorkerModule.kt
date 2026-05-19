@@ -3,8 +3,6 @@ package com.yourname.expensetracker.di
 import com.yourname.expensetracker.domain.workers.WorkerDrainController
 import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
 import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistryImpl
-import com.yourname.expensetracker.domain.workers.WorkerRunLogger
-import com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -14,10 +12,6 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class WorkerModule {
-    @Binds
-    @Singleton
-    abstract fun bindWorkerRunLogger(impl: WorkerRunLoggerImpl): WorkerRunLogger
-
     @Binds
     @Singleton
     abstract fun bindWorkerLeaseRegistry(impl: WorkerLeaseRegistryImpl): WorkerLeaseRegistry

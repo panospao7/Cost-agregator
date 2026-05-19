@@ -420,7 +420,7 @@ class WarrantyTrackerRepository @Inject constructor(
             currency = receipt.currency
         )
 
-        return cloudExtractionService.extractWarranty(input, shouldRedact)
+        return cloudExtractionService.extractWarranty(input)
     }
 
     /**

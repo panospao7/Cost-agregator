@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -40,20 +41,27 @@ class CloudDashboardBriefingService @Inject constructor(
     @CloudAiHttpClient private val client: OkHttpClient,
     private val promptFormatter: DashboardBriefingPromptFormatter,
     private val aiSettingsRepository: AiSettingsRepository? = null,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val policyResolver: EffectiveCloudAiPolicyResolver
 ) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
+
+    private companion object {
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        fun noOpGate() = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
+    }
 
     constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage = secureKeyStorage,
         client = OkHttpClient(),
         promptFormatter = DashboardBriefingPromptFormatter(),
         aiSettingsRepository = null,
-        privacyGate = object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
-        }
+        privacyGate = noOpGate(),
+        policyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
     )
 
     constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
@@ -61,10 +69,8 @@ class CloudDashboardBriefingService @Inject constructor(
         client = client,
         promptFormatter = DashboardBriefingPromptFormatter(),
         aiSettingsRepository = null,
-        privacyGate = object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
-        }
+        privacyGate = noOpGate(),
+        policyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
     )
 
     constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
@@ -72,10 +78,8 @@ class CloudDashboardBriefingService @Inject constructor(
         client = OkHttpClient(),
         promptFormatter = DashboardBriefingPromptFormatter(),
         aiSettingsRepository = null,
-        privacyGate = object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
-        }
+        privacyGate = noOpGate(),
+        policyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -110,7 +114,7 @@ class CloudDashboardBriefingService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
         }
 
-        val shouldRedact = settings?.redactBeforeCloud ?: true
+        val shouldRedact = policyResolver.resolve().redactBeforeCloud
 
         // HIGH-13 FIX: Remove API key length logging (information disclosure)
         Timber.d("CloudDashboardBriefingService: API key configured: ${apiKey.isNotBlank()}")
@@ -272,9 +276,5 @@ class CloudDashboardBriefingService @Inject constructor(
             ?: return null
 
         return DashboardBriefingResponseParser.parseResponse(text)
-    }
-
-    private companion object {
-        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

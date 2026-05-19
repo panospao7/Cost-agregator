@@ -208,7 +208,7 @@ class PrivacyGateContractTest {
             auditLogger.logDecision(
                 PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
                 any<PrivacyDecision>(),
-                any()
+                any<Map<String, String>>()
             )
         }
     }

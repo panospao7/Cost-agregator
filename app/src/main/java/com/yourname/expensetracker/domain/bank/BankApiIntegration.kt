@@ -14,6 +14,9 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -63,7 +66,9 @@ class BankApiIntegration @Inject constructor(
     private val timeProvider: TimeProvider,
     private val coordinator: TransactionLifecycleCoordinator,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
+    private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder,
+    private val hashingService: SensitiveHashingService,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
     
     companion object {
@@ -316,11 +321,36 @@ class BankApiIntegration @Inject constructor(
      * through [TransactionLifecycleCoordinator.createExpense] for full lifecycle
      * handling (validate → normalize → dedupe → insert atomic → event).
      */
-    private fun mapTransactionToExpense(
+    private suspend fun mapTransactionToExpense(
         transaction: BankTransaction,
         connection: BankConnection
     ): CreateExpenseRequest {
         val transactionType = transaction.movementType?.toTransactionType() ?: inferTransactionType(transaction)
+
+        // PR5: Redact/hash sensitive bank fields based on privacy policy
+        val settings = privacySettingsRepository.getSettings()
+        val mode = settings.rawOcrStorageMode  // bank API uses OCR storage mode
+
+        val safeDescription: String? = when (mode) {
+            RawStorageMode.STORE_RAW -> transaction.description
+            RawStorageMode.STORE_REDACTED -> "[REDACTED]"
+            else -> null
+        }
+        val safeReference: String? = when (mode) {
+            RawStorageMode.STORE_RAW -> transaction.reference
+            RawStorageMode.STORE_REDACTED -> if (transaction.reference != null) "[REDACTED]" else null
+            else -> null
+        }
+        // transferAccountName must never be raw description unless STORE_RAW
+        val safeTransferAccountName: String? = when {
+            transactionType == TransactionType.TRANSFER && mode == RawStorageMode.STORE_RAW ->
+                transaction.description.takeIf { it.isNotBlank() }
+            else -> null
+        }
+        val notes = buildString {
+            if (safeDescription != null) append(safeDescription)
+            if (safeReference != null) append(" (Ref: $safeReference)")
+        }.takeIf { it.isNotBlank() }
 
         return CreateExpenseRequest(
             merchant = transaction.merchant,
@@ -331,13 +361,9 @@ class BankApiIntegration @Inject constructor(
             source = ExpenseSource.BANK_API_SYNC,
             categoryId = connection.defaultCategoryId,
             transferDirection = transaction.transferDirection.takeIf { transactionType == TransactionType.TRANSFER },
-            // TODO (P0-4): BankTransaction needs transferAccountName field.
-            // Once the bank provider returns account names for transfers, pass:
-            //   transferAccountName = transaction.transferAccountName
-            transferAccountName = transaction.description.takeIf { it.isNotBlank() }, // fallback: description often contains account name for transfers
-            // P0-5: Use bank transaction external ID for dedup on re-sync
-            idempotencyKey = transaction.id,
-            notes = transaction.description + (transaction.reference?.let { " (Ref: $it)" } ?: "")
+            transferAccountName = safeTransferAccountName,
+            idempotencyKey = hashingService.hmacSha256Prefix(transaction.id, "providerTransactionId") ?: transaction.id,
+            notes = notes
         )
     }
 

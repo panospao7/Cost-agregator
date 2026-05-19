@@ -224,14 +224,15 @@ class CloudReceiptAssistServiceTest {
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
             privacyGate = mockk<PrivacyGate>(relaxed = true),
-            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor(),
+            policyResolver = com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver.failClosedForTest(settingsRepository)
         )
 
         val result = kotlinx.coroutines.runBlocking {
             service.suggest(sampleInput(rawOcrText = "LIDL TOTAL 12.34"))
         }
 
-        assertTrue(result is AiServiceResult.Success)
+        assertTrue(result is AiServiceResult.Success<*>)
         assertEquals(2, attempts.get())
     }
 

@@ -16,4 +16,46 @@ data class PrivacySettings(
     val rawOcrStorageMode: RawStorageMode = RawStorageMode.STORE_RAW,
     val emailReceiptStorageMode: RawStorageMode = RawStorageMode.STORE_REDACTED,
     val debugDataPersistenceEnabled: Boolean = false
-)
+) {
+    companion object {
+        /**
+         * Fail-closed settings used when DataStore is corrupted.
+         * All opt-in features are disabled; all raw storage modes are DO_NOT_STORE.
+         */
+        val FAIL_CLOSED_DEFAULTS = PrivacySettings(
+            notificationCaptureEnabled = false,
+            cloudAiEnabled = false,
+            redactBeforeCloud = true,
+            receiptImageCloudEnabled = false,
+            bankStatementAiEnabled = false,
+            externalGeocodingEnabled = false,
+            backgroundLocationBackfillEnabled = false,
+            deviceGpsLocationEnabled = false,
+            encryptedBackupEnabled = true,
+            rawNotificationRetentionDays = 30,
+            rawOcrRetentionDays = 30,
+            rawNotificationStorageMode = RawStorageMode.DO_NOT_STORE,
+            rawOcrStorageMode = RawStorageMode.DO_NOT_STORE,
+            emailReceiptStorageMode = RawStorageMode.DO_NOT_STORE,
+            debugDataPersistenceEnabled = false
+        )
+    }
+}
+
+/**
+ * Distinguishes why the current [PrivacySettings] value is in effect,
+ * so callers can surface appropriate warnings to the user.
+ */
+sealed interface PrivacySettingsLoadState {
+    /** Settings were successfully read from DataStore. */
+    data class Loaded(val settings: PrivacySettings) : PrivacySettingsLoadState
+
+    /** No persisted settings found — first run; defaults applied. */
+    data class FirstRunDefault(val settings: PrivacySettings) : PrivacySettingsLoadState
+
+    /** DataStore read failed; fail-closed defaults applied. User should be warned. */
+    data class CorruptedFailClosed(
+        val settings: PrivacySettings,
+        val reason: String
+    ) : PrivacySettingsLoadState
+}

@@ -70,7 +70,8 @@ class BudgetAutopilotEngineTest {
 
         engine = BudgetAutopilotEngine(
             budgetRepository = budgetRepository,
-            expenseDao = expenseDao,
+            multiCurrencyRepository = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
             categoryRepository = categoryRepository,
             insightsEngine = insightsEngine,
             spendingPaceCalculator = spendingPaceCalculator,

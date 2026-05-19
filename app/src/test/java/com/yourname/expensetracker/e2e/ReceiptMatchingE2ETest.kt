@@ -78,7 +78,7 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             database = database,
             receiptExpenseLinkDao = database.receiptExpenseLinkDao(),
             scannedReceiptDao = database.scannedReceiptDao(),
-            receiptEventDao = database.receiptEventDao(),
+            receiptLifecycleEventWriter = mockk(relaxed = true),
             receiptItemCategorizationDao = database.receiptItemCategorizationDao(),
             warrantyDao = database.warrantyDao(),
             returnWindowDao = database.returnWindowDao(),
@@ -93,7 +93,8 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             merchantNormalizer = merchantNormalizer,
             stringDistance = StringDistanceUtils,
             timeProvider = timeProvider,
-            receiptLinkService = linkService
+            receiptLinkService = linkService,
+            currencyConverter = mockk(relaxed = true)
         )
     }
 

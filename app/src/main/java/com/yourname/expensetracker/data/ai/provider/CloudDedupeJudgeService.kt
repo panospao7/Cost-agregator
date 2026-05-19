@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
@@ -56,19 +57,16 @@ class CloudDedupeJudgeService @Inject constructor(
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor
+    private val redactor: CloudPayloadRedactor,
+    private val policyResolver: EffectiveCloudAiPolicyResolver
 ) : DedupeJudgeService {
 
-    // Secondary constructor for tests
     constructor(secureKeyStorage: SecureKeyStorage) : this(
-        secureKeyStorage,
-        OkHttpClient(),
-        null,
+        secureKeyStorage, OkHttpClient(), null,
         object : PrivacyGate {
-            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
-                PrivacyDecision.Allowed
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision = PrivacyDecision.Allowed
         },
-        DefaultCloudPayloadRedactor()
+        DefaultCloudPayloadRedactor(), EffectiveCloudAiPolicyResolver.failClosedNoAi()
     )
 
     /**
@@ -91,7 +89,7 @@ class CloudDedupeJudgeService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
         }
 
-        val shouldRedact = aiSettingsRepository?.settings()?.first()?.redactBeforeCloud ?: true
+        val shouldRedact = policyResolver.resolve().redactBeforeCloud
         val requestBody = buildRequestBody(input, shouldRedact)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()

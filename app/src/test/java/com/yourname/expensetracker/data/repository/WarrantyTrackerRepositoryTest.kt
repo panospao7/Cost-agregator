@@ -55,7 +55,8 @@ class WarrantyTrackerRepositoryTest {
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true),
-            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            receiptLifecycleEventWriter = mockk(relaxed = true)
         )
 
         every { aiSettingsRepository.settings() } returns settingsFlow
@@ -113,8 +114,7 @@ class WarrantyTrackerRepositoryTest {
                         it.totalAmount == receipt.parsedTotal &&
                         it.purchaseDate == receipt.parsedDate &&
                         it.currency == receipt.currency
-                },
-                false
+                }
             )
         } returns extractionResult
 
@@ -151,7 +151,7 @@ class WarrantyTrackerRepositoryTest {
             confidence = 0.95f
         )
 
-        coEvery { cloudExtractionService.extractWarranty(any(), false) } returns extractionResult
+        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
 
         val result = repository.extractWarrantyFromReceipt(receipt)
 
@@ -182,7 +182,7 @@ class WarrantyTrackerRepositoryTest {
         val result = repository.extractWarrantyFromReceipt(receipt)
 
         assertNull(result)
-        coVerify(exactly = 0) { cloudExtractionService.extractWarranty(any(), any()) }
+        coVerify(exactly = 0) { cloudExtractionService.extractWarranty(any()) }
     }
 
     @Test
@@ -315,7 +315,7 @@ class WarrantyTrackerRepositoryTest {
             confidence = 0.85f
         )
 
-        coEvery { cloudExtractionService.extractWarranty(any(), false) } returns extractionResult
+        coEvery { cloudExtractionService.extractWarranty(any()) } returns extractionResult
 
         val result = repository.processReceiptForWarranty(receipt)
 

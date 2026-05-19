@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
 import com.yourname.expensetracker.data.email.provider.AppleReceiptParser
@@ -88,6 +89,7 @@ class EmailReceiptIngestionService(
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+    private val hashingService: SensitiveHashingService,
     private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
 ) {
     @Inject
@@ -106,7 +108,8 @@ class EmailReceiptIngestionService(
         restoreMaintenanceMode: RestoreMaintenanceMode,
         writeBarrier: DatabaseWriteBarrier,
         privacySettingsRepository: PrivacySettingsRepository,
-        diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+        diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+        hashingService: SensitiveHashingService
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -122,6 +125,7 @@ class EmailReceiptIngestionService(
         writeBarrier = writeBarrier,
         privacySettingsRepository = privacySettingsRepository,
         diagnosticEventWriter = diagnosticEventWriter,
+        hashingService = hashingService,
         transactionRunner = { block -> database.withTransaction { block() } }
     )
 
@@ -156,6 +160,7 @@ class EmailReceiptIngestionService(
         diagnosticEventWriter = object : com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter {
             override suspend fun emit(event: com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent) {}
         },
+        hashingService = com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService(),
         transactionRunner = { block -> block() }
     )
 
@@ -268,9 +273,11 @@ class EmailReceiptIngestionService(
             ).canonical.normalizedName
 
             val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date, messageId)
+            // PR4: hash messageId for deduplication; never store plaintext in coordinator
+            val messageIdHash = hashingService.hmacSha256Prefix(messageId, "emailMessageId") ?: messageId
 
             val coordinatorEmailData = EmailReceiptData(
-                messageId = messageId,
+                messageId = messageIdHash,   // pass HMAC hash, not plaintext
                 from = sender,
                 subject = subject,
                 body = emailBody,
@@ -431,15 +438,15 @@ class EmailReceiptIngestionService(
     }
 
     /**
-     * Create a fingerprint for deduplication.
-     * Format: normalized_merchant_amount_date
+     * Create a hashed fingerprint for deduplication.
+     * Hash of: normalized_merchant_amount_date_bucket
+     * PR4: Never stores plaintext merchant/amount/date as fingerprint.
      */
     private fun createFingerprint(merchant: String, amount: Double, date: Long, messageId: String = ""): String {
         val roundedAmount = String.format(Locale.US, "%.2f", amount)
         val dateBucket = date / 300_000L
-        // Content-only dedup fingerprint: forwarded/re-sent receipts with different
-        // message IDs still match by content (merchant + amount + date bucket)
-        return "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
+        val raw = "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
+        return hashingService.sha256Prefix(raw, 32) ?: raw.hashCode().toString(16)
     }
 
     /**

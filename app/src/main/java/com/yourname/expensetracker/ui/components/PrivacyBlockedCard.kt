@@ -105,4 +105,10 @@ fun PrivacyCapability.displayLabel(): String = when (this) {
     PrivacyCapability.RAW_OCR_RETENTION -> "OCR Retention"
     PrivacyCapability.DEBUG_DATA_PERSISTENCE -> "Debug Data"
     PrivacyCapability.TIMBER_PII_LOGGING -> "PII Logging"
+    PrivacyCapability.EXPENSE_EXPORT -> "Expense Export"
+    PrivacyCapability.EXPENSE_EXPORT_RAW -> "Raw Expense Export"
+    PrivacyCapability.EXPENSE_EXPORT_REDACTED -> "Redacted Export"
+    PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED -> "Encrypted Export"
+    PrivacyCapability.DEBUG_RAW_EXPORT -> "Debug Raw Export"
+    PrivacyCapability.RAW_DATABASE_EXPORT -> "Raw Database Export"
 }

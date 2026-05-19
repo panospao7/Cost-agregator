@@ -211,7 +211,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             title = UiText.DynamicString("Total spending"),
             primaryText = "42.00 EUR"
         )
-        every { mapFinancialQueryToNavigationUseCase(intent) } returns null
+        coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
 
         viewModel.submitQuery("total this month")
         advanceUntilIdle()
@@ -262,7 +262,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             title = UiText.DynamicString("Total spending"),
             primaryText = "42.00 EUR"
         )
-        every { mapFinancialQueryToNavigationUseCase(intent) } returns null
+        coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
         coEvery { aiChatRepository.createSession(any()) } returns null
 
         viewModel.submitQuery("total this month")
@@ -306,7 +306,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             title = UiText.DynamicString("Total spending"),
             primaryText = "42.00 EUR"
         )
-        every { mapFinancialQueryToNavigationUseCase(intent) } returns null
+        coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
 
         viewModel.submitQuery("total this month")
         advanceUntilIdle()
@@ -375,7 +375,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             title = UiText.DynamicString("Total spending"),
             primaryText = "42.00 EUR"
         )
-        every { mapFinancialQueryToNavigationUseCase(intent) } returns null
+        coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
 
         viewModel.submitQuery("compare spending")
         advanceUntilIdle()

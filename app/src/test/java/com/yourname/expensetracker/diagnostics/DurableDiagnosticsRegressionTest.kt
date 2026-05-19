@@ -165,7 +165,7 @@ class DurableDiagnosticsRegressionTest {
             currency = "EUR",
             date = System.currentTimeMillis(),
             transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
-            source = com.yourname.expensetracker.domain.transaction.ExpenseSource.BANK_SYNC
+            source = com.yourname.expensetracker.domain.transaction.ExpenseSource.BANK_API_SYNC
         )
         assertEquals(null, req.correlationId)
 

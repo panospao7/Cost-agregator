@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.model.PeriodRange
+import kotlinx.coroutines.test.runTest
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -18,11 +20,11 @@ class MapFinancialQueryToNavigationUseCaseTest {
 
     @Before
     fun setup() {
-        useCase = MapFinancialQueryToNavigationUseCase()
+        useCase = MapFinancialQueryToNavigationUseCase(mockk(relaxed = true))
     }
 
     @Test
-    fun `invoke maps supported list intent to transaction filter`() {
+    fun `invoke maps supported list intent to transaction filter`() = runTest {
         val intent = FinancialQueryIntent(
             rawQuery = "show groceries this month",
             normalizedQuery = "show groceries this month",
@@ -51,7 +53,7 @@ class MapFinancialQueryToNavigationUseCaseTest {
     }
 
     @Test
-    fun `invoke maps all ownership to null ownership filter`() {
+    fun `invoke maps all ownership to null ownership filter`() = runTest {
         val intent = FinancialQueryIntent(
             rawQuery = "total this month",
             normalizedQuery = "total this month",

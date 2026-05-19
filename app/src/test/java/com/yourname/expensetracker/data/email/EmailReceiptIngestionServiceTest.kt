@@ -64,8 +64,7 @@ class EmailReceiptIngestionServiceTest {
             coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
             restoreMaintenanceMode = mockk(relaxed = true),
             writeBarrier = mockk(relaxed = true),
-            privacySettingsRepository = mockk(relaxed = true),
-            transactionRunner = { block -> block() }
+            privacySettingsRepository = mockk(relaxed = true)
         )
 
         // Inject provider parsers (normally created as private fields)
@@ -237,6 +236,7 @@ class EmailReceiptIngestionServiceTest {
     @Test
     fun `processEmailReceipt returns ParseError for malformed email`() = runTest {
         // No parser matches or can parse this body → parseEmailReceipt returns null
+        every { amazonParser.parse(any(), any()) } returns null
         val result = service.processEmailReceipt(
             emailBody = "<html><body>broken receipt without total and structure</body>",
             sender = "auto-confirm@amazon.com",
@@ -251,6 +251,9 @@ class EmailReceiptIngestionServiceTest {
 
     @Test
     fun `processEmailReceipt returns ParseError for unknown provider with unparsable body`() = runTest {
+        every { amazonParser.parse(any(), any()) } returns null
+        every { uberParser.parse(any(), any()) } returns null
+        every { appleParser.parse(any(), any()) } returns null
         val result = service.processEmailReceipt(
             emailBody = "hello there no receipt here",
             sender = "random@unknown.org",

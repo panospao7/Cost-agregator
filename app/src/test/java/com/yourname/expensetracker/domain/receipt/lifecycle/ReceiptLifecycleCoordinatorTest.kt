@@ -91,7 +91,7 @@ class ReceiptLifecycleCoordinatorTest {
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
             privacySettingsRepository = mockk(relaxed = true),
-            diagnosticEventDao = mockk(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true)
         )
     }
 

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.privacy
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -63,5 +64,35 @@ class EffectiveCloudAiPolicyResolver @Inject constructor(
             receiptImageUploadAllowed = receiptImageUploadAllowed,
             bankStatementCloudAllowed = bankStatementCloudAllowed
         )
+    }
+
+    companion object {
+        /**
+         * Returns a fail-closed resolver for use in secondary test constructors.
+         * Always redacts, never allows image upload.
+         */
+        fun failClosedForTest(aiSettingsRepository: AiSettingsRepository): EffectiveCloudAiPolicyResolver {
+            val failClosedRepo = object : PrivacySettingsRepository {
+                private val settings = PrivacySettings.FAIL_CLOSED_DEFAULTS
+                override fun observeSettings() = flowOf(settings)
+                override fun observeLoadState() = flowOf(PrivacySettingsLoadState.FirstRunDefault(settings))
+                override suspend fun getSettings() = settings
+                override suspend fun getLoadState() = PrivacySettingsLoadState.FirstRunDefault(settings)
+                override suspend fun updateSettings(transform: (PrivacySettings) -> PrivacySettings) {}
+            }
+            return EffectiveCloudAiPolicyResolver(failClosedRepo, aiSettingsRepository)
+        }
+
+        /**
+         * Fail-closed resolver when no [AiSettingsRepository] is available (test constructors).
+         * Returns policy with cloudAllowed=false and redactBeforeCloud=true.
+         */
+        fun failClosedNoAi(): EffectiveCloudAiPolicyResolver {
+            val noOpAiRepo = object : AiSettingsRepository {
+                override fun settings() = flowOf(AiSettings())
+                override suspend fun update(transform: (AiSettings) -> AiSettings) {}
+            }
+            return failClosedForTest(noOpAiRepo)
+        }
     }
 }

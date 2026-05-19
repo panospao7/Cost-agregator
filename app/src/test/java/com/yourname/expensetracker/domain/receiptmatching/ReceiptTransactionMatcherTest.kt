@@ -23,6 +23,7 @@ class ReceiptTransactionMatcherTest {
         stringDistance = StringDistanceUtils,
         timeProvider = mockk(relaxed = true),
         receiptLinkService = mockk(),
+        currencyConverter = mockk(relaxed = true),
     )
 
     @Test

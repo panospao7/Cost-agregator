@@ -20,5 +20,18 @@ enum class PrivacyCapability {
     RAW_OCR_RETENTION,
     DEBUG_DATA_PERSISTENCE,
     OVERPASS_API,
-    TIMBER_PII_LOGGING
+    TIMBER_PII_LOGGING,
+
+    /** PR8: Standard expense export (CSV/JSON). */
+    EXPENSE_EXPORT,
+    /** PR8: Raw (un-redacted) expense export — requires explicit opt-in. */
+    EXPENSE_EXPORT_RAW,
+    /** PR8: Redacted expense export — safe for sharing. */
+    EXPENSE_EXPORT_REDACTED,
+    /** PR8: Encrypted expense export. */
+    EXPENSE_EXPORT_ENCRYPTED,
+    /** PR8: Debug raw export — requires debug build + privacy consent. */
+    DEBUG_RAW_EXPORT,
+    /** PR8: Raw database export — release-disabled. */
+    RAW_DATABASE_EXPORT
 }

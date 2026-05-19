@@ -111,7 +111,7 @@ class GroupTransactionCoordinatorTest {
         )
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
-            transactionEventDao, transactionLifecycleCoordinator,
+            mockk(relaxed = true), transactionLifecycleCoordinator,
             writeBarrier, timeProvider, Dispatchers.Unconfined
         )
     }
@@ -193,7 +193,7 @@ class GroupTransactionCoordinatorTest {
 
         val mockCoordinator = GroupTransactionCoordinator(
             database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao,
-            database.transactionEventDao(), transactionLifecycleCoordinator,
+            mockk(relaxed = true), transactionLifecycleCoordinator,
             mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
         )
 

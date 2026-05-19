@@ -98,7 +98,7 @@ class GroupLifecycleScenarioTest {
 
         groupTxCoordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, database.groupExpenseDao(), expenseDao,
-            transactionEventDao, txLifecycle,
+            mockk(relaxed = true), txLifecycle,
             mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
         )
 

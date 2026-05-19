@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import io.mockk.coEvery
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -30,7 +31,12 @@ class BankApiIntegrationTest {
         integration = BankApiIntegration(
             timeProvider = FakeTimeProvider(),
             coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            operationRunRecorder = mockk(relaxed = true),
+            hashingService = com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService(),
+            privacySettingsRepository = mockk(relaxed = true) {
+                coEvery { getSettings() } returns com.yourname.expensetracker.domain.privacy.PrivacySettings()
+            }
         )
         mapMethod = BankApiIntegration::class.java.getDeclaredMethod(
             "mapTransactionToExpense",

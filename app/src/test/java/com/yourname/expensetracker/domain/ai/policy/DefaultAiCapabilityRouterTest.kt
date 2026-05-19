@@ -34,7 +34,7 @@ class DefaultAiCapabilityRouterTest {
         secureKeyStorage = mockk()
         // By default, assume API key is present for existing tests
         every { secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) } returns true
-        router = DefaultAiCapabilityRouter(policy, environmentMonitor, aiRuntimeDiagnostics, secureKeyStorage)
+        router = DefaultAiCapabilityRouter(policy, environmentMonitor, aiRuntimeDiagnostics, secureKeyStorage, mockk(relaxed = true))
     }
 
     @Test

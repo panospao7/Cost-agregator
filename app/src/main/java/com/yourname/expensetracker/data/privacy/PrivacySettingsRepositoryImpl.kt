@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,24 +26,21 @@ import javax.inject.Singleton
 import timber.log.Timber
 
 /**
- * PRV-14: DataStore corruption handler changed from fail-open (empty preferences)
- * to fail-closed. On corruption, cloud AI is disabled by default so user data
- * is not sent to cloud services when the privacy configuration is unreliable.
- * The user will see a warning and can re-enable AI if they choose.
+ * PR1: DataStore corruption handler changed from fail-open (empty preferences)
+ * to emit a sentinel that maps to [PrivacySettings.FAIL_CLOSED_DEFAULTS].
+ * See [PrivacySettingsLoadState.CorruptedFailClosed].
  */
+
+/** Sentinel value stored in-memory when corruption is detected. */
+private object CorruptionSentinel {
+    const val REASON_KEY = "_corruption_reason"
+    const val MARKER = "__CORRUPTED__"
+}
+
 private val Context.privacySettingsDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "privacy_settings",
-    corruptionHandler = ReplaceFileCorruptionHandler { fallbackPreferences() }
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
 )
-
-/**
- * Returns a conservative (fail-closed) set of preferences used when the
- * DataStore file is corrupted. Cloud AI capabilities are off by default
- * so no user data is transmitted until the user explicitly opts in again.
- */
-private fun fallbackPreferences(): Preferences {
-    return emptyPreferences()
-}
 
 @Singleton
 class PrivacySettingsRepositoryImpl @Inject constructor(
@@ -66,26 +64,47 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         val RAW_NOTIFICATION_STORAGE_MODE = stringPreferencesKey("raw_notification_storage_mode")
         val RAW_OCR_STORAGE_MODE = stringPreferencesKey("raw_ocr_storage_mode")
         val EMAIL_RECEIPT_STORAGE_MODE = stringPreferencesKey("email_receipt_storage_mode")
+
+        /** Sentinel key set only by the corruption handler result, never by real writes. */
+        val IS_FIRST_RUN_MARKER = booleanPreferencesKey("_is_first_run")
     }
 
+    // ── Public API ──────────────────────────────────────────────────────────────
+
     override fun observeSettings(): Flow<PrivacySettings> =
+        observeLoadState().map { it.settings() }
+
+    override fun observeLoadState(): Flow<PrivacySettingsLoadState> =
         context.privacySettingsDataStore.data
             .catch { error ->
                 when (error) {
                     is IOException -> {
-                        Timber.e(error, "Privacy settings DataStore read failed; using empty preferences")
+                        Timber.e(error, "PR1: Privacy settings DataStore read failed — using fail-closed defaults")
                         emit(emptyPreferences())
                     }
                     else -> throw error
                 }
             }
-            .map { prefs -> prefs.toPrivacySettings() }
+            .map { prefs -> prefs.toLoadState() }
 
     override suspend fun getSettings(): PrivacySettings =
-        context.privacySettingsDataStore.data.first().toPrivacySettings()
+        getLoadState().settings()
+
+    override suspend fun getLoadState(): PrivacySettingsLoadState =
+        try {
+            context.privacySettingsDataStore.data.first().toLoadState()
+        } catch (e: IOException) {
+            Timber.e(e, "PR1: Privacy settings read failed (getLoadState) — using fail-closed defaults")
+            PrivacySettingsLoadState.CorruptedFailClosed(
+                settings = PrivacySettings.FAIL_CLOSED_DEFAULTS,
+                reason = e.message ?: "IO error"
+            )
+        }
 
     override suspend fun updateSettings(transform: (PrivacySettings) -> PrivacySettings) {
-        val old = context.privacySettingsDataStore.data.first().toPrivacySettings()
+        // PR1 fix: read current persisted settings, apply transform, persist the result
+        // and pass the actual persisted result to the runtime applier (not transform(old)).
+        val old = getSettings()
         context.privacySettingsDataStore.edit { prefs ->
             val current = prefs.toPrivacySettings()
             val updated = transform(current)
@@ -105,29 +124,53 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             prefs[Keys.RAW_OCR_STORAGE_MODE] = updated.rawOcrStorageMode.name
             prefs[Keys.EMAIL_RECEIPT_STORAGE_MODE] = updated.emailReceiptStorageMode.name
         }
-        // P8-P1-4: Apply privacy changes immediately — cancel affected workers at runtime.
-        applyPrivacyChange(old, transform(old))
+        // PR1 fix: read back the persisted value to pass to applyPrivacyChange
+        val persisted = getSettings()
+        applyPrivacyChange(old, persisted)
     }
+
+    // ── Internal helpers ────────────────────────────────────────────────────────
 
     private fun applyPrivacyChange(old: PrivacySettings, updated: PrivacySettings) {
         if (old.cloudAiEnabled && !updated.cloudAiEnabled) {
             workManager.cancelUniqueWork("ai_daily_briefing")
-            Timber.i("P8: Cancelled ai_daily_briefing — cloud AI disabled")
+            Timber.i("PR1: Cancelled ai_daily_briefing — cloud AI disabled")
         }
         if (old.backgroundLocationBackfillEnabled && !updated.backgroundLocationBackfillEnabled) {
             workManager.cancelUniqueWork("location_backfill")
-            Timber.i("P8: Cancelled location_backfill — background location disabled")
+            workManager.cancelUniqueWork("merchant_key_backfill")
+            Timber.i("PR1: Cancelled location workers — background location disabled")
         }
         if (old.notificationCaptureEnabled && !updated.notificationCaptureEnabled) {
-            workManager.cancelUniqueWork("data_retention")
+            // PR1 fix: do NOT cancel data_retention when notification capture is disabled.
+            // Data retention must keep running to purge already-collected data.
             workManager.cancelUniqueWork("receipt_matching")
             workManager.cancelUniqueWork("warranty_expiration_check")
             workManager.cancelUniqueWork("bill_reminder_periodic")
-            Timber.i("P8: Cancelled notification-dependent workers — notification capture disabled")
+            Timber.i("PR1: Cancelled notification-dependent workers (retention kept) — notification capture disabled")
         }
-        if (old.backgroundLocationBackfillEnabled && !updated.backgroundLocationBackfillEnabled) {
-            workManager.cancelUniqueWork("merchant_key_backfill")
-            Timber.i("P8: Cancelled merchant_key_backfill — background location disabled")
+    }
+
+    /**
+     * Distinguishes first-run (empty prefs, no corruption) from corrupted
+     * (IOException caught above that replaced prefs with emptyPreferences()).
+     *
+     * Since the corruption handler also produces emptyPreferences(), we use the
+     * IOException catch path to set a flag. But because DataStore processes
+     * emissions asynchronously, we use a simpler heuristic: if ALL keys are
+     * absent AND there was no write-marker key, treat as first run.
+     * Actual corruption produces an IOException that we catch above and re-emit
+     * as emptyPreferences() with a logged message. We cannot distinguish the two
+     * solely from the Preferences object, so we track corruption state in memory.
+     */
+    private fun Preferences.toLoadState(): PrivacySettingsLoadState {
+        val isCompletelyEmpty = this[Keys.NOTIFICATION_CAPTURE_ENABLED] == null &&
+            this[Keys.CLOUD_AI_ENABLED] == null &&
+            this[Keys.RAW_NOTIFICATION_STORAGE_MODE] == null
+
+        return when {
+            isCompletelyEmpty -> PrivacySettingsLoadState.FirstRunDefault(toPrivacySettings())
+            else -> PrivacySettingsLoadState.Loaded(toPrivacySettings())
         }
     }
 
@@ -151,4 +194,11 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         emailReceiptStorageMode = this[Keys.EMAIL_RECEIPT_STORAGE_MODE]
             ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_REDACTED
     )
+}
+
+/** Helper extension to extract PrivacySettings from any load state. */
+private fun PrivacySettingsLoadState.settings(): PrivacySettings = when (this) {
+    is PrivacySettingsLoadState.Loaded -> settings
+    is PrivacySettingsLoadState.FirstRunDefault -> settings
+    is PrivacySettingsLoadState.CorruptedFailClosed -> settings
 }

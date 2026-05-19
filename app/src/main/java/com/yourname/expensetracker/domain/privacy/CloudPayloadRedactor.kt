@@ -29,7 +29,14 @@ enum class CloudPayloadPurpose {
     REVIEW_EXPLANATION,
     DASHBOARD_BRIEFING,
     DEDUPE_JUDGE,
-    WARRANTY_EXTRACTION
+    WARRANTY_EXTRACTION,
+
+    /** PR6: Bank statement validation — stricter redaction than receipt assist. */
+    BANK_STATEMENT_VALIDATION,
+    /** PR6: Bank transaction classification — strict. */
+    BANK_TRANSACTION_CLASSIFICATION,
+    /** PR6: Export summary — no raw financial data. */
+    EXPORT_SUMMARY
 }
 
 data class RedactedPayload(

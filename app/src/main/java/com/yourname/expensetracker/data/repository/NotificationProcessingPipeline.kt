@@ -42,6 +42,8 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -146,6 +148,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val writeBarrier: DatabaseWriteBarrier,
+    private val privacySettingsRepository: PrivacySettingsRepository,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     // TODO P1-CURRENT-016: ProcessingResult is dead code — replaced by NotificationPipelineOutcome.
@@ -354,8 +357,8 @@ class NotificationProcessingPipeline @Inject constructor(
                         confidence = 0.0f,
                         explanation = "Oversized amount needs manual confirmation",
                         packageName = notification.packageName,
-                        notificationTitle = notification.title,
-                        notificationText = notification.text ?: notification.bigText,
+                        notificationTitle = sanitizePendingReviewText(notification.title),
+                        notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText),
                         extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                     )
                     val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
@@ -413,8 +416,8 @@ class NotificationProcessingPipeline @Inject constructor(
                             confidence = 0.0f,
                             explanation = "Transaction signal detected but parser failed — needs manual confirmation",
                             packageName = notification.packageName,
-                            notificationTitle = notification.title,
-                            notificationText = notification.text ?: notification.bigText,
+                            notificationTitle = sanitizePendingReviewText(notification.title),
+                            notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText),
                             extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                         )
                         val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
@@ -601,6 +604,20 @@ class NotificationProcessingPipeline @Inject constructor(
         val currency: String,
         val merchantHint: String?
     )
+
+    /**
+     * PR3: Sanitize notification text before storing in PendingReview.
+     * Uses the current rawNotificationStorageMode from PrivacySettings.
+     * Falls back to STORE_REDACTED on read failure (fail-closed).
+     */
+    private suspend fun sanitizePendingReviewText(text: String?): String? {
+        val mode = try {
+            privacySettingsRepository.getSettings().rawNotificationStorageMode
+        } catch (_: Exception) {
+            com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_REDACTED
+        }
+        return RawContentSanitizer.sanitizeNotificationText(text, mode)
+    }
 
     /**
      * Constants and utility methods for the notification processing pipeline.
@@ -1113,9 +1130,9 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             suggestedCategoryId = preDb.categoryId,
             confidence = preDb.routingResult.adjustedConfidence,
             packageName = notification.packageName,
-            notificationTitle = notification.title,
+            notificationTitle = sanitizePendingReviewText(notification.title),
             // P1-CURRENT-013 FIX: Preserve combined text for review context
-            notificationText = preDb.fullNotificationText,
+            notificationText = sanitizePendingReviewText(preDb.fullNotificationText),
             suggestedDate = preDb.eventDate,
             suggestedDirection = preDb.direction?.name,
             suggestedAccountName = preDb.accountName,

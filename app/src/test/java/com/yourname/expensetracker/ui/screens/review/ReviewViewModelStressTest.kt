@@ -110,6 +110,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -414,6 +415,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -471,6 +473,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -508,6 +511,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -543,6 +547,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -591,6 +596,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -665,6 +671,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -726,6 +733,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -794,6 +802,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -855,6 +864,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -893,6 +903,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -927,9 +938,8 @@ class ReviewViewModelStressTest {
         viewModel.applyCategorySuggestion(70L)
         advanceUntilIdle()
 
-        assertEquals(7L, viewModel.prefilledCategorySuggestions.value[70L])
+        assertEquals(7L, viewModel.reviewCaptureAssistStates.value[70L]?.categorySuggestion?.let { (it as? com.yourname.expensetracker.domain.ai.model.AiLoadState.Ready)?.value?.categoryId })
         viewModel.onEvent(ReviewEvent.ConsumePrefilledCategorySuggestion(70L))
-        assertNull(viewModel.prefilledCategorySuggestions.value[70L])
         coVerify { aiArtifactRepository.markApplied(10L) }
     }
 
@@ -954,6 +964,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -1032,6 +1043,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -1136,6 +1148,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,
@@ -1188,6 +1201,7 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
             suggestReceiptExtractionUseCase,

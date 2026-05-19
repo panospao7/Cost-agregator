@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
@@ -48,24 +49,25 @@ class CloudReceiptAssistService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor
+    private val redactor: CloudPayloadRedactor,
+    private val policyResolver: EffectiveCloudAiPolicyResolver
 ) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
 
-    // Secondary constructor for tests
+    // Secondary constructor for tests (fail-closed redaction by default)
     constructor(
         aiSettingsRepository: AiSettingsRepository,
         secureKeyStorage: SecureKeyStorage
-    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient(), 
-        // Tests use a no-op gate by default
+    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient(),
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
         },
-        DefaultCloudPayloadRedactor())
+        DefaultCloudPayloadRedactor(),
+        EffectiveCloudAiPolicyResolver.failClosedForTest(aiSettingsRepository))
 
-    // Secondary constructor for testing
+    // Secondary constructor for testing with API key override
     constructor(
         aiSettingsRepository: AiSettingsRepository,
         secureKeyStorage: SecureKeyStorage,
@@ -75,7 +77,8 @@ class CloudReceiptAssistService @Inject constructor(
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
         },
-        DefaultCloudPayloadRedactor()) {
+        DefaultCloudPayloadRedactor(),
+        EffectiveCloudAiPolicyResolver.failClosedForTest(aiSettingsRepository)) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -107,7 +110,7 @@ class CloudReceiptAssistService @Inject constructor(
         val settings = aiSettingsRepository.settings().first()
 
         val allowImage = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
-        val shouldRedact = settings.redactBeforeCloud
+        val shouldRedact = policyResolver.resolve().redactBeforeCloud
         val requestPayload = buildRequestPayload(input, allowImage, shouldRedact)
         val requestBody = requestPayload.jsonBody
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent"
@@ -237,9 +240,8 @@ class CloudReceiptAssistService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason()))
         }
 
-        // P2-24: Apply redaction before sending to cloud if user setting requires it
-        val settings = aiSettingsRepository.settings().first()
-        val safePrompt = if (settings.redactBeforeCloud) {
+        // PR6: Redaction authority comes from EffectiveCloudAiPolicyResolver, not AiSettings directly
+        val safePrompt = if (policyResolver.resolve().redactBeforeCloud) {
             redactor.redactText(prompt, CloudPayloadPurpose.RECEIPT_ASSIST).text
         } else {
             prompt
@@ -343,7 +345,7 @@ class CloudReceiptAssistService @Inject constructor(
     }
 
     internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String =
-        buildRequestPayload(input, allowImage, shouldRedact = false).jsonBody
+        buildRequestPayload(input, allowImage, shouldRedact = input.redactBeforeCloud).jsonBody
 
     private fun buildRequestPayload(input: ReceiptAssistInput, allowImage: Boolean, shouldRedact: Boolean): RequestPayload {
         val inlineImagePart = buildImageInlineData(input, allowImage, shouldRedact)

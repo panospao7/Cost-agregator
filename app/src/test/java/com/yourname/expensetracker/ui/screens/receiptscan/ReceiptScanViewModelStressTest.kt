@@ -192,7 +192,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             selectedCategoryId = 5L,
             errorMessage = "Old error",
             isSaving = true,
-            saveResult = SaveReceiptResult.Success,
+            saveResult = SaveReceiptResult.Success(expenseId = 1L),
             receiptAssistState = AiLoadState.Ready(ReceiptAssistSuggestion(merchant = SuggestedValue("AI Merchant"))),
             receiptAssistMessage = "old receipt assist",
             receiptAssistDiagnostics = "old receipt diagnostics",

@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -45,11 +46,16 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor
+    private val redactor: CloudPayloadRedactor,
+    private val policyResolver: EffectiveCloudAiPolicyResolver
 ) : ReceiptItemCategorizationService {
 
-    // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP), DefaultCloudPayloadRedactor())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(
+        secureKeyStorage, OkHttpClient(),
+        CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP),
+        DefaultCloudPayloadRedactor(),
+        EffectiveCloudAiPolicyResolver.failClosedNoAi()
+    )
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
@@ -70,9 +76,10 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
 
         val correlationId = CloudCorrelation.newCorrelationId()
-        
+        val shouldRedact = policyResolver.resolve().redactBeforeCloud
+
         return withContext(Dispatchers.IO) {
-            val prompt = buildPrompt(input)
+            val prompt = buildPrompt(input, shouldRedact)
             val requestBody = buildRequestBody(prompt)
 
             val request = Request.Builder()
@@ -184,22 +191,22 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
     }
     
-    private fun buildPrompt(input: ReceiptItemCategorizationInput): String {
-        val safeMerchant = if (input.redactBeforeCloud) {
+    private fun buildPrompt(input: ReceiptItemCategorizationInput, shouldRedact: Boolean = false): String {
+        val safeMerchant = if (shouldRedact) {
             redactor.redactText(input.merchant ?: "", CloudPayloadPurpose.ITEM_CATEGORIZATION).text
         } else {
             input.merchant ?: "Unknown"
         }
 
         val cloudOptions = cloudCategoryOptionsForPrompt(input)
-        val categoriesList = if (input.redactBeforeCloud) {
+        val categoriesList = if (shouldRedact) {
             cloudOptions.joinToString(", ") { "${it.cloudName} (id: ${it.categoryId})" }
         } else {
             input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
         }
         
         val itemsList = input.lineItems.joinToString("\n") { item ->
-            val safeDescription = if (input.redactBeforeCloud) {
+            val safeDescription = if (shouldRedact) {
                 redactor.redactText(item.description ?: "", CloudPayloadPurpose.ITEM_CATEGORIZATION).text
             } else {
                 item.description ?: "unknown item"

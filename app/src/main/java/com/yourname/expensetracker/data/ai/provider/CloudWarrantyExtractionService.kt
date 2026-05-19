@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
@@ -42,11 +43,17 @@ class CloudWarrantyExtractionService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor
+    private val redactor: CloudPayloadRedactor,
+    private val policyResolver: EffectiveCloudAiPolicyResolver
 ) {
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP), DefaultCloudPayloadRedactor()) {
+    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(
+        secureKeyStorage, OkHttpClient(),
+        CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP),
+        DefaultCloudPayloadRedactor(),
+        EffectiveCloudAiPolicyResolver.failClosedNoAi()
+    ) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -58,8 +65,7 @@ class CloudWarrantyExtractionService @Inject constructor(
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     suspend fun extractWarranty(
-        input: WarrantyExtractionInput,
-        shouldRedactBeforeCloud: Boolean
+        input: WarrantyExtractionInput
     ): WarrantyExtractionResult? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             Timber.d("CloudWarrantyExtractionService: Gemini API key missing, skipping.")
@@ -73,6 +79,7 @@ class CloudWarrantyExtractionService @Inject constructor(
             return@withContext null
         }
 
+        val shouldRedactBeforeCloud = policyResolver.resolve().redactBeforeCloud
         val correlationId = CloudCorrelation.newCorrelationId()
         val prompt = buildPrompt(input, shouldRedactBeforeCloud)
         
