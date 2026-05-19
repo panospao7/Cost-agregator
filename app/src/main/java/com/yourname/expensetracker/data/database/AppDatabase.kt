@@ -7836,11 +7836,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         val MIGRATION_130_131 = object : androidx.room.migration.Migration(130, 131) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // Backfill validDate for legacy rows that have validDate = 0.
-                // These rows were inserted before historical-rate support was added.
-                // Using lastUpdated as the best approximation of when the rate was valid.
-                // This prevents historical backfills from poisoning latest-rate lookups
-                // (getRate/getLatestRateForPair now ORDER BY validDate DESC).
-                database.execSQL("UPDATE exchange_rates SET validDate = lastUpdated WHERE validDate = 0 AND lastUpdated > 0")
+                // Truncate lastUpdated to start-of-day (UTC) so that same-day
+                // expenses occurring before the rate update time can still match.
+                // Formula: (lastUpdated / 86400000) * 86400000
+                database.execSQL("UPDATE exchange_rates SET validDate = (lastUpdated / 86400000) * 86400000 WHERE validDate = 0 AND lastUpdated > 0")
             }
         }
 

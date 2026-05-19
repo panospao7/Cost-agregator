@@ -87,17 +87,51 @@ class BudgetForecastingEngine @Inject constructor(
         // P6-P1-06: Normalize budget.amount to home currency using the period-end
         // historical rate via convertAsOf(). Falls back to latest rate if no
         // historical rate exists for the target period.
-        val normalizedBudgetAmount = runCatching {
-            val converted = currencyConverter.convertAsOf(budget.amount, budget.currency, homeCurrency, periodEnd)
-                ?: currencyConverter.convert(budget.amount, budget.currency, homeCurrency)
-            converted?.convertedAmount ?: budget.amount
-        }.getOrElse {
-            Timber.w("BudgetForecastingEngine: Failed to convert budget.amount=%.2f %s to %s, using raw amount",
-                budget.amount, budget.currency, homeCurrency)
-            budget.amount
+        // CURR-C62-15: Never fall back to raw budget.amount — that mixes currencies.
+        val normalizedBudgetAmount: Double
+        val budgetConversionFailed: Boolean
+        run {
+            val converted = runCatching {
+                currencyConverter.convertAsOf(budget.amount, budget.currency, homeCurrency, periodEnd)
+                    ?: currencyConverter.convert(budget.amount, budget.currency, homeCurrency)
+            }.getOrNull()
+            if (converted != null) {
+                normalizedBudgetAmount = converted.convertedAmount
+                budgetConversionFailed = false
+            } else {
+                Timber.w("BudgetForecastingEngine: Failed to convert budget.amount=%.2f %s to %s — forecast unavailable",
+                    budget.amount, budget.currency, homeCurrency)
+                normalizedBudgetAmount = 0.0
+                budgetConversionFailed = true
+            }
         }
         val elapsedEnd = now.coerceAtMost(periodEnd)
-        val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd, homeCurrency)
+        val spentToDate = if (!budgetConversionFailed) {
+            getSpentAmount(budget, periodStart, elapsedEnd, homeCurrency)
+        } else 0.0
+
+        // If budget limit conversion failed, produce a degraded forecast
+        if (budgetConversionFailed) {
+            val forecast = BudgetForecast(
+                budgetId = budget.id,
+                forecastDate = now,
+                targetPeriodStart = periodStart,
+                targetPeriodEnd = periodEnd,
+                predictedSpending = 0.0,
+                predictedRemaining = 0.0,
+                confidenceScore = 0.0,
+                riskLevel = ForecastRiskLevel.LOW,
+                overspendProbability = 0.0,
+                createdAt = now,
+                currency = homeCurrency
+            )
+            val persistedId = budgetForecastDao.insertWithDeactivation(forecast)
+            return@withContext forecast.copy(id = persistedId).also { f ->
+                f.spentToDate = 0.0
+                f.normalizedBudgetAmount = 0.0
+            }
+        }
+
         val remainingForecastDays = TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()
         
         // Get historical spending data for this budget's category

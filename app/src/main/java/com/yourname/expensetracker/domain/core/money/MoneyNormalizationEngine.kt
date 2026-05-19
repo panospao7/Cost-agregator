@@ -103,7 +103,8 @@ class MoneyNormalizationEngine @Inject constructor(
             warningMessage = if (failures.isNotEmpty()) {
                 val txCount = failures.sumOf { it.transactionCount }
                 "Partial: $txCount transaction(s) could not be converted"
-            } else null
+            } else null,
+            rateBasis = rateBasis
         )
     }
 
@@ -130,7 +131,18 @@ class MoneyNormalizationEngine @Inject constructor(
             }
 
             val atMillis = when (bucketDatePolicy) {
-                is BucketDatePolicy.RequireBucketDate -> bucket.bucketDate
+                is BucketDatePolicy.RequireBucketDate -> {
+                    if (bucket.bucketDate == null) {
+                        failures.add(ConversionFailure(
+                            originalAmount = MoneyAmount(bucket.amount, bucket.currency),
+                            targetCurrency = homeCurrency,
+                            reason = FailureReason.MISSING_RATE,
+                            transactionCount = bucket.transactionCount
+                        ))
+                        continue
+                    }
+                    bucket.bucketDate
+                }
                 is BucketDatePolicy.FixedDate -> bucketDatePolicy.atMillis
                 is BucketDatePolicy.Latest -> null
             }
@@ -171,7 +183,8 @@ class MoneyNormalizationEngine @Inject constructor(
             warningMessage = if (failures.isNotEmpty()) {
                 val txCount = failures.sumOf { it.transactionCount }
                 "Partial: $txCount transaction(s) could not be converted"
-            } else null
+            } else null,
+            rateBasis = rateBasis
         )
     }
 }

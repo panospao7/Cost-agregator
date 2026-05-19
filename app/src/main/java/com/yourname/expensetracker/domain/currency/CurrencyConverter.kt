@@ -290,6 +290,16 @@ class CurrencyConverter @Inject constructor(
             )
         }
 
+        // Historical bases require a date — never silently fall back to latest
+        if (rateBasis in listOf(RateBasis.TRANSACTION_DATE, RateBasis.PERIOD_START,
+                RateBasis.PERIOD_END, RateBasis.FORECAST_DATE, RateBasis.PERIOD_MIDPOINT_ESTIMATE) && atMillis == null) {
+            return@withContext ConversionOutcome.Failed(
+                originalAmount = amount, originalCurrency = from, targetCurrency = to,
+                rateBasis = rateBasis, failureType = ConversionFailureType.UNKNOWN,
+                message = "Historical rate basis $rateBasis requires atMillis but none provided"
+            )
+        }
+
         // Validate currencies
         if (SupportedCurrency.fromCode(from) == null) {
             return@withContext ConversionOutcome.Failed(
@@ -356,7 +366,14 @@ class CurrencyConverter @Inject constructor(
                 StaleRateReference.TRANSACTION_DATE -> atMillis ?: timeProvider.now()
                 StaleRateReference.RATE_VALID_DATE -> rateResult.validDate ?: rateResult.lastUpdated
             }
-            val age = referenceTime - rateResult.lastUpdated
+            // For historical conversions, compare against validDate (when the rate was valid).
+            // For latest conversions, compare against lastUpdated (when we last fetched it).
+            val rateTimestamp = if (useHistorical) {
+                rateResult.validDate ?: rateResult.lastUpdated
+            } else {
+                rateResult.lastUpdated
+            }
+            val age = referenceTime - rateTimestamp
             if (age > stalePolicy.maxAgeMs) {
                 return@withContext ConversionOutcome.Failed(
                     originalAmount = amount, originalCurrency = from, targetCurrency = to,
@@ -447,12 +464,14 @@ class CurrencyConverter @Inject constructor(
             Timber.w("Ignoring invalid exchange rate %s -> %s = %s", fromCurrency, toCurrency, rate)
             return
         }
+        val now = timeProvider.now()
         val exchangeRate = DomainExchangeRate(
             fromCurrency = fromCurrency.uppercase(),
             toCurrency = toCurrency.uppercase(),
             rate = rate,
-            lastUpdated = timeProvider.now(),
-            source = source
+            lastUpdated = now,
+            source = source,
+            validDate = startOfDay(now)
         )
         exchangeRateStore.insertOrUpdate(exchangeRate)
     }
@@ -464,6 +483,8 @@ class CurrencyConverter @Inject constructor(
         rates: List<Triple<String, String, Double>>,
         source: String = "api"
     ) {
+        val now = timeProvider.now()
+        val todayStart = startOfDay(now)
         val exchangeRates = rates.mapNotNull { (from, to, rate) ->
             if (!isValidRate(rate)) {
                 Timber.w("Skipping invalid exchange rate %s -> %s = %s", from, to, rate)
@@ -473,14 +494,21 @@ class CurrencyConverter @Inject constructor(
                 fromCurrency = from.uppercase(),
                 toCurrency = to.uppercase(),
                 rate = rate,
-                lastUpdated = timeProvider.now(),
-                source = source
+                lastUpdated = now,
+                source = source,
+                validDate = todayStart
             )
         }
         exchangeRateStore.insertOrUpdateAll(exchangeRates)
     }
 
     private fun isValidRate(rate: Double): Boolean = rate.isFinite() && rate > 0.0
+
+    /** Truncate epoch millis to start of day (UTC). */
+    private fun startOfDay(millis: Long): Long {
+        val dayMs = 24 * 60 * 60 * 1000L
+        return (millis / dayMs) * dayMs
+    }
 
     /**
      * Check if an exchange rate exists for a currency pair.
