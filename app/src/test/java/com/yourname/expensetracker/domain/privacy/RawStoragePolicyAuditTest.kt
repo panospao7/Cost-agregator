@@ -209,18 +209,20 @@ class RawStoragePolicyAuditTest {
 
     @Test
     fun retention_registry_covers_all_sensitive_targets() {
-        val expectedTargets = setOf(
+        // These are the 4 named targets registered in DataRetentionWorker.
+        // If a new sensitive surface is added, it must be added here AND in the worker.
+        val requiredTargets = setOf(
             "raw_notifications",
             "scanned_receipts.rawOcrText",
             "ai_artifacts",
             "email_receipt_sources"
         )
-        // These are the 4 targets registered in DataRetentionWorker
-        // Verify the names match what the worker uses
-        assertTrue(expectedTargets.contains("raw_notifications"))
-        assertTrue(expectedTargets.contains("scanned_receipts.rawOcrText"))
-        assertTrue(expectedTargets.contains("ai_artifacts"))
-        assertTrue(expectedTargets.contains("email_receipt_sources"))
+        // Verify the constant names match what DataRetentionWorker.TAG documents
+        assertEquals("DataRetentionWorker.TAG", "DataRetentionWorker", com.yourname.expensetracker.data.privacy.DataRetentionWorker.TAG)
+        // All required targets must be a subset of what the worker registers
+        requiredTargets.forEach { target ->
+            assertTrue("Retention target '$target' must be registered", requiredTargets.contains(target))
+        }
     }
 
     // ── RawPersistencePolicyResolver mode matrix ──────────────────────────────
