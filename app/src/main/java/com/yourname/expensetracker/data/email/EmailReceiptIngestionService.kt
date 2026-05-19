@@ -224,7 +224,7 @@ class EmailReceiptIngestionService(
         try {
             // Step 1: Detect provider
             val provider = detectProvider(sender, subject, emailBody)
-            Timber.d("Email receipt detected provider: $provider from sender: $sender")
+            Timber.d("Email receipt detected provider: $provider")
             try {
                 diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
@@ -361,7 +361,7 @@ class EmailReceiptIngestionService(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "Error processing email receipt from $sender")
+            Timber.e(e, "Error processing email receipt (correlationId=$correlationId)")
             try {
                 diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,

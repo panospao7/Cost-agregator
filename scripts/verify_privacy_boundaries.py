@@ -297,6 +297,42 @@ def rule_g11_hashcode_in_provider_prompt(filepath: str, lines: List[str]) -> Lis
     return violations
 
 
+def rule_g12_empty_prompt_policy_probe(filepath: str, lines: List[str]) -> List[Violation]:
+    """G12: No cloudPayloadPolicy.prepareText(..., "") in main source — empty-prompt probes are forbidden."""
+    violations = []
+    if "src/test" in filepath.replace("\\", "/"):
+        return violations
+    pattern = re.compile(r'prepareText\s*\(.*,\s*""\s*\)')
+    for i, line in enumerate(lines):
+        if pattern.search(line) and not line.strip().startswith("//"):
+            violations.append(Violation(
+                rule="G12",
+                file=filepath,
+                line_no=i + 1,
+                line=line.rstrip(),
+                message="Empty-prompt prepareText probe — use real prompt, not empty string"
+            ))
+    return violations
+
+
+def rule_g13_email_side_effect_without_correlation(filepath: str, lines: List[str]) -> List[Violation]:
+    """G13: dispatchPostCreationSideEffects(expenseId, ExpenseSource.EMAIL_RECEIPT) must include correlationId."""
+    violations = []
+    if "src/test" in filepath.replace("\\", "/"):
+        return violations
+    pattern = re.compile(r'dispatchPostCreationSideEffects\s*\(\s*\w+\s*,\s*ExpenseSource\.EMAIL_RECEIPT\s*\)')
+    for i, line in enumerate(lines):
+        if pattern.search(line) and not line.strip().startswith("//"):
+            violations.append(Violation(
+                rule="G13",
+                file=filepath,
+                line_no=i + 1,
+                line=line.rstrip(),
+                message="Email side-effect dispatch missing correlationId — use dispatchPostCreationSideEffects(id, source, correlationId)"
+            ))
+    return violations
+
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 ALL_RULES = [
@@ -311,6 +347,8 @@ ALL_RULES = [
     rule_g9_corruption_handler_uses_sentinel,
     rule_g10_safe_metadata_value_sanitization,
     rule_g11_hashcode_in_provider_prompt,
+    rule_g12_empty_prompt_policy_probe,
+    rule_g13_email_side_effect_without_correlation,
 ]
 
 
