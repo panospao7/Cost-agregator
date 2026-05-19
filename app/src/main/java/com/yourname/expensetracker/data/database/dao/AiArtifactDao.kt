@@ -65,9 +65,10 @@ interface AiArtifactDao {
     /**
      * Delete all artifacts whose TTL has expired.
      * Called by a cleanup worker; pass [now] as epoch-millis.
+     * Returns the number of rows deleted.
      */
     @Query("DELETE FROM ai_artifacts WHERE expiresAt IS NOT NULL AND expiresAt < :now")
-    suspend fun deleteExpired(now: Long)
+    suspend fun deleteExpired(now: Long): Int
 
     /**
      * Delete all artifacts for a given target (e.g. when a PendingReview is approved/rejected).

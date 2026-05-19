@@ -81,7 +81,6 @@ class CloudCategorizationAssistService @Inject constructor(
             return null
         }
 
-        val shouldRedact = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, "").redactionApplied
         val rawPrompt = buildRawPrompt(input)
         val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, rawPrompt)
         val requestBody = buildRequestBody(prepared.text)

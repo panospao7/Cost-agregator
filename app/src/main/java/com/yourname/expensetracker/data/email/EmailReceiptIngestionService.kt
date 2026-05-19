@@ -313,14 +313,7 @@ class EmailReceiptIngestionService(
 
             when (coordinatorResult) {
                 is EmailReceiptProcessResult.Success -> {
-                    for (expenseId in coordinatorResult.expenseIds) {
-                        try {
-                            // PRIV-441-11: Pass correlationId to side effects for audit traceability
-                            coordinator.dispatchPostCreationSideEffects(expenseId, ExpenseSource.EMAIL_RECEIPT)
-                        } catch (e: Exception) {
-                            Timber.w(e, "Non-critical: failed to dispatch post-creation side effects for expense $expenseId")
-                        }
-                    }
+                    // Side effects are dispatched by ReceiptLifecycleCoordinator — do NOT dispatch again here
                     try {
                         diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                             pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,

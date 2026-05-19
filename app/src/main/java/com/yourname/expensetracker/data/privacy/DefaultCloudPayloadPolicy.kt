@@ -81,12 +81,16 @@ class DefaultCloudPayloadPolicy @Inject constructor(
         val preparedText = textPayload?.text ?: rawPrompt
         val hash = preparedText.sha256Prefix(32)
 
-        // Image is only included when: allowImage=true AND redaction is NOT required AND file exists
+        // Image is only included when: allowImage=true AND redaction is NOT required AND file exists AND MIME allowed
         val (imageBytes, resolvedMimeType) = if (allowImage && !redactRequired && imagePath != null && imageMimeType != null) {
-            val file = java.io.File(imagePath)
-            if (file.exists() && file.length() <= MAX_INLINE_IMAGE_BYTES) {
-                runCatching { file.readBytes() }.getOrNull() to imageMimeType
-            } else null to null
+            if (imageMimeType !in ALLOWED_RECEIPT_IMAGE_MIME_TYPES) {
+                null to null  // unsupported MIME — suppress image
+            } else {
+                val file = java.io.File(imagePath)
+                if (file.exists() && file.length() <= MAX_INLINE_IMAGE_BYTES) {
+                    runCatching { file.readBytes() }.getOrNull() to imageMimeType
+                } else null to null
+            }
         } else null to null
 
         return PreparedCloudPayload(
@@ -130,5 +134,6 @@ class DefaultCloudPayloadPolicy @Inject constructor(
 
     private companion object {
         private const val MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
+        private val ALLOWED_RECEIPT_IMAGE_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp")
     }
 }

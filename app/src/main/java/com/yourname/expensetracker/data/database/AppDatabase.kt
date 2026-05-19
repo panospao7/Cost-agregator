@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 129
+const val APP_DATABASE_SCHEMA_VERSION = 130
 
 @Database(
     entities = [
@@ -7794,6 +7794,45 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_129_130 = object : androidx.room.migration.Migration(129, 130) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Make emailSender and emailSubject nullable; add explicit hash columns
+                // SQLite does not support ALTER COLUMN, so we recreate the table.
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS email_receipt_sources_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        receiptId INTEGER NOT NULL,
+                        emailSender TEXT,
+                        emailSubject TEXT,
+                        emailMessageId TEXT,
+                        emailMessageIdHash TEXT,
+                        contentFingerprintHash TEXT,
+                        parsedAt INTEGER NOT NULL,
+                        provider TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        fingerprint TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    INSERT INTO email_receipt_sources_new
+                        (id, receiptId, emailSender, emailSubject, emailMessageId,
+                         emailMessageIdHash, contentFingerprintHash, parsedAt, provider, confidence, fingerprint)
+                    SELECT id, receiptId, emailSender, emailSubject, emailMessageId,
+                           NULL, NULL, parsedAt, provider, confidence, fingerprint
+                    FROM email_receipt_sources
+                """.trimIndent())
+                database.execSQL("DROP TABLE email_receipt_sources")
+                database.execSQL("ALTER TABLE email_receipt_sources_new RENAME TO email_receipt_sources")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources(receiptId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources(emailMessageId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources(provider, parsedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_parsedAt ON email_receipt_sources(parsedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources(fingerprint)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageIdHash ON email_receipt_sources(emailMessageIdHash)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7958,7 +7997,8 @@ MIGRATION_91_92,
         MIGRATION_125_126,
         MIGRATION_126_127,
         MIGRATION_127_128,
-        MIGRATION_128_129
+        MIGRATION_128_129,
+        MIGRATION_129_130
     )
 }
 }

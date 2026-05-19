@@ -661,18 +661,21 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             savedId = scannedReceiptDao.insert(receipt)
             require(savedId > 0) { "Email receipt insert failed (conflict): sender=$sender" }
 
-            val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, emailStorageMode) ?: ""
-            val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, emailStorageMode) ?: ""
+            val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, emailStorageMode)
+            val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, emailStorageMode)
 
             val emailSource = EmailReceiptSource(
                 receiptId = savedId,
+                // PRIV-6825-02/03: nullable fields — null in restricted modes
                 emailSender = sanitizedSender,
                 emailSubject = sanitizedSubject,
-                // PRIV-441-09: Store hash in all modes — never raw messageId in restricted modes
+                // PRIV-6825-03: raw messageId only in STORE_RAW; hash in all other modes
                 emailMessageId = when (emailStorageMode) {
-                    RawStorageMode.STORE_RAW -> messageId  // raw only in STORE_RAW
-                    else -> messageIdHash.ifBlank { null }  // hash for dedup in all other modes
+                    RawStorageMode.STORE_RAW -> messageId
+                    else -> null
                 },
+                emailMessageIdHash = messageIdHash.ifBlank { null },
+                contentFingerprintHash = fingerprint.ifBlank { null },
                 parsedAt = now,
                 provider = provider,
                 confidence = 1.0,

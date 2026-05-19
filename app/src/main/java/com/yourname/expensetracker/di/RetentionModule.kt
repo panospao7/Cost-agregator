@@ -72,18 +72,16 @@ object RetentionModule {
         object : RetentionTarget {
             override val name = "ai_artifacts"
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
-                // Note: AiArtifactDao.deleteExpired does not return count; report 0 as best-effort
-                appDatabase.aiArtifactDao().deleteExpired(cutoffMs)
-                RetentionPurgeResult(name, 0, true)
+                val count = appDatabase.aiArtifactDao().deleteExpired(cutoffMs)
+                RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
         },
 
         object : RetentionTarget {
             override val name = "ai_chat_messages"
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
-                // Note: AiChatMessageDao.deleteOlderThan does not return count; report 0 as best-effort
-                appDatabase.aiChatMessageDao().deleteOlderThan(cutoffMs)
-                RetentionPurgeResult(name, 0, true)
+                val count = appDatabase.aiChatMessageDao().deleteOlderThan(cutoffMs)
+                RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
         },
 

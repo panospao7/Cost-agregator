@@ -27,7 +27,7 @@ interface AiChatMessageDao {
     suspend fun deleteBySession(sessionId: Long)
 
     @Query("DELETE FROM ai_chat_messages WHERE createdAt < :cutoff")
-    suspend fun deleteOlderThan(cutoff: Long)
+    suspend fun deleteOlderThan(cutoff: Long): Int
 
     @Query("DELETE FROM ai_chat_messages")
     suspend fun deleteAll()

@@ -258,6 +258,14 @@ class NotificationCaptureService : NotificationListenerService() {
      */
     @Volatile
     private var blockedPackagesCache: Set<String> = emptySet()
+
+    /**
+     * PRIV-6825-07: Tracks whether the blocked-package cache has received its first emission.
+     * Until loaded, isPackageBlockedFast() returns true (fail-closed) to prevent
+     * notification extras from being read before the cache is ready.
+     */
+    @Volatile
+    private var blockedPackageCacheLoaded = false
     
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
@@ -312,6 +320,7 @@ class NotificationCaptureService : NotificationListenerService() {
             try {
                 blockedPackageDao.getAllPackageNamesFlow().collect { packages ->
                     blockedPackagesCache = packages.toSet()
+                    blockedPackageCacheLoaded = true
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to observe blocked packages cache")
@@ -614,11 +623,12 @@ class NotificationCaptureService : NotificationListenerService() {
     private fun isPrivacyDeniedFast(): Boolean = capturePrivacyDenied
 
     /**
-     * PRIV-441-06: Fast in-memory blocked-package check using a cached set.
-     * Checked BEFORE extras extraction to prevent raw text from being read.
+     * PRIV-441-06 / PRIV-6825-07: Fast in-memory blocked-package check.
+     * Returns true (fail-closed) until the cache has received its first emission,
+     * preventing extras extraction before the blocked-package list is available.
      */
     private fun isPackageBlockedFast(packageName: String): Boolean =
-        packageName in blockedPackagesCache
+        !blockedPackageCacheLoaded || packageName in blockedPackagesCache
 
     /**
      * DDL-512-14: Emit RECEIVED then terminal in a single work-tracked coroutine so

@@ -69,8 +69,9 @@ interface EmailReceiptDao {
     suspend fun deleteOlderThan(before: Long)
 
     /**
-     * PRIV-43B-12: Redact sensitive fields rather than deleting rows.
+     * PRIV-43B-12 / PRIV-6825-02: Redact sensitive fields rather than deleting rows.
      * Preserves receiptId, provider, fingerprint, and hash columns for dedup/provenance.
+     * emailSender and emailSubject are now nullable so this update is safe.
      * Returns the number of rows updated.
      */
     @androidx.room.Query("""

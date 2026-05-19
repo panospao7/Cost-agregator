@@ -98,7 +98,9 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
     override suspend fun updateSettings(transform: (PrivacySettings) -> PrivacySettings) {
         val old = getSettings()
         context.privacySettingsDataStore.edit { prefs ->
-            val current = prefs.toPrivacySettings()
+            // PRIV-6825-04: Use load-state settings as base so corruption cannot resurrect unsafe defaults.
+            // toLoadState().settings() returns FAIL_CLOSED_DEFAULTS on corruption, not normal defaults.
+            val current = prefs.toLoadState().settings()
             val updated = transform(current)
             prefs[Keys.NOTIFICATION_CAPTURE_ENABLED] = updated.notificationCaptureEnabled
             prefs[Keys.CLOUD_AI_ENABLED] = updated.cloudAiEnabled

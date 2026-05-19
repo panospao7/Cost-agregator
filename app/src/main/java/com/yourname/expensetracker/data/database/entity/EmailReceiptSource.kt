@@ -13,8 +13,6 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "email_receipt_sources",
     foreignKeys = [
-        // DB-8: CASCADE on EmailReceiptSource.receiptId → ScannedReceipt(id)
-        // Safe: Email source records are child data of a scanned receipt; no value in keeping orphaned records.
         ForeignKey(
             entity = ScannedReceipt::class,
             parentColumns = ["id"],
@@ -27,29 +25,41 @@ import androidx.room.PrimaryKey
         Index(value = ["emailMessageId"], unique = true),
         Index(value = ["provider", "parsedAt"]),
         Index(value = ["parsedAt"]),
-        Index(name = "index_email_receipt_fingerprint", value = ["fingerprint"])
+        Index(name = "index_email_receipt_fingerprint", value = ["fingerprint"]),
+        Index(name = "index_email_receipt_sources_emailMessageIdHash", value = ["emailMessageIdHash"])
     ]
 )
 data class EmailReceiptSource(
-    @PrimaryKey(autoGenerate = true) 
+    @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    
+
     val receiptId: Long, // FK to scanned_receipts
-    
-    val emailSender: String,
-    
-    val emailSubject: String,
-    
+
+    /** Raw sender — null in restricted storage modes. */
+    @ColumnInfo(defaultValue = "NULL")
+    val emailSender: String? = null,
+
+    /** Raw subject — null in restricted storage modes. */
+    @ColumnInfo(defaultValue = "NULL")
+    val emailSubject: String? = null,
+
     @ColumnInfo(defaultValue = "NULL")
     val emailMessageId: String? = null,
-    
+
+    /** HMAC hash of messageId — present in all modes for dedup. */
+    @ColumnInfo(defaultValue = "NULL")
+    val emailMessageIdHash: String? = null,
+
+    /** SHA-256 hash of content fingerprint (merchant+amount+date). */
+    @ColumnInfo(defaultValue = "NULL")
+    val contentFingerprintHash: String? = null,
+
     val parsedAt: Long,
-    
+
     val provider: String, // "amazon", "uber", "apple", "unknown"
-    
+
     val confidence: Double,
-    
-    // Fingerprint for deduplication: merchant_lowercase + amount + date
-    @ColumnInfo(defaultValue = "") 
+
+    @ColumnInfo(defaultValue = "")
     val fingerprint: String = ""
 )
