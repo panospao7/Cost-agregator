@@ -67,6 +67,8 @@ class DataRetentionWorker @AssistedInject constructor(
             val notificationCutoff = now - TimeUnit.DAYS.toMillis(settings.rawNotificationRetentionDays.toLong())
             val ocrCutoff = now - TimeUnit.DAYS.toMillis(settings.rawOcrRetentionDays.toLong())
             val emailCutoff = now - TimeUnit.DAYS.toMillis(30)
+            // AI chat messages use the same 30-day retention as email by default
+            val aiChatCutoff = now - TimeUnit.DAYS.toMillis(30)
 
             // PRIV-441-12: Use injectable RetentionRegistry instead of inline list
             val allTargets = retentionRegistry.allTargets()
@@ -84,11 +86,14 @@ class DataRetentionWorker @AssistedInject constructor(
                 results += it.purge(ocrCutoff)
             }
 
-            // All other targets use now as their TTL-based cutoff, except email which uses emailCutoff
+            // All other targets use now as their TTL-based cutoff, except email and ai_chat_messages
             for (target in allTargets) {
                 if (target.name != "raw_notifications" && target.name != "scanned_receipts.rawOcrText") {
-                    // PRIV-43B-12: Email target uses emailCutoff (30 days), not now
-                    val cutoff = if (target.name == "email_receipt_sources") emailCutoff else now
+                    val cutoff = when (target.name) {
+                        "email_receipt_sources" -> emailCutoff  // PRIV-43B-12: redact not delete
+                        "ai_chat_messages" -> aiChatCutoff      // PR-D: proper 30-day cutoff
+                        else -> now  // ai_artifacts uses TTL-based expiry (expiresAt < now is correct)
+                    }
                     results += target.purge(cutoff)
                 }
             }

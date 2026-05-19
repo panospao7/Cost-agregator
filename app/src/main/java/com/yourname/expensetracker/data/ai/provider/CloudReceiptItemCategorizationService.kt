@@ -85,7 +85,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 
         val correlationId = CloudCorrelation.newCorrelationId()
         // PRIV-43B-03: Build full raw prompt, then prepare through policy — no empty-string probe
-        val rawPrompt = buildPrompt(input, shouldRedact = false)
+        val rawPrompt = buildPrompt(input)
         val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, rawPrompt)
 
         return withContext(Dispatchers.IO) {
@@ -200,16 +200,11 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         }
     }
     
-    private fun buildPrompt(input: ReceiptItemCategorizationInput, shouldRedact: Boolean = false): String {
+    private fun buildPrompt(input: ReceiptItemCategorizationInput): String {
         // PRIV-43B-03: Raw values — CloudPayloadPolicy will redact if required; no hashCode pseudonyms
         val safeMerchant = input.merchant ?: "Unknown"
 
-        val cloudOptions = cloudCategoryOptionsForPrompt(input)
-        val categoriesList = if (shouldRedact) {
-            cloudOptions.joinToString(", ") { "${it.cloudName} (id: ${it.categoryId})" }
-        } else {
-            input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
-        }
+        val categoriesList = input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
         
         val itemsList = input.lineItems.joinToString("\n") { item ->
             val safeDescription = item.description ?: "unknown item"

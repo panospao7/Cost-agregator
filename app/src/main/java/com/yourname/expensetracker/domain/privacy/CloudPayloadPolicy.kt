@@ -26,6 +26,23 @@ interface CloudPayloadPolicy {
     ): PreparedCloudPayload
 
     /**
+     * Prepare a receipt-assist payload including optional image bytes.
+     *
+     * Image inclusion is governed by policy:
+     * - If redaction is required, [PreparedCloudPayload.rawImageIncluded] is false
+     *   and [PreparedCloudPayload.imageBytes] is null.
+     * - If image upload is allowed, bytes are read from [imagePath] and returned
+     *   in the payload; the provider must not read the file independently.
+     */
+    suspend fun prepareReceiptAssist(
+        rawPrompt: String,
+        imagePath: String? = null,
+        imageMimeType: String? = null,
+        allowImage: Boolean = false,
+        context: SafePrivacyMetadata = SafePrivacyMetadata.empty()
+    ): PreparedCloudPayload
+
+    /**
      * Prepare a bank statement validation payload.
      * Uses [CloudPayloadPurpose.BANK_STATEMENT_VALIDATION] with strict redaction.
      */

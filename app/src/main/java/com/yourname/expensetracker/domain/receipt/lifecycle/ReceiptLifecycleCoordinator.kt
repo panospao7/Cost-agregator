@@ -756,9 +756,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             runCatching { sideEffectDispatcher.dispatchAfterSave(saved) }
             for (expenseId in expenseIds) {
                 runCatching {
-                    // PRIV-43B-09: Pass correlationId to side effects for audit traceability
                     transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                        expenseId, ExpenseSource.EMAIL_RECEIPT
+                        expenseId, ExpenseSource.EMAIL_RECEIPT, correlationId ?: ""
                     )
                 }
             }

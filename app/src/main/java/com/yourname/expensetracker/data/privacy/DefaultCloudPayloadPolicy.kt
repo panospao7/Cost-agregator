@@ -64,6 +64,49 @@ class DefaultCloudPayloadPolicy @Inject constructor(
         }
     }
 
+    override suspend fun prepareReceiptAssist(
+        rawPrompt: String,
+        imagePath: String?,
+        imageMimeType: String?,
+        allowImage: Boolean,
+        context: SafePrivacyMetadata
+    ): PreparedCloudPayload {
+        val policy = policyResolver.resolve()
+        val redactRequired = policy.redactBeforeCloud
+
+        val textPayload = if (redactRequired) {
+            redactor.redactText(rawPrompt, CloudPayloadPurpose.RECEIPT_ASSIST)
+        } else null
+
+        val preparedText = textPayload?.text ?: rawPrompt
+        val hash = preparedText.sha256Prefix(32)
+
+        // Image is only included when: allowImage=true AND redaction is NOT required AND file exists
+        val (imageBytes, resolvedMimeType) = if (allowImage && !redactRequired && imagePath != null && imageMimeType != null) {
+            val file = java.io.File(imagePath)
+            if (file.exists() && file.length() <= MAX_INLINE_IMAGE_BYTES) {
+                runCatching { file.readBytes() }.getOrNull() to imageMimeType
+            } else null to null
+        } else null to null
+
+        return PreparedCloudPayload(
+            purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
+            text = preparedText,
+            redactionApplied = redactRequired,
+            fieldsRedacted = textPayload?.fieldsRedacted ?: emptySet(),
+            payloadHash = hash,
+            rawTextIncluded = !redactRequired,
+            rawImageIncluded = imageBytes != null,
+            imageBytes = imageBytes,
+            imageMimeType = resolvedMimeType,
+            auditMetadata = SafePrivacyMetadata.builder()
+                .put("purpose", CloudPayloadPurpose.RECEIPT_ASSIST.name)
+                .put("redacted", redactRequired)
+                .put("imageIncluded", imageBytes != null)
+                .build()
+        )
+    }
+
     override suspend fun prepareBankStatementValidation(
         rawText: String,
         context: SafePrivacyMetadata
@@ -83,5 +126,9 @@ class DefaultCloudPayloadPolicy @Inject constructor(
                 .put("redacted", true)
                 .build()
         )
+    }
+
+    private companion object {
+        private const val MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
     }
 }

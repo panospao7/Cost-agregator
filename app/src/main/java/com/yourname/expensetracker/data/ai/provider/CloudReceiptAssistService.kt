@@ -31,8 +31,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONException
-import java.io.File
-import java.util.Base64
 import java.io.IOException
 import java.net.SocketTimeoutException
 import javax.net.ssl.SSLException
@@ -120,15 +118,17 @@ class CloudReceiptAssistService @Inject constructor(
 
         val settings = aiSettingsRepository.settings().first()
 
-        // PRIV-43B-02: Build full raw prompt first, then prepare entire prompt through policy
+        // PR-B: Use prepareReceiptAssist — policy owns both text and image inclusion decision
         val allowImage = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
         val hasImage = allowImage && input.imagePath != null
         val rawPrompt = buildRawPrompt(input, hasAttachedImage = hasImage)
-        val prepared = cloudPayloadPolicy.prepareText(
-            purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
-            rawText = rawPrompt
+        val prepared = cloudPayloadPolicy.prepareReceiptAssist(
+            rawPrompt = rawPrompt,
+            imagePath = input.imagePath,
+            imageMimeType = input.imageMimeType,
+            allowImage = allowImage
         )
-        val requestPayload = buildRequestPayloadFromPrepared(input, allowImage, prepared)
+        val requestPayload = buildRequestPayloadFromPrepared(prepared)
         val requestBody = requestPayload.jsonBody
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
@@ -360,9 +360,12 @@ class CloudReceiptAssistService @Inject constructor(
 
     internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String {
         val redactionApplied = input.redactBeforeCloud
-        // Image is only included when allowImage=true AND redaction is not required
         val imageWillBeIncluded = allowImage && !redactionApplied && input.imagePath != null
         val rawPrompt = buildRawPrompt(input, hasAttachedImage = imageWillBeIncluded)
+        // Read image bytes for test if image will be included
+        val (imageBytes, imageMimeType) = if (imageWillBeIncluded && input.imageMimeType != null) {
+            runCatching { java.io.File(input.imagePath!!).readBytes() }.getOrNull() to input.imageMimeType
+        } else null to null
         val prepared = com.yourname.expensetracker.domain.privacy.PreparedCloudPayload(
             purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
             text = rawPrompt,
@@ -370,26 +373,30 @@ class CloudReceiptAssistService @Inject constructor(
             fieldsRedacted = emptySet(),
             payloadHash = "",
             rawTextIncluded = !redactionApplied,
-            rawImageIncluded = false
+            rawImageIncluded = imageBytes != null,
+            imageBytes = imageBytes,
+            imageMimeType = imageMimeType
         )
-        return buildRequestPayloadFromPrepared(input, allowImage, prepared).jsonBody
+        return buildRequestPayloadFromPrepared(prepared).jsonBody
     }
 
     private fun buildRequestPayloadFromPrepared(
-        input: ReceiptAssistInput,
-        allowImage: Boolean,
         prepared: com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
     ): RequestPayload {
-        // Image upload only allowed when prepared payload says raw image is allowed
-        val inlineImagePart = if (allowImage && !prepared.redactionApplied) {
-            buildImageInlineData(input)
+        // PR-B: Image bytes come from prepared payload — provider never reads file directly
+        val inlineImagePart = if (prepared.rawImageIncluded && prepared.imageBytes != null && prepared.imageMimeType != null) {
+            JSONObject().put(
+                "inlineData",
+                JSONObject()
+                    .put("mimeType", prepared.imageMimeType)
+                    .put("data", java.util.Base64.getEncoder().encodeToString(prepared.imageBytes))
+            )
         } else {
-            if (allowImage && prepared.redactionApplied) {
-                Timber.d("CloudReceiptAssistService: suppressing cloud image upload because redaction is required by policy")
+            if (!prepared.rawImageIncluded) {
+                Timber.d("CloudReceiptAssistService: image not included — policy decision (redactionApplied=${prepared.redactionApplied})")
             }
             null
         }
-        // PRIV-43B-02: Use prepared.text directly — it IS the full prepared prompt
         val parts = JSONArray().put(JSONObject().put("text", prepared.text))
         inlineImagePart?.let(parts::put)
 
@@ -490,27 +497,6 @@ class CloudReceiptAssistService @Inject constructor(
             - rawOcrText:
             $safeRawOcrText
         """.trimIndent()
-    }
-
-    private fun buildImageInlineData(input: ReceiptAssistInput): JSONObject? {
-        val imagePath = input.imagePath ?: return null
-        val mimeType = input.imageMimeType ?: return null
-        val file = File(imagePath)
-        if (!file.exists()) return null
-        val fileSize = file.length()
-        if (fileSize > MAX_INLINE_IMAGE_BYTES) {
-            Timber.d("CloudReceiptAssistService: receipt image too large for inline upload (%d bytes)", fileSize)
-            return null
-        }
-        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
-        if (bytes.isEmpty()) return null
-
-        return JSONObject().put(
-            "inlineData",
-            JSONObject()
-                .put("mimeType", mimeType)
-                .put("data", Base64.getEncoder().encodeToString(bytes))
-        )
     }
 
     private fun parseResponse(body: String): ReceiptAssistSuggestion? {
@@ -617,7 +603,6 @@ class CloudReceiptAssistService @Inject constructor(
 
     private companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        private const val MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
     }
 
     private data class RequestPayload(
