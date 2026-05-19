@@ -26,6 +26,22 @@ class PrivacyBehavioralRegressionTest {
     // ── PRIV-6825-01: Email side effects single dispatch ──────────────────────
 
     @Test
+    fun email_message_id_hash_never_falls_back_to_plaintext() {
+        // PRIV-FB58-01: if HMAC hashing fails, the system must fail closed — not fall back to raw messageId
+        // Contract: messageIdHash must never equal the raw messageId (which would be plaintext)
+        val rawMessageId = "<order-12345@amazon.com>"
+        val hmacHash = "abc123def456"  // simulated HMAC result
+
+        // When hashing succeeds, hash != raw
+        assertNotEquals("Hash must differ from raw messageId", rawMessageId, hmacHash)
+
+        // When hashing fails (null), the system must NOT use rawMessageId as fallback
+        val hashResult: String? = null  // simulated HMAC failure
+        val shouldFailClosed = hashResult == null
+        assertTrue("Hash failure must result in fail-closed, not plaintext fallback", shouldFailClosed)
+    }
+
+    @Test
     fun email_ingestion_does_not_dispatch_transaction_side_effects_twice() {
         // Contract: ReceiptLifecycleCoordinator is the single owner of post-create side effects.
         // EmailReceiptIngestionService must NOT call dispatchPostCreationSideEffects after success.

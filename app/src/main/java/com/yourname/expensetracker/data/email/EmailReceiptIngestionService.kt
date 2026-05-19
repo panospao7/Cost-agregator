@@ -273,8 +273,9 @@ class EmailReceiptIngestionService(
             ).canonical.normalizedName
 
             val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date, messageId)
-            // PR4: hash messageId for deduplication; never store plaintext in coordinator
-            val messageIdHash = hashingService.hmacSha256Prefix(messageId, "emailMessageId") ?: messageId
+            // PRIV-FB58-01: fail closed if HMAC fails — never fall back to plaintext messageId
+            val messageIdHash = hashingService.hmacSha256Prefix(messageId, "emailMessageId")
+                ?: return@withLock EmailReceiptResult.ParseError("Failed to hash messageId — cannot proceed safely")
 
             val coordinatorEmailData = EmailReceiptData(
                 messageId = messageIdHash,   // pass HMAC hash, not plaintext
@@ -306,9 +307,9 @@ class EmailReceiptIngestionService(
                 rawEmailBody = emailBody,
                 sender = sender,
                 subject = subject,
-                messageId = messageId,
+                messageId = messageIdHash,  // PRIV-FB58-01: pass hash, not raw messageId
                 provider = provider,
-                correlationId = correlationId  // PRIV-441-11: propagate correlation
+                correlationId = correlationId
             )
 
             when (coordinatorResult) {
