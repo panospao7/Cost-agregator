@@ -114,6 +114,10 @@ class TestExchangeRateStore : ExchangeRateStore {
         return rates[fromCurrency.uppercase() to toCurrency.uppercase()]
     }
 
+    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? {
+        return rates[fromCurrency.uppercase() to toCurrency.uppercase()]
+    }
+
     override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
         return rates[fromCurrency.uppercase() to toCurrency.uppercase()]
     }

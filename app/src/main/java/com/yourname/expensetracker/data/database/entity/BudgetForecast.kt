@@ -131,5 +131,6 @@ enum class ForecastRiskLevel {
     LOW,      // Predicted to stay well under budget
     MEDIUM,   // Might come close to budget limit
     HIGH,     // High risk of exceeding budget
-    CRITICAL  // Very likely to exceed budget
+    CRITICAL, // Very likely to exceed budget
+    UNKNOWN   // Cannot determine risk (e.g. home currency unavailable)
 }

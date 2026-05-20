@@ -9,9 +9,12 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.TransactionTypeFilter
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.FailedConversion
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -60,7 +63,9 @@ class MultiCurrencyRepository @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val currencyConverter: CurrencyConverter,
     private val timeProvider: TimeProvider,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val normalizationEngine: com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine =
+        com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(currencyConverter)
 ) {
     sealed interface CurrencyRepositoryError {
         data class Dao(val message: String, val cause: Throwable? = null) : CurrencyRepositoryError
@@ -369,19 +374,30 @@ class MultiCurrencyRepository @Inject constructor(
     // don't need to resolve it themselves.
 
     /**
-     * Get the user's current home currency as a String.
-     * Falls back to "EUR" if the DataStore hasn't been initialized yet.
+     * Resolve the user's home currency using [HomeCurrencyResolution].
+     * Returns the currency code string for Resolved and FirstRunDefault cases.
+     * Throws [HomeCurrencyUnavailableException] for Failed case so callers
+     * that return MoneyAggregate can catch and return unavailable state.
      *
-     * TODO (P2-09): Distinguish first-run default from settings-load failure.
-     * A settings corruption should produce a visible dashboard warning rather
-     * than silently switching to EUR. Consider returning a sealed
-     * [HomeCurrencyResolution] with Resolved/DefaultedFirstRun/Failed variants.
+     * CURR-70F-09: Uses typed resolution instead of raw homeCurrency().first().
      */
     private suspend fun resolveHomeCurrency(): String {
-        return try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            throw IllegalStateException("Home currency unavailable: ${e.message}", e)
+        return when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is HomeCurrencyResolution.Failed -> throw HomeCurrencyUnavailableException(resolution.reason)
+        }
+    }
+
+    /**
+     * Resolve home currency, returning MoneyAggregate.empty with UNAVAILABLE quality on failure.
+     * Use this in aggregate-returning methods to avoid throwing.
+     */
+    private suspend fun resolveHomeCurrencyOrUnavailable(): Pair<CurrencyCode, Boolean> {
+        return when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> CurrencyCode(resolution.currency.code) to false
+            is HomeCurrencyResolution.FirstRunDefault -> CurrencyCode(resolution.currency.code) to false
+            is HomeCurrencyResolution.Failed -> CurrencyCode("EUR") to true
         }
     }
 
@@ -394,6 +410,10 @@ class MultiCurrencyRepository @Inject constructor(
      * Uses current exchange rates via [CurrencyConverter.convertMultiple].
      * For historical accuracy, use [getHomeCurrencyPurchaseTotalHistorical] instead.
      */
+    @Deprecated(
+        "Type-agnostic latest-rate API. Use getHomeCurrencyPurchaseTotalHistorical() or getHomeCurrencyPurchaseTotal() with explicit rate semantics.",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getHomeCurrencyTotal(
         startDate: Long,
         endDate: Long
@@ -479,6 +499,10 @@ class MultiCurrencyRepository @Inject constructor(
      * Uses [MoneyAggregateBuilder.fromBuckets] for safe multi-currency conversion.
      * Returns list of [PeriodMoneyAggregate] sorted by week ascending.
      */
+    @Deprecated(
+        "Uses latest-rate conversion. Use getWeeklyAggregatesHistorical() for historical accuracy.",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getHomeCurrencyWeeklyTotals(
         startDate: Long,
         endDate: Long
@@ -503,6 +527,10 @@ class MultiCurrencyRepository @Inject constructor(
      * Uses [MoneyAggregateBuilder.fromBuckets] for safe multi-currency conversion.
      * Returns list of [PeriodMoneyAggregate] sorted by day ascending.
      */
+    @Deprecated(
+        "Uses latest-rate conversion. Use getDailyAggregatesHistorical() for historical accuracy.",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getHomeCurrencyDailyTotals(
         startDate: Long,
         endDate: Long
@@ -525,73 +553,118 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * **HISTORICAL-RATE:** Get total PURCHASE spending in home currency using
-     * the exchange rate at the period midpoint for each non-home-currency bucket.
+     * per-expense transaction-date conversion via [MoneyNormalizationEngine].
      *
-     * This is more accurate than [getHomeCurrencyPurchaseTotal] for period reports
-     * because it avoids applying today's rate to historical transactions.
-     *
-     * Falls back to latest-rate conversion if historical rate is unavailable.
+     * CURR-70F-08: Replaced midpoint+latest-fallback approach with proper
+     * per-expense TRANSACTION_DATE conversion. Never falls back to latest rate.
      */
     suspend fun getHomeCurrencyPurchaseTotalHistorical(
         startDate: Long,
         endDate: Long
     ): MoneyAggregate {
-        val homeCurrency = resolveHomeCurrency()
-        val currencyTotals = expenseDao.getTotalSpentBetweenByCurrency(startDate, endDate)
-        if (currencyTotals.isEmpty()) return MoneyAggregate.empty(CurrencyCode(homeCurrency))
-
-        val midpoint = startDate + (endDate - startDate) / 2
-        val buckets = mutableListOf<com.yourname.expensetracker.domain.core.money.MoneyBucket>()
-        val failures = mutableListOf<com.yourname.expensetracker.domain.core.money.ConversionFailure>()
-        var total = 0.0
-
-        for (ct in currencyTotals) {
-            val srcCurrency = CurrencyCode(ct.currency)
-            if (ct.currency.uppercase() == homeCurrency.uppercase()) {
-                total += ct.total
-                buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
-            } else {
-                val conversion = currencyConverter.convertAsOf(ct.total, ct.currency, homeCurrency, midpoint)
-                if (conversion != null) {
-                    total += conversion.convertedAmount
-                    buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
-                } else {
-                    // Fallback to latest rate — mark as partial since rate basis is not historical
-                    val latestConversion = currencyConverter.convert(ct.total, ct.currency, homeCurrency)
-                    if (latestConversion != null) {
-                        total += latestConversion.convertedAmount
-                        buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
-                        failures.add(
-                            com.yourname.expensetracker.domain.core.money.ConversionFailure(
-                                originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(ct.total, srcCurrency),
-                                targetCurrency = CurrencyCode(homeCurrency),
-                                reason = com.yourname.expensetracker.domain.core.money.FailureReason.RATE_STALE,
-                                transactionCount = ct.txCount
-                            )
-                        )
-                    } else {
-                        failures.add(
-                            com.yourname.expensetracker.domain.core.money.ConversionFailure(
-                                originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(ct.total, srcCurrency),
-                                targetCurrency = CurrencyCode(homeCurrency),
-                                reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
-                                transactionCount = ct.txCount
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        return if (failures.isEmpty()) {
-            MoneyAggregate(
-                displayAmount = total,
-                displayCurrency = CurrencyCode(homeCurrency),
-                sourceBuckets = buckets,
-                conversionFailures = emptyList()
+        val homeCurrency = try {
+            CurrencyCode(resolveHomeCurrency())
+        } catch (e: HomeCurrencyUnavailableException) {
+            return MoneyAggregate.empty(CurrencyCode("EUR"), RateBasis.TRANSACTION_DATE).copy(
+                conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
+                warningMessage = "Home currency unavailable: ${e.reason}"
             )
-        } else {
-            MoneyAggregate.partial(total, CurrencyCode(homeCurrency), buckets, failures)
+        }
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return MoneyAggregate.empty(homeCurrency, RateBasis.TRANSACTION_DATE)
+
+        return normalizationEngine.aggregateExpenses(
+            expenses = expenses,
+            homeCurrency = homeCurrency,
+            rateBasis = RateBasis.TRANSACTION_DATE,
+            transactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+        )
+    }
+
+    // ── Explicit historical API family (CURR-70F-08) ───────────────────────
+
+    /**
+     * **HISTORICAL-RATE:** Get category totals using per-expense transaction-date conversion.
+     * Returns map of categoryId -> MoneyAggregate with TRANSACTION_DATE basis.
+     */
+    suspend fun getCategoryAggregatesHistorical(
+        startDate: Long,
+        endDate: Long,
+        transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+    ): Map<Long?, MoneyAggregate> {
+        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return emptyMap()
+
+        val byCategory = expenses.groupBy { it.categoryId }
+        return byCategory.mapValues { (_, group) ->
+            normalizationEngine.aggregateExpenses(group, homeCurrency, RateBasis.TRANSACTION_DATE, transactionTypeFilter)
+        }
+    }
+
+    /**
+     * **HISTORICAL-RATE:** Get daily totals using per-expense transaction-date conversion.
+     * Returns list of [PeriodMoneyAggregate] sorted by day ascending.
+     */
+    suspend fun getDailyAggregatesHistorical(
+        startDate: Long,
+        endDate: Long,
+        transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+    ): List<PeriodMoneyAggregate> {
+        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return emptyList()
+
+        val byDay = expenses.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+        return byDay.toSortedMap().map { (dayStart, group) ->
+            PeriodMoneyAggregate(
+                periodKey = getDayKey(dayStart),
+                aggregate = normalizationEngine.aggregateExpenses(group, homeCurrency, RateBasis.TRANSACTION_DATE, transactionTypeFilter)
+            )
+        }
+    }
+
+    /**
+     * **HISTORICAL-RATE:** Get weekly totals using per-expense transaction-date conversion.
+     * Returns list of [PeriodMoneyAggregate] sorted by week ascending.
+     */
+    suspend fun getWeeklyAggregatesHistorical(
+        startDate: Long,
+        endDate: Long,
+        transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+    ): List<PeriodMoneyAggregate> {
+        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return emptyList()
+
+        val byWeek = expenses.groupBy { TimePeriodUtils.getStartOfWeek(it.date) }
+        return byWeek.toSortedMap().map { (weekStart, group) ->
+            PeriodMoneyAggregate(
+                periodKey = getWeekKey(weekStart),
+                aggregate = normalizationEngine.aggregateExpenses(group, homeCurrency, RateBasis.TRANSACTION_DATE, transactionTypeFilter)
+            )
+        }
+    }
+
+    /**
+     * **HISTORICAL-RATE:** Get monthly totals using per-expense transaction-date conversion.
+     * Returns list of [MonthMoneyAggregate] sorted by month ascending.
+     */
+    suspend fun getMonthlyAggregatesHistorical(
+        startDate: Long,
+        endDate: Long,
+        transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+    ): List<MonthMoneyAggregate> {
+        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return emptyList()
+
+        val byMonth = expenses.groupBy { getMonthKey(it.date) }
+        return byMonth.toSortedMap().map { (monthKey, group) ->
+            MonthMoneyAggregate(
+                monthKey = monthKey,
+                aggregate = normalizationEngine.aggregateExpenses(group, homeCurrency, RateBasis.TRANSACTION_DATE, transactionTypeFilter)
+            )
         }
     }
 
@@ -834,6 +907,14 @@ private class MissingExchangeRateException(
     override val message: String,
     val failedConversions: List<FailedConversion>
 ) : IllegalStateException(message)
+
+/**
+ * CURR-70F-09: Thrown when home currency settings cannot be read.
+ * Callers should catch this and return unavailable/partial MoneyAggregate.
+ */
+class HomeCurrencyUnavailableException(
+    val reason: String
+) : IllegalStateException("Home currency unavailable: $reason")
 
 /**
  * Expense with converted amount information.

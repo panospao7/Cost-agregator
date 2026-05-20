@@ -91,11 +91,13 @@ sealed class DashboardWidget {
         val weekSpent: Double,
         val monthSpent: Double,
         /** S4-006: true when any conversion failed for these totals */
-        val isPartial: Boolean = false
+        val isPartial: Boolean = false,
+        val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
     data class TopCategories(
-        val categories: List<CategorySpending>
+        val categories: List<CategorySpending>,
+        val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
     data class BudgetHealthWidget(
@@ -113,7 +115,8 @@ sealed class DashboardWidget {
     ) : DashboardWidget()
 
     data class SpendingTrend(
-        val series: List<SpendingTrendSeries>
+        val series: List<SpendingTrendSeries>,
+        val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
     data class FinancialWeatherWidget(
@@ -139,7 +142,8 @@ sealed class DashboardWidget {
     }
 
     data class MonteCarloForecast(
-        val result: MonteCarloResult
+        val result: MonteCarloResult,
+        val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
     data object TotalsDashboard : DashboardWidget()
@@ -309,6 +313,62 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             txCount = ctx.txCount,
             // S4-006/S4-D914-006: Propagate data-quality from summary AND today/week aggregates
             isPartial = ctx.data.summary.isPartial || ctx.periodIsPartial
+        )
+    }
+
+    /**
+     * CURR-70F-13: Produce the canonical normalized input for dashboard widgets.
+     * All widgets that display money totals should consume from this single source.
+     */
+    suspend fun produceDashboardNormalizedInput(
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        periodStart: Long,
+        periodEnd: Long
+    ): DashboardNormalizedInput {
+        val resolution = currencySettingsRepository.resolveHomeCurrency()
+        val homeCurrency = resolution.currencyOrNull
+            ?: return DashboardNormalizedInput(
+                homeCurrency = CurrencyCode.EUR,
+                periodStart = periodStart,
+                periodEnd = periodEnd,
+                normalizedExpenses = emptyList(),
+                periodAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(CurrencyCode.EUR, com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE),
+                categoryAggregates = emptyMap(),
+                dataQuality = CurrencyDataQuality.UNAVAILABLE
+            )
+
+        val engine = com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(currencyConverter)
+        val rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE
+
+        val periodAggregate = engine.aggregateExpenses(
+            expenses = expenses,
+            homeCurrency = homeCurrency,
+            rateBasis = rateBasis,
+            transactionTypeFilter = com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY
+        )
+
+        val categoryAggregates = expenses
+            .filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE }
+            .groupBy { it.categoryId }
+            .mapValues { (_, group) ->
+                engine.aggregateExpenses(group, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.ALL_TYPES)
+            }
+
+        val normalizedExpenses = expenses.mapNotNull { expense ->
+            when (val result = engine.normalizeExpense(expense, homeCurrency, rateBasis)) {
+                is com.yourname.expensetracker.domain.core.money.NormalizationResult.Included -> result.value
+                is com.yourname.expensetracker.domain.core.money.NormalizationResult.Excluded -> null
+            }
+        }
+
+        return DashboardNormalizedInput(
+            homeCurrency = homeCurrency,
+            periodStart = periodStart,
+            periodEnd = periodEnd,
+            normalizedExpenses = normalizedExpenses,
+            periodAggregate = periodAggregate,
+            categoryAggregates = categoryAggregates,
+            dataQuality = CurrencyDataQuality.fromAggregate(periodAggregate, rateBasis)
         )
     }
 
@@ -547,8 +607,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
     // P5-P1-05: Spending trend now normalizes expenses to home currency before summing.
     private suspend fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
+                throw IllegalStateException("Home currency unavailable: ${resolution.reason}")
+        }
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
         // DSH-N2: Deduplicate by expense ID to prevent shared/duplicate expenses

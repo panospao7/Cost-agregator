@@ -31,6 +31,7 @@ data class NormalizedExpense(
     val rateBasis: String? = null,
     val rateUsed: Double? = null,
     val rateValidDate: Long? = null,
+    val rateLastUpdated: Long? = null,
     val conversionPath: String? = null
 )
 

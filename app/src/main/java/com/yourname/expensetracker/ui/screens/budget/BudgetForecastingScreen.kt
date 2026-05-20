@@ -191,6 +191,10 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
             SemanticColors.StatusDarkRed, "🚨", context.getString(R.string.budget_forecast_risk_critical), 
             context.getString(R.string.budget_forecast_desc_critical)
         )
+        ForecastRiskLevel.UNKNOWN -> Quadruple(
+            SemanticColors.TextSecondary, "❓", "Unknown",
+            "Forecast unavailable — currency conversion failed."
+        )
     }
     
     Card(

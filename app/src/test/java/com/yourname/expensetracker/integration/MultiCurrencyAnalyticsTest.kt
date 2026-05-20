@@ -31,7 +31,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
         val converter = CurrencyConverter(exchangeRateStore, timeProvider = mockk())
-        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository())
+        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository(), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(converter))
 
         coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
             fromCurrency = "USD",
@@ -79,7 +79,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
     fun `getExpensesByCurrency uses aggregate path`() = runTest {
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
-        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository())
+        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository(), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(mockk(relaxed = true)))
 
         val start = ms(2026, 4, 1)
         val end = ms(2026, 5, 1)
@@ -108,7 +108,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
     fun `aggregate path handles over 2000 expenses without truncation`() = runTest {
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
-        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository())
+        val repository = MultiCurrencyRepository(expenseDao, mockk(relaxed = true), timeProvider, TestCurrencySettingsRepository(), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(mockk(relaxed = true)))
 
         val start = ms(2026, 1, 1)
         val end = ms(2026, 5, 1)
@@ -145,7 +145,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
             )
         }
 
-        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository())
+        val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository(), com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(converter))
 
         val start = ms(2026, 4, 1)
         val end = ms(2026, 5, 1)

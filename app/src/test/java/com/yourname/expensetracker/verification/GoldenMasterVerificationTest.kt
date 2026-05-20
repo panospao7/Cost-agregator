@@ -206,7 +206,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
                 expenseDao = expenseDao,
                 currencyConverter = currencyConverter,
                 timeProvider = timeProvider,
-                currencySettingsRepository = currencySettingsRepository
+                currencySettingsRepository = currencySettingsRepository,
+                normalizationEngine = com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(currencyConverter)
             ),
             categoryRepository = categoryRepository,
             ioDispatcher = Dispatchers.Unconfined

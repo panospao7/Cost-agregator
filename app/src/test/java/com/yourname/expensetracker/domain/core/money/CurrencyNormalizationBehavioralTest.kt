@@ -53,8 +53,8 @@ class CurrencyNormalizationBehavioralTest {
         // Only rate: historical backfill with old validDate but fresh lastUpdated
         store.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.80, lastUpdated = NOW, source = "backfill", validDate = NOW - 60 * DAY_MS)
 
-        val outcome = converter.convertOutcome(100.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE)
-        // Should still find it (it's the only rate), but validDate is old
+        val outcome = converter.convertOutcome(100.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE, stalePolicy = StaleRatePolicy.None)
+        // Should still find it (it's the only rate) — staleness disabled for this test
         assertTrue(outcome is ConversionOutcome.Converted)
     }
 

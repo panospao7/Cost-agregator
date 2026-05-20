@@ -76,33 +76,54 @@ class BudgetForecastingEngine @Inject constructor(
     ): BudgetForecast = withContext(ioDispatcher) {
         writeBarrier.checkWritesAllowed("BudgetForecastingEngine.generateForecast")
         val now = timeProvider.now()
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrElse { throw IllegalStateException("Home currency unavailable for forecast: ${it.message}") }
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed -> {
+                Timber.w("BudgetForecastingEngine: Home currency unavailable: %s", resolution.reason)
+                return@withContext BudgetForecast(
+                    budgetId = budget.id,
+                    forecastDate = now,
+                    targetPeriodStart = now,
+                    targetPeriodEnd = now,
+                    predictedSpending = 0.0,
+                    predictedRemaining = 0.0,
+                    confidenceScore = 0.0,
+                    riskLevel = ForecastRiskLevel.UNKNOWN,
+                    overspendProbability = 0.0,
+                    createdAt = now,
+                    currency = "EUR"
+                )
+            }
+        }
 
         // Calculate active budget period window first — we need periodEnd for the
         // rate-as-of lookup so the budget limit is converted at the same
         // historical rate basis as expenses (P6-P1-06).
         val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
 
-        // P6-P1-06: Normalize budget.amount to home currency using the period-end
-        // historical rate via convertAsOf(). Falls back to latest rate if no
-        // historical rate exists for the target period.
-        // CURR-C62-15: Never fall back to raw budget.amount — that mixes currencies.
+        // CURR-70F-11: Use convertOutcome with PERIOD_END basis — never hide latest fallback.
         val normalizedBudgetAmount: Double
         val budgetConversionFailed: Boolean
         run {
-            val converted = runCatching {
-                currencyConverter.convertAsOf(budget.amount, budget.currency, homeCurrency, periodEnd)
-                    ?: currencyConverter.convert(budget.amount, budget.currency, homeCurrency)
-            }.getOrNull()
-            if (converted != null) {
-                normalizedBudgetAmount = converted.convertedAmount
-                budgetConversionFailed = false
-            } else {
-                Timber.w("BudgetForecastingEngine: Failed to convert budget.amount=%.2f %s to %s — forecast unavailable",
-                    budget.amount, budget.currency, homeCurrency)
-                normalizedBudgetAmount = 0.0
-                budgetConversionFailed = true
+            val outcome = currencyConverter.convertOutcome(
+                amount = budget.amount,
+                fromCurrency = budget.currency,
+                toCurrency = homeCurrency,
+                rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END,
+                atMillis = periodEnd,
+                stalePolicy = com.yourname.expensetracker.domain.core.money.StaleRatePolicy.None
+            )
+            when (outcome) {
+                is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted -> {
+                    normalizedBudgetAmount = outcome.convertedAmount
+                    budgetConversionFailed = false
+                }
+                is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed -> {
+                    Timber.w("BudgetForecastingEngine: %s — forecast unavailable", outcome.message)
+                    normalizedBudgetAmount = 0.0
+                    budgetConversionFailed = true
+                }
             }
         }
         val elapsedEnd = now.coerceAtMost(periodEnd)
@@ -120,7 +141,7 @@ class BudgetForecastingEngine @Inject constructor(
                 predictedSpending = 0.0,
                 predictedRemaining = 0.0,
                 confidenceScore = 0.0,
-                riskLevel = ForecastRiskLevel.LOW,
+                riskLevel = ForecastRiskLevel.UNKNOWN,
                 overspendProbability = 0.0,
                 createdAt = now,
                 currency = homeCurrency
@@ -209,8 +230,12 @@ class BudgetForecastingEngine @Inject constructor(
     private suspend fun getHistoricalSpendingData(budget: Budget): HistoricalData {
         val now = timeProvider.now()
         val threeMonthsAgo = TimePeriodUtils.addMonths(now, -3)
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrElse { throw IllegalStateException("Home currency unavailable for forecast: ${it.message}") }
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
+                throw IllegalStateException("Home currency unavailable for historical data: ${resolution.reason}")
+        }
 
         // ── Fetch raw snapshots and normalise to home currency ──────────────
         val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(threeMonthsAgo, now)

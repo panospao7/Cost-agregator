@@ -215,7 +215,7 @@ class BudgetRepository @Inject constructor(
         // When `rolloverDeficitTracking` is true, deficits (negative surplus)
         // are carried forward to reduce the next period's effective limit.
         // When false (default), only surplus is carried forward (surplus-only mode).
-        if (budget.rollover) {
+        if (budget.rollover && !initialLimitAggregate.isPartial) {
             val budgetFirstStart = budget.startDate
             val periods = mutableListOf<PeriodRange>()
             // Use explicit evaluation times so every completed anchored cycle is
@@ -431,10 +431,11 @@ class BudgetRepository @Inject constructor(
     }
 
     private suspend fun resolveHomeCurrency(): String {
-        return try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            throw IllegalStateException("Home currency unavailable: ${e.message}", e)
+        return when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
+                throw IllegalStateException("Home currency unavailable: ${resolution.reason}")
         }
     }
 

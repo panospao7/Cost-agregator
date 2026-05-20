@@ -4,8 +4,8 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.core.money.*
 import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.test.FakeExchangeRateStore
-import com.yourname.expensetracker.test.FakeTimeProvider
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -109,17 +109,18 @@ class CurrencyNormalizationBehavioralTest {
             DomainExchangeRate("USD", "EUR", 0.85, lastUpdated = now, validDate = startOfOldDate)
         )
         
-        // Historical conversion with staleness check
+        // Historical conversion with staleness check using TRANSACTION_DATE reference:
+        // compares |atMillis - rate.validDate| = |oldDate - startOfOldDate| ≈ 0 → fresh
         val outcome = currencyConverter.convertOutcome(
             amount = 100.0,
             fromCurrency = "USD",
             toCurrency = "EUR",
             rateBasis = RateBasis.TRANSACTION_DATE,
             atMillis = oldDate,
-            stalePolicy = StaleRatePolicy(maxAgeMs = 86400000L, compareAgainst = StaleRateReference.RATE_VALID_DATE)
+            stalePolicy = StaleRatePolicy(maxAgeMs = 86400000L, compareAgainst = StaleRateReference.TRANSACTION_DATE)
         )
         
-        // Should succeed because we're comparing against validDate, not lastUpdated
+        // Should succeed because rate validDate is close to transaction date
         assertTrue(outcome is ConversionOutcome.Converted)
     }
 
@@ -233,8 +234,35 @@ class CurrencyNormalizationBehavioralTest {
             categoryId = null,
             isNotMine = false,
             source = "test",
-            createdAt = date,
-            updatedAt = date
+            createdAt = date
         )
     }
+}
+
+private class FakeTimeProvider : TimeProvider {
+    override fun now(): Long = 1716163200000L // 2024-05-20 00:00 UTC
+}
+
+private class FakeExchangeRateStore : ExchangeRateStore {
+    private val rates = mutableListOf<DomainExchangeRate>()
+
+    fun insertRate(rate: DomainExchangeRate) { rates.add(rate) }
+
+    override suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate? =
+        rates.filter { it.fromCurrency == fromCurrency && it.toCurrency == toCurrency }
+            .maxByOrNull { it.validDate ?: 0L }
+
+    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? =
+        rates.filter { it.fromCurrency == fromCurrency && it.toCurrency == toCurrency }
+            .maxByOrNull { it.validDate ?: 0L }
+
+    override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? =
+        rates.filter { it.fromCurrency == fromCurrency && it.toCurrency == toCurrency && (it.validDate ?: 0L) <= atMillis }
+            .maxByOrNull { it.validDate ?: 0L }
+
+    override suspend fun insertOrUpdate(rate: DomainExchangeRate) { rates.add(rate) }
+    override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) { this.rates.addAll(rates) }
+    override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> = flowOf(emptyList())
+    override suspend fun getLatestRate(): DomainExchangeRate? = rates.maxByOrNull { it.lastUpdated }
+    override suspend fun deleteOldRates(olderThan: Long) { rates.removeAll { it.lastUpdated < olderThan } }
 }

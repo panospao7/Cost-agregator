@@ -84,6 +84,13 @@ class CurrencyConverter @Inject constructor(
     companion object {
         const val DEFAULT_BASE_CURRENCY = "EUR"
         const val MAX_RATE_AGE_MS = 24 * 60 * 60 * 1000L  // 24 hours
+
+        /** Rate bases that require atMillis and use getRateAsOf (CURR-70F-01). */
+        private val historicalBases = setOf(
+            RateBasis.TRANSACTION_DATE, RateBasis.PERIOD_START,
+            RateBasis.PERIOD_END, RateBasis.FORECAST_DATE,
+            RateBasis.PERIOD_MIDPOINT_ESTIMATE
+        )
     }
 
     /**
@@ -291,10 +298,7 @@ class CurrencyConverter @Inject constructor(
         }
 
         // Historical bases require a date — never silently fall back to latest (CURR-C62-03)
-        val historicalBases = listOf(
-            RateBasis.TRANSACTION_DATE, RateBasis.PERIOD_START,
-            RateBasis.PERIOD_END, RateBasis.FORECAST_DATE, RateBasis.PERIOD_MIDPOINT_ESTIMATE
-        )
+        // CURR-70F-01: PERIOD_MIDPOINT_ESTIMATE included — must use getRateAsOf, not latest
         if (rateBasis in historicalBases && atMillis == null) {
             return@withContext ConversionOutcome.Failed(
                 originalAmount = amount, originalCurrency = from, targetCurrency = to,
@@ -319,11 +323,8 @@ class CurrencyConverter @Inject constructor(
             )
         }
 
-        // Lookup rate based on basis
-        val useHistorical = rateBasis in listOf(
-            RateBasis.TRANSACTION_DATE, RateBasis.PERIOD_START,
-            RateBasis.PERIOD_END, RateBasis.FORECAST_DATE
-        )
+        // Lookup rate based on basis — canonical set shared with historicalBases above
+        val useHistorical = rateBasis in historicalBases
 
         data class RateResult(val rate: Double, val validDate: Long?, val lastUpdated: Long, val source: String?, val path: ConversionPath)
 
@@ -335,8 +336,14 @@ class CurrencyConverter @Inject constructor(
                 val toEur = exchangeRateStore.getRateAsOf(from, DEFAULT_BASE_CURRENCY, atMillis)
                 val fromEur = exchangeRateStore.getRateAsOf(DEFAULT_BASE_CURRENCY, to, atMillis)
                 if (toEur != null && fromEur != null) {
-                    RateResult(toEur.rate * fromEur.rate, toEur.validDate ?: fromEur.validDate,
-                        maxOf(toEur.lastUpdated, fromEur.lastUpdated), toEur.source, ConversionPath.VIA_BASE_CURRENCY)
+                    // CURR-70F-03: weakest-leg provenance for composite conversions
+                    RateResult(
+                        rate = toEur.rate * fromEur.rate,
+                        validDate = listOfNotNull(toEur.validDate, fromEur.validDate).minOrNull(),
+                        lastUpdated = minOf(toEur.lastUpdated, fromEur.lastUpdated),
+                        source = listOfNotNull(toEur.source, fromEur.source).joinToString("+"),
+                        path = ConversionPath.VIA_BASE_CURRENCY
+                    )
                 } else null
             }
         } else {
@@ -347,8 +354,14 @@ class CurrencyConverter @Inject constructor(
                 val toEur = exchangeRateStore.getLatestRateForPair(from, DEFAULT_BASE_CURRENCY)
                 val fromEur = exchangeRateStore.getLatestRateForPair(DEFAULT_BASE_CURRENCY, to)
                 if (toEur != null && fromEur != null) {
-                    RateResult(toEur.rate * fromEur.rate, toEur.validDate ?: fromEur.validDate,
-                        maxOf(toEur.lastUpdated, fromEur.lastUpdated), toEur.source, ConversionPath.VIA_BASE_CURRENCY)
+                    // CURR-70F-03: weakest-leg provenance for composite conversions
+                    RateResult(
+                        rate = toEur.rate * fromEur.rate,
+                        validDate = listOfNotNull(toEur.validDate, fromEur.validDate).minOrNull(),
+                        lastUpdated = minOf(toEur.lastUpdated, fromEur.lastUpdated),
+                        source = listOfNotNull(toEur.source, fromEur.source).joinToString("+"),
+                        path = ConversionPath.VIA_BASE_CURRENCY
+                    )
                 } else null
             }
         }
@@ -362,25 +375,39 @@ class CurrencyConverter @Inject constructor(
             )
         }
 
-        // Staleness check (CURR-C62-04: fixed to use validDate for historical conversions)
+        // Staleness check (CURR-70F-02: honor StaleRatePolicy.compareAgainst)
         if (stalePolicy.maxAgeMs != null) {
-            // For historical conversions, compare transaction date against rate validDate
-            // For latest conversions, compare now against lastUpdated
-            val (referenceTime, rateTimestamp) = if (useHistorical) {
-                val txDate = atMillis ?: timeProvider.now()
-                val rateDate = rateResult.validDate ?: rateResult.lastUpdated
-                txDate to rateDate
-            } else {
-                val now = timeProvider.now()
-                now to rateResult.lastUpdated
+            val ageMs: Long? = when (stalePolicy.compareAgainst) {
+                StaleRateReference.NOW -> {
+                    val now = timeProvider.now()
+                    val rateTs = rateResult.validDate ?: rateResult.lastUpdated
+                    kotlin.math.abs(now - rateTs)
+                }
+                StaleRateReference.TRANSACTION_DATE -> {
+                    val txDate = atMillis ?: null
+                    if (txDate != null) {
+                        val rateTs = rateResult.validDate ?: rateResult.lastUpdated
+                        kotlin.math.abs(txDate - rateTs)
+                    } else null
+                }
+                StaleRateReference.RATE_VALID_DATE -> {
+                    val vd = rateResult.validDate
+                    if (vd != null) {
+                        kotlin.math.abs(rateResult.lastUpdated - vd)
+                    } else null
+                }
             }
-            
-            val age = kotlin.math.abs(referenceTime - rateTimestamp)
-            if (age > stalePolicy.maxAgeMs) {
+
+            // If age cannot be computed, do not silently treat as fresh
+            if (ageMs == null || ageMs > stalePolicy.maxAgeMs) {
                 return@withContext ConversionOutcome.Failed(
                     originalAmount = amount, originalCurrency = from, targetCurrency = to,
                     rateBasis = rateBasis, failureType = ConversionFailureType.STALE_RATE,
-                    message = "Rate from $from to $to is stale (age: ${age}ms, max: ${stalePolicy.maxAgeMs}ms)"
+                    message = if (ageMs == null) {
+                        "Rate from $from to $to: staleness cannot be determined (missing reference)"
+                    } else {
+                        "Rate from $from to $to is stale (age: ${ageMs}ms, max: ${stalePolicy.maxAgeMs}ms)"
+                    }
                 )
             }
         }

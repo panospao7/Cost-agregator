@@ -61,12 +61,16 @@ private fun ExchangeRate.toDomain(): DomainExchangeRate {
 }
 
 private fun DomainExchangeRate.toEntity(): ExchangeRate {
+    // CURR-70F-04: Reject undated rates at storage boundary
+    require(validDate != null && validDate > 0L) {
+        "Exchange rate $fromCurrency->$toCurrency must have a non-zero validDate (got $validDate)"
+    }
     return ExchangeRate(
         fromCurrency = fromCurrency,
         toCurrency = toCurrency,
         rate = rate,
         lastUpdated = lastUpdated,
         source = source,
-        validDate = validDate ?: 0L
+        validDate = validDate
     )
 }

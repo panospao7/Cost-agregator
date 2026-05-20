@@ -80,8 +80,13 @@ class CashFlowCalculator @Inject constructor(
         endDate: Date,
         startingBalance: Double = 0.0
     ): List<DailyCashFlow> {
-        // S8-024: Do not fall back to "EUR" — fail explicitly if home currency unavailable
-        val homeCurrency = currencySettingsRepository.homeCurrency().first()
+        // CURR-70F-09: Use typed resolution — fail explicitly if home currency unavailable
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
+                throw IllegalStateException("Home currency unavailable for cash flow: ${resolution.reason}")
+        }
         val calendar = Calendar.getInstance()
         val results = mutableListOf<DailyCashFlow>()
         var runningBalance = startingBalance
@@ -253,11 +258,20 @@ class CashFlowCalculator @Inject constructor(
                 if (recurring.currency.equals(homeCurrency, ignoreCase = true)) {
                     dayExpensesTotal += recurring.averageAmount
                 } else {
-                    val converted = currencyConverter.convert(recurring.averageAmount, recurring.currency, homeCurrency)
-                    if (converted != null) {
-                        dayExpensesTotal += converted.convertedAmount
-                    } else {
-                        conversionFailures++
+                    // CURR-70F-12: Use FORECAST_DATE basis for predicted recurring items
+                    val outcome = currencyConverter.convertOutcome(
+                        amount = recurring.averageAmount,
+                        fromCurrency = recurring.currency,
+                        toCurrency = homeCurrency,
+                        rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.FORECAST_DATE,
+                        atMillis = currentDay.time,
+                        stalePolicy = com.yourname.expensetracker.domain.core.money.StaleRatePolicy.None
+                    )
+                    when (outcome) {
+                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted ->
+                            dayExpensesTotal += outcome.convertedAmount
+                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed ->
+                            conversionFailures++
                     }
                 }
             }

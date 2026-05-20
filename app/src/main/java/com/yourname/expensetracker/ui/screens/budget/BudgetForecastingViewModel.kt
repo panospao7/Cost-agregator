@@ -87,6 +87,7 @@ class BudgetForecastingViewModel @Inject constructor(
                             ForecastRiskLevel.MEDIUM -> BudgetRecommendationRiskLevel.MEDIUM
                             ForecastRiskLevel.HIGH -> BudgetRecommendationRiskLevel.HIGH
                             ForecastRiskLevel.CRITICAL -> BudgetRecommendationRiskLevel.CRITICAL
+                            ForecastRiskLevel.UNKNOWN -> BudgetRecommendationRiskLevel.HIGH
                         },
                         overspendProbability = forecast.overspendProbability
                     ),

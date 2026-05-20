@@ -56,6 +56,9 @@ jobs:
       - name: Verify privacy boundaries
         run: python3 scripts/verify_privacy_boundaries.py --root .
 
+      - name: Verify money boundaries
+        run: python3 scripts/verify_money_boundaries.py --root .
+
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@v4

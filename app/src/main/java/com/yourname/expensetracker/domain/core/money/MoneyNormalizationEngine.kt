@@ -34,7 +34,14 @@ class MoneyNormalizationEngine @Inject constructor(
         val to = homeCurrency.code
 
         if (from == to) {
-            return NormalizationResult.Included(expense.toNormalizedExpense(homeCurrency, 1.0, rateBasis, ConversionPath.IDENTITY))
+            return NormalizationResult.Included(expense.toNormalizedExpense(
+                homeCurrency = homeCurrency,
+                rateUsed = 1.0,
+                rateBasis = RateBasis.IDENTITY,
+                path = ConversionPath.IDENTITY,
+                rateValidDate = null,
+                rateLastUpdated = null
+            ))
         }
 
         val atMillis = if (rateBasis == RateBasis.TRANSACTION_DATE) expense.date else null
@@ -49,7 +56,14 @@ class MoneyNormalizationEngine @Inject constructor(
 
         return when (outcome) {
             is ConversionOutcome.Converted -> NormalizationResult.Included(
-                expense.toNormalizedExpense(homeCurrency, outcome.rateUsed, rateBasis, outcome.conversionPath)
+                expense.toNormalizedExpense(
+                    homeCurrency = homeCurrency,
+                    rateUsed = outcome.rateUsed,
+                    rateBasis = outcome.rateBasis,
+                    path = outcome.conversionPath,
+                    rateValidDate = outcome.rateValidDate,
+                    rateLastUpdated = outcome.rateLastUpdated
+                )
             )
             is ConversionOutcome.Failed -> NormalizationResult.Excluded(
                 sourceEntityId = expense.id,
@@ -114,11 +128,18 @@ class MoneyNormalizationEngine @Inject constructor(
             rateBasis = rateBasis,
             requestedRateBasis = rateBasis,
             actualRateBasis = rateBasis,
+            conversionQuality = when {
+                includedCount == 0 && excludedCount > 0 -> ConversionQuality.UNAVAILABLE
+                failures.isNotEmpty() -> ConversionQuality.PARTIAL
+                rateBasis == RateBasis.PERIOD_MIDPOINT_ESTIMATE -> ConversionQuality.ESTIMATED
+                else -> ConversionQuality.COMPLETE
+            },
             metadata = MoneyAggregateMetadata(
                 includedTransactionCount = includedCount,
                 excludedTransactionCount = excludedCount,
                 missingRateCount = failures.count { it.reason == FailureReason.MISSING_RATE },
-                staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE }
+                staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE },
+                invalidCurrencyCount = failures.count { it.reason == FailureReason.INVALID_AMOUNT }
             )
         )
     }
@@ -211,11 +232,18 @@ class MoneyNormalizationEngine @Inject constructor(
             rateBasis = rateBasis,
             requestedRateBasis = rateBasis,
             actualRateBasis = rateBasis,
+            conversionQuality = when {
+                includedCount == 0 && excludedCount > 0 -> ConversionQuality.UNAVAILABLE
+                failures.isNotEmpty() -> ConversionQuality.PARTIAL
+                rateBasis == RateBasis.PERIOD_MIDPOINT_ESTIMATE -> ConversionQuality.ESTIMATED
+                else -> ConversionQuality.COMPLETE
+            },
             metadata = MoneyAggregateMetadata(
                 includedTransactionCount = includedCount,
                 excludedTransactionCount = excludedCount,
                 missingRateCount = failures.count { it.reason == FailureReason.MISSING_RATE },
-                staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE }
+                staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE },
+                invalidCurrencyCount = failures.count { it.reason == FailureReason.INVALID_AMOUNT }
             )
         )
     }
@@ -233,7 +261,9 @@ private fun Expense.toNormalizedExpense(
     homeCurrency: CurrencyCode,
     rateUsed: Double,
     rateBasis: RateBasis,
-    path: ConversionPath
+    path: ConversionPath,
+    rateValidDate: Long?,
+    rateLastUpdated: Long?
 ): NormalizedExpense {
     val txType = when (transactionType) {
         TransactionType.PURCHASE -> "PURCHASE"
@@ -261,7 +291,8 @@ private fun Expense.toNormalizedExpense(
         source = source,
         rateBasis = rateBasis.name,
         rateUsed = rateUsed,
-        rateValidDate = null,
+        rateValidDate = rateValidDate,
+        rateLastUpdated = rateLastUpdated,
         conversionPath = path.name
     )
 }

@@ -15,15 +15,14 @@ object MoneyAggregateBuilder {
     /**
      * Builds a MoneyAggregate from per-currency buckets, converting to home currency.
      *
-     * Rules:
-     * - empty → home currency empty aggregate
-     * - same as home → no conversion needed
-     * - single non-home → convert to home
-     * - mixed → convert each bucket via CurrencyConverter
-     *
-     * Failures correctly map [FailedConversion.STALE_RATE] to [FailureReason.RATE_STALE]
-     * and [FailedConversion.MISSING_RATE] to [FailureReason.MISSING_RATE].
+     * CURR-70F-06: This overload uses latest-rate [convertMultiple] internally,
+     * so it MUST NOT claim a historical rate basis. Use the typed overload or
+     * [MoneyNormalizationEngine] for historical conversions.
      */
+    @Deprecated(
+        "Use typed fromBuckets with BucketDatePolicy or MoneyNormalizationEngine for historical basis",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun fromBuckets(
         buckets: List<Pair<Double, String>>,  // amount, currency
         homeCurrency: String,
@@ -31,6 +30,9 @@ object MoneyAggregateBuilder {
         transactionCounts: List<Int> = emptyList(),
         rateBasis: RateBasis = RateBasis.LATEST_AVAILABLE
     ): MoneyAggregate {
+        require(rateBasis == RateBasis.LATEST_AVAILABLE) {
+            "Legacy fromBuckets uses latest-rate conversion only. Use typed overload for $rateBasis."
+        }
         if (buckets.isEmpty()) {
             return MoneyAggregate.empty(CurrencyCode(homeCurrency), rateBasis)
         }
@@ -112,7 +114,19 @@ object MoneyAggregateBuilder {
             }
 
             val atMillis = when (bucketDatePolicy) {
-                is BucketDatePolicy.RequireBucketDate -> bucket.bucketDate
+                is BucketDatePolicy.RequireBucketDate -> {
+                    // CURR-70F-07: Fail explicitly before calling converter
+                    if (bucket.bucketDate == null) {
+                        failures.add(ConversionFailure(
+                            originalAmount = MoneyAmount(bucket.amount, bucket.currency),
+                            targetCurrency = homeCurrency,
+                            reason = FailureReason.MISSING_RATE,
+                            transactionCount = bucket.transactionCount
+                        ))
+                        continue
+                    }
+                    bucket.bucketDate
+                }
                 is BucketDatePolicy.FixedDate -> bucketDatePolicy.atMillis
                 is BucketDatePolicy.Latest -> null
             }
