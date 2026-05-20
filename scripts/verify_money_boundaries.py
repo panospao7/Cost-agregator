@@ -86,6 +86,15 @@ RULES: List[Tuple[str, str, str, bool]] = [
      'Raw effectiveAmount fallback on conversion failure', False),
     (r'\.getOrDefault\s*\(\s*"EUR"\s*\)', 'G-MONEY-08',
      'Silent EUR fallback via getOrDefault("EUR")', False),
+
+    # G-MONEY-09: fake EUR in unavailable/failure containers
+    (r'CurrencyCode\.EUR.*UNAVAILABLE|CurrencyCode\("EUR"\).*unavailable|currency\s*=\s*"EUR".*fail|currency\s*=\s*"EUR".*unknown',
+     'G-MONEY-09',
+     'Fake EUR in unavailable/failure container — use typed Unavailable result or empty string', True),
+
+    # G-MONEY-10: raw ExpenseSnapshot amounts in synthesis/forecast without normalization
+    (r'ExpenseSnapshot\(.*effectiveAmount\s*=\s*\w+\.effectiveAmount', 'G-MONEY-10',
+     'Raw ExpenseSnapshot.effectiveAmount passed to synthesis — normalize first', True),
 ]
 
 # ── Multiline rule: G-MONEY-02 across lines ────────────────────────────────────

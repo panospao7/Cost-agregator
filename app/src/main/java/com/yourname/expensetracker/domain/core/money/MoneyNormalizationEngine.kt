@@ -45,13 +45,20 @@ class MoneyNormalizationEngine @Inject constructor(
         }
 
         val atMillis = if (rateBasis == RateBasis.TRANSACTION_DATE) expense.date else null
+        // CURR-9A6-05: Historical rates are never "stale" (they're old by definition).
+        // Latest-rate conversions use a 7-day staleness window.
+        val stalePolicy = if (rateBasis == RateBasis.LATEST_AVAILABLE) {
+            StaleRatePolicy.LatestDefault
+        } else {
+            StaleRatePolicy.None
+        }
         val outcome = currencyConverter.convertOutcome(
             amount = expense.effectiveAmount,
             fromCurrency = from,
             toCurrency = to,
             rateBasis = rateBasis,
             atMillis = atMillis,
-            stalePolicy = StaleRatePolicy.None // historical rates are never "stale"
+            stalePolicy = stalePolicy
         )
 
         return when (outcome) {

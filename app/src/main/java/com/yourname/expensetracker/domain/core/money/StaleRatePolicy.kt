@@ -10,6 +10,8 @@ data class StaleRatePolicy(
     companion object {
         /** Default: 24 hours compared against current time. */
         val Default = StaleRatePolicy(maxAgeMs = 24 * 60 * 60 * 1000L, compareAgainst = StaleRateReference.NOW)
+        /** CURR-9A6-05: Latest-rate staleness for normalization engine — 7 days. */
+        val LatestDefault = StaleRatePolicy(maxAgeMs = 7 * 24 * 60 * 60 * 1000L, compareAgainst = StaleRateReference.NOW)
         /** No staleness check — accept any rate. */
         val None = StaleRatePolicy(maxAgeMs = null)
     }

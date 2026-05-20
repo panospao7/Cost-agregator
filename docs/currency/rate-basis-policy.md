@@ -48,6 +48,19 @@ Every currency conversion in ExpenseTracker must declare which **rate basis** it
 
 If age cannot be computed (missing reference), the rate is treated as **stale**, not fresh.
 
+### Named Policies
+
+| Policy | maxAge | compareAgainst | Usage |
+|--------|--------|----------------|-------|
+| `Default` | 24h | NOW | General-purpose |
+| `LatestDefault` | 7 days | NOW | `MoneyNormalizationEngine` for `LATEST_AVAILABLE` |
+| `None` | null | — | Historical rates (never stale by definition) |
+
+### MoneyNormalizationEngine Behavior
+
+- `LATEST_AVAILABLE` → uses `LatestDefault` (7 days). Rates older than 7 days are excluded and marked stale.
+- All historical bases → uses `None`. Historical rates are never stale — they're old by definition.
+
 ## Composite (EUR-Bridge) Conversions
 
 When converting via EUR intermediate:

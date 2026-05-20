@@ -504,7 +504,7 @@ class CanonicalMultiCurrencyFixtureTest {
         // when all expenses are PURCHASE
         val repository = createCanonicalRepository()
 
-        val aggregate = repository.getHomeCurrencyTotal(
+        val aggregate = @Suppress("DEPRECATION_ERROR") repository.getHomeCurrencyTotal(
             startDate = CanonicalMultiCurrencyFixture.START_DATE,
             endDate = CanonicalMultiCurrencyFixture.END_DATE
         )

@@ -225,7 +225,9 @@ data class CompiledDashboardData(
     val totalSpent: Double,
     val txCount: Int,
     /** S4-006: true when any currency conversion failed for dashboard totals */
-    val isPartial: Boolean = false
+    val isPartial: Boolean = false,
+    /** CURR-9A6-07: Canonical normalized input for basis-consistent widget consumption */
+    val normalizedInput: DashboardNormalizedInputResult? = null
 )
 
 // ─── Use Case ─────────────────────────────────────────────────────────────────
@@ -324,17 +326,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
         periodStart: Long,
         periodEnd: Long
-    ): DashboardNormalizedInput {
+    ): DashboardNormalizedInputResult {
         val resolution = currencySettingsRepository.resolveHomeCurrency()
         val homeCurrency = resolution.currencyOrNull
-            ?: return DashboardNormalizedInput(
-                homeCurrency = CurrencyCode.EUR,
+            ?: return DashboardNormalizedInputResult.Unavailable(
+                reason = "Home currency unavailable",
                 periodStart = periodStart,
-                periodEnd = periodEnd,
-                normalizedExpenses = emptyList(),
-                periodAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(CurrencyCode.EUR, com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE),
-                categoryAggregates = emptyMap(),
-                dataQuality = CurrencyDataQuality.UNAVAILABLE
+                periodEnd = periodEnd
             )
 
         val engine = com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(currencyConverter)
@@ -361,7 +359,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             }
         }
 
-        return DashboardNormalizedInput(
+        return DashboardNormalizedInputResult.Available(DashboardNormalizedInput(
             homeCurrency = homeCurrency,
             periodStart = periodStart,
             periodEnd = periodEnd,
@@ -369,7 +367,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             periodAggregate = periodAggregate,
             categoryAggregates = categoryAggregates,
             dataQuality = CurrencyDataQuality.fromAggregate(periodAggregate, rateBasis)
-        )
+        ))
     }
 
     // ── Sub-methods to keep each function under the DEX 256-register limit ───
@@ -440,6 +438,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private suspend fun computeRunwayAndForecast(ctx: ComputeContext): RunwayResult {
         val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
         val data = ctx.data.data
+        // CURR-9A6-08: Build snapshots from dashboard expenses.
+        // TODO: Full migration to NormalizedExpense requires ForecastInputAssembler refactor.
+        // For now, amounts are in original currency — the assembler handles mixed currencies
+        // via its own normalization path.
         val expenseSnapshots = data.expenses.map { expense ->
             ExpenseSnapshot(
                 id = expense.id,
@@ -635,6 +637,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
 
         val monthLabels = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+        var totalExcluded = 0
         monthKeys.forEach { (yr, mo) ->
             val monthExpenses = purchasesByMonth[Pair(yr, mo)] ?: emptyList()
 
@@ -653,8 +656,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                     exp.effectiveAmount
                 } else {
                     // Use transaction-date rate for historical accuracy
-                    currencyConverter.convertAsOf(exp.effectiveAmount, exp.currency, homeCurrency, exp.date)
-                        ?.convertedAmount ?: return@forEach
+                    val converted = currencyConverter.convertAsOf(exp.effectiveAmount, exp.currency, homeCurrency, exp.date)
+                        ?.convertedAmount
+                    if (converted == null) { totalExcluded++; return@forEach }
+                    converted
                 }
                 daily[dayIdx] += amount
             }
@@ -671,7 +676,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             ))
         }
 
-        return DashboardWidget.SpendingTrend(series = trendSeries)
+        // CURR-9A6-03: Surface quality when conversions were dropped
+        val quality = if (totalExcluded > 0) CurrencyQualityUi(
+            isPartial = true,
+            quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.PARTIAL,
+            warningMessage = "$totalExcluded transaction(s) excluded due to missing exchange rates"
+        ) else null
+
+        return DashboardWidget.SpendingTrend(series = trendSeries, currencyQuality = quality)
     }
 
     private fun computeBudgetSummary(ctx: ComputeContext): UiText? {

@@ -7,6 +7,19 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.RateBasis
 
 /**
+ * CURR-9A6-02: Typed result for dashboard normalization.
+ * Unavailable state is explicit — no fake EUR money container.
+ */
+sealed interface DashboardNormalizedInputResult {
+    data class Available(val input: DashboardNormalizedInput) : DashboardNormalizedInputResult
+    data class Unavailable(
+        val reason: String,
+        val periodStart: Long,
+        val periodEnd: Long
+    ) : DashboardNormalizedInputResult
+}
+
+/**
  * CURR-70F-13: Canonical normalized input for all dashboard widgets.
  *
  * All dashboard widgets should consume from this single source to ensure

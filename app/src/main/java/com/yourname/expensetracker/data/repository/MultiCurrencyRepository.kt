@@ -412,7 +412,7 @@ class MultiCurrencyRepository @Inject constructor(
      */
     @Deprecated(
         "Type-agnostic latest-rate API. Use getHomeCurrencyPurchaseTotalHistorical() or getHomeCurrencyPurchaseTotal() with explicit rate semantics.",
-        level = DeprecationLevel.WARNING
+        level = DeprecationLevel.ERROR
     )
     suspend fun getHomeCurrencyTotal(
         startDate: Long,
@@ -565,7 +565,7 @@ class MultiCurrencyRepository @Inject constructor(
         val homeCurrency = try {
             CurrencyCode(resolveHomeCurrency())
         } catch (e: HomeCurrencyUnavailableException) {
-            return MoneyAggregate.empty(CurrencyCode("EUR"), RateBasis.TRANSACTION_DATE).copy(
+            return MoneyAggregate.empty(CurrencyCode(""), RateBasis.TRANSACTION_DATE).copy(
                 conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
                 warningMessage = "Home currency unavailable: ${e.reason}"
             )

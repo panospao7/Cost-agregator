@@ -64,3 +64,12 @@ Each normalized row carries:
 - `rateValidDate` — when the rate was valid
 - `rateLastUpdated` — when the rate was last refreshed
 - `conversionPath` — "DIRECT", "VIA_BASE_CURRENCY", or "IDENTITY"
+
+## Unavailable Home Currency
+
+When home currency resolution fails:
+- **Do NOT** use `CurrencyCode.EUR` as a placeholder in money containers.
+- Use `CurrencyCode("")` for MoneyAggregate unavailable states.
+- Use `DashboardNormalizedInputResult.Unavailable` for dashboard paths.
+- Use `currency = ""` with `riskLevel = UNKNOWN` for budget forecasts.
+- UI must check for empty currency and display "unavailable" state, not EUR totals.

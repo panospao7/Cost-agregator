@@ -1,214 +1,243 @@
-I created a PR-by-PR implementation plan for the remaining issues, focused on what is still open after `fb58e69`.
+I reviewed commit `9a6afc438093ed6a03c7f831d3e4acd41a7f2a40` and wrote a fresh deep evaluation.
 
-<remaining_implementation_plan_post_fb58e69.md>
-# Remaining Implementation Plan — post-`fb58e690e2d89d691df2b548ef54f972eddcda61`
+<deep_evaluation_currency_9a6afc4.md>
+# Deep Evaluation / Debugging Report — Currency Normalization
+Commit: `9a6afc438093ed6a03c7f831d3e4acd41a7f2a40`
 
-## Already fixed; do not rework
-- PrivacySettings fail-closed load/update behavior
-- blocked-package startup fail-closed
-- email hash columns / nullable email fields
-- duplicate email side-effect dispatch
-- raw sender removed from the two log lines
+## Executive verdict
+This is a strong cleanup commit and it fixes several major currency bugs from the previous pass.  
+But it still does **not fully close global currency issue #4**.
 
-## Remaining issues
-1. Email hashing still has unsafe fallbacks
-2. Email diagnostics still leak raw sensitive content
-3. Cloud receipt payload provenance is incomplete
-4. Static privacy guard is still heuristic/bypassable
-5. “Behavioral” tests are mostly contract/spec tests
-6. Retention registry is still incomplete
-7. Cloud audit metadata is not fully propagated
+### Confirmed improvements
+- `ExchangeRateStoreAdapter` now rejects `validDate = null/0` at runtime storage.
+- `CurrencyConverter.storeRate/storeRates` now stamp `validDate`.
+- `convertOutcome()` now honors historical bases better and fails on missing date context.
+- `MoneyAggregate` now carries requested/actual basis and quality metadata.
+- `MoneyNormalizationEngine` exists and is now the main normalization path in several places.
+- `BudgetForecastingEngine` no longer uses the raw source amount on conversion failure.
+- `CashFlowCalculator` now uses `FORECAST_DATE` for predicted recurring items.
+- A money-boundary guard script is wired into CI.
+- The commit adds substantial test coverage.
 
----
-
-## PR1 — Email privacy hardening
-### Goal
-No raw or weak fallback identifier survives the email path.
-
-### Files
-- `EmailReceiptIngestionService.kt`
-- `ReceiptLifecycleCoordinator.kt`
-- `SensitiveHashingService.kt` usage sites
-- email diagnostic builders/tests
-
-### Tasks
-- [ ] Remove plaintext fallback in `messageIdHash`
-  - current bad path: `hmacSha256Prefix(...) ?: messageId`
-  - fail closed instead
-- [ ] Remove `hashCode()` fallback in `createFingerprint(...)`
-  - current bad path: `sha256Prefix(...) ?: raw.hashCode().toString(16)`
-  - use HMAC/SHA only, never `hashCode()`
-- [ ] Replace `sourceIdHash = messageId.sha256Prefix(...)` with keyed hashing
-- [ ] Stop returning raw parsed merchant/amount in `ParseError`
-- [ ] Replace `require(...){ "sender=$sender" }` with sanitized message
-- [ ] Review `Timber.w(... result.errors)` for raw-sensitive payloads
-- [ ] Keep raw `messageId` only ephemeral; never persist/fallback raw
-
-### Acceptance tests
-- [ ] `email_hash_fallback_never_uses_plaintext_message_id`
-- [ ] `email_fingerprint_never_uses_string_hashCode`
-- [ ] `email_validation_error_does_not_expose_merchant_or_amount`
-- [ ] `email_insert_failure_does_not_include_raw_sender`
+### Remaining problems
+1. `getHomeCurrencyPurchaseTotalHistorical()` in `MultiCurrencyRepository` still uses midpoint conversion plus latest fallback.
+2. `produceDashboardNormalizedInput()` still falls back to `CurrencyCode.EUR` on home-currency failure.
+3. `computeSpendingTrend()` still silently drops failed conversions and does not surface trend-level currency quality.
+4. `BudgetForecastingEngine` still returns a forecast object with `currency = "EUR"` when home currency is unavailable.
+5. `MoneyNormalizationEngine` still uses `StaleRatePolicy.None`, so latest-rate paths do not surface staleness.
+6. The static money guard is still heuristic and can miss multiline or wrapper-based regressions.
+7. Some “behavioral” tests are still fake-store/unit style rather than real Room/repository integration.
 
 ---
 
-## PR2 — Cloud receipt provenance / image hardening
-### Goal
-The prepared cloud payload must describe the actual payload sent.
+## What is fixed well
+### Exchange-rate correctness
+The runtime storage boundary is now much safer:
+- undated exchange rates are rejected,
+- stored rates get a `validDate`,
+- the latest-rate lookup semantics are improved.
 
-### Files
-- `DefaultCloudPayloadPolicy.kt`
-- `CloudReceiptAssistService.kt`
-- `PreparedCloudPayload.kt`
-- cloud audit/provenance code
+This is a real fix.
 
-### Tasks
-- [ ] Make `payloadHash` reflect final payload, not only text
-  - include image bytes when `rawImageIncluded=true`
-- [ ] Add image suppression reason to `auditMetadata`
-- [ ] Add image MIME and image size to audit metadata
-- [ ] Thread `SafePrivacyMetadata context` through and preserve it
-- [ ] If possible, validate image source/path is app-owned before reading
-- [ ] Keep provider code from touching raw image bytes except via prepared payload
-- [ ] Do not silently ignore provenance fields
+### Historical conversion hardening
+`convertOutcome()` now clearly fails when a historical basis is requested without `atMillis`.  
+That closes the prior silent downgrade to latest-rate behavior.
 
-### Acceptance tests
-- [ ] `receipt_assist_payload_hash_changes_when_image_changes`
-- [ ] `receipt_assist_audit_records_image_suppression_reason`
-- [ ] `receipt_assist_rejects_non_app_owned_image_path`
-- [ ] `receipt_assist_preserves_context_metadata`
+### Budget/cashflow improvements
+- budget hard failure no longer returns raw foreign amount,
+- cashflow recurring forecast items use forecast-date basis,
+- conversion failures are now counted instead of being silently hidden.
+
+Those are all meaningful improvements.
 
 ---
 
-## PR3 — Static privacy guard hardening
-### Goal
-CI should catch real bypasses, not just suspicious text.
+## High-priority remaining issues
 
-### Files
-- `scripts/verify_privacy_boundaries.py`
-- cloud provider files
-- email ingestion file
-- CI workflow if needed
+### CURR-9A6-01 — Historical purchase total still uses midpoint + latest fallback
+Severity: **High**  
+Type: **actual correctness bug**
 
-### Tasks
-- [ ] Strengthen G3
-  - forbid direct provider `Request.Builder().post(...)` unless it is clearly routed through prepared transport
-- [ ] Strengthen G4
-  - catch allow-all anonymous `PrivacyGate` in `main`
-- [ ] Strengthen G12
-  - detect empty-prompt probes even if wrapped across lines/helpers
-- [ ] Strengthen G13
-  - detect missing correlation even with named args/wrappers
-- [ ] Add new rules for:
-  - [ ] `messageIdHash` plaintext fallback
-  - [ ] `hashCode()` fallback in email fingerprinting
-  - [ ] raw sender/merchant/amount in exception strings
-- [ ] Prefer a transport abstraction over regex-only enforcement
+`getHomeCurrencyPurchaseTotalHistorical()` still does:
+- group by currency,
+- convert at period midpoint,
+- if that fails, fall back to latest rate.
 
-### Acceptance tests
-- [ ] `privacy_guard_flags_raw_provider_post_without_prepared_payload`
-- [ ] `privacy_guard_flags_allow_all_privacy_gate_in_main`
-- [ ] `privacy_guard_flags_empty_prompt_probe`
-- [ ] `privacy_guard_flags_plaintext_hash_fallback`
-- [ ] `privacy_guard_flags_raw_sensitive_exception_text`
+That is still a mixed-basis historical aggregate.
+
+Why it matters:
+- the method’s doc says it is historical,
+- but the implementation can still quietly become latest-rate based,
+- this is exactly the class of bug the normalization effort is trying to eliminate.
+
+Fix direction:
+- use `MoneyNormalizationEngine.aggregateExpenses(..., RateBasis.TRANSACTION_DATE)` per expense,
+- or make the method explicitly “estimated” and label the basis accordingly,
+- but do not leave it pretending to be exact historical math.
 
 ---
 
-## PR4 — Real behavioral regression tests
-### Goal
-Replace model/contract tests with live-path tests.
+### CURR-9A6-02 — Dashboard normalized input still uses EUR on home-currency failure
+Severity: **Medium/High**
 
-### Files
-- `PrivacyBehavioralRegressionTest.kt`
-- new integration tests for email/notification/retention/cloud
+`produceDashboardNormalizedInput()` returns:
+- `homeCurrency = EUR`
+- empty normalized expenses
+- empty aggregate
+- `dataQuality = UNAVAILABLE`
 
-### Tasks
-- [ ] Test actual `EmailReceiptIngestionService` path
-- [ ] Test actual `ReceiptLifecycleCoordinator`
-- [ ] Test actual `NotificationCaptureService`
-- [ ] Test actual `DataRetentionWorker`
-- [ ] Test actual cloud provider request construction
-- [ ] Use sentinel raw inputs and assert they never reach DB/request bodies
-- [ ] Remove tests that only assert constants or policy objects
+This is safer than silent numeric EUR math, but it is still a fallback representation that can mislead any caller that looks only at the currency field.
 
-### Must prove
-- [ ] single email side-effect dispatch
-- [ ] email correlation survives end-to-end
-- [ ] email restricted modes store hashes only
-- [ ] cloud prepared payload is the only request source
-- [ ] retention actually redacts/purges live rows
-- [ ] notification capture does not read extras too early
-
-### Acceptance tests
-- [ ] `email_ingestion_live_flow_single_dispatch`
-- [ ] `email_restricted_mode_persists_hashes_not_raw_values`
-- [ ] `cloud_receipt_assist_request_contains_prepared_text_only`
-- [ ] `retention_worker_redacts_live_email_rows`
-- [ ] `notification_service_fail_closed_before_extras_access`
+Fix direction:
+- keep the `UNAVAILABLE` status,
+- but ensure no downstream consumer treats the EUR fallback as a usable money basis,
+- ideally return a typed unavailable result instead of a fake EUR container.
 
 ---
 
-## PR5 — Retention registry expansion
-### Goal
-Every sensitive artifact class must be registered and auditable.
+### CURR-9A6-03 — Dashboard spending trend still hides partial failures
+Severity: **High**
 
-### Files
-- `RetentionModule.kt`
-- `RetentionRegistry.kt`
-- DAO classes for additional sensitive targets
+`computeSpendingTrend()`:
+- converts with `convertAsOf(...)`,
+- skips failed rows with `return@forEach`,
+- returns `DashboardWidget.SpendingTrend(series = trendSeries)` with no visible quality signal.
 
-### Tasks
-- [ ] Audit all sensitive tables/artifacts against the privacy taxonomy
-- [ ] Add missing targets if they exist:
-  - [ ] parsed receipt items
-  - [ ] debug exports
-  - [ ] bank/import debug artifacts
-  - [ ] pipeline diagnostic metadata
-  - [ ] operation-run metadata
-  - [ ] privacy audit context
-  - [ ] cloud call audit artifacts
-- [ ] Keep retention target-owned, not worker-special-cased
-- [ ] Preserve hashes/links while redacting raw fields
+That means:
+- failed historical rows vanish silently,
+- the user sees a complete trend even when data was dropped,
+- no currency-quality metadata is attached to this widget.
 
-### Acceptance tests
-- [ ] `retention_registry_contains_all_sensitive_targets`
-- [ ] `retention_debug_exports_purged`
-- [ ] `retention_parsed_items_purged_or_redacted`
-- [ ] `retention_diagnostic_metadata_purged_or_redacted`
+Fix direction:
+- add a `currencyQuality` / `isPartial` flag to the trend widget output,
+- or return a typed trend result that includes missing/stale counts,
+- do not silently drop failed rows without surfacing partial quality.
 
 ---
 
-## PR6 — Cleanup / docs sync
-### Goal
-Remove drift so the next agent can reason safely.
+### CURR-9A6-04 — Budget forecast still returns EUR on home-currency unavailability
+Severity: **Medium**
 
-### Tasks
-- [ ] Remove unused params/branches like `messageId` in fingerprint helpers if truly unused
-- [ ] Normalize naming:
-  - raw ephemeral input
-  - prepared payload
-  - persisted hash
-- [ ] Update privacy docs to match final code paths
-- [ ] Add one “privacy boundaries” reference doc for future agents
+`BudgetForecastingEngine` now returns:
+- `riskLevel = UNKNOWN`
+- but also `currency = "EUR"` when home currency resolution fails.
+
+This is better than pretending a precise forecast exists, but it still embeds a fallback currency in a failure state.
+
+Fix direction:
+- keep UNKNOWN,
+- also carry an explicit unavailable/partial currency status,
+- or return a typed unavailable forecast model instead of a fake EUR forecast.
 
 ---
 
-## Suggested execution order
-1. PR1 Email privacy hardening
-2. PR2 Cloud receipt provenance / image hardening
-3. PR3 Static privacy guard hardening
-4. PR4 Real behavioral regression tests
-5. PR5 Retention registry expansion
-6. PR6 Cleanup / docs sync
+### CURR-9A6-05 — `MoneyNormalizationEngine` still does not surface staleness for latest-rate paths
+Severity: **Medium**
+
+In `normalizeExpense(...)`, latest-path normalization still uses `StaleRatePolicy.None`.
+
+That means:
+- latest-rate conversions can be accepted without any staleness quality signal,
+- the quality model can say “complete” even if the latest rate is stale.
+
+Fix direction:
+- decide whether latest-rate conversions should be checked for staleness,
+- if yes, use a real stale policy instead of `None`,
+- if no, document that latest-rate paths are intentionally freshness-blind.
+
+---
+
+### CURR-9A6-06 — Legacy historical repository APIs still exist and still look dangerous
+Severity: **Medium/High**
+
+`MultiCurrencyRepository` now has historical APIs, but the legacy APIs still remain and some of them are explicitly latest-rate based.
+
+That’s not automatically wrong, but it means:
+- old callers can still choose ambiguous or outdated behavior,
+- some historical-looking methods still use bucket midpoint/latest fallback behavior.
+
+Fix direction:
+- keep the explicit historical/latest split,
+- migrate all real consumers,
+- deprecate the ambiguous methods harder or remove them once call sites are gone.
+
+---
+
+### CURR-9A6-07 — Static money guard is still heuristic
+Severity: **High regression risk**
+
+The new guard is useful, but it is still regex-based and can miss:
+- multiline fallback logic,
+- wrapper/helper indirections,
+- some direct latest-rate usage outside allowlisted contexts.
+
+Fix direction:
+- keep the guard,
+- but do not trust it as the only defense,
+- pair it with real repository/dashboard/budget/cashflow integration tests.
+
+---
+
+### CURR-9A6-08 — Some “behavioral” tests are still fake-store/unit style
+Severity: **Medium**
+
+At least one visible test file uses:
+- fake exchange-rate stores,
+- fake time provider,
+- direct in-memory logic.
+
+That’s useful, but it is not the same as:
+- Room migration tests,
+- real DAO latest/as-of ordering tests,
+- real repository integration tests.
+
+Fix direction:
+- keep the fake-store tests,
+- add Room/integration tests for the key exchange-rate and repository flows.
+
+---
+
+## Bug vs architecture classification
+
+### Actual bugs affecting users
+- historical purchase totals still use midpoint/latest fallback,
+- dashboard trend can hide failed conversion rows,
+- budget forecast still uses EUR as a failure placeholder,
+- dashboard normalized input still returns EUR on unavailable home currency.
+
+### Architectural debt
+- latest-rate APIs still coexist with historical APIs,
+- `MoneyNormalizationEngine` does not yet fully encode staleness policy for latest paths,
+- static guard is still heuristic.
+
+### Good cleanup
+- runtime invalid exchange-rate storage is now much safer,
+- `convertOutcome()` failure handling is much better,
+- cashflow recurring forecast conversion is improved.
+
+---
+
+## Priority next fixes
+1. Rework `getHomeCurrencyPurchaseTotalHistorical()` so it no longer midpoint-converts with latest fallback.
+2. Attach currency-quality metadata to `computeSpendingTrend()`.
+3. Remove or strongly constrain EUR placeholders in unavailable home-currency paths.
+4. Decide and enforce staleness behavior for latest-rate normalization.
+5. Add real integration tests for exchange-rate and repository behavior.
+6. Keep the money-boundary guard, but treat it as a secondary line of defense.
+
+## Bottom line
+This commit closes several major correctness gaps, but **historical mixed-basis aggregation and dashboard quality propagation are still not fully resolved**.
 
 ## Sources reviewed
-- Commit: https://github.com/panospao7/Cost-agregator/commit/fb58e690e2d89d691df2b548ef54f972eddcda61
-- `EmailReceiptIngestionService.kt`: https://raw.githubusercontent.com/panospao7/Cost-agregator/fb58e690e2d89d691df2b548ef54f972eddcda61/app/src/main/java/com/yourname/expensetracker/data/email/EmailReceiptIngestionService.kt
-- `ReceiptLifecycleCoordinator.kt`: https://raw.githubusercontent.com/panospao7/Cost-agregator/fb58e690e2d89d691df2b548ef54f972eddcda61/app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
-- `DefaultCloudPayloadPolicy.kt`: https://raw.githubusercontent.com/panospao7/Cost-agregator/fb58e690e2d89d691df2b548ef54f972eddcda61/app/src/main/java/com/yourname/expensetracker/data/privacy/DefaultCloudPayloadPolicy.kt
-- `CloudReceiptAssistService.kt`: https://raw.githubusercontent.com/panospao7/Cost-agregator/fb58e690e2d89d691df2b548ef54f972eddcda61/app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptAssistService.kt
-- `RetentionModule.kt`: https://raw.githubusercontent.com/panospao7/Cost-agregator/fb58e690e2d89d691df2b548ef54f972eddcda61/app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
-- `verify_privacy_boundaries.py`: https://raw.githubusercontent.com/panospao7/Cost-agregator/fb58e690e2d89d691df2b548ef54f972eddcda61/scripts/verify_privacy_boundaries.py
-</remaining_implementation_plan_post_fb58e69>
+- Commit: https://github.com/panospao7/Cost-agregator/commit/9a6afc438093ed6a03c7f831d3e4acd41a7f2a40
+- `CurrencyConverter.kt`
+- `ExchangeRateStoreAdapter.kt`
+- `MoneyNormalizationEngine.kt`
+- `MultiCurrencyRepository.kt`
+- `BudgetForecastingEngine.kt`
+- `CashFlowCalculator.kt`
+- `ComputeDashboardWidgetsUseCase.kt`
+- `verify_money_boundaries.py`
+</deep_evaluation_currency_9a6afc.md>
 
-If you want, I can turn this into a **copy-paste agent prompt** next.
+If you want, I can now turn this into a **PR checklist for the remaining currency issues**.
