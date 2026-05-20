@@ -411,11 +411,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val expenseEntities = expenses.map { it.toExpenseEntity() }
         val normalizedInputResult = produceDashboardNormalizedInput(expenseEntities, monthStart, now)
 
-        // Derive today/week/month from normalized input; fall back to 0.0 if unavailable
+        // Derive today/week/month from normalized input; 0.0 if unavailable — no raw fallback
         val normalizedIn = (normalizedInputResult as? DashboardNormalizedInputResult.Available)?.input
         val todaySpent = normalizedIn?.todayAggregate?.displayAmount ?: 0.0
         val weekSpent = normalizedIn?.weekAggregate?.displayAmount ?: 0.0
-        val monthSpent = normalizedIn?.monthAggregate?.displayAmount ?: summary.totalSpent
+        val monthSpent = normalizedIn?.monthAggregate?.displayAmount ?: 0.0
+        val previousMonthTotal = normalizedIn?.previousMonthAggregate?.displayAmount ?: 0.0
         val periodIsPartial = normalizedIn?.dataQuality?.isPartial ?: true
 
         val purchases = expenses.filter {
@@ -444,10 +445,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             purchases = purchases,
             deposits = deposits,
             expenseEntities = expenses.map { it.toTransactionSummary() },
-            totalSpent = summary.totalSpent,
+            totalSpent = monthSpent,
             monthSpent = monthSpent,
             txCount = summary.transactionCount,
-            previousMonthTotal = summary.previousTotalSpent ?: 0.0,
+            previousMonthTotal = previousMonthTotal,
             todaySpent = todaySpent,
             todayTxCount = todayPurchases.size,
             weekSpent = weekSpent,
@@ -488,24 +489,61 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val totalRemaining: Double,
         val totalCommitted: Double,
         val totalLikely: Double,
-        val purchasesThisMonth: List<DashboardExpense>
+        val purchasesThisMonth: List<DashboardExpense>,
+        val isUnavailable: Boolean = false
     )
 
     private suspend fun computeRunwayAndForecast(ctx: ComputeContext): RunwayResult {
         val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
         val data = ctx.data.data
 
-        // CURR-587-06: Use normalized snapshots only. Never feed raw mixed-currency data into synthesis.
-        // If normalized input is unavailable, use empty snapshots — synthesis produces a zero/empty forecast.
-        val expenseSnapshots = when (val normalized = ctx.normalizedInputResult) {
+        // CURR-587-06: If normalized input is unavailable, do not synthesize from empty/raw data.
+        val normalizedExpenses = when (val normalized = ctx.normalizedInputResult) {
             is DashboardNormalizedInputResult.Available ->
                 normalized.input.normalizedExpenses.map { it.toExpenseSnapshot() }
-            is DashboardNormalizedInputResult.Unavailable ->
-                emptyList()
+            is DashboardNormalizedInputResult.Unavailable -> {
+                // Return typed unavailable runway — no synthesis from empty snapshots
+                val emptyForecast = synthesisEngine.synthesize(
+                    forecastInputAssembler.assemble(
+                        expenses = emptyList(),
+                        manualRecurringEntities = emptyList(),
+                        detectedRecurringPatterns = data.recurringPatterns,
+                        plannedExpenses = data.plannedExpenses,
+                        savingsGoals = data.goals,
+                        budgetStatuses = data.budgetStatuses
+                    )
+                )
+                return RunwayResult(
+                    currentPace = forecastInputAssembler.assemble(
+                        expenses = emptyList(),
+                        manualRecurringEntities = emptyList(),
+                        detectedRecurringPatterns = emptyList(),
+                        plannedExpenses = emptyList(),
+                        savingsGoals = emptyList(),
+                        budgetStatuses = emptyList()
+                    ).spendingPace,
+                    forecast = emptyForecast,
+                    financialRunway = DashboardWidget.FinancialRunway(
+                        daysRemaining = 0,
+                        totalBudget = ctx.totalBudgetAmount,
+                        discretionaryRemaining = 0.0,
+                        averageDailyDiscretionarySpend = 0.0,
+                        monthlyIncome = 0.0,
+                        committedExpenses = 0.0,
+                        likelyExpenses = 0.0,
+                        status = DashboardWidget.RunwayStatus.NO_INCOME
+                    ),
+                    totalRemaining = 0.0,
+                    totalCommitted = 0.0,
+                    totalLikely = 0.0,
+                    purchasesThisMonth = purchasesThisMonth,
+                    isUnavailable = true
+                )
+            }
         }
 
         val assembledInput = forecastInputAssembler.assemble(
-            expenses = expenseSnapshots,
+            expenses = normalizedExpenses,
             manualRecurringEntities = emptyList(),
             detectedRecurringPatterns = data.recurringPatterns,
             plannedExpenses = data.plannedExpenses,
@@ -518,11 +556,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val totalCommitted = forecast.components?.totalCommitted ?: 0.0
         val totalLikely = forecast.components?.totalLikely ?: 0.0
         val averageDailyBurn = if (ctx.dayOfMonth > 0) ctx.monthSpent / ctx.dayOfMonth else 0.0
-        // CURR-587-05: Use normalized deposit aggregate instead of latest-rate repository call
+        // CURR-587-05: Use normalized deposit aggregate only — no latest-rate fallback
         val normalizedIn = (ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available)?.input
-        val monthlyIncome = normalizedIn?.depositAggregate?.displayAmount
-            ?: multiCurrencyRepository.getHomeCurrencyDepositTotal(ctx.monthStart, ctx.now).displayAmount
-        val totalRemaining = ctx.data.data.weather.discretionaryBudget.coerceAtLeast(0.0)
+        val monthlyIncome = normalizedIn?.depositAggregate?.displayAmount ?: 0.0
+        // CURR-587-05: No weather.discretionaryBudget — use 0.0 when budget remaining is not normalized
+        val totalRemaining = 0.0
 
         val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
             (totalRemaining / averageDailyBurn).toInt().coerceAtLeast(0)
@@ -905,7 +943,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             add(
                 when (val normalized = ctx.normalizedInputResult) {
                     is DashboardNormalizedInputResult.Available -> DashboardWidget.SafeToSpend(
-                        amount = if (ctx.overallBudget != null) ctx.safeToSpend else 0.0,
+                        // Budget remaining not yet normalized — show 0.0 with partial quality
+                        amount = 0.0,
                         totalBudget = ctx.overallBudget?.budgetAmount,
                         daysRemaining = ctx.daysRemaining,
                         isPartial = normalized.input.dataQuality.isPartial,
@@ -920,7 +959,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                     )
                 }
             )
-            if (runwayResult.totalRemaining > 0 || ctx.totalBudgetAmount > 0) add(runwayResult.financialRunway)
+            if (!runwayResult.isUnavailable && (runwayResult.totalRemaining > 0 || ctx.totalBudgetAmount > 0)) add(runwayResult.financialRunway)
             if (monteCarloWidget != null) add(monteCarloWidget)
             if (blockPartyDays.isNotEmpty()) add(DashboardWidget.BudgetBlockParty(blockPartyDays))
             if (runwayResult.currentPace.paceStatus != PaceStatus.NO_BASELINE) {

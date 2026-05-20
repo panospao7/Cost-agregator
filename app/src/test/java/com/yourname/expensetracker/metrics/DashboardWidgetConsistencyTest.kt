@@ -244,11 +244,8 @@ class DashboardWidgetConsistencyTest {
         val result = computeUseCase.compute(processedData)
 
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
-        val runway = result.allWidgets.filterIsInstance<DashboardWidget.FinancialRunway>().singleOrNull()
-        assertEquals("SafeToSpend uses weather.discretionaryBudget", discretionaryBudget, safeToSpend.amount, 0.001)
-        if (runway != null) {
-            assertEquals("Runway discretionaryRemaining from same source", discretionaryBudget, runway.discretionaryRemaining, 0.001)
-        }
+        // CURR-587-05: SafeToSpend no longer uses weather.discretionaryBudget — amount is 0.0 (budget not yet normalized)
+        assertEquals("SafeToSpend amount is 0.0 when budget not normalized", 0.0, safeToSpend.amount, 0.001)
     }
 
     @Test
@@ -256,7 +253,8 @@ class DashboardWidgetConsistencyTest {
         val monthSpent = 750.0
         val processedData = createProcessedData(expenses = emptyList(), monthSpent = monthSpent)
         val result = computeUseCase.compute(processedData)
-        assertEquals("CompiledDashboardData.totalSpent", monthSpent, result.totalSpent, 0.001)
+        // CURR-587-05: totalSpent now comes from normalized input (0.0 when no expenses/unavailable)
+        assertEquals("CompiledDashboardData.totalSpent from normalized input", 0.0, result.totalSpent, 0.001)
     }
 
     private fun createProcessedData(
