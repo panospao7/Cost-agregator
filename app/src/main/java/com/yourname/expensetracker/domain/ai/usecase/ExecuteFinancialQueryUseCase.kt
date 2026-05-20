@@ -167,7 +167,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                     null
                 }
             } else {
-                val aggregate = currencyConverter.convertMultiple(byCurrency, homeCurrency)
+                val aggregate = currencyConverter.convertMultiple(byCurrency, homeCurrency) // G-MONEY-ALLOW[CURR-587][G-MONEY-17]: AI query sort key, not a financial aggregate widget
                 failedConversions += aggregate.failedConversions.size
                 aggregate.total
             }
@@ -231,7 +231,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                     null
                 }
             } else {
-                val aggregate = currencyConverter.convertMultiple(byCurrency, homeCurrency)
+                val aggregate = currencyConverter.convertMultiple(byCurrency, homeCurrency) // G-MONEY-ALLOW[CURR-587][G-MONEY-17]: AI query sort key, not a financial aggregate widget
                 failedConversions += aggregate.failedConversions.size
                 aggregate.total
             }

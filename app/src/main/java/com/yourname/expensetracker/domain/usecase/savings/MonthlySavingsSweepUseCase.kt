@@ -238,7 +238,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             .filter { it.nextDate in now until monthEndExclusive }
             .map { it.amount to it.currency }
 
-        val recurringAggregate = currencyConverter.convertMultiple(recurringPairs, homeCurrency)
+        val recurringAggregate = currencyConverter.convertMultiple(recurringPairs, homeCurrency) // G-MONEY-ALLOW[CURR-587][G-MONEY-17]: savings sweep latest-rate estimate, not a dashboard money widget
         val recurringUpcoming = recurringAggregate.total
         if (recurringAggregate.hasFailures) {
             Timber.w(
@@ -267,7 +267,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             }
             .map { it.amount to it.currency }
 
-        val plannedAggregate = currencyConverter.convertMultiple(plannedPairs, homeCurrency)
+        val plannedAggregate = currencyConverter.convertMultiple(plannedPairs, homeCurrency) // G-MONEY-ALLOW[CURR-587][G-MONEY-17]: savings sweep latest-rate estimate, not a dashboard money widget
         val plannedUpcoming = plannedAggregate.total
         if (plannedAggregate.hasFailures) {
             Timber.w(

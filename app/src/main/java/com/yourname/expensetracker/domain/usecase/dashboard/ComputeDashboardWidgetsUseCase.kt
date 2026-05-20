@@ -279,7 +279,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val periodIsPartial: Boolean,
         val overallBudget: BudgetStatusSnapshot?,
         val totalBudgetAmount: Double,
-        val safeToSpend: Double,
         /** CURR-587-04: Canonical normalized input result for all money widgets */
         val normalizedInputResult: DashboardNormalizedInputResult
     )
@@ -455,7 +454,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             periodIsPartial = periodIsPartial,
             overallBudget = overallBudget,
             totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0,
-            safeToSpend = data.weather.discretionaryBudget,
             normalizedInputResult = normalizedInputResult
         )
     }
