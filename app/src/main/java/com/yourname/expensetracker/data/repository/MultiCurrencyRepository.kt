@@ -374,32 +374,47 @@ class MultiCurrencyRepository @Inject constructor(
     // don't need to resolve it themselves.
 
     /**
-     * Resolve the user's home currency using [HomeCurrencyResolution].
-     * Returns the currency code string for Resolved and FirstRunDefault cases.
-     * Throws [HomeCurrencyUnavailableException] for Failed case so callers
-     * that return MoneyAggregate can catch and return unavailable state.
+     * CURR-587-02: Resolves home currency for financial math without throwing.
      *
-     * CURR-70F-09: Uses typed resolution instead of raw homeCurrency().first().
+     * Failed settings resolution returns [HomeCurrencyForMoneyMath.Unavailable].
+     * Callers must return typed unavailable/partial output, not fake EUR/XXX.
      */
-    private suspend fun resolveHomeCurrency(): String {
+    private suspend fun resolveHomeCurrencyForMoneyMath(): com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath {
         return when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
-            is HomeCurrencyResolution.Resolved -> resolution.currency.code
-            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
-            is HomeCurrencyResolution.Failed -> throw HomeCurrencyUnavailableException(resolution.reason)
+            is HomeCurrencyResolution.Resolved -> com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available(
+                currency = resolution.currency,
+                firstRunDefault = false
+            )
+            is HomeCurrencyResolution.FirstRunDefault -> com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available(
+                currency = resolution.currency,
+                firstRunDefault = true
+            )
+            is HomeCurrencyResolution.Failed -> com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Unavailable(
+                reason = resolution.reason
+            )
         }
     }
 
     /**
-     * Resolve home currency, returning MoneyAggregate.empty with UNAVAILABLE quality on failure.
-     * Use this in aggregate-returning methods to avoid throwing.
+     * CURR-587-02: Legacy compatibility helper for APIs that cannot represent unavailable money.
+     *
+     * Throws [HomeCurrencyUnavailableException] when home currency cannot be resolved.
+     * Prefer [resolveHomeCurrencyForMoneyMath] in new code.
      */
-    private suspend fun resolveHomeCurrencyOrUnavailable(): Pair<CurrencyCode, Boolean> {
-        return when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
-            is HomeCurrencyResolution.Resolved -> CurrencyCode(resolution.currency.code) to false
-            is HomeCurrencyResolution.FirstRunDefault -> CurrencyCode(resolution.currency.code) to false
-            is HomeCurrencyResolution.Failed -> throw HomeCurrencyUnavailableException(resolution.reason)
+    private suspend fun requireHomeCurrencyForMoneyMath(): CurrencyCode {
+        return when (val result = resolveHomeCurrencyForMoneyMath()) {
+            is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available -> result.currency
+            is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Unavailable ->
+                throw HomeCurrencyUnavailableException(result.reason)
         }
     }
+
+    @Deprecated(
+        message = "Misleading name. Use resolveHomeCurrencyForMoneyMath() or requireHomeCurrencyForMoneyMath().",
+        level = DeprecationLevel.ERROR
+    )
+    @Suppress("UNUSED")
+    private suspend fun resolveHomeCurrencyOrUnavailable(): Nothing = error("Do not use")
 
     /**
      * **LATEST-RATE:** Get total expenses in home currency.
@@ -418,7 +433,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): MoneyAggregate {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val currencyTotals = expenseDao.getAllSpentBetweenByCurrency(startDate, endDate)
         return aggregateToMoneyAggregate(currencyTotals, homeCurrency)
     }
@@ -436,7 +451,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): Map<Long?, MoneyAggregate> {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val grouped = expenseDao.getAllCategoryTotalsBetweenByCurrency(startDate, endDate)
         val byCategoryId = grouped.groupBy { it.categoryId }
         val result = mutableMapOf<Long?, MoneyAggregate>()
@@ -459,7 +474,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): Map<String, MoneyAggregate> {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val grouped = expenseDao.getAllMerchantTotalsBetweenByCurrency(startDate, endDate)
         val byMerchant = grouped.groupBy { it.merchant }
         val result = mutableMapOf<String, MoneyAggregate>()
@@ -482,7 +497,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): List<MonthMoneyAggregate> {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val grouped = expenseDao.getAllMonthlyTotalsBetweenByCurrency(startDate, endDate)
         val byMonth = grouped.groupBy { it.monthKey }
         val result = mutableListOf<MonthMoneyAggregate>()
@@ -507,7 +522,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): List<PeriodMoneyAggregate> {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
         if (expenses.isEmpty()) return emptyList()
 
@@ -535,7 +550,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): List<PeriodMoneyAggregate> {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
         if (expenses.isEmpty()) return emptyList()
 
@@ -552,35 +567,61 @@ class MultiCurrencyRepository @Inject constructor(
     // ── PURCHASE-only variants ─────────────────────────────────────────────
 
     /**
+     * CURR-587-01: Result-returning historical purchase total.
+     * Returns [MoneyAggregateResult.Unavailable] on home-currency failure — never CurrencyCode("XXX").
+     */
+    suspend fun getHomeCurrencyPurchaseTotalHistoricalResult(
+        startDate: Long,
+        endDate: Long
+    ): com.yourname.expensetracker.domain.core.money.MoneyAggregateResult {
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is HomeCurrencyResolution.Resolved -> resolution.currency
+            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency
+            is HomeCurrencyResolution.Failed -> {
+                return com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable(
+                    reason = "Home currency unavailable: ${resolution.reason}",
+                    requestedRateBasis = RateBasis.TRANSACTION_DATE
+                )
+            }
+        }
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) {
+            return com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(
+                MoneyAggregate.empty(homeCurrency, RateBasis.TRANSACTION_DATE)
+            )
+        }
+        return com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(
+            normalizationEngine.aggregateExpenses(
+                expenses = expenses,
+                homeCurrency = homeCurrency,
+                rateBasis = RateBasis.TRANSACTION_DATE,
+                transactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+            )
+        )
+    }
+
+    /**
      * **HISTORICAL-RATE:** Get total PURCHASE spending in home currency using
      * per-expense transaction-date conversion via [MoneyNormalizationEngine].
      *
      * CURR-70F-08: Replaced midpoint+latest-fallback approach with proper
      * per-expense TRANSACTION_DATE conversion. Never falls back to latest rate.
+     *
+     * @deprecated Use [getHomeCurrencyPurchaseTotalHistoricalResult] to handle unavailable state explicitly.
      */
+    @Deprecated(
+        message = "Can throw if home currency is unavailable. Use getHomeCurrencyPurchaseTotalHistoricalResult().",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getHomeCurrencyPurchaseTotalHistorical(
         startDate: Long,
         endDate: Long
     ): MoneyAggregate {
-        val homeCurrency = try {
-            CurrencyCode(resolveHomeCurrency())
-        } catch (e: HomeCurrencyUnavailableException) {
-            // CURR-3E8-01: Return empty aggregate with UNAVAILABLE quality.
-            // Use a sentinel valid currency since MoneyAggregate requires valid CurrencyCode.
-            return MoneyAggregate.empty(CurrencyCode("XXX"), RateBasis.TRANSACTION_DATE).copy(
-                conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
-                warningMessage = "Home currency unavailable: ${e.reason}"
-            )
+        return when (val result = getHomeCurrencyPurchaseTotalHistoricalResult(startDate, endDate)) {
+            is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available -> result.aggregate
+            is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable ->
+                throw HomeCurrencyUnavailableException(result.reason)
         }
-        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
-        if (expenses.isEmpty()) return MoneyAggregate.empty(homeCurrency, RateBasis.TRANSACTION_DATE)
-
-        return normalizationEngine.aggregateExpenses(
-            expenses = expenses,
-            homeCurrency = homeCurrency,
-            rateBasis = RateBasis.TRANSACTION_DATE,
-            transactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
-        )
     }
 
     // ── Explicit historical API family (CURR-70F-08) ───────────────────────
@@ -594,7 +635,7 @@ class MultiCurrencyRepository @Inject constructor(
         endDate: Long,
         transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
     ): Map<Long?, MoneyAggregate> {
-        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val homeCurrency = requireHomeCurrencyForMoneyMath()
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
         if (expenses.isEmpty()) return emptyMap()
 
@@ -613,7 +654,7 @@ class MultiCurrencyRepository @Inject constructor(
         endDate: Long,
         transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
     ): List<PeriodMoneyAggregate> {
-        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val homeCurrency = requireHomeCurrencyForMoneyMath()
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
         if (expenses.isEmpty()) return emptyList()
 
@@ -635,7 +676,7 @@ class MultiCurrencyRepository @Inject constructor(
         endDate: Long,
         transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
     ): List<PeriodMoneyAggregate> {
-        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val homeCurrency = requireHomeCurrencyForMoneyMath()
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
         if (expenses.isEmpty()) return emptyList()
 
@@ -657,7 +698,7 @@ class MultiCurrencyRepository @Inject constructor(
         endDate: Long,
         transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
     ): List<MonthMoneyAggregate> {
-        val homeCurrency = CurrencyCode(resolveHomeCurrency())
+        val homeCurrency = requireHomeCurrencyForMoneyMath()
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
         if (expenses.isEmpty()) return emptyList()
 
@@ -683,7 +724,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): MoneyAggregate {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val currencyTotals = expenseDao.getTotalSpentBetweenByCurrency(startDate, endDate)
         return aggregateToMoneyAggregate(currencyTotals, homeCurrency)
     }
@@ -697,7 +738,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): MoneyAggregate {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startDate, endDate)
         return aggregateToMoneyAggregate(currencyTotals, homeCurrency)
     }
@@ -710,7 +751,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): Map<Long?, MoneyAggregate> {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val grouped = expenseDao.getCategoryTotalsBetweenByCurrency(startDate, endDate)
         val byCategoryId = grouped.groupBy { it.categoryId }
         val result = mutableMapOf<Long?, MoneyAggregate>()
@@ -731,7 +772,7 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): List<MonthMoneyAggregate> {
-        val homeCurrency = resolveHomeCurrency()
+        val homeCurrency = requireHomeCurrencyForMoneyMath().code
         val grouped = expenseDao.getMonthlyTotalsBetweenByCurrency(startDate, endDate)
         val byMonth = grouped.groupBy { it.monthKey }
         val result = mutableListOf<MonthMoneyAggregate>()

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.usecase.dashboard
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
@@ -226,8 +227,8 @@ data class CompiledDashboardData(
     val txCount: Int,
     /** S4-006: true when any currency conversion failed for dashboard totals */
     val isPartial: Boolean = false,
-    /** CURR-9A6-07: Canonical normalized input for basis-consistent widget consumption */
-    val normalizedInput: DashboardNormalizedInputResult? = null
+    /** CURR-587-04: Canonical normalized input — always populated, never null */
+    val normalizedInput: DashboardNormalizedInputResult
 )
 
 // ─── Use Case ─────────────────────────────────────────────────────────────────
@@ -278,7 +279,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val periodIsPartial: Boolean,
         val overallBudget: BudgetStatusSnapshot?,
         val totalBudgetAmount: Double,
-        val safeToSpend: Double
+        val safeToSpend: Double,
+        /** CURR-587-04: Canonical normalized input result for all money widgets */
+        val normalizedInputResult: DashboardNormalizedInputResult
     )
 
     /** Pure computation: maps raw dashboard data → a list of ordered [DashboardWidget]s. */
@@ -309,12 +312,17 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             lifestyleWidget, savingsSweepWidget, moneyRadarData, stressForecastResult
         )
 
+        val normalizedInputPartial = ctx.normalizedInputResult.let {
+            it is DashboardNormalizedInputResult.Unavailable ||
+                (it is DashboardNormalizedInputResult.Available && it.input.dataQuality.isPartial)
+        }
+
         return CompiledDashboardData(
             allWidgets = widgets,
             totalSpent = ctx.totalSpent,
             txCount = ctx.txCount,
-            // S4-006/S4-D914-006: Propagate data-quality from summary AND today/week aggregates
-            isPartial = ctx.data.summary.isPartial || ctx.periodIsPartial
+            isPartial = ctx.data.summary.isPartial || ctx.periodIsPartial || normalizedInputPartial,
+            normalizedInput = ctx.normalizedInputResult
         )
     }
 
@@ -385,6 +393,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val todayAgg = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(todayStart, now)
         val weekAgg  = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(weekStart, now)
 
+        // CURR-587-04: Produce canonical normalized input once per compute run
+        val expenseEntities = expenses.map { it.toExpenseEntity() }
+        val normalizedInputResult = produceDashboardNormalizedInput(expenseEntities, monthStart, now)
+
         val purchases = expenses.filter {
             it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine
         }
@@ -421,7 +433,29 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             periodIsPartial = todayAgg.isPartial || weekAgg.isPartial,
             overallBudget = overallBudget,
             totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0,
-            safeToSpend = data.weather.discretionaryBudget
+            safeToSpend = data.weather.discretionaryBudget,
+            normalizedInputResult = normalizedInputResult
+        )
+    }
+
+    /** Maps a [DashboardExpense] to a minimal [Expense] entity for normalization. */
+    private fun DashboardExpense.toExpenseEntity(): com.yourname.expensetracker.data.database.entity.Expense {
+        return com.yourname.expensetracker.data.database.entity.Expense(
+            id = id,
+            amount = amount,
+            currency = currency,
+            merchant = merchant,
+            transactionType = when (transactionType) {
+                DashboardTransactionType.PURCHASE -> com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
+                DashboardTransactionType.WITHDRAWAL -> com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL
+                DashboardTransactionType.TRANSFER -> com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER
+                DashboardTransactionType.DEPOSIT -> com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT
+                DashboardTransactionType.UNKNOWN -> com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            isManualEntry = isManualEntry
         )
     }
 
@@ -438,31 +472,40 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private suspend fun computeRunwayAndForecast(ctx: ComputeContext): RunwayResult {
         val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
         val data = ctx.data.data
-        // CURR-9A6-08: Build snapshots from dashboard expenses.
-        // TODO: Full migration to NormalizedExpense requires ForecastInputAssembler refactor.
-        // For now, amounts are in original currency — the assembler handles mixed currencies
-        // via its own normalization path.
-        val expenseSnapshots = data.expenses.map { expense ->
-            ExpenseSnapshot(
-                id = expense.id,
-                amount = expense.amount,
-                effectiveAmount = expense.effectiveAmount, // G-MONEY-ALLOW: ForecastInputAssembler normalizes downstream
-                currency = expense.currency,
-                merchant = expense.merchant,
-                merchantKey = MerchantKeyGenerator.generate(expense.merchant).ifBlank { null },
-                transactionType = when (expense.transactionType) {
-                    DashboardTransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-                    DashboardTransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-                    DashboardTransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-                    DashboardTransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-                    DashboardTransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-                },
-                date = expense.date,
-                categoryId = expense.categoryId,
-                isNotMine = expense.isNotMine,
-                transferDirection = null,
-                notes = null
-            )
+
+        // CURR-587-06: Build ExpenseSnapshots from normalized expenses when available,
+        // falling back to raw snapshots only when normalized input is unavailable.
+        // Normalized path uses normalizedEffectiveAmount (already in home currency).
+        val expenseSnapshots = when (val normalized = ctx.normalizedInputResult) {
+            is DashboardNormalizedInputResult.Available -> {
+                // Use existing toExpenseSnapshot() which maps normalizedAmount/normalizedCurrency
+                normalized.input.normalizedExpenses.map { it.toExpenseSnapshot() }
+            }
+            is DashboardNormalizedInputResult.Unavailable -> {
+                // Fallback: use raw snapshots — amounts may mix currencies
+                data.expenses.map { expense ->
+                    ExpenseSnapshot(
+                        id = expense.id,
+                        amount = expense.amount,
+                        effectiveAmount = expense.effectiveAmount,
+                        currency = expense.currency,
+                        merchant = expense.merchant,
+                        merchantKey = MerchantKeyGenerator.generate(expense.merchant).ifBlank { null },
+                        transactionType = when (expense.transactionType) {
+                            DashboardTransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                            DashboardTransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                            DashboardTransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                            DashboardTransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                            DashboardTransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+                        },
+                        date = expense.date,
+                        categoryId = expense.categoryId,
+                        isNotMine = expense.isNotMine,
+                        transferDirection = null,
+                        notes = null
+                    )
+                }
+            }
         }
 
         val assembledInput = forecastInputAssembler.assemble(
@@ -572,8 +615,20 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         runwayResult: RunwayResult
     ): DashboardWidget.MonteCarloForecast? {
         return try {
-            // NOTE: spentToDate now uses MultiCurrencyRepository for proper multi-currency conversion.
-            val spentToDate = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ctx.monthStart, ctx.now).displayAmount
+            // CURR-587-05: Use normalized month aggregate instead of raw repository call
+            val spentToDate = when (val normalized = ctx.normalizedInputResult) {
+                is DashboardNormalizedInputResult.Available -> normalized.input.periodAggregate.displayAmount
+                is DashboardNormalizedInputResult.Unavailable -> {
+                    return DashboardWidget.MonteCarloForecast(
+                        result = MonteCarloResult.unavailable(normalized.reason),
+                        currencyQuality = CurrencyQualityUi(
+                            isPartial = true,
+                            quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
+                            warningMessage = normalized.reason
+                        )
+                    )
+                }
+            }
             val knownUpcoming = runwayResult.totalCommitted + runwayResult.totalLikely
             val budgetForMC = if (ctx.totalBudgetAmount > 0) ctx.totalBudgetAmount else null
 
@@ -591,41 +646,74 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     }
 
     private fun computeCategoryTotals(ctx: ComputeContext): List<CategorySpending> {
-        return ctx.data.categoryBreakdown.map {
+        val normalized = ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available
+            ?: return ctx.data.categoryBreakdown.map {
+                CategorySpending(
+                    category = CategoryInfo(
+                        id = it.categoryId,
+                        name = it.categoryName,
+                        icon = it.categoryIcon,
+                        color = it.categoryColor,
+                        isIncome = false
+                    ),
+                    total = it.amount,
+                    percentage = it.percentage.toFloat(),
+                    currency = ctx.data.summary.currency
+                )
+            }
+
+        val input = normalized.input
+        val total = input.categoryAggregates.values.sumOf { it.displayAmount }
+            .takeIf { it > 0.0 } ?: input.periodAggregate.displayAmount.coerceAtLeast(0.0)
+
+        val categoryNameById = ctx.data.data.categories.associate { it.id to it }
+        return input.categoryAggregates.mapNotNull { (categoryId, aggregate) ->
+            val cat = categoryNameById[categoryId] ?: return@mapNotNull null
             CategorySpending(
                 category = CategoryInfo(
-                    id = it.categoryId,
-                    name = it.categoryName,
-                    icon = it.categoryIcon,
-                    color = it.categoryColor,
+                    id = cat.id,
+                    name = cat.name,
+                    icon = cat.icon,
+                    color = cat.color,
                     isIncome = false
                 ),
-                total = it.amount,
-                percentage = it.percentage.toFloat(),
-                currency = ctx.data.summary.currency
+                total = aggregate.displayAmount,
+                percentage = if (total > 0.0) ((aggregate.displayAmount / total) * 100).toFloat() else 0f,
+                currency = input.homeCurrency.code
             )
+        }.sortedByDescending { it.total }
+    }
+
+    // CURR-587-08: SpendingTrend now consumes DashboardNormalizedInput — no direct conversion.
+    private fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
+        return when (val normalized = ctx.normalizedInputResult) {
+            is DashboardNormalizedInputResult.Unavailable -> {
+                DashboardWidget.SpendingTrend(
+                    series = emptyList(),
+                    currencyQuality = CurrencyQualityUi(
+                        isPartial = true,
+                        quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
+                        warningMessage = normalized.reason
+                    )
+                )
+            }
+            is DashboardNormalizedInputResult.Available -> buildTrendFromNormalizedInput(normalized.input, ctx)
         }
     }
 
-    // P5-P1-05: Spending trend now normalizes expenses to home currency before summing.
-    private suspend fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
-        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
-            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
-            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
-            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
-                throw IllegalStateException("Home currency unavailable: ${resolution.reason}")
-        }
+    private fun buildTrendFromNormalizedInput(
+        input: DashboardNormalizedInput,
+        ctx: ComputeContext
+    ): DashboardWidget.SpendingTrend {
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
-        // DSH-N2: Deduplicate by expense ID to prevent shared/duplicate expenses
-        // from being counted twice in the spending trend. Shared expenses that
-        // appear in both the payer's and participant's records have the same
-        // expense ID — the distinctBy ensures each unique expense is counted once.
-        val purchasesByMonth = ctx.data.data.expenses
-            .filter { it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine }
+
+        // Group normalized purchase expenses by (year, month)
+        val purchasesByMonth = input.normalizedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
             .distinctBy { it.id }
-            .groupBy { expense ->
-                trendSeriesCal.timeInMillis = expense.date
+            .groupBy { ne ->
+                trendSeriesCal.timeInMillis = ne.date
                 Pair(trendSeriesCal.get(java.util.Calendar.YEAR), trendSeriesCal.get(java.util.Calendar.MONTH))
             }
 
@@ -637,7 +725,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
 
         val monthLabels = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
-        var totalExcluded = 0
         monthKeys.forEach { (yr, mo) ->
             val monthExpenses = purchasesByMonth[Pair(yr, mo)] ?: emptyList()
 
@@ -647,21 +734,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val mStart = tempCal.timeInMillis
             val daysInThisMonth = tempCal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
 
-            // DSH-N1: Emit zero-filled series for empty months instead of
-            // skipping them, so the spending trend chart shows continuous data.
+            // DSH-N1: Zero-filled series for empty months
             val daily = DoubleArray(daysInThisMonth)
-            monthExpenses.forEach { exp ->
-                val dayIdx = TimePeriodUtils.daysBetween(mStart, exp.date).coerceIn(0, daysInThisMonth - 1)
-                val amount = if (exp.currency.equals(homeCurrency, ignoreCase = true)) {
-                    exp.effectiveAmount
-                } else {
-                    // Use transaction-date rate for historical accuracy
-                    val converted = currencyConverter.convertAsOf(exp.effectiveAmount, exp.currency, homeCurrency, exp.date)
-                        ?.convertedAmount
-                    if (converted == null) { totalExcluded++; return@forEach }
-                    converted
-                }
-                daily[dayIdx] += amount
+            monthExpenses.forEach { ne ->
+                val dayIdx = TimePeriodUtils.daysBetween(mStart, ne.date).coerceIn(0, daysInThisMonth - 1)
+                // Use normalizedAmount — already in home currency, no conversion needed
+                daily[dayIdx] += ne.normalizedAmount
             }
             var running = 0.0
             val cumulative = daily.map { d -> running += d; running.toFloat() }
@@ -676,13 +754,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             ))
         }
 
-        // CURR-9A6-03: Surface quality when conversions were dropped
-        val quality = if (totalExcluded > 0) CurrencyQualityUi(
-            isPartial = true,
-            quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.PARTIAL,
-            warningMessage = "$totalExcluded transaction(s) excluded due to missing exchange rates"
-        ) else null
-
+        val quality = CurrencyQualityUi.from(input.dataQuality)
         return DashboardWidget.SpendingTrend(series = trendSeries, currencyQuality = quality)
     }
 

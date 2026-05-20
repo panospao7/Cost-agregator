@@ -68,6 +68,39 @@ class BudgetForecastingEngine @Inject constructor(
     }
 
     /**
+     * CURR-587-03: Result-returning forecast API.
+     * Returns [BudgetForecastResult.Unavailable] on home-currency or conversion failure.
+     */
+    suspend fun generateForecastResult(
+        budget: com.yourname.expensetracker.data.database.entity.Budget,
+        forecastPeriodDays: Int = 30
+    ): BudgetForecastResult {
+        val now = timeProvider.now()
+        val resolution = currencySettingsRepository.resolveHomeCurrency()
+        if (resolution is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed) {
+            return BudgetForecastResult.Unavailable(
+                budgetId = budget.id,
+                reasonCode = ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
+                reason = "Home currency unavailable: ${resolution.reason}",
+                createdAt = now
+            )
+        }
+        val forecast = generateForecast(budget, forecastPeriodDays)
+        // If forecast came back with UNKNOWN risk and zero confidence, it was a conversion failure
+        return if (forecast.riskLevel == ForecastRiskLevel.UNKNOWN && forecast.confidenceScore == 0.0 &&
+            forecast.predictedSpending == 0.0 && forecast.predictedRemaining == 0.0) {
+            BudgetForecastResult.Unavailable(
+                budgetId = budget.id,
+                reasonCode = ForecastUnavailableReason.LIMIT_CONVERSION_FAILED,
+                reason = "Budget limit conversion failed",
+                createdAt = now
+            )
+        } else {
+            BudgetForecastResult.Available(forecast)
+        }
+    }
+
+    /**
      * Generate a forecast for a specific budget.
      */
     suspend fun generateForecast(
@@ -81,6 +114,8 @@ class BudgetForecastingEngine @Inject constructor(
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed -> {
                 Timber.w("BudgetForecastingEngine: Home currency unavailable: %s", resolution.reason)
+                // CURR-587-03: Return unavailable-marked forecast. currency=budget.currency is
+                // only stored for schema non-null requirement; currencyStatus marks it unavailable.
                 return@withContext BudgetForecast(
                     budgetId = budget.id,
                     forecastDate = now,
@@ -92,7 +127,7 @@ class BudgetForecastingEngine @Inject constructor(
                     riskLevel = ForecastRiskLevel.UNKNOWN,
                     overspendProbability = 0.0,
                     createdAt = now,
-                    currency = budget.currency // CURR-3E8-09: use budget's own currency, not blank
+                    currency = budget.currency // schema non-null; UI must check riskLevel=UNKNOWN + confidenceScore=0
                 )
             }
         }

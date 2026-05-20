@@ -13,8 +13,10 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import io.mockk.coEvery
@@ -96,6 +98,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             )
         }
         every { mockCurrencySettingsRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { mockCurrencySettingsRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
         engine = BudgetForecastingEngine(
             expenseDao = expenseDao,

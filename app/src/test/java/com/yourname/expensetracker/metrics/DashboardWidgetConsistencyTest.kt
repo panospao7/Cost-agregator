@@ -30,6 +30,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardDat
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
@@ -132,9 +133,11 @@ class DashboardWidgetConsistencyTest {
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine,
-            forecastInputAssembler = mockk(),
+            forecastInputAssembler = mockk(relaxed = true),
             currencyConverter = mockk<CurrencyConverter>(relaxed = true),
-            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
+                coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+            },
             multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true).also {
                 coEvery { it.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
             }

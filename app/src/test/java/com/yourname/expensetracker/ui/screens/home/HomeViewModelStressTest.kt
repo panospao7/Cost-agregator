@@ -136,7 +136,12 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         coEvery { computeDashboardWidgetsUseCase.compute(any()) } returns CompiledDashboardData(
             allWidgets = emptyList(),
             totalSpent = 0.0,
-            txCount = 0
+            txCount = 0,
+            normalizedInput = com.yourname.expensetracker.domain.usecase.dashboard.DashboardNormalizedInputResult.Unavailable(
+                reason = "test",
+                periodStart = 0L,
+                periodEnd = 0L
+            )
         )
         every { dashboardRepository.configFlow } returns configFlow
         every { dashboardRepository.getDashboardConfig() } answers { configFlow.value }
