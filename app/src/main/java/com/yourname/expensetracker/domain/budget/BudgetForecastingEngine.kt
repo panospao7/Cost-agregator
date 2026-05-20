@@ -116,7 +116,7 @@ class BudgetForecastingEngine @Inject constructor(
         val elapsedEnd = now.coerceAtMost(periodEnd)
         val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd, homeCurrency)
         val remainingForecastDays = com.yourname.expensetracker.domain.util.TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()
-        val historicalData = getHistoricalSpendingData(budget)
+        val historicalData = getHistoricalSpendingData(budget, homeCurrency)
         val predictedSpending = calculatePredictedSpending(historicalData, remainingForecastDays)
         val confidence = calculateConfidence(historicalData)
         val riskLevel = determineRiskLevel(budget, predictedSpending, confidence, spentToDate, normalizedBudgetAmount)
@@ -156,10 +156,13 @@ class BudgetForecastingEngine @Inject constructor(
         budget: Budget,
         forecastPeriodDays: Int = 30
     ): BudgetForecast = withContext(ioDispatcher) {
-        // Delegate to the real implementation; throw on unavailable for legacy compatibility
+        // Delegate to the real implementation; throw typed exception on unavailable for legacy compatibility
         when (val result = generateForecastResult(budget, forecastPeriodDays)) {
             is BudgetForecastResult.Available -> result.forecast
-            is BudgetForecastResult.Unavailable -> throw IllegalStateException(result.reason)
+            is BudgetForecastResult.Unavailable -> throw BudgetForecastUnavailableException(
+                reasonCode = result.reasonCode,
+                message = result.reason
+            )
         }
     }
     
@@ -178,15 +181,9 @@ class BudgetForecastingEngine @Inject constructor(
      * explicit zero-spend buckets so averages and trends are not skewed
      * upward when a user simply had no spending in an intermediate month.
      */
-    private suspend fun getHistoricalSpendingData(budget: Budget): HistoricalData {
+    private suspend fun getHistoricalSpendingData(budget: Budget, homeCurrency: String): HistoricalData {
         val now = timeProvider.now()
         val threeMonthsAgo = TimePeriodUtils.addMonths(now, -3)
-        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
-            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
-            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
-            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
-                throw IllegalStateException("Home currency unavailable for historical data: ${resolution.reason}")
-        }
 
         // ── Fetch raw snapshots and normalise to home currency ──────────────
         val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(threeMonthsAgo, now)

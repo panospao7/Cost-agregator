@@ -24,3 +24,12 @@ enum class ForecastUnavailableReason {
     INVALID_CURRENCY,
     UNKNOWN
 }
+
+/** Thrown by legacy [BudgetForecastingEngine.generateForecast] when forecast is unavailable. */
+class BudgetForecastUnavailableException(
+    val reasonCode: ForecastUnavailableReason,
+    override val message: String
+) : IllegalStateException(message)
+
+val BudgetForecastResult.canFormatMoney: Boolean
+    get() = this is BudgetForecastResult.Available

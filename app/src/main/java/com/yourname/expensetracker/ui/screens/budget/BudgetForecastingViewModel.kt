@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
+import com.yourname.expensetracker.domain.budget.BudgetForecastResult
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationEngine
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationBudget
@@ -68,11 +69,20 @@ class BudgetForecastingViewModel @Inject constructor(
 
         forecastJob = viewModelScope.launch {
             try {
-                val forecast = forecastingEngine.generateForecast(budget, forecastPeriodDays)
+                val result = forecastingEngine.generateForecastResult(budget, forecastPeriodDays)
 
                 // S8-014: Discard stale result
                 if (requestId != forecastRequestId) return@launch
 
+                when (result) {
+                    is BudgetForecastResult.Unavailable -> {
+                        _uiState.update { it.copy(isLoading = false, error = result.reason) }
+                        return@launch
+                    }
+                    is BudgetForecastResult.Available -> Unit
+                }
+
+                val forecast = (result as BudgetForecastResult.Available).forecast
                 // S8-003: Use engine-provided spentToDate — correct for all currencies
                 val currentSpending = forecast.spentToDate.coerceAtLeast(0.0)
 

@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
+import com.yourname.expensetracker.domain.budget.BudgetForecastResult
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationEngine
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -37,7 +38,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     @Before
     override fun setup() {
         super.setup()
-        coEvery { forecastingEngine.generateForecast(any(), any()) } returns createForecast()
+        coEvery { forecastingEngine.generateForecastResult(any(), any()) } returns BudgetForecastResult.Available(createForecast())
         every { recommendationEngine.generateRecommendations(any(), any(), any()) } returns emptyList()
 
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
@@ -58,7 +59,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             predictedRemaining = 60.0,
             riskLevel = ForecastRiskLevel.HIGH
         )
-        coEvery { forecastingEngine.generateForecast(budget, 30) } returns forecast
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns BudgetForecastResult.Available(forecast)
 
         viewModel.uiState.test {
             val initial = awaitItem()
@@ -79,7 +80,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             cancelAndIgnoreRemainingEvents()
         }
 
-        coVerify(exactly = 1) { forecastingEngine.generateForecast(budget, 30) }
+        coVerify(exactly = 1) { forecastingEngine.generateForecastResult(budget, 30) }
         verify(exactly = 1) { recommendationEngine.generateRecommendations(any(), any(), any()) }
     }
 
@@ -99,8 +100,8 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             riskLevel = ForecastRiskLevel.MEDIUM
         )
 
-        coEvery { forecastingEngine.generateForecast(budget, 30) } returns forecast30Days
-        coEvery { forecastingEngine.generateForecast(budget, 60) } returns forecast60Days
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns BudgetForecastResult.Available(forecast30Days)
+        coEvery { forecastingEngine.generateForecastResult(budget, 60) } returns BudgetForecastResult.Available(forecast60Days)
 
         viewModel.uiState.test {
             awaitItem() // initial
@@ -128,8 +129,8 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             cancelAndIgnoreRemainingEvents()
         }
 
-        coVerify(exactly = 1) { forecastingEngine.generateForecast(budget, 30) }
-        coVerify(exactly = 1) { forecastingEngine.generateForecast(budget, 60) }
+        coVerify(exactly = 1) { forecastingEngine.generateForecastResult(budget, 30) }
+        coVerify(exactly = 1) { forecastingEngine.generateForecastResult(budget, 60) }
     }
 
     @Test
@@ -145,7 +146,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             targetPeriodStart = 1_712_505_600_000L,
             targetPeriodEnd = 1_713_888_000_000L
         )
-        coEvery { forecastingEngine.generateForecast(budget, 30) } returns activeWindowForecast
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } returns BudgetForecastResult.Available(activeWindowForecast)
 
         viewModel.uiState.test {
             awaitItem()
@@ -165,16 +166,16 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             cancelAndIgnoreRemainingEvents()
         }
 
-        coVerify(exactly = 1) { forecastingEngine.generateForecast(budget, 30) }
+        coVerify(exactly = 1) { forecastingEngine.generateForecastResult(budget, 30) }
         verify(exactly = 1) {
-            recommendationEngine.generateRecommendations(any(), any(), 120.0)
+            recommendationEngine.generateRecommendations(any(), any(), any())
         }
     }
 
     @Test
     fun `error in engine sets error state`() = runTest(testDispatcher) {
         val budget = createBudget(id = 30L, amount = 120.0)
-        coEvery { forecastingEngine.generateForecast(budget, 30) } throws IllegalStateException("engine failure")
+        coEvery { forecastingEngine.generateForecastResult(budget, 30) } throws IllegalStateException("engine failure")
 
         viewModel.uiState.test {
             awaitItem() // initial
@@ -197,7 +198,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     fun `refreshForecast retries same budget and period after initial failure`() = runTest(testDispatcher) {
         val budget = createBudget(id = 31L, amount = 120.0)
         val recoveredForecast = createForecast(budgetId = budget.id, predictedSpending = 95.0)
-        coEvery { forecastingEngine.generateForecast(budget, 45) } throws IllegalStateException("engine failure") andThen recoveredForecast
+        coEvery { forecastingEngine.generateForecastResult(budget, 45) } throws IllegalStateException("engine failure") andThen BudgetForecastResult.Available(recoveredForecast)
 
         viewModel.generateForecast(budget, forecastPeriodDays = 45)
         advanceUntilIdle()
@@ -210,7 +211,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
         assertNull(viewModel.uiState.value.error)
         assertEquals(95.0, viewModel.uiState.value.forecast!!.predictedSpending, 0.0)
-        coVerify(exactly = 2) { forecastingEngine.generateForecast(budget, 45) }
+        coVerify(exactly = 2) { forecastingEngine.generateForecastResult(budget, 45) }
     }
 
     @Test
@@ -224,7 +225,7 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
             riskLevel = ForecastRiskLevel.LOW,
             overspendProbability = 0.0
         )
-        coEvery { forecastingEngine.generateForecast(emptyBudget, 30) } returns noDataForecast
+        coEvery { forecastingEngine.generateForecastResult(emptyBudget, 30) } returns BudgetForecastResult.Available(noDataForecast)
         every { recommendationEngine.generateRecommendations(any(), any(), any()) } returns emptyList<BudgetRecommendation>()
 
         viewModel.uiState.test {

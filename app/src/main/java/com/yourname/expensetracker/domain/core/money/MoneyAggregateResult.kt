@@ -3,7 +3,7 @@ package com.yourname.expensetracker.domain.core.money
 /**
  * CURR-587-01: Typed result for money aggregation operations.
  *
- * Unavailable state is explicit — no fake CurrencyCode("XXX") or blank sentinel.
+ * Unavailable state is explicit — no fake/sentinel currency.
  * MoneyAggregate continues to mean "available aggregate with a valid display currency".
  */
 sealed interface MoneyAggregateResult {
@@ -21,6 +21,9 @@ sealed interface MoneyAggregateResult {
 
 val MoneyAggregateResult.isAvailable: Boolean
     get() = this is MoneyAggregateResult.Available
+
+val MoneyAggregateResult.isUnavailable: Boolean
+    get() = this is MoneyAggregateResult.Unavailable
 
 fun MoneyAggregateResult.aggregateOrNull(): MoneyAggregate? =
     (this as? MoneyAggregateResult.Available)?.aggregate

@@ -561,7 +561,7 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * CURR-587-01: Result-returning historical purchase total.
-     * Returns [MoneyAggregateResult.Unavailable] on home-currency failure — never CurrencyCode("XXX").
+     * Returns [MoneyAggregateResult.Unavailable] on home-currency failure — never a fake/sentinel currency.
      */
     suspend fun getHomeCurrencyPurchaseTotalHistoricalResult(
         startDate: Long,
@@ -599,7 +599,7 @@ class MultiCurrencyRepository @Inject constructor(
      */
     @Deprecated(
         message = "Can throw if home currency is unavailable. Use getHomeCurrencyPurchaseTotalHistoricalResult().",
-        level = DeprecationLevel.WARNING
+        level = DeprecationLevel.ERROR
     )
     suspend fun getHomeCurrencyPurchaseTotalHistorical(
         startDate: Long,
