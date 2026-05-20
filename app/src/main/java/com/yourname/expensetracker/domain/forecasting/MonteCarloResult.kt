@@ -39,7 +39,7 @@ data class MonteCarloResult(
     val displayCurrency: String
 ) {
     companion object {
-        /** CURR-587-05: Unavailable placeholder when normalized input is unavailable. */
+        /** CURR-587-05 / CURR-172-06: Unavailable placeholder — no blank currency. */
         fun unavailable(reason: String): MonteCarloResult = MonteCarloResult(
             percentile10 = 0.0, percentile25 = 0.0, percentile50 = 0.0,
             percentile75 = 0.0, percentile90 = 0.0,
@@ -47,7 +47,7 @@ data class MonteCarloResult(
             spentToDate = 0.0, knownUpcoming = 0.0,
             confidence = SimulationConfidence(0.0, ConfidenceLevel.LOW, reason),
             metadata = SimulationMetadata(0, 0, 0, 0.0, 0.0, 0, 0L),
-            displayCurrency = ""
+            displayCurrency = "N/A" // unavailable — must not be formatted as money
         )
     }
 }

@@ -409,13 +409,6 @@ class MultiCurrencyRepository @Inject constructor(
         }
     }
 
-    @Deprecated(
-        message = "Misleading name. Use resolveHomeCurrencyForMoneyMath() or requireHomeCurrencyForMoneyMath().",
-        level = DeprecationLevel.ERROR
-    )
-    @Suppress("UNUSED")
-    private suspend fun resolveHomeCurrencyOrUnavailable(): Nothing = error("Do not use")
-
     /**
      * **LATEST-RATE:** Get total expenses in home currency.
      *
@@ -574,24 +567,19 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long
     ): com.yourname.expensetracker.domain.core.money.MoneyAggregateResult {
-        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
-            is HomeCurrencyResolution.Resolved -> resolution.currency
-            is HomeCurrencyResolution.FirstRunDefault -> resolution.currency
-            is HomeCurrencyResolution.Failed -> {
+        val homeCurrency = when (val home = resolveHomeCurrencyForMoneyMath()) {
+            is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available -> home.currency
+            is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Unavailable -> {
                 return com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable(
-                    reason = "Home currency unavailable: ${resolution.reason}",
+                    reason = "Home currency unavailable: ${home.reason}",
                     requestedRateBasis = RateBasis.TRANSACTION_DATE
                 )
             }
         }
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
-        if (expenses.isEmpty()) {
-            return com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(
-                MoneyAggregate.empty(homeCurrency, RateBasis.TRANSACTION_DATE)
-            )
-        }
         return com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(
-            normalizationEngine.aggregateExpenses(
+            if (expenses.isEmpty()) MoneyAggregate.empty(homeCurrency, RateBasis.TRANSACTION_DATE)
+            else normalizationEngine.aggregateExpenses(
                 expenses = expenses,
                 homeCurrency = homeCurrency,
                 rateBasis = RateBasis.TRANSACTION_DATE,

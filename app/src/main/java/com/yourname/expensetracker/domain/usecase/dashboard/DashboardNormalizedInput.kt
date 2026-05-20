@@ -31,7 +31,12 @@ data class DashboardNormalizedInput(
     val periodEnd: Long,
     val normalizedExpenses: List<NormalizedExpense>,
     val periodAggregate: MoneyAggregate,
+    val todayAggregate: MoneyAggregate,
+    val weekAggregate: MoneyAggregate,
+    val monthAggregate: MoneyAggregate,
+    val previousMonthAggregate: MoneyAggregate? = null,
     val categoryAggregates: Map<Long?, MoneyAggregate>,
+    val depositAggregate: MoneyAggregate? = null,
     val dataQuality: CurrencyDataQuality
 )
 
@@ -62,6 +67,23 @@ data class CurrencyDataQuality(
             actualRateBasis = aggregate.actualRateBasis
         )
 
+        fun fromAggregates(aggregates: Collection<MoneyAggregate>, requestedBasis: RateBasis = RateBasis.TRANSACTION_DATE): CurrencyDataQuality {
+            if (aggregates.isEmpty()) return UNAVAILABLE
+            return aggregates.map { fromAggregate(it, requestedBasis) }.reduce { a, b ->
+                CurrencyDataQuality(
+                    isPartial = a.isPartial || b.isPartial,
+                    conversionQuality = if (a.conversionQuality == ConversionQuality.COMPLETE && b.conversionQuality == ConversionQuality.COMPLETE) ConversionQuality.COMPLETE else ConversionQuality.PARTIAL,
+                    missingRateCount = a.missingRateCount + b.missingRateCount,
+                    staleRateCount = a.staleRateCount + b.staleRateCount,
+                    invalidCurrencyCount = a.invalidCurrencyCount + b.invalidCurrencyCount,
+                    excludedTransactionCount = a.excludedTransactionCount + b.excludedTransactionCount,
+                    warningMessage = listOfNotNull(a.warningMessage, b.warningMessage).firstOrNull(),
+                    requestedRateBasis = a.requestedRateBasis,
+                    actualRateBasis = a.actualRateBasis
+                )
+            }
+        }
+
         val UNAVAILABLE = CurrencyDataQuality(
             isPartial = true,
             conversionQuality = ConversionQuality.UNAVAILABLE,
@@ -81,14 +103,23 @@ data class CurrencyDataQuality(
  */
 data class CurrencyQualityUi(
     val isPartial: Boolean,
+    val isUnavailable: Boolean = false,
     val quality: ConversionQuality,
     val warningMessage: String?
 ) {
     companion object {
         fun from(dataQuality: CurrencyDataQuality) = CurrencyQualityUi(
             isPartial = dataQuality.isPartial,
+            isUnavailable = dataQuality.conversionQuality == ConversionQuality.UNAVAILABLE,
             quality = dataQuality.conversionQuality,
             warningMessage = dataQuality.warningMessage
+        )
+
+        fun unavailable(reason: String) = CurrencyQualityUi(
+            isPartial = true,
+            isUnavailable = true,
+            quality = ConversionQuality.UNAVAILABLE,
+            warningMessage = reason
         )
     }
 }

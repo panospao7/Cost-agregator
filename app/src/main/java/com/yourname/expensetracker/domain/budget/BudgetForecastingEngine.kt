@@ -68,160 +68,61 @@ class BudgetForecastingEngine @Inject constructor(
     }
 
     /**
-     * CURR-587-03: Result-returning forecast API.
+     * CURR-587-03: Result-returning forecast API — the real implementation.
      * Returns [BudgetForecastResult.Unavailable] on home-currency or conversion failure.
+     * Never infers failure from zero/UNKNOWN sentinel values.
      */
     suspend fun generateForecastResult(
         budget: com.yourname.expensetracker.data.database.entity.Budget,
         forecastPeriodDays: Int = 30
-    ): BudgetForecastResult {
-        val now = timeProvider.now()
-        val resolution = currencySettingsRepository.resolveHomeCurrency()
-        if (resolution is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed) {
-            return BudgetForecastResult.Unavailable(
-                budgetId = budget.id,
-                reasonCode = ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
-                reason = "Home currency unavailable: ${resolution.reason}",
-                createdAt = now
-            )
-        }
-        val forecast = generateForecast(budget, forecastPeriodDays)
-        // If forecast came back with UNKNOWN risk and zero confidence, it was a conversion failure
-        return if (forecast.riskLevel == ForecastRiskLevel.UNKNOWN && forecast.confidenceScore == 0.0 &&
-            forecast.predictedSpending == 0.0 && forecast.predictedRemaining == 0.0) {
-            BudgetForecastResult.Unavailable(
-                budgetId = budget.id,
-                reasonCode = ForecastUnavailableReason.LIMIT_CONVERSION_FAILED,
-                reason = "Budget limit conversion failed",
-                createdAt = now
-            )
-        } else {
-            BudgetForecastResult.Available(forecast)
-        }
-    }
-
-    /**
-     * Generate a forecast for a specific budget.
-     */
-    suspend fun generateForecast(
-        budget: Budget,
-        forecastPeriodDays: Int = 30
-    ): BudgetForecast = withContext(ioDispatcher) {
-        writeBarrier.checkWritesAllowed("BudgetForecastingEngine.generateForecast")
+    ): BudgetForecastResult = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("BudgetForecastingEngine.generateForecastResult")
         val now = timeProvider.now()
         val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed -> {
-                Timber.w("BudgetForecastingEngine: Home currency unavailable: %s", resolution.reason)
-                // CURR-587-03: Return unavailable-marked forecast. currency=budget.currency is
-                // only stored for schema non-null requirement; currencyStatus marks it unavailable.
-                return@withContext BudgetForecast(
+                return@withContext BudgetForecastResult.Unavailable(
                     budgetId = budget.id,
-                    forecastDate = now,
-                    targetPeriodStart = now,
-                    targetPeriodEnd = now,
-                    predictedSpending = 0.0,
-                    predictedRemaining = 0.0,
-                    confidenceScore = 0.0,
-                    riskLevel = ForecastRiskLevel.UNKNOWN,
-                    overspendProbability = 0.0,
-                    createdAt = now,
-                    currency = budget.currency // schema non-null; UI must check riskLevel=UNKNOWN + confidenceScore=0
+                    reasonCode = ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
+                    reason = "Home currency unavailable: ${resolution.reason}",
+                    createdAt = now
                 )
             }
         }
 
-        // Calculate active budget period window first — we need periodEnd for the
-        // rate-as-of lookup so the budget limit is converted at the same
-        // historical rate basis as expenses (P6-P1-06).
         val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
 
-        // CURR-70F-11: Use convertOutcome with PERIOD_END basis — never hide latest fallback.
-        val normalizedBudgetAmount: Double
-        val budgetConversionFailed: Boolean
-        run {
-            val outcome = currencyConverter.convertOutcome(
-                amount = budget.amount,
-                fromCurrency = budget.currency,
-                toCurrency = homeCurrency,
-                rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END,
-                atMillis = periodEnd,
-                stalePolicy = com.yourname.expensetracker.domain.core.money.StaleRatePolicy.None
-            )
-            when (outcome) {
-                is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted -> {
-                    normalizedBudgetAmount = outcome.convertedAmount
-                    budgetConversionFailed = false
-                }
-                is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed -> {
-                    Timber.w("BudgetForecastingEngine: %s — forecast unavailable", outcome.message)
-                    normalizedBudgetAmount = 0.0
-                    budgetConversionFailed = true
-                }
+        val outcome = currencyConverter.convertOutcome(
+            amount = budget.amount,
+            fromCurrency = budget.currency,
+            toCurrency = homeCurrency,
+            rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.PERIOD_END,
+            atMillis = periodEnd,
+            stalePolicy = com.yourname.expensetracker.domain.core.money.StaleRatePolicy.None
+        )
+        val normalizedBudgetAmount = when (outcome) {
+            is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted -> outcome.convertedAmount
+            is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed -> {
+                return@withContext BudgetForecastResult.Unavailable(
+                    budgetId = budget.id,
+                    reasonCode = ForecastUnavailableReason.LIMIT_CONVERSION_FAILED,
+                    reason = "Budget limit conversion failed: ${outcome.message}",
+                    createdAt = now
+                )
             }
         }
+
         val elapsedEnd = now.coerceAtMost(periodEnd)
-        val spentToDate = if (!budgetConversionFailed) {
-            getSpentAmount(budget, periodStart, elapsedEnd, homeCurrency)
-        } else 0.0
-
-        // If budget limit conversion failed, produce a degraded forecast
-        if (budgetConversionFailed) {
-            val forecast = BudgetForecast(
-                budgetId = budget.id,
-                forecastDate = now,
-                targetPeriodStart = periodStart,
-                targetPeriodEnd = periodEnd,
-                predictedSpending = 0.0,
-                predictedRemaining = 0.0,
-                confidenceScore = 0.0,
-                riskLevel = ForecastRiskLevel.UNKNOWN,
-                overspendProbability = 0.0,
-                createdAt = now,
-                currency = homeCurrency
-            )
-            val persistedId = budgetForecastDao.insertWithDeactivation(forecast)
-            return@withContext forecast.copy(id = persistedId).also { f ->
-                f.spentToDate = 0.0
-                f.normalizedBudgetAmount = 0.0
-            }
-        }
-
-        val remainingForecastDays = TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()
-        
-        // Get historical spending data for this budget's category
+        val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd, homeCurrency)
+        val remainingForecastDays = com.yourname.expensetracker.domain.util.TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()
         val historicalData = getHistoricalSpendingData(budget)
-        
-        // Calculate predicted spending using multiple factors
-        val predictedSpending = calculatePredictedSpending(
-            historicalData = historicalData,
-            forecastPeriodDays = remainingForecastDays
-        )
-        
-        // Calculate confidence based on data quality
+        val predictedSpending = calculatePredictedSpending(historicalData, remainingForecastDays)
         val confidence = calculateConfidence(historicalData)
-        
-        // Determine risk level
-        val riskLevel = determineRiskLevel(
-            budget = budget,
-            predictedSpending = predictedSpending,
-            confidence = confidence,
-            spentToDate = spentToDate,
-            normalizedBudgetAmount = normalizedBudgetAmount
-        )
-        
-        // Calculate overspend probability
-        val overspendProbability = calculateOverspendProbability(
-            budgetAmount = normalizedBudgetAmount,
-            predictedSpending = predictedSpending,
-            spentToDate = spentToDate,
-            confidence = confidence
-        )
-        
-        // Calculate predicted remaining
+        val riskLevel = determineRiskLevel(budget, predictedSpending, confidence, spentToDate, normalizedBudgetAmount)
+        val overspendProbability = calculateOverspendProbability(normalizedBudgetAmount, predictedSpending, spentToDate, confidence)
         val predictedRemaining = normalizedBudgetAmount - spentToDate - predictedSpending
-        
+
         val forecast = BudgetForecast(
             budgetId = budget.id,
             forecastDate = now,
@@ -235,15 +136,30 @@ class BudgetForecastingEngine @Inject constructor(
             createdAt = now,
             currency = homeCurrency
         )
-        
-        // Save forecast — deactivate any existing active forecast for the same
-        // budget+period so only the newest forecast remains active.
         val persistedId = budgetForecastDao.insertWithDeactivation(forecast)
-
-        forecast.copy(id = persistedId).also { f ->
-            // S8-003: Expose computed values for ViewModel use (not persisted)
+        val persisted = forecast.copy(id = persistedId).also { f ->
             f.spentToDate = spentToDate
             f.normalizedBudgetAmount = normalizedBudgetAmount
+        }
+        BudgetForecastResult.Available(persisted)
+    }
+
+    /**
+     * Generate a forecast for a specific budget.
+     * @deprecated Use [generateForecastResult] to handle unavailable forecasts explicitly.
+     */
+    @Deprecated(
+        message = "Use generateForecastResult() to handle unavailable forecasts explicitly.",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun generateForecast(
+        budget: Budget,
+        forecastPeriodDays: Int = 30
+    ): BudgetForecast = withContext(ioDispatcher) {
+        // Delegate to the real implementation; throw on unavailable for legacy compatibility
+        when (val result = generateForecastResult(budget, forecastPeriodDays)) {
+            is BudgetForecastResult.Available -> result.forecast
+            is BudgetForecastResult.Unavailable -> throw IllegalStateException(result.reason)
         }
     }
     
