@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -418,13 +419,14 @@ class BudgetRepository @Inject constructor(
             )
         }
 
-        Timber.w("Failed to convert budget amount $amount from $sourceCurrency to $homeCurrency (as of $asOfMillis), using original amount")
-        return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
-            amount = amount,
-            currency = CurrencyCode(sourceCurrency)
+        // CURR-C62-14: Do not return raw source-currency amount — that would mix currencies
+        Timber.w("Failed to convert budget amount $amount from $sourceCurrency to $homeCurrency (as of $asOfMillis)")
+        return com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
+            CurrencyCode(homeCurrency)
         ).copy(
             isPartial = true,
-            warningMessage = "Budget limit could not be converted from $sourceCurrency to $homeCurrency"
+            warningMessage = "Budget limit could not be converted from $sourceCurrency to $homeCurrency",
+            conversionQuality = ConversionQuality.UNAVAILABLE
         )
     }
 

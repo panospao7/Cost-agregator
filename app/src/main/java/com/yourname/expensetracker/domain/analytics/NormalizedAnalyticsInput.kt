@@ -26,7 +26,12 @@ data class NormalizedExpense(
     val isNotMine: Boolean,
     val isSharedExpense: Boolean,
     val ownershipMode: String?,
-    val source: String?
+    val source: String?,
+    // Rate provenance — how this row was converted
+    val rateBasis: String? = null,
+    val rateUsed: Double? = null,
+    val rateValidDate: Long? = null,
+    val conversionPath: String? = null
 )
 
 /**

@@ -65,6 +65,7 @@ class MoneyNormalizationEngine @Inject constructor(
 
     /**
      * Aggregate a list of expenses into a single [MoneyAggregate].
+     * CURR-C62-06: Correctly populates rateBasis field.
      */
     suspend fun aggregateExpenses(
         expenses: List<Expense>,
@@ -73,11 +74,13 @@ class MoneyNormalizationEngine @Inject constructor(
         transactionTypeFilter: TransactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
     ): MoneyAggregate {
         val filtered = expenses.filter { it.matchesFilter(transactionTypeFilter) }
-        if (filtered.isEmpty()) return MoneyAggregate.empty(homeCurrency)
+        if (filtered.isEmpty()) return MoneyAggregate.empty(homeCurrency, rateBasis)
 
         var total = 0.0
         val failures = mutableListOf<ConversionFailure>()
         val bucketMap = mutableMapOf<CurrencyCode, Pair<Double, Int>>() // currency -> (amount, count)
+        var includedCount = 0
+        var excludedCount = 0
 
         for (expense in filtered) {
             val result = normalizeExpense(expense, homeCurrency, rateBasis)
@@ -87,8 +90,12 @@ class MoneyNormalizationEngine @Inject constructor(
                     val ccy = CurrencyCode(expense.currency.uppercase())
                     val (amt, cnt) = bucketMap.getOrDefault(ccy, 0.0 to 0)
                     bucketMap[ccy] = (amt + expense.effectiveAmount) to (cnt + 1)
+                    includedCount++
                 }
-                is NormalizationResult.Excluded -> failures.add(result.failure)
+                is NormalizationResult.Excluded -> {
+                    failures.add(result.failure)
+                    excludedCount++
+                }
             }
         }
 
@@ -104,12 +111,22 @@ class MoneyNormalizationEngine @Inject constructor(
                 val txCount = failures.sumOf { it.transactionCount }
                 "Partial: $txCount transaction(s) could not be converted"
             } else null,
-            rateBasis = rateBasis
+            rateBasis = rateBasis,
+            requestedRateBasis = rateBasis,
+            actualRateBasis = rateBasis,
+            metadata = MoneyAggregateMetadata(
+                includedTransactionCount = includedCount,
+                excludedTransactionCount = excludedCount,
+                missingRateCount = failures.count { it.reason == FailureReason.MISSING_RATE },
+                staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE }
+            )
         )
     }
 
     /**
      * Aggregate pre-grouped currency buckets into a single [MoneyAggregate].
+     * CURR-C62-06: Correctly populates rateBasis field.
+     * CURR-C62-09: Enforces RequireBucketDate policy.
      */
     suspend fun aggregateBuckets(
         buckets: List<MoneyBucketInput>,
@@ -117,19 +134,23 @@ class MoneyNormalizationEngine @Inject constructor(
         rateBasis: RateBasis,
         bucketDatePolicy: BucketDatePolicy
     ): MoneyAggregate {
-        if (buckets.isEmpty()) return MoneyAggregate.empty(homeCurrency)
+        if (buckets.isEmpty()) return MoneyAggregate.empty(homeCurrency, rateBasis)
 
         var total = 0.0
         val failures = mutableListOf<ConversionFailure>()
         val sourceBuckets = mutableListOf<MoneyBucket>()
+        var includedCount = 0
+        var excludedCount = 0
 
         for (bucket in buckets) {
             if (bucket.currency == homeCurrency) {
                 total += bucket.amount
                 sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
+                includedCount += bucket.transactionCount
                 continue
             }
 
+            // CURR-C62-09: Enforce RequireBucketDate policy
             val atMillis = when (bucketDatePolicy) {
                 is BucketDatePolicy.RequireBucketDate -> {
                     if (bucket.bucketDate == null) {
@@ -139,6 +160,7 @@ class MoneyNormalizationEngine @Inject constructor(
                             reason = FailureReason.MISSING_RATE,
                             transactionCount = bucket.transactionCount
                         ))
+                        excludedCount += bucket.transactionCount
                         continue
                     }
                     bucket.bucketDate
@@ -162,6 +184,7 @@ class MoneyNormalizationEngine @Inject constructor(
                 is ConversionOutcome.Converted -> {
                     total += outcome.convertedAmount
                     sourceBuckets.add(MoneyBucket(bucket.currency, bucket.amount, bucket.transactionCount))
+                    includedCount += bucket.transactionCount
                 }
                 is ConversionOutcome.Failed -> {
                     failures.add(ConversionFailure(
@@ -170,6 +193,7 @@ class MoneyNormalizationEngine @Inject constructor(
                         reason = outcome.failureType.toFailureReason(),
                         transactionCount = bucket.transactionCount
                     ))
+                    excludedCount += bucket.transactionCount
                 }
             }
         }
@@ -184,7 +208,15 @@ class MoneyNormalizationEngine @Inject constructor(
                 val txCount = failures.sumOf { it.transactionCount }
                 "Partial: $txCount transaction(s) could not be converted"
             } else null,
-            rateBasis = rateBasis
+            rateBasis = rateBasis,
+            requestedRateBasis = rateBasis,
+            actualRateBasis = rateBasis,
+            metadata = MoneyAggregateMetadata(
+                includedTransactionCount = includedCount,
+                excludedTransactionCount = excludedCount,
+                missingRateCount = failures.count { it.reason == FailureReason.MISSING_RATE },
+                staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE }
+            )
         )
     }
 }
@@ -226,7 +258,11 @@ private fun Expense.toNormalizedExpense(
         isNotMine = isNotMine,
         isSharedExpense = false,
         ownershipMode = null,
-        source = source
+        source = source,
+        rateBasis = rateBasis.name,
+        rateUsed = rateUsed,
+        rateValidDate = null,
+        conversionPath = path.name
     )
 }
 

@@ -629,8 +629,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         var capturedDuplicate: EmailReceiptProcessResult.Duplicate? = null
 
         database.withTransaction {
-            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-                .getOrDefault("EUR")
+            val homeResolution = currencySettingsRepository.resolveHomeCurrency()
+            val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR" // last resort for email receipt
 
             val receipt = ScannedReceipt(
                 imagePath = null,

@@ -520,10 +520,13 @@ class ReceiptRepository @Inject constructor(
         }
     }
 
-    /** Returns the user's home currency, falling back to "EUR" on error. */
+    /** 
+     * Returns the user's home currency, falling back to "EUR" only as last resort.
+     * CURR-C62-10: This is acceptable for receipt parsing context where a default is needed.
+     */
     private suspend fun homeCurrency(): String {
-        return runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeResolution = currencySettingsRepository.resolveHomeCurrency()
+        return homeResolution.currencyOrNull?.code ?: "EUR" // last resort for receipt parsing
     }
 
     private suspend fun runPostCommitSafely(

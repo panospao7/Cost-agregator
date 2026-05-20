@@ -153,10 +153,9 @@ class CsvExpenseImporter @Inject constructor(
                 ?: return RowResult.Failed("Invalid amount: $amountStr")
 
             // Resolve currency: explicit Currency column, then symbol from amount, then home fallback
-            val resolvedCurrency = col("currency")
-                ?: currencyFromSymbol
-                ?: runCatching { currencySettingsRepository.homeCurrency().first() }
-                    .getOrDefault("EUR")
+            val homeResolution = currencySettingsRepository.resolveHomeCurrency()
+            val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR" // last resort for CSV import
+            val resolvedCurrency = col("currency") ?: currencyFromSymbol ?: homeCurrency
 
             // Get or create category
             val categoryId = getOrCreateCategory(categoryName)

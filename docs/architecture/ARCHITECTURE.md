@@ -29,10 +29,11 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v124
-- 829+ Kotlin source files
-- 59 DAOs (56 in DaoModule + 3 in AiModule), 62 entities registered in AppDatabase
-- 38 ViewModels
+- Database version: v129 (migrated from v124 through v125–v129 for durable diagnostics, barrier system, lifecycle events)
+- 888 Kotlin source files (388 domain, 280 data, 164 ui, 31 di, 25 other)
+- 62 DAOs (58 in DaoModule + 3 in AiModule + 1 unbound), 64 entities registered in AppDatabase
+- 39 @HiltViewModel (38 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
+- 29 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
 - Bank statement AI parsing: **complete** (on-device→cloud→parser 3-tier validation with per-transaction source tracking)
@@ -116,7 +117,7 @@
 - **Leftover issues tracker** (`docs/LEFTOVER_ISSUES_PIPELINES_1_8.md`) — 55 P2/P3/enhancement items for all 8 pipelines tracked for future sprints.
 
 ### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
-- **Database version upgraded to v124** (from v123). Migration 123→124 adds forensic/debug fields for pipeline diagnostics and data-integrity tracking.
+- **Database version upgraded to v129** (from v124). Migrations 124→129 add durable diagnostics tables (`operation_runs`, `operation_run_events`), expand `pipeline_diagnostic_events` with 9 new columns, add `correlationId`/`causationId` to `transaction_events`, and add `isTerminal`/`eventId` to `operation_run_events`.
 - **WorkerRegistry** (`domain/workers/WorkerRegistry.kt`) — `object` with typed `Entry` list (specName + schedule lambda) for all 7 background workers. `scheduleAll(context)` iterates entries with `runCatching` for resilience. Replaces hardcoded lists in `RestoreMaintenanceMode.scheduleAllWorkers()` and `AppStartupCoordinator.scheduleStartupWork()` (P7-P1-07).
 - **PrivacyBlocked** (`domain/privacy/PrivacyBlocked.kt`) — sealed interface with concrete subclasses: `CloudAiDisabled`, `ReceiptImageUploadDisabled`, `ExternalGeocodingDisabled`, `NotificationCaptureDisabled`, `RawExportDisabled`, `Custom`. All 4 privacy gates (`NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`) now return `PrivacyBlocked` instead of ad-hoc `Denied(reason)` strings. Provides consistent UI messaging for privacy-denied states.
 - **PrivacySettings** — added `blockCloudAi: Boolean` field for explicit cloud AI blocking independent of the `cloudAiEnabled` toggle.
@@ -141,7 +142,7 @@
 - **AppStartupCoordinator** — uses `WorkerRegistry.scheduleAll()` instead of hardcoded worker schedule calls.
 
 ### Architecture Drift Updates (2026-05-10 — universal gap closure & hotfix)
-- **Database version upgraded to v123** (from v120) via three incremental migrations (v120→v121→v122→v123). New tables: `group_lifecycle_events`, `pipeline_diagnostic_events`. Various column additions and index optimizations.
+- **Database version upgraded to v124** (from v123). Migration 123→124 adds forensic/debug fields for pipeline diagnostics and data-integrity tracking.
 - **GroupLifecycleEventEntity** + **GroupLifecycleEventDao** created (`data/database/entity/GroupLifecycleEventEntity.kt`, `data/database/dao/GroupLifecycleEventDao.kt`) — immutable audit log for group lifecycle transitions (create group, add/remove member, add expense, archive, delete, record settlement). Registered in AppDatabase entities and DaoModule.
 - **PipelineDiagnosticEvent** + **PipelineDiagnosticEventDao** created (`data/database/entity/PipelineDiagnosticEvent.kt`, `data/database/dao/PipelineDiagnosticEventDao.kt`) — diagnostic tracking for all 8+ data pipelines (notification, transaction lifecycle, receipt, recurring, currency, budget/forecast, backup/restore, privacy/AI). Each pipeline writes diagnostic events on success/drop/failure. Used by `NotificationProcessingPipeline.writePipelineDiagnosticEvent()`.
 - **WorkerRunLogger** (`domain/workers/WorkerRunLogger.kt`) + **WorkerRunLoggerImpl** — per-worker-run interface with start/success/skipped/retry/failure lifecycle. Writes to `BackgroundJobRun` table via `BackgroundJobRunDao`. Bound via new **WorkerModule** (`di/WorkerModule.kt`).

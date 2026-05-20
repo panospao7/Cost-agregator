@@ -133,6 +133,10 @@ class AnalyticsCurrencyNormalizerTest {
             return rates[fromCurrency.uppercase() to toCurrency.uppercase()]
         }
 
+        override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? {
+            return rates[fromCurrency.uppercase() to toCurrency.uppercase()]
+        }
+
         override suspend fun insertOrUpdate(rate: DomainExchangeRate) {
             rates[rate.fromCurrency.uppercase() to rate.toCurrency.uppercase()] = rate
         }

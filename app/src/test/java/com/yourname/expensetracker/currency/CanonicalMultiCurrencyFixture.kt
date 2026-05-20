@@ -291,6 +291,10 @@ class FakeExchangeRateStore(
         return storedRates[fromCurrency.uppercase() to toCurrency.uppercase()]
     }
 
+    override suspend fun getLatestRateForPair(fromCurrency: String, toCurrency: String): DomainExchangeRate? {
+        return storedRates[fromCurrency.uppercase() to toCurrency.uppercase()]
+    }
+
     override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
         return storedRates[fromCurrency.uppercase() to toCurrency.uppercase()]
     }
@@ -358,6 +362,12 @@ class FakeCurrencySettingsRepository(
     override suspend fun clear() {
         homeCurrencyFlow.value = CanonicalMultiCurrencyFixture.HOME_CURRENCY
         lastRateUpdateFlow.value = 0L
+    }
+
+    override suspend fun resolveHomeCurrency(): com.yourname.expensetracker.domain.currency.HomeCurrencyResolution {
+        return com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+            com.yourname.expensetracker.domain.core.money.CurrencyCode(homeCurrencyFlow.value)
+        )
     }
 }
 

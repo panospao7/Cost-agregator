@@ -28,10 +28,11 @@ object MoneyAggregateBuilder {
         buckets: List<Pair<Double, String>>,  // amount, currency
         homeCurrency: String,
         converter: CurrencyConverter,
-        transactionCounts: List<Int> = emptyList()
+        transactionCounts: List<Int> = emptyList(),
+        rateBasis: RateBasis = RateBasis.LATEST_AVAILABLE
     ): MoneyAggregate {
         if (buckets.isEmpty()) {
-            return MoneyAggregate.empty(CurrencyCode(homeCurrency))
+            return MoneyAggregate.empty(CurrencyCode(homeCurrency), rateBasis)
         }
 
         // Group by currency
@@ -51,7 +52,7 @@ object MoneyAggregateBuilder {
         if (byCurrency.size == 1) {
             val entry = byCurrency.entries.first()
             if (entry.key == homeCurrency.uppercase()) {
-                return MoneyAggregate.singleCurrency(entry.value.first, CurrencyCode(entry.key), entry.value.second)
+                return MoneyAggregate.singleCurrency(entry.value.first, CurrencyCode(entry.key), entry.value.second, rateBasis)
             }
         }
 
@@ -79,7 +80,10 @@ object MoneyAggregateBuilder {
                 val totalFailedTx = conversionFailures.sumOf { it.transactionCount }
                 val bucketCount = conversionFailures.size
                 "Total excludes $totalFailedTx transaction(s) across $bucketCount currency bucket(s)"
-            } else null
+            } else null,
+            rateBasis = rateBasis,
+            requestedRateBasis = rateBasis,
+            actualRateBasis = rateBasis
         )
     }
 
@@ -94,7 +98,7 @@ object MoneyAggregateBuilder {
         rateBasis: RateBasis,
         bucketDatePolicy: BucketDatePolicy
     ): MoneyAggregate {
-        if (buckets.isEmpty()) return MoneyAggregate.empty(homeCurrency)
+        if (buckets.isEmpty()) return MoneyAggregate.empty(homeCurrency, rateBasis)
 
         var total = 0.0
         val sourceBuckets = mutableListOf<MoneyBucket>()
@@ -153,7 +157,9 @@ object MoneyAggregateBuilder {
                 val txCount = failures.sumOf { it.transactionCount }
                 "Total excludes $txCount transaction(s) across ${failures.size} currency bucket(s)"
             } else null,
-            rateBasis = rateBasis
+            rateBasis = rateBasis,
+            requestedRateBasis = rateBasis,
+            actualRateBasis = rateBasis
         )
     }
 }

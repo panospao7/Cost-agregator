@@ -30,7 +30,11 @@ data class MoneyAggregate(
     val conversionFailures: List<ConversionFailure>,
     val isPartial: Boolean = conversionFailures.isNotEmpty(),
     val warningMessage: String? = null,
-    val rateBasis: RateBasis = RateBasis.LATEST_AVAILABLE
+    val rateBasis: RateBasis = RateBasis.LATEST_AVAILABLE,
+    val requestedRateBasis: RateBasis = rateBasis,
+    val actualRateBasis: RateBasis = rateBasis,
+    val conversionQuality: ConversionQuality = if (conversionFailures.isEmpty()) ConversionQuality.COMPLETE else ConversionQuality.PARTIAL,
+    val metadata: MoneyAggregateMetadata = MoneyAggregateMetadata()
 ) {
 
     init {
@@ -65,22 +69,29 @@ data class MoneyAggregate(
         fun singleCurrency(
             amount: Double,
             currency: CurrencyCode,
-            transactionCount: Int = 0
+            transactionCount: Int = 0,
+            rateBasis: RateBasis = RateBasis.IDENTITY
         ): MoneyAggregate = MoneyAggregate(
             displayAmount = amount,
             displayCurrency = currency,
             sourceBuckets = listOf(MoneyBucket(currency, amount, transactionCount)),
             conversionFailures = emptyList(),
-            isPartial = false
+            isPartial = false,
+            rateBasis = rateBasis,
+            requestedRateBasis = rateBasis,
+            actualRateBasis = RateBasis.IDENTITY
         )
 
         /** Create an empty aggregate with zero total. */
-        fun empty(currency: CurrencyCode): MoneyAggregate = MoneyAggregate(
+        fun empty(currency: CurrencyCode, rateBasis: RateBasis = RateBasis.LATEST_AVAILABLE): MoneyAggregate = MoneyAggregate(
             displayAmount = 0.0,
             displayCurrency = currency,
             sourceBuckets = emptyList(),
             conversionFailures = emptyList(),
-            isPartial = false
+            isPartial = false,
+            rateBasis = rateBasis,
+            requestedRateBasis = rateBasis,
+            actualRateBasis = rateBasis
         )
 
         /** Create a partial aggregate with failures. */
@@ -88,7 +99,8 @@ data class MoneyAggregate(
             displayAmount: Double,
             displayCurrency: CurrencyCode,
             sourceBuckets: List<MoneyBucket>,
-            failures: List<ConversionFailure>
+            failures: List<ConversionFailure>,
+            rateBasis: RateBasis = RateBasis.LATEST_AVAILABLE
         ): MoneyAggregate = MoneyAggregate(
             displayAmount = displayAmount,
             displayCurrency = displayCurrency,
@@ -98,7 +110,10 @@ data class MoneyAggregate(
             warningMessage = if (failures.isNotEmpty()) {
                 val transactionCount = failures.sumOf { it.transactionCount }
                 "Partial: $transactionCount transaction(s) from ${failures.size} currency/currencies could not be converted"
-            } else null
+            } else null,
+            rateBasis = rateBasis,
+            requestedRateBasis = rateBasis,
+            actualRateBasis = rateBasis
         )
     }
 }

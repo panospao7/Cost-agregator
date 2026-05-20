@@ -290,12 +290,15 @@ class CurrencyConverter @Inject constructor(
             )
         }
 
-        // Historical bases require a date — never silently fall back to latest
-        if (rateBasis in listOf(RateBasis.TRANSACTION_DATE, RateBasis.PERIOD_START,
-                RateBasis.PERIOD_END, RateBasis.FORECAST_DATE, RateBasis.PERIOD_MIDPOINT_ESTIMATE) && atMillis == null) {
+        // Historical bases require a date — never silently fall back to latest (CURR-C62-03)
+        val historicalBases = listOf(
+            RateBasis.TRANSACTION_DATE, RateBasis.PERIOD_START,
+            RateBasis.PERIOD_END, RateBasis.FORECAST_DATE, RateBasis.PERIOD_MIDPOINT_ESTIMATE
+        )
+        if (rateBasis in historicalBases && atMillis == null) {
             return@withContext ConversionOutcome.Failed(
                 originalAmount = amount, originalCurrency = from, targetCurrency = to,
-                rateBasis = rateBasis, failureType = ConversionFailureType.UNKNOWN,
+                rateBasis = rateBasis, failureType = ConversionFailureType.MISSING_HISTORICAL_RATE,
                 message = "Historical rate basis $rateBasis requires atMillis but none provided"
             )
         }
@@ -359,21 +362,20 @@ class CurrencyConverter @Inject constructor(
             )
         }
 
-        // Staleness check
+        // Staleness check (CURR-C62-04: fixed to use validDate for historical conversions)
         if (stalePolicy.maxAgeMs != null) {
-            val referenceTime = when (stalePolicy.compareAgainst) {
-                StaleRateReference.NOW -> timeProvider.now()
-                StaleRateReference.TRANSACTION_DATE -> atMillis ?: timeProvider.now()
-                StaleRateReference.RATE_VALID_DATE -> rateResult.validDate ?: rateResult.lastUpdated
-            }
-            // For historical conversions, compare against validDate (when the rate was valid).
-            // For latest conversions, compare against lastUpdated (when we last fetched it).
-            val rateTimestamp = if (useHistorical) {
-                rateResult.validDate ?: rateResult.lastUpdated
+            // For historical conversions, compare transaction date against rate validDate
+            // For latest conversions, compare now against lastUpdated
+            val (referenceTime, rateTimestamp) = if (useHistorical) {
+                val txDate = atMillis ?: timeProvider.now()
+                val rateDate = rateResult.validDate ?: rateResult.lastUpdated
+                txDate to rateDate
             } else {
-                rateResult.lastUpdated
+                val now = timeProvider.now()
+                now to rateResult.lastUpdated
             }
-            val age = referenceTime - rateTimestamp
+            
+            val age = kotlin.math.abs(referenceTime - rateTimestamp)
             if (age > stalePolicy.maxAgeMs) {
                 return@withContext ConversionOutcome.Failed(
                     originalAmount = amount, originalCurrency = from, targetCurrency = to,
@@ -452,39 +454,44 @@ class CurrencyConverter @Inject constructor(
     }
 
     /**
-     * Store an exchange rate.
+     * Store an exchange rate with explicit validDate set to start-of-day.
+     * CURR-C62-01: Always sets validDate to prevent fresh rates from being ignored.
      */
     suspend fun storeRate(
         fromCurrency: String,
         toCurrency: String,
         rate: Double,
-        source: String = "manual"
+        source: String = "manual",
+        validDate: Long? = null
     ) {
         if (!isValidRate(rate)) {
             Timber.w("Ignoring invalid exchange rate %s -> %s = %s", fromCurrency, toCurrency, rate)
             return
         }
         val now = timeProvider.now()
+        val effectiveValidDate = validDate ?: startOfDay(now)
         val exchangeRate = DomainExchangeRate(
             fromCurrency = fromCurrency.uppercase(),
             toCurrency = toCurrency.uppercase(),
             rate = rate,
             lastUpdated = now,
             source = source,
-            validDate = startOfDay(now)
+            validDate = effectiveValidDate
         )
         exchangeRateStore.insertOrUpdate(exchangeRate)
     }
 
     /**
-     * Store multiple exchange rates at once.
+     * Store multiple exchange rates at once with explicit validDate.
+     * CURR-C62-01: Always sets validDate to prevent fresh rates from being ignored.
      */
     suspend fun storeRates(
         rates: List<Triple<String, String, Double>>,
-        source: String = "api"
+        source: String = "api",
+        validDate: Long? = null
     ) {
         val now = timeProvider.now()
-        val todayStart = startOfDay(now)
+        val effectiveValidDate = validDate ?: startOfDay(now)
         val exchangeRates = rates.mapNotNull { (from, to, rate) ->
             if (!isValidRate(rate)) {
                 Timber.w("Skipping invalid exchange rate %s -> %s = %s", from, to, rate)
@@ -496,7 +503,7 @@ class CurrencyConverter @Inject constructor(
                 rate = rate,
                 lastUpdated = now,
                 source = source,
-                validDate = todayStart
+                validDate = effectiveValidDate
             )
         }
         exchangeRateStore.insertOrUpdateAll(exchangeRates)

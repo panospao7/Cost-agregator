@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.currency
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 
 /**
  * Repository for currency-related settings.
@@ -66,5 +67,20 @@ interface CurrencySettingsRepository {
      * Resolve the home currency with explicit first-run vs failure distinction.
      * Implementations should override if they can distinguish "no value set" from "read error".
      */
-    suspend fun resolveHomeCurrency(): HomeCurrencyResolution
+    suspend fun resolveHomeCurrency(): HomeCurrencyResolution {
+        return try {
+            val code = homeCurrency().first()
+            if (code.isBlank()) {
+                HomeCurrencyResolution.FirstRunDefault(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR
+                )
+            } else {
+                HomeCurrencyResolution.Resolved(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode(code)
+                )
+            }
+        } catch (e: Exception) {
+            HomeCurrencyResolution.Failed(e.message ?: "Unknown error reading home currency")
+        }
+    }
 }

@@ -14,11 +14,13 @@ import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -247,16 +249,27 @@ class WarrantyTrackerRepository @Inject constructor(
     /**
      * Returns protected value aggregated by currency with conversion awareness.
      * W01: Replaces raw Double sum with MoneyAggregate for multi-currency safety.
-     * Now uses CurrencyConverter + CurrencySettingsRepository to convert each
-     * bucket to the user's home currency.
+     * CURR-C62-10: Returns partial aggregate if home currency unavailable.
      */
     suspend fun getTotalProtectedValueAggregate(): MoneyAggregate {
         val currencyTotals = warrantyDao.getTotalProtectedValueByCurrency(timeProvider.now())
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
-        val buckets = currencyTotals.map { Pair(it.total, it.currency) }
-        val counts = currencyTotals.map { it.txCount }
-        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
+        val homeResolution = currencySettingsRepository.resolveHomeCurrency()
+        
+        return when (homeResolution) {
+            is HomeCurrencyResolution.Resolved, is HomeCurrencyResolution.FirstRunDefault -> {
+                val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR"
+                val buckets = currencyTotals.map { Pair(it.total, it.currency) }
+                val counts = currencyTotals.map { it.txCount }
+                MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
+            }
+            is HomeCurrencyResolution.Failed -> {
+                MoneyAggregate.empty(CurrencyCode("EUR")).copy(
+                    isPartial = true,
+                    warningMessage = "Home currency unavailable: ${homeResolution.reason}",
+                    conversionQuality = ConversionQuality.UNAVAILABLE
+                )
+            }
+        }
     }
     
     // Return window operations
@@ -313,6 +326,7 @@ class WarrantyTrackerRepository @Inject constructor(
      * If [refundAmount] is null, refund-related fields are left unchanged.
      * If [refundCurrency] is null, it falls back to the linked Expense's currency,
      * then to the user's home currency setting.
+     * CURR-C62-10: Falls back to EUR only as last resort if home currency unavailable.
      */
     suspend fun markAsReturned(
         returnWindowId: Long,
@@ -322,8 +336,8 @@ class WarrantyTrackerRepository @Inject constructor(
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.markAsReturned")
         val existing = returnWindowDao.getReturnWindowById(returnWindowId) ?: return null
         val linkedExpense = existing.expenseId?.let { database.expenseDao().getById(it) }
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeResolution = currencySettingsRepository.resolveHomeCurrency()
+        val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR" // last resort for refund currency
         val currency = refundCurrency ?: linkedExpense?.currency ?: homeCurrency
         val updated = existing.copy(
             status = ReturnStatus.RETURNED,
@@ -583,15 +597,15 @@ class WarrantyTrackerRepository @Inject constructor(
      * satisfy the foreign-key constraint on [Warranty.receiptId] / [ReturnWindow.receiptId].
      * No OCR, deduplication, or warranty side effects are needed since the user is
      * manually entering warranty data.
+     * CURR-C62-10: Falls back to EUR only as last resort if home currency unavailable.
      */
-    // W21: Use homeCurrency from CurrencySettingsRepository instead of hardcoded EUR.
     suspend fun createManualPlaceholderReceipt(
         merchantName: String,
         purchaseDate: Long,
         productName: String
     ): Long {
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+        val homeResolution = currencySettingsRepository.resolveHomeCurrency()
+        val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR" // last resort for placeholder
         val receipt = ScannedReceipt(
             imagePath = null,
             rawOcrText = "Manual warranty entry",
