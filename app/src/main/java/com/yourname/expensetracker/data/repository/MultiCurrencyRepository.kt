@@ -397,7 +397,7 @@ class MultiCurrencyRepository @Inject constructor(
         return when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
             is HomeCurrencyResolution.Resolved -> CurrencyCode(resolution.currency.code) to false
             is HomeCurrencyResolution.FirstRunDefault -> CurrencyCode(resolution.currency.code) to false
-            is HomeCurrencyResolution.Failed -> CurrencyCode("EUR") to true
+            is HomeCurrencyResolution.Failed -> throw HomeCurrencyUnavailableException(resolution.reason)
         }
     }
 
@@ -565,7 +565,9 @@ class MultiCurrencyRepository @Inject constructor(
         val homeCurrency = try {
             CurrencyCode(resolveHomeCurrency())
         } catch (e: HomeCurrencyUnavailableException) {
-            return MoneyAggregate.empty(CurrencyCode(""), RateBasis.TRANSACTION_DATE).copy(
+            // CURR-3E8-01: Return empty aggregate with UNAVAILABLE quality.
+            // Use a sentinel valid currency since MoneyAggregate requires valid CurrencyCode.
+            return MoneyAggregate.empty(CurrencyCode("XXX"), RateBasis.TRANSACTION_DATE).copy(
                 conversionQuality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
                 warningMessage = "Home currency unavailable: ${e.reason}"
             )

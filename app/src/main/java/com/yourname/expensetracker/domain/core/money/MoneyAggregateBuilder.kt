@@ -138,7 +138,7 @@ object MoneyAggregateBuilder {
                 toCurrency = homeCurrency.code,
                 rateBasis = effectiveBasis,
                 atMillis = atMillis,
-                stalePolicy = StaleRatePolicy.None
+                stalePolicy = StaleRatePolicy.forBasis(effectiveBasis)
             )
 
             when (outcome) {

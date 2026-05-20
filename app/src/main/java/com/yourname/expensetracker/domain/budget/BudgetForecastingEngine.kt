@@ -92,7 +92,7 @@ class BudgetForecastingEngine @Inject constructor(
                     riskLevel = ForecastRiskLevel.UNKNOWN,
                     overspendProbability = 0.0,
                     createdAt = now,
-                    currency = "" // CURR-9A6-04: no fake EUR on unavailable
+                    currency = budget.currency // CURR-3E8-09: use budget's own currency, not blank
                 )
             }
         }

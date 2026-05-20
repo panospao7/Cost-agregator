@@ -446,7 +446,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             ExpenseSnapshot(
                 id = expense.id,
                 amount = expense.amount,
-                effectiveAmount = expense.effectiveAmount,
+                effectiveAmount = expense.effectiveAmount, // G-MONEY-ALLOW: ForecastInputAssembler normalizes downstream
                 currency = expense.currency,
                 merchant = expense.merchant,
                 merchantKey = MerchantKeyGenerator.generate(expense.merchant).ifBlank { null },
