@@ -436,40 +436,36 @@ class CurrencyConverter @Inject constructor(
         amounts: List<Pair<Double, String>>,
         targetCurrency: String
     ): MultiConversionAggregate = withContext(Dispatchers.IO) {
+        val stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
         var total = 0.0
         val failures = mutableListOf<FailedConversion>()
 
         for ((amount, currency) in amounts) {
-            val converted = convert(amount, currency, targetCurrency)
-            if (converted != null) {
-                total += converted.convertedAmount
-            } else {
-                // Determine whether failure was due to stale rate or missing rate
-                val now = timeProvider.now()
-                val directRate = exchangeRateStore.getRate(currency.uppercase(), targetCurrency.uppercase())
-                val isStale = if (directRate != null) {
-                    (now - directRate.lastUpdated) > MAX_RATE_AGE_MS
-                } else {
-                    // Check EUR-composite legs for staleness when direct rate absent
-                    val toEur = exchangeRateStore.getRate(currency.uppercase(), DEFAULT_BASE_CURRENCY)
-                    val fromEur = exchangeRateStore.getRate(DEFAULT_BASE_CURRENCY, targetCurrency.uppercase())
-                    toEur != null && fromEur != null &&
-                        ((now - toEur.lastUpdated) > MAX_RATE_AGE_MS || (now - fromEur.lastUpdated) > MAX_RATE_AGE_MS)
+            when (val outcome = convertOutcome(
+                amount = amount,
+                fromCurrency = currency,
+                toCurrency = targetCurrency,
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = stalePolicy
+            )) {
+                is ConversionOutcome.Converted -> total += outcome.convertedAmount
+                is ConversionOutcome.Failed -> {
+                    val failureType = when (outcome.failureType) {
+                        ConversionFailureType.STALE_RATE -> FailedConversion.STALE_RATE
+                        ConversionFailureType.MISSING_RATE,
+                        ConversionFailureType.MISSING_HISTORICAL_RATE -> FailedConversion.MISSING_RATE
+                        else -> FailedConversion.MISSING_RATE
+                    }
+                    failures += FailedConversion(
+                        originalAmount = amount,
+                        originalCurrency = currency,
+                        targetCurrency = targetCurrency,
+                        reason = outcome.message,
+                        failureType = failureType
+                    )
+                    Timber.w("Could not convert $amount $currency to $targetCurrency ($failureType): ${outcome.message}")
                 }
-                val failureType = if (isStale) FailedConversion.STALE_RATE else FailedConversion.MISSING_RATE
-                val reason = if (isStale) {
-                    "Stale exchange rate from ${currency.uppercase()} to ${targetCurrency.uppercase()}"
-                } else {
-                    "Missing exchange rate from ${currency.uppercase()} to ${targetCurrency.uppercase()}"
-                }
-                failures += FailedConversion(
-                    originalAmount = amount,
-                    originalCurrency = currency,
-                    targetCurrency = targetCurrency,
-                    reason = reason,
-                    failureType = failureType
-                )
-                Timber.w("Could not convert $amount $currency to $targetCurrency ($failureType)")
             }
         }
 

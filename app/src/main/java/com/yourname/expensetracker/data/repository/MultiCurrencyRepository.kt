@@ -102,7 +102,7 @@ class MultiCurrencyRepository @Inject constructor(
             // A.9 Batch 5: type-agnostic aggregate SQL path replaces uncapped row scan.
             val currencyTotals = expenseDao.getAllSpentBetweenByCurrency(startDate, endDate)
             val amounts = currencyTotals.map { Pair(it.total, it.currency) }
-            val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+            val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency) // G-MONEY-ALLOW[CURR-587-09][G-MONEY-17]: deprecated getTotalExpensesInHomeCurrency, not used by dashboard
             if (aggregate.hasFailures) {
                 throw MissingExchangeRateException(
                     buildMissingRateMessage(aggregate.failedConversions, homeCurrency),
@@ -233,7 +233,7 @@ class MultiCurrencyRepository @Inject constructor(
             val byCategoryId = grouped.groupBy { it.categoryId }
             for ((categoryId, buckets) in byCategoryId) {
                 val amounts = buckets.map { Pair(it.total, it.currency) }
-                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency) // G-MONEY-ALLOW[CURR-587-09][G-MONEY-17]: deprecated getCategoryTotalsInHomeCurrency
                 failedConversions += aggregate.failedConversions
                 val current = result[categoryId] ?: 0.0
                 result[categoryId] = current + aggregate.total
@@ -292,7 +292,7 @@ class MultiCurrencyRepository @Inject constructor(
             val byMerchant = grouped.groupBy { it.merchant }
             for ((merchant, buckets) in byMerchant) {
                 val amounts = buckets.map { Pair(it.total, it.currency) }
-                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency) // G-MONEY-ALLOW[CURR-587-09][G-MONEY-17]: deprecated getMerchantTotalsInHomeCurrency
                 failedConversions += aggregate.failedConversions
                 val current = result[merchant] ?: 0.0
                 result[merchant] = current + aggregate.total
@@ -344,7 +344,7 @@ class MultiCurrencyRepository @Inject constructor(
             val result = mutableListOf<MonthTotal>()
             for ((monthKey, buckets) in byMonth.toSortedMap()) {
                 val amounts = buckets.map { Pair(it.total, it.currency) }
-                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency) // G-MONEY-ALLOW[CURR-587-09][G-MONEY-17]: deprecated getMonthlyTotalsInHomeCurrency
                 result.add(
                     MonthTotal(
                         monthKey = monthKey,

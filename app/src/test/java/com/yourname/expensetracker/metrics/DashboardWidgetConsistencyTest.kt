@@ -49,6 +49,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -244,8 +245,9 @@ class DashboardWidgetConsistencyTest {
         val result = computeUseCase.compute(processedData)
 
         val safeToSpend = result.allWidgets.filterIsInstance<DashboardWidget.SafeToSpend>().single()
-        // CURR-587-05: SafeToSpend no longer uses weather.discretionaryBudget — amount is 0.0 (budget not yet normalized)
-        assertEquals("SafeToSpend amount is 0.0 when budget not normalized", 0.0, safeToSpend.amount, 0.001)
+        // PR3: SafeToSpend amount is null when budget remaining is not yet normalized
+        assertNull("SafeToSpend amount should be null when budget not normalized", safeToSpend.amount)
+        assertTrue("SafeToSpend should be unavailable when budget not normalized", safeToSpend.isUnavailable)
     }
 
     @Test

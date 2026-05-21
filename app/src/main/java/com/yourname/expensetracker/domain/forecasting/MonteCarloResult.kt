@@ -36,7 +36,7 @@ data class MonteCarloResult(
     val metadata: SimulationMetadata,
 
     /** Currency in which all monetary values in this result are denominated. */
-    val displayCurrency: String
+    val displayCurrency: String?
 ) {
     companion object {
         /** CURR-587-05 / CURR-172-06: Unavailable placeholder — no blank currency. */
@@ -47,7 +47,7 @@ data class MonteCarloResult(
             spentToDate = 0.0, knownUpcoming = 0.0,
             confidence = SimulationConfidence(0.0, ConfidenceLevel.LOW, reason),
             metadata = SimulationMetadata(0, 0, 0, 0.0, 0.0, 0, 0L),
-            displayCurrency = "N/A" // unavailable — must not be formatted as money
+            displayCurrency = null // unavailable — must not be formatted as money
         )
     }
 }

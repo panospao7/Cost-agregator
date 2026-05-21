@@ -67,11 +67,15 @@ sealed class DashboardWidget {
      * @param daysRemaining Days left in the current budget period.
      */
     data class SafeToSpend(
-        val amount: Double,
+        val amount: Double?,
         val totalBudget: Double?,
         val daysRemaining: Int,
         /** S4-006: true when conversion failures made this amount partial */
         val isPartial: Boolean = false,
+        /** PR3: true when budget remaining is not yet normalized */
+        val isUnavailable: Boolean = false,
+        /** PR3: currency quality metadata when available */
+        val currencyQuality: CurrencyQualityUi? = null,
         val conversionWarningCount: Int = 0
     ) : DashboardWidget()
 
@@ -132,7 +136,9 @@ sealed class DashboardWidget {
         val monthlyIncome: Double,
         val committedExpenses: Double,
         val likelyExpenses: Double,
-        val status: RunwayStatus
+        val status: RunwayStatus,
+        val isUnavailable: Boolean = false,
+        val currencyQuality: CurrencyQualityUi? = null
     ) : DashboardWidget()
 
     enum class RunwayStatus {
@@ -361,6 +367,23 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val monthAggregate = engine.aggregateExpenses(purchases.filter { it.date >= periodStart }, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
         val depositAggregate = engine.aggregateExpenses(deposits, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.INCOME_ONLY)
 
+        // Compute previous month aggregate
+        val previousMonthEnd = periodStart - 1L
+        val previousMonthStart = TimePeriodUtils.getStartOfMonth(previousMonthEnd)
+        val previousMonthPurchases = purchases.filter { it.date >= previousMonthStart && it.date < periodStart }
+        val previousMonthAggregate = if (previousMonthPurchases.isEmpty()) {
+            null
+        } else {
+            engine.aggregateExpenses(previousMonthPurchases, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
+        }
+
+        // Compute per-day aggregates for the current period
+        val dailyAggregates = purchases
+            .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+            .mapValues { (_, group) ->
+                engine.aggregateExpenses(group, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
+            }
+
         val categoryAggregates = purchases
             .groupBy { it.categoryId }
             .mapValues { (_, group) ->
@@ -389,6 +412,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             todayAggregate = todayAggregate,
             weekAggregate = weekAggregate,
             monthAggregate = monthAggregate,
+            previousMonthAggregate = previousMonthAggregate,
             categoryAggregates = categoryAggregates,
             depositAggregate = depositAggregate,
             dataQuality = dataQuality
@@ -453,7 +477,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             weekSpent = weekSpent,
             periodIsPartial = periodIsPartial,
             overallBudget = overallBudget,
-            totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0,
+            totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization is implemented
             normalizedInputResult = normalizedInputResult
         )
     }
@@ -480,16 +504,23 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         )
     }
 
-    private data class RunwayResult(
-        val currentPace: SpendingPace,
-        val forecast: com.yourname.expensetracker.domain.model.FinancialForecast,
-        val financialRunway: DashboardWidget.FinancialRunway,
-        val totalRemaining: Double,
-        val totalCommitted: Double,
-        val totalLikely: Double,
-        val purchasesThisMonth: List<DashboardExpense>,
-        val isUnavailable: Boolean = false
-    )
+    private sealed interface RunwayResult {
+        data class Available(
+            val currentPace: SpendingPace,
+            val forecast: com.yourname.expensetracker.domain.model.FinancialForecast,
+            val financialRunway: DashboardWidget.FinancialRunway,
+            val totalRemaining: Double,
+            val totalCommitted: Double,
+            val totalLikely: Double,
+            val purchasesThisMonth: List<DashboardExpense>
+        ) : RunwayResult
+
+        data class Unavailable(
+            val reason: String,
+            val purchasesThisMonth: List<DashboardExpense>,
+            val currencyQuality: CurrencyQualityUi
+        ) : RunwayResult
+    }
 
     private suspend fun computeRunwayAndForecast(ctx: ComputeContext): RunwayResult {
         val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
@@ -500,42 +531,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             is DashboardNormalizedInputResult.Available ->
                 normalized.input.normalizedExpenses.map { it.toExpenseSnapshot() }
             is DashboardNormalizedInputResult.Unavailable -> {
-                // Return typed unavailable runway — no synthesis from empty snapshots
-                val emptyForecast = synthesisEngine.synthesize(
-                    forecastInputAssembler.assemble(
-                        expenses = emptyList(),
-                        manualRecurringEntities = emptyList(),
-                        detectedRecurringPatterns = data.recurringPatterns,
-                        plannedExpenses = data.plannedExpenses,
-                        savingsGoals = data.goals,
-                        budgetStatuses = data.budgetStatuses
-                    )
-                )
-                return RunwayResult(
-                    currentPace = forecastInputAssembler.assemble(
-                        expenses = emptyList(),
-                        manualRecurringEntities = emptyList(),
-                        detectedRecurringPatterns = emptyList(),
-                        plannedExpenses = emptyList(),
-                        savingsGoals = emptyList(),
-                        budgetStatuses = emptyList()
-                    ).spendingPace,
-                    forecast = emptyForecast,
-                    financialRunway = DashboardWidget.FinancialRunway(
-                        daysRemaining = 0,
-                        totalBudget = ctx.totalBudgetAmount,
-                        discretionaryRemaining = 0.0,
-                        averageDailyDiscretionarySpend = 0.0,
-                        monthlyIncome = 0.0,
-                        committedExpenses = 0.0,
-                        likelyExpenses = 0.0,
-                        status = DashboardWidget.RunwayStatus.NO_INCOME
-                    ),
-                    totalRemaining = 0.0,
-                    totalCommitted = 0.0,
-                    totalLikely = 0.0,
+                return RunwayResult.Unavailable(
+                    reason = normalized.reason,
                     purchasesThisMonth = purchasesThisMonth,
-                    isUnavailable = true
+                    currencyQuality = CurrencyQualityUi(
+                        isPartial = true,
+                        quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
+                        warningMessage = normalized.reason
+                    )
                 )
             }
         }
@@ -573,12 +576,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             else                 -> DashboardWidget.RunwayStatus.CRITICAL
         }
 
-        return RunwayResult(
+        return RunwayResult.Available(
             currentPace = currentPace,
             forecast = forecast,
             financialRunway = DashboardWidget.FinancialRunway(
                 daysRemaining = runwayDays,
-                totalBudget = ctx.totalBudgetAmount,
+                totalBudget = ctx.totalBudgetAmount, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
                 discretionaryRemaining = totalRemaining,
                 averageDailyDiscretionarySpend = averageDailyBurn,
                 monthlyIncome = monthlyIncome,
@@ -597,11 +600,34 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         ctx: ComputeContext,
         runwayResult: RunwayResult
     ): List<DomainDayBudgetStatus> {
+        // When runway is unavailable, do not use raw expenseEntities or dailyHistory
+        if (runwayResult is RunwayResult.Unavailable) return emptyList()
+
+        val normalized = ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available
+            ?: return emptyList()
+
+        val availableResult = runwayResult as RunwayResult.Available
+
+        // Use normalized daily aggregates instead of raw dailyHistory
+        val dailySpending = normalized.input.normalizedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+            .mapValues { (_, expenses) -> expenses.sumOf { it.normalizedAmount }.toFloat() }
+
+        // Build daily history list aligned with calendar days
+        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = ctx.now }
+        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val monthStart = ctx.monthStart
+        val dailyHistory = (0 until daysInMonth).map { dayIndex ->
+            val dayStart = monthStart + dayIndex * TimePeriodUtils.DAY_IN_MILLIS
+            dailySpending[dayStart] ?: 0f
+        }
+
         val domainBlocks = synthesisEngine.calculateBlockPartyData(
-            forecast = runwayResult.forecast,
-            expenses = ctx.expenseEntities,
-            dailySpending = ctx.data.summary.dailyHistory.map { it.toFloat() },
-            budgetLimit = ctx.totalBudgetAmount
+            forecast = availableResult.forecast,
+            expenses = ctx.expenseEntities, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: display-only transaction list, not money math
+            dailySpending = dailyHistory,
+            budgetLimit = normalized.input.monthAggregate.displayAmount // Use normalized month total
         )
 
         // Build a lookup map from categoryId → categoryName so we can populate
@@ -649,6 +675,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         ctx: ComputeContext,
         runwayResult: RunwayResult
     ): DashboardWidget.MonteCarloForecast? {
+        if (runwayResult is RunwayResult.Unavailable) {
+            return DashboardWidget.MonteCarloForecast(
+                result = MonteCarloResult.unavailable(runwayResult.reason),
+                currencyQuality = runwayResult.currencyQuality
+            )
+        }
         return try {
             // CURR-587-05: Use normalized month aggregate instead of raw repository call
             val spentToDate = when (val normalized = ctx.normalizedInputResult) {
@@ -664,8 +696,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                     )
                 }
             }
-            val knownUpcoming = runwayResult.totalCommitted + runwayResult.totalLikely
-            val budgetForMC = if (ctx.totalBudgetAmount > 0) ctx.totalBudgetAmount else null
+            val availableResult = runwayResult as RunwayResult.Available
+            val knownUpcoming = availableResult.totalCommitted + availableResult.totalLikely
+            val budgetForMC = if (ctx.totalBudgetAmount > 0) ctx.totalBudgetAmount else null // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
 
             val mcResult = monteCarloSimulator.simulate(
                 spentToDate = spentToDate,
@@ -940,27 +973,55 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
             add(
                 when (val normalized = ctx.normalizedInputResult) {
-                    is DashboardNormalizedInputResult.Available -> DashboardWidget.SafeToSpend(
-                        // Budget remaining not yet normalized — show 0.0 with partial quality
-                        amount = 0.0,
-                        totalBudget = ctx.overallBudget?.budgetAmount,
-                        daysRemaining = ctx.daysRemaining,
-                        isPartial = normalized.input.dataQuality.isPartial,
-                        conversionWarningCount = normalized.input.dataQuality.excludedTransactionCount
-                    )
+                    is DashboardNormalizedInputResult.Available -> {
+                        // Budget remaining not yet normalized — show unavailable with partial quality
+                        DashboardWidget.SafeToSpend(
+                            amount = null,
+                            totalBudget = ctx.overallBudget?.budgetAmount, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget display until budget normalization
+                            daysRemaining = ctx.daysRemaining,
+                            isPartial = normalized.input.dataQuality.isPartial,
+                            isUnavailable = true,
+                            currencyQuality = CurrencyQualityUi(
+                                isPartial = true,
+                                quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.PARTIAL,
+                                warningMessage = "Budget remaining not yet normalized"
+                            ),
+                            conversionWarningCount = normalized.input.dataQuality.excludedTransactionCount
+                        )
+                    }
                     is DashboardNormalizedInputResult.Unavailable -> DashboardWidget.SafeToSpend(
-                        amount = 0.0,
-                        totalBudget = ctx.overallBudget?.budgetAmount,
+                        amount = null,
+                        totalBudget = null,
                         daysRemaining = ctx.daysRemaining,
                         isPartial = true,
+                        isUnavailable = true,
+                        currencyQuality = CurrencyQualityUi.unavailable(normalized.reason),
                         conversionWarningCount = 0
                     )
                 }
             )
-            if (!runwayResult.isUnavailable && (runwayResult.totalRemaining > 0 || ctx.totalBudgetAmount > 0)) add(runwayResult.financialRunway)
+            when (runwayResult) {
+                is RunwayResult.Available -> {
+                    if (runwayResult.totalRemaining > 0 || ctx.totalBudgetAmount > 0) add(runwayResult.financialRunway) // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget check until budget normalization
+                }
+                is RunwayResult.Unavailable -> {
+                    add(DashboardWidget.FinancialRunway(
+                        daysRemaining = 0,
+                        totalBudget = 0.0,
+                        discretionaryRemaining = 0.0,
+                        averageDailyDiscretionarySpend = 0.0,
+                        monthlyIncome = 0.0,
+                        committedExpenses = 0.0,
+                        likelyExpenses = 0.0,
+                        status = DashboardWidget.RunwayStatus.NO_INCOME,
+                        isUnavailable = true,
+                        currencyQuality = runwayResult.currencyQuality
+                    ))
+                }
+            }
             if (monteCarloWidget != null) add(monteCarloWidget)
             if (blockPartyDays.isNotEmpty()) add(DashboardWidget.BudgetBlockParty(blockPartyDays))
-            if (runwayResult.currentPace.paceStatus != PaceStatus.NO_BASELINE) {
+            if (runwayResult is RunwayResult.Available && runwayResult.currentPace.paceStatus != PaceStatus.NO_BASELINE) {
                 add(DashboardWidget.SpendingPaceWidget(runwayResult.currentPace))
             }
             add(trend)

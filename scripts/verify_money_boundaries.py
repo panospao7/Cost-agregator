@@ -45,7 +45,7 @@ class Violation:
 
 # ── Structured allowlist syntax ────────────────────────────────────────────────
 STRUCTURED_ALLOW_RE = re.compile(
-    r'G-MONEY-ALLOW\[(?P<issue>[A-Z]+-\d+)\]\[(?P<rule>G-MONEY-\d+)\]:\s*(?P<reason>.{15,})'
+    r'G-MONEY-ALLOW\[(?P<issue>[A-Z0-9-]+)\]\[(?P<rule>G-MONEY-\d+)\]:\s*(?P<reason>.{15,})'
 )
 GENERIC_ALLOW_RE = re.compile(r'G-MONEY-ALLOW(?!\[)')
 
@@ -117,6 +117,15 @@ RULES: List[Rule] = [
     Rule(r'MoneyAggregate\.empty\(CurrencyCode\("XXX"\)', 'G-MONEY-11',
          'MoneyAggregate.empty with fake XXX currency — use MoneyAggregateResult.Unavailable',
          financial_only=False, allowlistable=False),
+    Rule(r'CurrencyCode\(""\)', 'G-MONEY-11',
+         'Blank currency sentinel CurrencyCode("") — use MoneyAggregateResult.Unavailable',
+         financial_only=False, allowlistable=False),
+    Rule(r'displayCurrency\s*=\s*""', 'G-MONEY-11',
+         'Blank displayCurrency sentinel — use null or typed unavailable',
+         financial_only=True, allowlistable=False),
+    Rule(r'displayCurrency\s*=\s*"N/A"', 'G-MONEY-11',
+         'Sentinel displayCurrency "N/A" — use null or typed unavailable',
+         financial_only=True, allowlistable=False),
 
     # G-MONEY-12: misleading helper — NON-ALLOWLISTABLE
     Rule(r'resolveHomeCurrencyOrUnavailable\s*\(', 'G-MONEY-12',
@@ -171,8 +180,22 @@ G_MONEY_15_PATTERNS = [
     (r'weather\.discretionaryBudget', 'weather.discretionaryBudget'),
     (r'getHomeCurrencyPurchaseTotal\(', 'getHomeCurrencyPurchaseTotal()'),
     (r'getHomeCurrencyDepositTotal\(', 'getHomeCurrencyDepositTotal()'),
+    (r'summary\.dailyHistory', 'summary.dailyHistory'),
+    (r'ctx\.expenseEntities', 'ctx.expenseEntities'),
+    (r'ctx\.totalBudgetAmount', 'ctx.totalBudgetAmount'),
+    (r'overallBudget\?\.budgetAmount', 'overallBudget?.budgetAmount'),
 ]
 G_MONEY_15_FILE_RE = re.compile(r'ComputeDashboardWidgetsUseCase', re.IGNORECASE)
+
+# ── G-MONEY-21b: Unavailable branch that still calls assemble/synthesize ──────
+G_MONEY_21_BLOCK_RE = re.compile(
+    r'DashboardNormalizedInputResult\.Unavailable\s*->\s*\{[^}]{0,2000}?(?:'
+    r'forecastInputAssembler\.assemble\(|'
+    r'synthesisEngine\.synthesize\(|'
+    r'expenses\s*=\s*emptyList\(\)'
+    r')',
+    re.DOTALL
+)
 
 # ── Multiline G-MONEY-02 ───────────────────────────────────────────────────────
 MULTILINE_FALLBACK = re.compile(
@@ -191,7 +214,6 @@ EXCLUDED_FILES = {
     'MoneyMappers.kt',
     'ExchangeRateStoreAdapter.kt',
     'AppDatabase.kt',
-    'StaleRatePolicy.kt',  # defines the policies
 }
 
 EXCLUDED_PATH_PATTERNS = [
@@ -202,11 +224,6 @@ EXCLUDED_PATH_PATTERNS = [
     r'Fake\.kt$',
     r'Mock\.kt$',
 ]
-
-# G-MONEY-17 allowlist: these files use convertMultiple for legacy compat
-G_MONEY_17_ALLOWLIST_FILES = {
-    'MultiCurrencyRepository.kt',  # legacy latest-rate compat methods
-}
 
 # G-MONEY-19 allowlist: StaleRatePolicy.None is valid for non-latest bases
 G_MONEY_19_ALLOWLIST_CONTEXT = re.compile(
@@ -260,14 +277,35 @@ def check_file(file_path: Path) -> List[Violation]:
 
     # G-MONEY-15: dashboard raw money (scoped to ComputeDashboardWidgetsUseCase only)
     if is_dashboard_usecase:
-        for pattern, label in G_MONEY_15_PATTERNS:
-            for m in re.finditer(pattern, content_stripped):
-                line_num = content_stripped[:m.start()].count('\n') + 1
-                violations.append(Violation(
-                    line_num, 'G-MONEY-15',
-                    f'Dashboard widget must not use raw {label} — use normalized input',
-                    lines_raw[line_num - 1].strip() if line_num <= len(lines_raw) else ''
-                ))
+        for line_idx, raw_line in enumerate(lines_raw):
+            stripped_line = raw_line.strip()
+            if stripped_line.startswith('//') or stripped_line.startswith('*') or stripped_line.startswith('/*'):
+                continue
+
+            # Check structured allowlist from raw line
+            structured_allowed = get_structured_allow(raw_line)
+            if structured_allowed == 'G-MONEY-15':
+                continue
+
+            # Strip inline comment for pattern matching
+            code_part = LINE_COMMENT_RE.sub('', raw_line)
+
+            for pattern, label in G_MONEY_15_PATTERNS:
+                if re.search(pattern, code_part):
+                    violations.append(Violation(
+                        line_idx + 1, 'G-MONEY-15',
+                        f'Dashboard widget must not use raw {label} — use normalized input',
+                        code_part.strip()
+                    ))
+
+        # G-MONEY-21b: Unavailable branch must not call assemble/synthesize with emptyList
+        for match in G_MONEY_21_BLOCK_RE.finditer(content_stripped):
+            line_num = content_stripped[:match.start()].count('\n') + 1
+            violations.append(Violation(
+                line_num, 'G-MONEY-21',
+                'Unavailable normalized input branch must not call assemble/synthesize with emptyList — return typed unavailable instead',
+                match.group()[:200].replace('\n', ' ')
+            ))
 
     # Line-level rules — scan raw lines (allowlists are in comments, patterns are in code)
     for line_idx, raw_line in enumerate(lines_raw):
@@ -298,10 +336,6 @@ def check_file(file_path: Path) -> List[Violation]:
             if rule.rule_id in ('G-MONEY-16', 'G-MONEY-21') and not is_dashboard_usecase:
                 continue
             if not re.search(rule.pattern, code_part):
-                continue
-
-            # G-MONEY-17: skip for legacy compat files
-            if rule.rule_id == 'G-MONEY-17' and file_path.name in G_MONEY_17_ALLOWLIST_FILES:
                 continue
 
             # G-MONEY-19: skip if nearby context shows non-latest basis

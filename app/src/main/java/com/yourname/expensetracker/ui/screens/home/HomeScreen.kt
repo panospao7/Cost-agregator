@@ -356,7 +356,7 @@ fun HomeScreen(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         AmountText(
-                                            amount = widget.amount,
+                                            amount = widget.amount ?: 0.0,
                                             style = MaterialTheme.typography.displayMedium,
                                             color = SemanticColors.TextPrimary
                                         )
@@ -378,12 +378,12 @@ fun HomeScreen(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         AmountText(
-                                            amount = widget.amount,
+                                            amount = widget.amount ?: 0.0,
                                             style = MaterialTheme.typography.displayMedium,
                                             color = SemanticColors.TextPrimary
                                         )
                                         LinearProgressIndicator(
-                                            progress = { ((widget.totalBudget - widget.amount) / widget.totalBudget).toFloat().coerceIn(0f, 1f) },
+                                            progress = { ((widget.totalBudget - (widget.amount ?: 0.0)) / widget.totalBudget).toFloat().coerceIn(0f, 1f) },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(vertical = 12.dp)
