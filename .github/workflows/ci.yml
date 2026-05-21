@@ -59,6 +59,10 @@ jobs:
       - name: Verify money boundaries
         run: python3 scripts/verify_money_boundaries.py --root .
 
+      - name: Run currency guardrails
+        shell: pwsh
+        run: pwsh scripts/currency_guardrails.ps1 -SourceDir app/src/main/java -ProjectRoot ${{ github.workspace }}
+
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@v4

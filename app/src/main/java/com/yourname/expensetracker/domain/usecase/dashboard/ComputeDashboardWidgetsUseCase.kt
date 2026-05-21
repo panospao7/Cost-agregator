@@ -3,12 +3,13 @@ package com.yourname.expensetracker.domain.usecase.dashboard
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
-import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
+import com.yourname.expensetracker.domain.forecasting.ForecastDataQuality
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.domain.forecasting.NormalizedForecastInput
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -526,31 +527,70 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
         val data = ctx.data.data
 
-        // CURR-587-06: If normalized input is unavailable, do not synthesize from empty/raw data.
-        val normalizedExpenses = when (val normalized = ctx.normalizedInputResult) {
-            is DashboardNormalizedInputResult.Available ->
-                normalized.input.normalizedExpenses.map { it.toExpenseSnapshot() }
+        // CURR-587-06: Use pre-normalized input directly, bypass ExpenseSnapshot bridge
+        val normalized = when (val n = ctx.normalizedInputResult) {
+            is DashboardNormalizedInputResult.Available -> n.input
             is DashboardNormalizedInputResult.Unavailable -> {
                 return RunwayResult.Unavailable(
-                    reason = normalized.reason,
+                    reason = n.reason,
                     purchasesThisMonth = purchasesThisMonth,
                     currencyQuality = CurrencyQualityUi(
                         isPartial = true,
                         quality = com.yourname.expensetracker.domain.core.money.ConversionQuality.UNAVAILABLE,
-                        warningMessage = normalized.reason
+                        warningMessage = n.reason
                     )
                 )
             }
         }
 
-        val assembledInput = forecastInputAssembler.assemble(
-            expenses = normalizedExpenses,
-            manualRecurringEntities = emptyList(),
-            detectedRecurringPatterns = data.recurringPatterns,
+        // Build pastSumDaily from normalized expenses (already in home currency)
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+        val currentDayIndex = TimePeriodUtils.daysBetween(monthStart, now).coerceAtLeast(0)
+        val amountByDay = DoubleArray(currentDayIndex + 1)
+        normalized.normalizedExpenses.forEach { ne ->
+            if (ne.transactionType == "PURCHASE" && !ne.isNotMine && ne.date in monthStart..now) {
+                val dayIndex = TimePeriodUtils.daysBetween(monthStart, ne.date)
+                if (dayIndex in amountByDay.indices) {
+                    amountByDay[dayIndex] += ne.normalizedAmount
+                }
+            }
+        }
+        var runningTotal = 0.0
+        val pastSumDaily = amountByDay.map { amount -> runningTotal += amount; runningTotal }
+
+        // Build spending pace from normalized aggregates
+        val daysInMonth = ctx.calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val daysElapsed = ctx.dayOfMonth
+        val spendingPace = SpendingPace(
+            currentMonthSpent = normalized.monthAggregate.displayAmount,
+            daysElapsed = daysElapsed,
+            daysInMonth = daysInMonth,
+            projectedTotal = normalized.monthAggregate.displayAmount / daysElapsed * daysInMonth,
+            previousMonthTotal = normalized.previousMonthAggregate?.displayAmount,
+            averageMonthlyTotal = normalized.monthAggregate.displayAmount.takeIf { it > 0 },
+            pacePercentage = 100f,
+            paceStatus = PaceStatus.NO_BASELINE, // Will be refined by synthesis
+            displayCurrency = normalized.homeCurrency.code
+        )
+
+        val normalizedForecastInput = NormalizedForecastInput(
+            homeCurrency = normalized.homeCurrency,
+            normalizedExpenses = normalized.normalizedExpenses,
+            pastSumDaily = pastSumDaily,
+            recurringPatterns = data.recurringPatterns,
             plannedExpenses = data.plannedExpenses,
             savingsGoals = data.goals,
-            budgetStatuses = data.budgetStatuses
+            budgetStatuses = data.budgetStatuses,
+            spendingPace = spendingPace,
+            dataQuality = ForecastDataQuality(
+                isPartial = normalized.dataQuality.isPartial,
+                excludedActualCount = normalized.dataQuality.excludedTransactionCount,
+                conversionWarnings = listOfNotNull(normalized.dataQuality.warningMessage)
+            )
         )
+
+        val assembledInput = forecastInputAssembler.assembleNormalized(normalizedForecastInput)
         val forecast = synthesisEngine.synthesize(assembledInput)
         val currentPace = assembledInput.spendingPace
 
@@ -558,8 +598,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val totalLikely = forecast.components?.totalLikely ?: 0.0
         val averageDailyBurn = if (ctx.dayOfMonth > 0) ctx.monthSpent / ctx.dayOfMonth else 0.0
         // CURR-587-05: Use normalized deposit aggregate only — no latest-rate fallback
-        val normalizedIn = (ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available)?.input
-        val monthlyIncome = normalizedIn?.depositAggregate?.displayAmount ?: 0.0
+        val monthlyIncome = normalized.depositAggregate?.displayAmount ?: 0.0
         // CURR-587-05: No weather.discretionaryBudget — use 0.0 when budget remaining is not normalized
         val totalRemaining = 0.0
 

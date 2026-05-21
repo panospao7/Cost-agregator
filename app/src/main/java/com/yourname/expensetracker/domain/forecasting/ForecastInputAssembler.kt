@@ -560,6 +560,29 @@ class ForecastInputAssembler @Inject constructor(
         // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 299 (inside assemble())
         .sumOf { it.effectiveAmount }
 
+    /**
+     * CURR-587-06: Assemble forecast input from pre-normalized data.
+     *
+     * This bypasses the AnalyticsCurrencyNormalizer step since the expenses
+     * are already normalized to home currency. The SpendingPace is also
+     * taken directly from the input rather than recomputed.
+     */
+    suspend fun assembleNormalized(
+        input: NormalizedForecastInput
+    ): ForecastInput {
+        return ForecastInput(
+            pastSumDaily = input.pastSumDaily,
+            recurringPatterns = input.recurringPatterns,
+            plannedExpenses = input.plannedExpenses,
+            savingsGoals = input.savingsGoals,
+            budgetStatuses = input.budgetStatuses,
+            spendingPace = input.spendingPace,
+            confirmedOccurrences = emptyList(), // Can be populated via occurrence DAO if needed
+            displayCurrency = input.homeCurrency.code,
+            dataQuality = input.dataQuality
+        )
+    }
+
     companion object {
         const val HIGH_CONFIDENCE_THRESHOLD: Float = 0.70f
         private const val PACE_UNDER_THRESHOLD = 90f

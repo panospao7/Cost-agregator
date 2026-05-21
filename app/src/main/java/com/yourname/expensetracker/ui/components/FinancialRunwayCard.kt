@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.usecase.dashboard.CurrencyQualityUi
 
 @Composable
 fun FinancialRunwayCard(
@@ -28,6 +29,8 @@ fun FinancialRunwayCard(
     committedExpenses: Double,
     likelyExpenses: Double,
     status: DashboardWidget.RunwayStatus,
+    isUnavailable: Boolean = false,
+    currencyQuality: CurrencyQualityUi? = null,
     modifier: Modifier = Modifier,
     /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
@@ -55,6 +58,37 @@ fun FinancialRunwayCard(
         DashboardWidget.RunwayStatus.CAUTION -> "Caution"
         DashboardWidget.RunwayStatus.CRITICAL -> "Critical"
         DashboardWidget.RunwayStatus.NO_INCOME -> "No Income Data"
+    }
+
+    if (isUnavailable) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.financial_runway_title),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = currencyQuality?.warningMessage ?: "Runway data unavailable",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+                if (currencyQuality?.isPartial == true) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    DataQualityWarningChip()
+                }
+            }
+        }
+        return
     }
 
     Card(

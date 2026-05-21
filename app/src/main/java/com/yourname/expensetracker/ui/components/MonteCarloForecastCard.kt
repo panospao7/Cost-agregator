@@ -36,6 +36,37 @@ fun MonteCarloForecastCard(
     /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
+    // S4-D914-017: Unavailable state — displayCurrency is null when Monte Carlo
+    // result could not be computed (e.g. insufficient data for simulation).
+    if (result.displayCurrency == null) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = SemanticColors.GlassSurface
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.forecast_month_end_title),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = result.confidence.reason,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+        }
+        return
+    }
+
     val confidenceColor = when (result.confidence.level) {
         ConfidenceLevel.HIGH -> SemanticColors.SuccessGreen
         ConfidenceLevel.MODERATE -> SemanticColors.WarningOrange

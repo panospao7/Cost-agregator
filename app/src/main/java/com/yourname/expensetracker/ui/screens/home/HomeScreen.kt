@@ -346,7 +346,29 @@ fun HomeScreen(
                         when (widget) {
                             is DashboardWidget.SafeToSpend -> {
                                 HeroBentoCard {
-                                    if (widget.totalBudget == null || widget.totalBudget <= 0.0) {
+                                    if (widget.isUnavailable) {
+                                        // Unavailable state — do NOT render as valid money
+                                        Text(
+                                            text = stringResource(R.string.widget_safe_to_spend),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 1.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = widget.currencyQuality?.warningMessage ?: "Budget data unavailable",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = SemanticColors.TextSecondary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = stringResource(R.string.widget_set_budget_cta),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 0.5.sp
+                                        )
+                                    } else if (widget.totalBudget == null || widget.totalBudget <= 0.0) {
                                         Text(
                                             text = stringResource(R.string.widget_month_spent),
                                             style = MaterialTheme.typography.labelSmall,
@@ -400,7 +422,7 @@ fun HomeScreen(
                                         )
                                     }
                                     // S4-D914-007: Show partial-conversion warning
-                                    if (widget.isPartial) {
+                                    if (widget.isPartial || widget.currencyQuality?.isPartial == true) {
                                         Spacer(modifier = Modifier.height(8.dp))
                                         DataQualityWarningChip()
                                     }
@@ -745,6 +767,8 @@ fun HomeScreen(
                 committedExpenses = widget.committedExpenses,
                 likelyExpenses = widget.likelyExpenses,
                 status = widget.status,
+                isUnavailable = widget.isUnavailable,
+                currencyQuality = widget.currencyQuality,
                 currency = homeCurrency ?: ""
             )
                             }
