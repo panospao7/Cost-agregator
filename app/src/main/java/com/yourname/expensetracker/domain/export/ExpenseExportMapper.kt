@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.export
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 
 /**
@@ -10,6 +11,8 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
  * (baseAmount, baseCurrency, exchangeRateUsed, effectiveAmount) and business/tax
  * fields (isBusinessExpense, businessPurpose, businessCategory, businessProject,
  * requiresReceipt) so that exports are audit-ready and roundtrip-safe.
+ *
+ * PR7: Extended to populate source link provenance data via [mapWithSourceLinks].
  *
  * BAK-14: All Double values are guarded with [isFinite] before serialization
  * to prevent NaN or Infinite values from corrupting the export output.
@@ -49,6 +52,39 @@ object ExpenseExportMapper {
             businessCategory = expense.businessCategory,
             businessProject = expense.businessProject,
             requiresReceipt = expense.requiresReceipt
+        )
+    }
+
+    /**
+     * PR7: Maps an expense to ExportTransaction with source link provenance data.
+     *
+     * @param sourceLinks Pre-loaded source links for this expense (from bulk DAO query).
+     */
+    fun mapWithSourceLinks(
+        expense: Expense,
+        sourceLinks: List<EntitySourceLink>
+    ): ExportTransaction {
+        val refs = sourceLinks.map { SourceLinkExportRef.fromEntitySourceLink(it) }
+        val sourceLinksJson = if (refs.isNotEmpty()) {
+            org.json.JSONArray().apply {
+                refs.forEach { ref ->
+                    put(org.json.JSONObject().apply {
+                        put("sourceType", ref.sourceType)
+                        put("sourceEntityType", ref.sourceEntityType)
+                        ref.sourceEntityLocalId?.let { put("sourceEntityLocalId", it) }
+                        put("linkRole", ref.linkRole)
+                        put("linkStatus", ref.linkStatus)
+                        put("isPrimary", ref.isPrimary)
+                        ref.metadataJson?.let { put("metadataJson", it) }
+                    })
+                }
+            }.toString()
+        } else {
+            null
+        }
+        return map(expense).copy(
+            sourceLinks = refs,
+            sourceLinksJson = sourceLinksJson
         )
     }
 }

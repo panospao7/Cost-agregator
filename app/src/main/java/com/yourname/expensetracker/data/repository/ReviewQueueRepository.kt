@@ -26,9 +26,13 @@ import timber.log.Timber
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkPromoter
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
+import org.json.JSONObject
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
@@ -47,7 +51,10 @@ class ReviewQueueRepository @Inject constructor(
     private val parserRegistry: AppParserRegistry,
     private val timeProvider: TimeProvider,
     private val confidenceRouter: ConfidenceRouter,
-    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
+    private val pendingReviewSourceLinkPromoter: PendingReviewSourceLinkPromoter,
+    private val transactionEventDao: TransactionEventDao
 ) {
     private companion object {
         private const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
@@ -212,24 +219,9 @@ class ReviewQueueRepository @Inject constructor(
                 return@withTransaction txAlreadyProcessed
             }
 
-            // Pre-insert canonical duplicate check: uses currency + transaction-type aware
-            // policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated, and
-            // (b) legacy rows with the old 3-part dedupe key are still caught by the
-            // merchant/amount/date/currency/type window query (not just by key collision).
-            // The coordinator below is the primary creation path; this pre-check is an
-            // early exit that avoids unnecessary coordinator calls.
-            val isDuplicate = hasCanonicalApprovalDuplicate(expense)
-            if (isDuplicate) {
-                sourceStatsDao.incrementDuplicate(review.packageName)
-                sourceStatsDao.decrementPending(review.packageName)
-                pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
-                return@withTransaction txDuplicate
-            }
-
             // ── Delegate to TransactionLifecycleCoordinator ─────────────────────────
-            // The coordinator handles key generation, dedup check (with
-            // skipDeduplication=true because we already checked above),
-            // atomic insert, and lifecycle event logging.
+            // The coordinator handles key generation, dedup check, atomic insert,
+            // lifecycle event logging, and source-link writing.
             val request = CreateExpenseRequest(
                 merchant = expense.merchant,
                 amount = expense.amount,
@@ -248,16 +240,56 @@ class ReviewQueueRepository @Inject constructor(
                 locationSource = expense.locationSource,
                 placeId = expense.placeId,
                 resolvedAddress = expense.resolvedAddress,
-                rawNotificationId = expense.rawNotificationId,
+                rawNotificationId = review.rawNotificationId,
                 pendingReviewId = reviewId,
                 scannedReceiptId = review.scannedReceiptId,
-                skipDeduplication = true
+                skipDeduplication = false
             )
 
-            @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-            when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
+            @Suppress("DEPRECATION_ERROR")
+            when (val result = transactionLifecycleCoordinator.createExpenseDbOnly(request)) {
                 is CreateExpenseResult.Created -> {
                     val id = result.expenseId
+
+                    // PR3: Promote pending-review source links to expense
+                    val promotion = pendingReviewSourceLinkPromoter.promotePendingReviewLinksToExpense(
+                        pendingReviewId = reviewId,
+                        expenseId = id,
+                        correlationId = null,
+                        source = ExpenseSource.REVIEW_APPROVAL
+                    )
+                    if (promotion.hasFatalFailure) {
+                        throw IllegalStateException(
+                            "Fatal failure promoting source links for reviewId=$reviewId: ${promotion.failures.joinToString(", ")}"
+                        )
+                    }
+
+                    // Write SOURCE_LINKED event for promotion
+                    if (promotion.inserted > 0) {
+                        transactionEventDao.insert(
+                            com.yourname.expensetracker.data.database.entity.TransactionEvent(
+                                expenseId = id,
+                                eventType = LifecycleEventType.SOURCE_LINKED.name,
+                                source = ExpenseSource.REVIEW_APPROVAL.name,
+                                actor = null,
+                                occurredAt = timeProvider.now(),
+                                dedupeKey = null,
+                                duplicateExpenseId = null,
+                                beforeSnapshot = null,
+                                afterSnapshot = null,
+                                metadata = JSONObject().apply {
+                                    put("operation", "PENDING_REVIEW_SOURCE_PROMOTION")
+                                    put("pendingReviewId", reviewId)
+                                    put("attempted", promotion.attempted)
+                                    put("inserted", promotion.inserted)
+                                    put("alreadyExists", promotion.alreadyExists)
+                                }.toString(),
+                                reason = "Source links promoted from pending review",
+                                correlationId = null
+                            )
+                        )
+                    }
+
                     review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
                     sourceStatsDao.incrementAccepted(review.packageName)
                     sourceStatsDao.decrementPending(review.packageName)
@@ -616,7 +648,19 @@ class ReviewQueueRepository @Inject constructor(
 
                 pendingReview != null -> {
                     val existing = pendingReview.rawNotificationId?.let { pendingReviewDao.getByRawId(it) }
-                    pendingReviewDao.upsertByRawNotificationId(pendingReview)
+                    val placeholderReviewId = pendingReviewDao.upsertByRawNotificationId(pendingReview)
+                    // PR3: Write source links for placeholder review provenance
+                    pendingReviewSourceLinkService.linkSourcesForReview(
+                        review = pendingReview,
+                        reviewId = placeholderReviewId,
+                        sourceType = ExpenseSource.REVIEW_APPROVAL,
+                        correlationId = null,
+                        context = com.yourname.expensetracker.domain.provenance.PendingReviewSourceContext(
+                            stage = "manual_mark_relevant_pending_review",
+                            reason = "manual_recovery_placeholder",
+                            extractionState = pendingReview.extractionState.name
+                        )
+                    )
                     if (existing == null) {
                         sourceStatsDao.incrementPending(notification.packageName)
                     }

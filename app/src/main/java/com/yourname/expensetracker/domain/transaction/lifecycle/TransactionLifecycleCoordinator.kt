@@ -13,6 +13,12 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import com.yourname.expensetracker.domain.provenance.CreateExpenseSourceLinkMapper
+import com.yourname.expensetracker.domain.provenance.DuplicateSourceLinkPolicy
+import com.yourname.expensetracker.domain.provenance.SourceLinkEventMetadataBuilder
+import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
+import com.yourname.expensetracker.domain.provenance.SourceLinkWriteResult
+import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -57,7 +63,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val sourceLinkWriter: SourceLinkWriter
 ) {
     /**
      * Creates an expense with full lifecycle handling:
@@ -103,6 +110,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // DDL-512-06: use a single correlationId for every event in this create attempt
         val correlationId = request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
+        // Compute source-link payloads once — used across all events
+        val sourceLinkPayloads = CreateExpenseSourceLinkMapper.fromRequest(request)
+
         // 1. Write CREATE_ATTEMPTED event before validation
         // TODO P2-CURRENT-012: For STRICT_EXTERNAL_ID mode, attemptDedupeKey should be
         // "idem:${source}:${idempotencyKey}" to match the actual key used at insert time.
@@ -126,7 +136,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     duplicateExpenseId = null,
                     beforeSnapshot = null,
                     afterSnapshot = null,
-                    metadata = null,
+                    metadata = SourceLinkEventMetadataBuilder.createAttemptMetadata(sourceLinkPayloads),
                     reason = "Attempting create for ${request.merchant} ${request.amount} ${request.currency}",
                     correlationId = correlationId
                 )
@@ -148,9 +158,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         duplicateExpenseId = null,
                         beforeSnapshot = null,
                         afterSnapshot = null,
-                        metadata = org.json.JSONObject().apply {
-                            put("errors", errors.joinToString("; "))
-                        }.toString(),
+                        metadata = SourceLinkEventMetadataBuilder.validationFailedMetadata(
+                            errors = errors,
+                            payloads = sourceLinkPayloads
+                        ),
                         reason = "Validation failed: ${errors.first()}",
                         correlationId = correlationId  // DDL-512-06
                     )
@@ -206,7 +217,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
             rawNotificationId = request.rawNotificationId,
             source = when (request.source) {
                 ExpenseSource.MANUAL_ENTRY -> ExpenseSource.MANUAL_ENTRY.name
+                ExpenseSource.MANUAL -> ExpenseSource.MANUAL.name
                 ExpenseSource.NOTIFICATION_AUTO_ACCEPT -> ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name
+                ExpenseSource.SMS_NOTIFICATION -> ExpenseSource.SMS_NOTIFICATION.name
                 ExpenseSource.REVIEW_APPROVAL -> ExpenseSource.REVIEW_APPROVAL.name
                 ExpenseSource.RECEIPT_SCAN -> ExpenseSource.RECEIPT_SCAN.name
                 ExpenseSource.RECEIPT_BATCH_REVIEW -> ExpenseSource.RECEIPT_BATCH_REVIEW.name
@@ -214,6 +227,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 ExpenseSource.CSV_IMPORT -> ExpenseSource.CSV_IMPORT.name
                 ExpenseSource.EMAIL_RECEIPT -> ExpenseSource.EMAIL_RECEIPT.name
                 ExpenseSource.GROUP_EXPENSE -> ExpenseSource.GROUP_EXPENSE.name
+                ExpenseSource.BANK_SYNC -> ExpenseSource.BANK_SYNC.name
                 ExpenseSource.BANK_API_SYNC -> ExpenseSource.BANK_API_SYNC.name
                 ExpenseSource.RECURRING_GENERATED -> ExpenseSource.RECURRING_GENERATED.name
                 ExpenseSource.DEBUG_TOOL -> ExpenseSource.DEBUG_TOOL.name
@@ -392,11 +406,45 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     duplicateExpenseId = null,
                     beforeSnapshot = null,
                     afterSnapshot = expenseToSnapshot(id, expense),
-                    metadata = null,
+                    metadata = SourceLinkEventMetadataBuilder.createdMetadata(sourceLinkPayloads),
                     reason = null,
                     correlationId = correlationId  // DDL-512-06
                 )
             )
+
+            // Write source links atomically with expense creation
+            // Source-link failure is fatal — throws to rollback the entire transaction
+            if (sourceLinkPayloads.isNotEmpty()) {
+                val linkResults = mutableListOf<SourceLinkWriteResult>()
+                for (payload in sourceLinkPayloads) {
+                    val result = sourceLinkWriter.linkExpense(id, payload, correlationId)
+                    linkResults.add(result)
+                    if (result is SourceLinkWriteResult.Rejected) {
+                        throw SourceLinkWriteException("Source link rejected: ${result.reason}")
+                    }
+                }
+                // Write SOURCE_LINKED event
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = id,
+                        eventType = LifecycleEventType.SOURCE_LINKED.name,
+                        source = request.source.name,
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = expense.dedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = null,
+                        afterSnapshot = null,
+                        metadata = SourceLinkEventMetadataBuilder.sourceLinkedMetadata(
+                            payloads = sourceLinkPayloads,
+                            results = linkResults
+                        ),
+                        reason = "Source links established for expense",
+                        correlationId = correlationId  // DDL-512-06
+                    )
+                )
+            }
+
             id
         }
 
@@ -414,10 +462,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         duplicateExpenseId = null,
                         beforeSnapshot = null,
                         afterSnapshot = null,
-                        metadata = org.json.JSONObject().apply {
-                            put("dedupMode", dedupMode.name)
-                            put("dedupeKey", expense.dedupeKey ?: "unknown")
-                        }.toString(),
+                        metadata = SourceLinkEventMetadataBuilder.insertConflictMetadata(
+                            dedupMode = dedupMode,
+                            dedupeKey = expense.dedupeKey,
+                            payloads = sourceLinkPayloads
+                        ),
                         reason = "Insert conflict for dedupeKey=${expense.dedupeKey}",
                         correlationId = correlationId  // DDL-512-06
                     )
@@ -439,10 +488,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                 duplicateExpenseId = existingId,
                                 beforeSnapshot = null,
                                 afterSnapshot = null,
-                                metadata = org.json.JSONObject().apply {
-                                    put("reason", "Idempotent STRICT_EXTERNAL_ID duplicate resolved")
-                                    put("existingExpenseId", existingId)
-                                }.toString(),
+                                metadata = SourceLinkEventMetadataBuilder.duplicateMetadata(
+                                    policy = getDuplicateSourceLinkPolicy(request.source),
+                                    attemptedExpense = expense,
+                                    sourceLinkPayloads = sourceLinkPayloads
+                                ),
                                 reason = "STRICT_EXTERNAL_ID idempotent retry resolved to existing expense",
                                 correlationId = correlationId  // DDL-512-06
                             )
@@ -1731,15 +1781,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         duplicateExpenseId: Long?,
         reason: String
     ): Boolean {
-        val metadata = JSONObject().apply {
-            put("reason", reason)
-            put("existingExpenseId", duplicateExpenseId ?: -1L)
-            put("attemptedAmount", expense.amount)
-            put("attemptedMerchant", expense.merchant)
-            put("attemptedDate", expense.date)
-            put("attemptedCurrency", expense.currency)
-            put("attemptedMerchantKey", expense.merchantKey)
-        }.toString()
+        val sourceLinkPayloads = CreateExpenseSourceLinkMapper.fromRequest(request)
+        val metadata = SourceLinkEventMetadataBuilder.duplicateMetadata(
+            policy = getDuplicateSourceLinkPolicy(request.source),
+            attemptedExpense = expense,
+            sourceLinkPayloads = sourceLinkPayloads
+        )
 
         // DDL-512-06: propagate correlationId so duplicate skips are traceable
         val correlationId = request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
@@ -1766,6 +1813,34 @@ class TransactionLifecycleCoordinator @Inject constructor(
             if (error is kotlinx.coroutines.CancellationException) throw error
             Timber.w(error, "Failed to write duplicate-skip event for expense")
             false
+        }
+    }
+
+    /**
+     * Returns the [DuplicateSourceLinkPolicy] for a given [ExpenseSource],
+     * determining how source links should be handled when a duplicate expense
+     * is detected.
+     *
+     * - [DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING]: The source should be
+     *   linked to the existing expense with a [com.yourname.expensetracker.domain.provenance.SourceLinkRole.DUPLICATE_MATCHED] role.
+     *   Currently deferred — the policy decision is recorded in the duplicate event metadata.
+     * - [DuplicateSourceLinkPolicy.RECORD_ATTEMPT_ONLY]: No source link is created;
+     *   the existing duplicate event is sufficient.
+     * - [DuplicateSourceLinkPolicy.DO_NOT_LINK]: No linking at all.
+     */
+    private fun getDuplicateSourceLinkPolicy(source: ExpenseSource): DuplicateSourceLinkPolicy {
+        return when (source) {
+            ExpenseSource.RECEIPT_SCAN -> DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING
+            ExpenseSource.EMAIL_RECEIPT -> DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING
+            ExpenseSource.BANK_SYNC -> DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING
+            ExpenseSource.BANK_API_SYNC -> DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING
+            ExpenseSource.BANK_STATEMENT_REVIEW -> DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING
+            ExpenseSource.REVIEW_APPROVAL -> DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING
+            ExpenseSource.CSV_IMPORT -> DuplicateSourceLinkPolicy.LINK_SOURCE_TO_EXISTING
+            ExpenseSource.NOTIFICATION_AUTO_ACCEPT -> DuplicateSourceLinkPolicy.RECORD_ATTEMPT_ONLY
+            ExpenseSource.MANUAL_ENTRY -> DuplicateSourceLinkPolicy.DO_NOT_LINK
+            ExpenseSource.MANUAL -> DuplicateSourceLinkPolicy.DO_NOT_LINK
+            else -> DuplicateSourceLinkPolicy.RECORD_ATTEMPT_ONLY
         }
     }
 

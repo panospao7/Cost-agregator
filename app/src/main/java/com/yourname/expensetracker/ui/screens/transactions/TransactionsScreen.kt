@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +54,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.formattedTime
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -156,6 +158,7 @@ fun TransactionsScreen(
     var expenseToChangeType by remember { mutableStateOf<Expense?>(null) }
     var expenseToEditOwnership by remember { mutableStateOf<Expense?>(null) }
     var expenseToDebug by remember { mutableStateOf<Expense?>(null) }
+    var expenseToViewProvenance by remember { mutableStateOf<Expense?>(null) }
     var expenseToEditLocation by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -564,7 +567,8 @@ fun TransactionsScreen(
                                             expenseToDebug = item.expense
                                         }
                                     },
-                                    onEditLocation = { expenseToEditLocation = item.expense }
+                                    onEditLocation = { expenseToEditLocation = item.expense },
+                                    onViewProvenance = { expenseToViewProvenance = item.expense }
                                 )
                             }
                         }
@@ -759,6 +763,140 @@ fun TransactionsScreen(
             )
         }
         
+        // Provenance Info Overlay
+        if (expenseToViewProvenance != null) {
+            val provenanceLinks by viewModel.provenanceLinks.collectAsState()
+            val provenanceSummary by viewModel.provenanceSummary.collectAsState()
+            val isProvenanceLoading by viewModel.isProvenanceLoading.collectAsState()
+
+            LaunchedEffect(expenseToViewProvenance) {
+                viewModel.loadProvenanceForExpense(expenseToViewProvenance!!.id)
+            }
+
+            Dialog(
+                onDismissRequest = {
+                    viewModel.clearProvenance()
+                    expenseToViewProvenance = null
+                },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true
+                )
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth(0.92f)
+                        .fillMaxHeight(0.75f),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp)
+                    ) {
+                        // Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Source Provenance",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            IconButton(onClick = {
+                                viewModel.clearProvenance()
+                                expenseToViewProvenance = null
+                            }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Close")
+                            }
+                        }
+
+                        Text(
+                            text = expenseToViewProvenance!!.merchant,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.TextSecondary,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+
+                        HorizontalDivider()
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (isProvenanceLoading) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Summary card
+                                item {
+                                    if (provenanceSummary != null) {
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.08f)
+                                            ),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                Text(
+                                                    text = "Summary",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = provenanceSummary!!,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Links
+                                if (provenanceLinks != null) {
+                                    if (provenanceLinks.isEmpty()) {
+                                        item {
+                                            Text(
+                                                text = "No provenance data available for this expense.",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = SemanticColors.TextSecondary,
+                                                modifier = Modifier.padding(vertical = 8.dp)
+                                            )
+                                        }
+                                    } else {
+                                        item {
+                                            Text(
+                                                text = "${provenanceLinks.size} source link(s):",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(vertical = 4.dp)
+                                            )
+                                        }
+
+                                        items(provenanceLinks) { link ->
+                                            ProvenanceLinkCard(link)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Debug Screen Overlay
         if (debugActionsEnabled && expenseToDebug != null) {
             Dialog(
@@ -982,7 +1120,8 @@ private fun TransactionItem(
     onChangeType: () -> Unit,
     onEditOwnership: () -> Unit,
     onDebug: () -> Unit,
-    onEditLocation: () -> Unit
+    onEditLocation: () -> Unit,
+    onViewProvenance: () -> Unit = {}
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -1320,6 +1459,20 @@ private fun TransactionItem(
                                 leadingIcon = {
                                     Icon(
                                         imageVector = if (expense.latitude != null) Icons.Filled.LocationOn else Icons.Rounded.AddLocationAlt,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.transactions_view_provenance)) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onViewProvenance()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Link,
                                         contentDescription = null
                                     )
                                 }
@@ -2129,5 +2282,98 @@ private fun EditLocationDialog(
                 }
             }
         }
+    }
+}
+
+// ============================================================
+// PROVENANCE CARD COMPONENT
+// ============================================================
+
+@Composable
+private fun ProvenanceLinkCard(link: EntitySourceLink) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // Primary source type and role
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = link.sourceType,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                if (link.isPrimary) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = "PRIMARY",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = SemanticColors.PrimaryIndigo
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = "Role: ${link.linkRole}",
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextSecondary
+            )
+
+            // Additional source info
+            ProvenanceInfoRow("Source", link.sourceEntityType)
+            ProvenanceInfoRow("Status", link.linkStatus)
+            if (link.confidence != null) {
+                ProvenanceInfoRow("Confidence", "${link.confidence}")
+            }
+            if (link.metadataJson != null) {
+                Text(
+                    text = "Metadata: ${link.metadataJson}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = SemanticColors.TextMuted,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProvenanceInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "$label: ",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = SemanticColors.TextSecondary
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = SemanticColors.TextPrimary
+        )
     }
 }

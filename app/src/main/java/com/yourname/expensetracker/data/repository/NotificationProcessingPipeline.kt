@@ -44,6 +44,11 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
+import com.yourname.expensetracker.domain.provenance.NotificationSourceLinkPayloadFactory
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceContext
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
+import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
+import com.yourname.expensetracker.domain.provenance.TargetEntityType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -145,6 +150,8 @@ class NotificationProcessingPipeline @Inject constructor(
     private val recommendationRepository: RecommendationRepository,
     private val subscriptionDetector: NotificationSubscriptionDetector,
     private val coordinator: TransactionLifecycleCoordinator,
+    private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
+    private val sourceLinkWriter: SourceLinkWriter,
     private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val writeBarrier: DatabaseWriteBarrier,
@@ -341,6 +348,12 @@ class NotificationProcessingPipeline @Inject constructor(
                     if (hasExpenseDuplicate || hasPendingDuplicate) {
                         sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, false)
+                        // PR5: Write dedupe source link
+                        writeNotificationDedupeSourceLink(
+                            rawId = rawId,
+                            matchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate",
+                            correlationId = correlationId
+                        )
                         parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Oversized duplicate")
                         return@withTransaction
                     }
@@ -362,6 +375,24 @@ class NotificationProcessingPipeline @Inject constructor(
                         extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                     )
                     val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+                    // PR3: Write source links for review provenance
+                    val linkResult = pendingReviewSourceLinkService.linkSourcesForReview(
+                        review = review,
+                        reviewId = reviewId,
+                        sourceType = ExpenseSource.REVIEW_APPROVAL,
+                        correlationId = correlationId,
+                        context = PendingReviewSourceContext(
+                            stage = "notification_oversized_parse_failed",
+                            reason = "Oversized amount needs manual confirmation",
+                            confidence = review.confidence,
+                            extractionState = review.extractionState.name
+                        )
+                    )
+                    if (linkResult.hasFatalFailure) {
+                        throw IllegalStateException(
+                            "Failed to write source links for oversized review reviewId=$reviewId: ${linkResult.failures.joinToString(", ")}"
+                        )
+                    }
                     Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                     dao.markRelevance(rawId, true)
@@ -400,6 +431,12 @@ class NotificationProcessingPipeline @Inject constructor(
                         if (hasExpenseDuplicate || hasPendingDuplicate) {
                             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                             dao.markRelevance(rawId, false)
+                            // PR5: Write dedupe source link
+                            writeNotificationDedupeSourceLink(
+                                rawId = rawId,
+                                matchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate",
+                                correlationId = correlationId
+                            )
                             parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Signal duplicate")
                             return@withTransaction
                         }
@@ -421,6 +458,24 @@ class NotificationProcessingPipeline @Inject constructor(
                             extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                         )
                         val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+                        // PR3: Write source links for review provenance
+                        val linkResult = pendingReviewSourceLinkService.linkSourcesForReview(
+                            review = review,
+                            reviewId = reviewId,
+                            sourceType = ExpenseSource.REVIEW_APPROVAL,
+                            correlationId = correlationId,
+                            context = PendingReviewSourceContext(
+                                stage = "notification_transaction_signal_parse_failed",
+                                reason = "Transaction signal detected but parser failed",
+                                confidence = review.confidence,
+                                extractionState = review.extractionState.name
+                            )
+                        )
+                        if (linkResult.hasFatalFailure) {
+                            throw IllegalStateException(
+                                "Failed to write source links for signal review reviewId=$reviewId: ${linkResult.failures.joinToString(", ")}"
+                            )
+                        }
                         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, true)
@@ -525,6 +580,32 @@ class NotificationProcessingPipeline @Inject constructor(
         runParsedPostCommitActions(notification, preDbContext, dbOutcome, correlationId)
 
         return outcome
+    }
+
+    /**
+     * PR5: Writes a dedupe source link for a notification that was identified as a duplicate.
+     * The link targets the notification itself, with metadata describing the match type.
+     */
+    private suspend fun writeNotificationDedupeSourceLink(
+        rawId: Long,
+        matchType: String,
+        correlationId: String?,
+        confidence: Double? = null
+    ) {
+        runCatching {
+            val payload = NotificationSourceLinkPayloadFactory.forDedupeMatch(
+                sourceNotificationId = rawId,
+                matchedNotificationId = rawId,
+                matchType = matchType,
+                confidence = confidence
+            )
+            sourceLinkWriter.linkTarget(
+                targetType = TargetEntityType.RAW_NOTIFICATION,
+                targetId = rawId,
+                payload = payload,
+                correlationId = correlationId
+            )
+        }
     }
 
     private suspend fun writePipelineDiagnosticEvent(outcome: NotificationPipelineOutcome, packageName: String, correlationId: String? = null) {
@@ -945,6 +1026,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+            // PR5: Write dedupe source link
+            writeNotificationDedupeSourceLink(
+                rawId = rawId,
+                matchType = "canonical_expense_duplicate",
+                correlationId = correlationId,
+                confidence = preDb.routingResult.adjustedConfidence.toDouble()
+            )
             return ParsedDbOutcome.Duplicate
         }
 
@@ -963,6 +1051,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         if (hasPendingDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+            // PR5: Write dedupe source link
+            writeNotificationDedupeSourceLink(
+                rawId = rawId,
+                matchType = "pending_review_duplicate",
+                correlationId = correlationId,
+                confidence = preDb.routingResult.adjustedConfidence.toDouble()
+            )
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1061,6 +1156,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             is CreateExpenseResult.DuplicateSkipped -> {
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                // PR5: Write dedupe source link
+                writeNotificationDedupeSourceLink(
+                    rawId = rawId,
+                    matchType = "coordinator_duplicate_skipped",
+                    correlationId = correlationId,
+                    confidence = preDb.routingResult.adjustedConfidence.toDouble()
+                )
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1070,6 +1172,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 }
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                // PR5: Write dedupe source link
+                writeNotificationDedupeSourceLink(
+                    rawId = rawId,
+                    matchType = "coordinator_insert_conflict",
+                    correlationId = correlationId,
+                    confidence = preDb.routingResult.adjustedConfidence.toDouble()
+                )
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1077,6 +1186,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 Timber.w("Auto-accept validation failed: ${result.errors}")
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                // PR5: Write dedupe source link
+                writeNotificationDedupeSourceLink(
+                    rawId = rawId,
+                    matchType = "coordinator_validation_failed",
+                    correlationId = correlationId,
+                    confidence = preDb.routingResult.adjustedConfidence.toDouble()
+                )
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1097,6 +1213,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+            // PR5: Write dedupe source link
+            writeNotificationDedupeSourceLink(
+                rawId = rawId,
+                matchType = "canonical_expense_duplicate",
+                correlationId = correlationId,
+                confidence = preDb.routingResult.adjustedConfidence.toDouble()
+            )
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1117,6 +1240,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         if (hasPendingDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+            // PR5: Write dedupe source link
+            writeNotificationDedupeSourceLink(
+                rawId = rawId,
+                matchType = "pending_review_duplicate",
+                correlationId = correlationId,
+                confidence = preDb.routingResult.adjustedConfidence.toDouble()
+            )
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1140,6 +1270,25 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             suggestedLongitude = preDb.deviceGps?.second
         )
         val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+        // PR3: Write source links for review provenance
+        val linkResult = pendingReviewSourceLinkService.linkSourcesForReview(
+            review = review,
+            reviewId = reviewId,
+            sourceType = ExpenseSource.REVIEW_APPROVAL,
+            correlationId = correlationId,
+            context = PendingReviewSourceContext(
+                stage = "notification_needs_review",
+                reason = preDb.routingResult.decision.name,
+                confidence = review.confidence,
+                extractionState = review.extractionState.name,
+                routingDecision = preDb.routingResult.decision.name
+            )
+        )
+        if (linkResult.hasFatalFailure) {
+            throw IllegalStateException(
+                "Failed to write source links for needs-review reviewId=$reviewId: ${linkResult.failures.joinToString(", ")}"
+            )
+        }
         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
         return ParsedDbOutcome.NeedsReviewCreated(rawId = rawId, reviewId = reviewId)

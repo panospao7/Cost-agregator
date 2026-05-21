@@ -28,6 +28,7 @@
     <string name="action_done">Done</string>
     <string name="action_continue">Continue</string>
     <string name="action_skip">Skip</string>
+    <string name="transactions_view_provenance">View Provenance</string>
     <string name="action_next">Next</string>
     <string name="action_previous">Previous</string>
     <string name="action_undo">Undo</string>

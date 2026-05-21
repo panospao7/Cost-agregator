@@ -22,6 +22,9 @@ import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.provenance.ReceiptSourceLinkPayloadFactory
+import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
+import com.yourname.expensetracker.domain.provenance.TargetEntityType
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
@@ -94,7 +97,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val privacySettingsRepository: PrivacySettingsRepository,
-    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+    private val sourceLinkWriter: SourceLinkWriter
 ) {
 
     companion object {
@@ -691,6 +695,23 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
             }
 
+            // PR4: Write source link for email receipt provenance
+            if (sourceId > 0) {
+                val emailToReceiptPayload = ReceiptSourceLinkPayloadFactory.forEmailReceiptToScannedReceipt(
+                    emailReceiptSourceId = sourceId,
+                    scannedReceiptId = savedId,
+                    provider = provider,
+                    messageIdHash = messageIdHash.ifBlank { null },
+                    contentFingerprintHash = fingerprint.ifBlank { null }
+                )
+                sourceLinkWriter.linkTarget(
+                    targetType = TargetEntityType.SCANNED_RECEIPT,
+                    targetId = savedId,
+                    payload = emailToReceiptPayload,
+                    correlationId = correlationId
+                )
+            }
+
             receiptEventDao.insert(ReceiptEvent(
                 receiptId = savedId,
                 sourceType = ReceiptSourceType.EMAIL.name,
@@ -719,6 +740,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     source = ExpenseSource.EMAIL_RECEIPT,
                     notes = "Email receipt from ${provider.ifBlank { "unknown" }}",
                     scannedReceiptId = savedId,
+                    emailReceiptSourceId = sourceId,
                     deduplicationMode = DeduplicationMode.STANDARD,
                     correlationId = correlationId  // PRIV-441-11: propagate email correlation
                 )
@@ -726,7 +748,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
                         expenseIds.add(result.expenseId)
-                        val linkResult = receiptLinkService.linkReceiptToExpense(savedId, result.expenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                        val linkResult = receiptLinkService.linkReceiptToExpense(
+                            savedId, result.expenseId, "EMAIL_RECEIPT",
+                            source = ExpenseSource.EMAIL_RECEIPT.name,
+                            writeSourceLink = false
+                        )
                         if (linkResult.isFailure) {
                             throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
                         }
@@ -734,7 +760,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped -> {
                         Timber.d("Email receipt %d matched existing expense %d", savedId, result.existingExpenseId)
                         expenseIds.add(result.existingExpenseId)
-                        val linkResult = receiptLinkService.linkReceiptToExpense(savedId, result.existingExpenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                        val linkResult = receiptLinkService.linkReceiptToExpense(
+                            savedId, result.existingExpenseId, "EMAIL_RECEIPT",
+                            source = ExpenseSource.EMAIL_RECEIPT.name,
+                            writeSourceLink = false
+                        )
                         if (linkResult.isFailure) {
                             throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
                         }
@@ -963,7 +993,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         receiptId = receiptId,
                         expenseId = expenseId,
                         linkType = "DIRECT_SAVE",
-                        source = ExpenseSource.RECEIPT_SCAN.name
+                        source = ExpenseSource.RECEIPT_SCAN.name,
+                        writeSourceLink = false
                     )
                     if (linkResult.isFailure) {
                         throw IllegalStateException("Receipt-expense link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
@@ -1052,7 +1083,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             receiptId = receiptId,
                             expenseId = result.expenseId,
                             linkType = "DIRECT_SAVE",
-                            source = com.yourname.expensetracker.domain.transaction.ExpenseSource.RECEIPT_SCAN.name
+                            source = com.yourname.expensetracker.domain.transaction.ExpenseSource.RECEIPT_SCAN.name,
+                            writeSourceLink = false
                         )
                         if (linkResult.isFailure) {
                             throw IllegalStateException(

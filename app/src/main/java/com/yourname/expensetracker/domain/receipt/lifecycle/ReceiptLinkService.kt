@@ -11,6 +11,8 @@ import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
+import com.yourname.expensetracker.domain.provenance.ReceiptSourceLinkPayloadFactory
+import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
@@ -86,7 +88,8 @@ class ReceiptLinkService @Inject constructor(
     private val returnWindowDao: ReturnWindowDao,
     private val expenseDao: ExpenseDao,
     private val timeProvider: TimeProvider,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val sourceLinkWriter: SourceLinkWriter
 ) {
 
     /**
@@ -120,7 +123,8 @@ class ReceiptLinkService @Inject constructor(
         createdBy: String? = null,
         confidence: Float? = null,
         allowRelink: Boolean = false,
-        matchStatus: MatchStatus? = null
+        matchStatus: MatchStatus? = null,
+        writeSourceLink: Boolean = true
     ): Result<ReceiptExpenseLink> {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
@@ -272,6 +276,12 @@ class ReceiptLinkService @Inject constructor(
                 actor = createdBy ?: "system",
                 message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated."
             ))
+
+            // PR4: Write source link for provenance when enabled
+            if (writeSourceLink) {
+                val payload = ReceiptSourceLinkPayloadFactory.forScannedReceiptToExpense(receiptId, linkType)
+                sourceLinkWriter.linkExpense(expenseId, payload, null)
+            }
 
             // 6. Return the link with actual DB-generated ID
             Result.success(link.copy(id = linkId))

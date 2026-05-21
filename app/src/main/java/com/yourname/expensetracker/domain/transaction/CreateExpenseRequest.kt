@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.transaction
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
 
 /**
  * Request object for creating an expense through the TransactionLifecycleCoordinator.
@@ -46,9 +47,14 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
  * @property scannedReceiptId Optional. Linked scanned receipt ID.
  * @property emailReceiptSourceId Optional. Linked email receipt source ID.
  * @property groupId Optional. Linked expense group ID.
+ * @property bankSyncRunId Optional. Linked bank sync run ID.
+ * @property fileImportRunId Optional. Linked file import run ID (CSV/JSON import provenance).
  * @property csvImportBatchId Optional. CSV import batch identifier.
  * @property csvRowNumber Optional. Row number within CSV import.
  * @property externalFingerprint Optional. External system fingerprint for dedup.
+ * @property sourceLinks Optional. Explicit source-link payloads (modern API).
+ *   Legacy fields above are automatically mapped by CreateExpenseSourceLinkMapper.
+ *   New callsites should prefer sourceLinks directly.
  * // -- Policy fields --
  * @property deduplicationMode Deduplication strategy (default STANDARD).
  * @property skipDeduplication Whether to skip deduplication entirely (default false).
@@ -90,18 +96,20 @@ data class CreateExpenseRequest(
     val splitVisualization: String? = null,
 
     // ── Source link fields ──────────────────────────────────────────────────────
-    // TODO P2-CURRENT-013: pendingReviewId, scannedReceiptId, emailReceiptSourceId,
-    // groupId, csvImportBatchId, csvRowNumber are accepted but not persisted by the
-    // coordinator. Either persist them in TransactionEvent metadata for traceability
-    // or remove them from this request to avoid misleading callers.
+    // These fields are mapped to EntitySourceLink rows by CreateExpenseSourceLinkMapper
+    // inside the TransactionLifecycleCoordinator's createExpense transaction.
     val rawNotificationId: Long? = null,
     val pendingReviewId: Long? = null,
     val scannedReceiptId: Long? = null,
     val emailReceiptSourceId: Long? = null,
     val groupId: Long? = null,
+    val bankSyncRunId: Long? = null,
+    val fileImportRunId: Long? = null,
     val csvImportBatchId: String? = null,
     val csvRowNumber: Int? = null,
     val externalFingerprint: String? = null,
+    /** Explicit source-link payloads. New callsites should prefer this over legacy fields. */
+    val sourceLinks: List<SourceLinkPayload> = emptyList(),
 
     // ── Policy fields ───────────────────────────────────────────────────────────
     val deduplicationMode: DeduplicationMode = DeduplicationMode.STANDARD,

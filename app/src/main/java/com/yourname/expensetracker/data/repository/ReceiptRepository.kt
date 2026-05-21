@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.ExtractionState
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.CategorizationStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
@@ -38,6 +39,8 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceContext
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
 import com.yourname.expensetracker.di.IoDispatcher
 import dagger.Lazy
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
@@ -79,7 +82,8 @@ class ReceiptRepository @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val receiptLifecycleCoordinator: Lazy<ReceiptLifecycleCoordinator>,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val privacySettingsRepository: PrivacySettingsRepository
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val pendingReviewSourceLinkService: PendingReviewSourceLinkService
 ) {
     private companion object {
         // Use the canonical policy for all duplicate detection constants.
@@ -217,6 +221,19 @@ class ReceiptRepository @Inject constructor(
                         notificationText = "OCR Text preserved. Manual entry required."
                     )
                     pendingReviewDao.insert(review)
+
+                    // PR4: Write review provenance source link for parse-failure branch
+                    pendingReviewSourceLinkService.linkSourcesForReview(
+                        review = review,
+                        reviewId = review.id,
+                        sourceType = ExpenseSource.REVIEW_APPROVAL,
+                        correlationId = null,
+                        context = PendingReviewSourceContext(
+                            stage = "receipt_parse_failed_review",
+                            reason = "OCR succeeded but parser failed",
+                            extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER.name
+                        )
+                    )
                 }
 
                 return@withContext ProcessReceiptResult(
@@ -282,6 +299,20 @@ class ReceiptRepository @Inject constructor(
                         }
                     )
                     pendingReviewDao.insert(review)
+
+                    // PR4: Write review provenance source link for normal scan branch
+                    pendingReviewSourceLinkService.linkSourcesForReview(
+                        review = review,
+                        reviewId = review.id,
+                        sourceType = ExpenseSource.REVIEW_APPROVAL,
+                        correlationId = null,
+                        context = PendingReviewSourceContext(
+                            stage = "receipt_scan_review",
+                            reason = "Receipt scan needs review",
+                            confidence = review.confidence,
+                            extractionState = review.extractionState.name
+                        )
+                    )
                 }
 
                 insertedReceiptId

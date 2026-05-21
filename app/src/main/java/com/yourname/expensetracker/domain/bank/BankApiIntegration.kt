@@ -186,9 +186,10 @@ class BankApiIntegration @Inject constructor(
             var skippedCount = 0
             val errors = mutableListOf<String>()
 
+            val syncRunId = run.runId  // PR6: capture sync run ID for provenance linking
             for (transaction in mockTransactions) {
                 try {
-                    val request = mapTransactionToExpense(transaction, connection)
+                    val request = mapTransactionToExpense(transaction, connection, syncRunId)
                         .copy(correlationId = run.correlationId)  // DDL-016-15: propagate bank sync correlation
                     @Suppress("DEPRECATION_ERROR")
                     when (val result = coordinator.createExpense(request)) {
@@ -323,7 +324,8 @@ class BankApiIntegration @Inject constructor(
      */
     private suspend fun mapTransactionToExpense(
         transaction: BankTransaction,
-        connection: BankConnection
+        connection: BankConnection,
+        syncRunId: Long
     ): CreateExpenseRequest {
         val transactionType = transaction.movementType?.toTransactionType() ?: inferTransactionType(transaction)
 
@@ -363,7 +365,8 @@ class BankApiIntegration @Inject constructor(
             transferDirection = transaction.transferDirection.takeIf { transactionType == TransactionType.TRANSFER },
             transferAccountName = safeTransferAccountName,
             idempotencyKey = hashingService.hmacSha256Prefix(transaction.id, "providerTransactionId") ?: transaction.id,
-            notes = notes
+            notes = notes,
+            bankSyncRunId = syncRunId
         )
     }
 

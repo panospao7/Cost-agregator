@@ -23,6 +23,8 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.provenance.SourceLinkQueryService
+import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import javax.inject.Inject
 
 /**
@@ -42,7 +44,8 @@ class TransactionsViewModel @Inject constructor(
     private val merchantLocationRepository: com.yourname.expensetracker.data.repository.MerchantLocationRepository,
  private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
  val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
- private val currencySettingsRepository: CurrencySettingsRepository
+ private val currencySettingsRepository: CurrencySettingsRepository,
+ private val sourceLinkQueryService: SourceLinkQueryService
 ) : ViewModel() {
 
     companion object {
@@ -156,6 +159,36 @@ class TransactionsViewModel @Inject constructor(
     /** S5-036: Emitted after recurring mark succeeds */
     private val _recurringSuccess = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val recurringSuccess: SharedFlow<Long> = _recurringSuccess.asSharedFlow()
+
+    // PR9: Provenance query state
+    private val _provenanceLinks = MutableStateFlow<List<EntitySourceLink>?>(null)
+    val provenanceLinks: StateFlow<List<EntitySourceLink>?> = _provenanceLinks.asStateFlow()
+
+    private val _provenanceSummary = MutableStateFlow<String?>(null)
+    val provenanceSummary: StateFlow<String?> = _provenanceSummary.asStateFlow()
+
+    private val _isProvenanceLoading = MutableStateFlow(false)
+    val isProvenanceLoading: StateFlow<Boolean> = _isProvenanceLoading.asStateFlow()
+
+    fun loadProvenanceForExpense(expenseId: Long) {
+        viewModelScope.launch {
+            _isProvenanceLoading.value = true
+            try {
+                _provenanceLinks.value = sourceLinkQueryService.getLinksForExpense(expenseId)
+                _provenanceSummary.value = sourceLinkQueryService.getExpenseSourceSummary(expenseId)
+            } catch (e: Exception) {
+                _provenanceLinks.value = emptyList()
+                _provenanceSummary.value = "Error loading provenance: ${e.message}"
+            } finally {
+                _isProvenanceLoading.value = false
+            }
+        }
+    }
+
+    fun clearProvenance() {
+        _provenanceLinks.value = null
+        _provenanceSummary.value = null
+    }
 
  // Refresh trigger for pull-to-refresh
  private val _refreshTrigger = MutableStateFlow(0)

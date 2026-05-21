@@ -21,16 +21,16 @@ class ImportCoordinator @Inject constructor(
     private val csvImporter: CsvExpenseImporter,
     private val jsonImporter: JsonExpenseImporter
 ) {
-    suspend fun importFromContent(content: String): ImportResult {
+    suspend fun importFromContent(content: String, fileImportRunId: Long? = null): ImportResult {
         val format = detectFormat(content)
         return when (format) {
             ImportFormat.CSV_LEGACY, ImportFormat.CSV_FULL -> {
-                when (val r = csvImporter.importFromContent(content)) {
+                when (val r = csvImporter.importFromContent(content, fileImportRunId)) {
                     is CsvExpenseImporter.ImportResult.Success -> ImportResult(true, r.imported, r.duplicates, r.errors, emptyList(), emptyList())
                     is CsvExpenseImporter.ImportResult.Error -> ImportResult(false, 0, 0, 1, listOf(r.message), emptyList())
                 }
             }
-            ImportFormat.JSON_V1, ImportFormat.JSON_V2 -> jsonImporter.importFromContent(content)
+            ImportFormat.JSON_V1, ImportFormat.JSON_V2 -> jsonImporter.importFromContent(content, fileImportRunId)
             ImportFormat.UNKNOWN -> ImportResult(false, 0, 0, 1, listOf("Unrecognized import format"), emptyList())
         }
     }

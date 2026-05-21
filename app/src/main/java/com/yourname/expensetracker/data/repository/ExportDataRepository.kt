@@ -4,6 +4,7 @@ import android.content.Context
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
+import com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -19,7 +20,9 @@ class ExportDataRepository @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val deterministicExpenseExportPager: DeterministicExpenseExportPager,
     private val backupEncryptionService: BackupEncryptionService,
-    private val readBarrier: DatabaseReadBarrier
+    private val readBarrier: DatabaseReadBarrier,
+    /** PR7: Source link DAO for bulk provenance queries during export. */
+    val sourceLinkDao: EntitySourceLinkDao
 ) {
     /**
      * ## BAK-13: Export no snapshot consistency

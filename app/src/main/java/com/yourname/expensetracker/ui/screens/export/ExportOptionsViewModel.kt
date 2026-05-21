@@ -2,9 +2,11 @@ package com.yourname.expensetracker.ui.screens.export
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
+import com.yourname.expensetracker.domain.export.ExpenseExportMapper
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
@@ -412,18 +414,23 @@ class ExportOptionsViewModel @Inject constructor(
         format: String,
         preview: PreviewCollector? = null,
         pageNumber: Int = 0,
-        pageSize: Int = 2000
+        pageSize: Int = 2000,
+        sourceLinksByExpense: Map<Long, List<EntitySourceLink>> = emptyMap()
     ) {
         val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         val zoneId = ZoneId.systemDefault()
         when (format) {
             "json" -> {
-                writeJsonPageRows(writer, page, categories, preview, pageNumber, dateFormatter, zoneId)
+                writeJsonPageRows(writer, page, categories, preview, pageNumber, dateFormatter, zoneId, sourceLinksByExpense)
             }
             "xero" -> {
                 page.forEach { expense ->
+                    val tx = ExpenseExportMapper.mapWithSourceLinks(
+                        expense,
+                        sourceLinksByExpense[expense.id] ?: emptyList()
+                    )
                     val line = buildString {
-                        xeroExporter.writeExpense(this, expense.toExportTransaction(), categories)
+                        xeroExporter.writeExpense(this, tx, categories)
                     }
                     writer.append(line)
                     preview?.append(line)
@@ -431,8 +438,12 @@ class ExportOptionsViewModel @Inject constructor(
             }
             "quickbooks" -> {
                 page.forEach { expense ->
+                    val tx = ExpenseExportMapper.mapWithSourceLinks(
+                        expense,
+                        sourceLinksByExpense[expense.id] ?: emptyList()
+                    )
                     val block = buildString {
-                        quickBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
+                        quickBooksExporter.writeExpense(this, tx, categories)
                     }
                     writer.append(block)
                     preview?.append(block)
@@ -440,8 +451,12 @@ class ExportOptionsViewModel @Inject constructor(
             }
             "freshbooks" -> {
                 page.forEach { expense ->
+                    val tx = ExpenseExportMapper.mapWithSourceLinks(
+                        expense,
+                        sourceLinksByExpense[expense.id] ?: emptyList()
+                    )
                     val line = buildString {
-                        freshBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
+                        freshBooksExporter.writeExpense(this, tx, categories)
                     }
                     writer.append(line)
                     preview?.append(line)
@@ -450,7 +465,10 @@ class ExportOptionsViewModel @Inject constructor(
             else -> {
                 // Generic CSV — full ExportTransaction schema
                 page.forEach { expense ->
-                    val tx = expense.toExportTransaction()
+                    val tx = ExpenseExportMapper.mapWithSourceLinks(
+                        expense,
+                        sourceLinksByExpense[expense.id] ?: emptyList()
+                    )
                     val line = buildString {
                         append(tx.id).append(',')
                         append(Instant.ofEpochMilli(tx.date).atZone(zoneId).toLocalDate().format(dateFormatter)).append(',')
@@ -471,7 +489,8 @@ class ExportOptionsViewModel @Inject constructor(
                         append(escapeCsv(tx.baseCurrency)).append(',')
                         append(tx.exchangeRateUsed).append(',')
                         append(if (tx.isBusinessExpense) "true" else "false").append(',')
-                        append(escapeCsv(tx.businessPurpose ?: "")).append('\n')
+                        append(escapeCsv(tx.businessPurpose ?: "")).append(',')
+                        append(escapeCsv(tx.sourceLinksJson ?: "")).append('\n')
                     }
                     writer.append(line)
                     preview?.append(line)
@@ -487,11 +506,15 @@ class ExportOptionsViewModel @Inject constructor(
         preview: PreviewCollector?,
         pageNumber: Int,
         dateFormatter: DateTimeFormatter,
-        zoneId: ZoneId
+        zoneId: ZoneId,
+        sourceLinksByExpense: Map<Long, List<EntitySourceLink>> = emptyMap()
     ) {
         var first = pageNumber == 1
         page.forEach { expense ->
-            val tx = expense.toExportTransaction()
+            val tx = ExpenseExportMapper.mapWithSourceLinks(
+                expense,
+                sourceLinksByExpense[expense.id] ?: emptyList()
+            )
             val row = buildString {
                 if (!first) append(',')
                 first = false
@@ -524,7 +547,10 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"isBusinessExpense\":").append(if (tx.isBusinessExpense) "true" else "false").append(',')
                 append("\"businessPurpose\":")
                 if (tx.businessPurpose == null) append("null")
-                else append("\"").append(escapeJson(tx.businessPurpose)).append("\"")
+                else append("\"").append(escapeJson(tx.businessPurpose)).append("\",")
+                append("\"sourceLinks\":")
+                if (tx.sourceLinksJson == null) append("null")
+                else append(escapeJson(tx.sourceLinksJson))
                 append("}")
             }
             writer.append(row)
@@ -574,8 +600,14 @@ class ExportOptionsViewModel @Inject constructor(
             )
             if (page.isEmpty()) break
 
+            // PR7: Batch-load source links for this page to avoid N+1 queries
+            val expenseIds = page.map { it.id }
+            val sourceLinksByExpense = exportDataRepository.sourceLinkDao
+                .getForExpenses(expenseIds)
+                .groupBy { it.targetEntityId }
+
             pageCount++
-            writePage(writer, page, categories, format, preview, pageCount, pageSize)
+            writePage(writer, page, categories, format, preview, pageCount, pageSize, sourceLinksByExpense)
             val last = page.last()
             lastDate = last.date
             lastId = last.id
@@ -623,7 +655,7 @@ class ExportOptionsViewModel @Inject constructor(
                 val metadataLine = "# ExpenseTracker Export v2, rowCount=$rowCount, startDate=$startDate, endDate=$endDate\n"
                 writer.append(metadataLine)
                 preview.append(metadataLine)
-                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,IsBusinessExpense,BusinessPurpose\n"
+                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,IsBusinessExpense,BusinessPurpose,SourceLinks\n"
                 writer.append(header)
                 preview.append(header)
             }

@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 131
+const val APP_DATABASE_SCHEMA_VERSION = 132
 
 @Database(
     entities = [
@@ -105,7 +105,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 131
         GroupLifecycleEventEntity::class,
         PipelineDiagnosticEvent::class,
         OperationRun::class,
-        OperationRunEvent::class
+        OperationRunEvent::class,
+        EntitySourceLink::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -175,6 +176,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun groupLifecycleEventDao(): GroupLifecycleEventDao
     abstract fun operationRunDao(): OperationRunDao
     abstract fun operationRunEventDao(): OperationRunEventDao
+    abstract fun entitySourceLinkDao(): EntitySourceLinkDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -7843,6 +7845,74 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // Migration 131 -> 132: Create entity_source_links table for provenance tracking
+        val MIGRATION_131_132 = object : androidx.room.migration.Migration(131, 132) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS entity_source_links (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        targetEntityType TEXT NOT NULL,
+                        targetEntityId INTEGER NOT NULL,
+                        sourceType TEXT NOT NULL,
+                        sourceEntityType TEXT NOT NULL,
+                        sourceEntityLocalId INTEGER,
+                        sourceIdentityKey TEXT NOT NULL,
+                        externalIdHash TEXT,
+                        externalFingerprintHash TEXT,
+                        providerId TEXT,
+                        accountIdHash TEXT,
+                        operationRunId INTEGER,
+                        importBatchId TEXT,
+                        importRowNumber INTEGER,
+                        linkRole TEXT NOT NULL,
+                        linkStatus TEXT NOT NULL,
+                        confidence REAL,
+                        isPrimary INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        createdBy TEXT,
+                        correlationId TEXT,
+                        metadataJson TEXT,
+                        metadataSchemaVersion INTEGER NOT NULL DEFAULT 1
+                    )
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_entity_source_links_targetEntityType_targetEntityId
+                    ON entity_source_links(targetEntityType, targetEntityId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_entity_source_links_sourceType
+                    ON entity_source_links(sourceType)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_entity_source_links_sourceEntityType_sourceEntityLocalId
+                    ON entity_source_links(sourceEntityType, sourceEntityLocalId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_entity_source_links_sourceIdentityKey
+                    ON entity_source_links(sourceIdentityKey)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_entity_source_links_operationRunId
+                    ON entity_source_links(operationRunId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_entity_source_links_correlationId
+                    ON entity_source_links(correlationId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_entity_source_links_targetEntityType_targetEntityId_sourceIdentityKey
+                    ON entity_source_links(targetEntityType, targetEntityId, sourceIdentityKey)
+                """.trimIndent())
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -8009,7 +8079,8 @@ MIGRATION_91_92,
         MIGRATION_127_128,
         MIGRATION_128_129,
         MIGRATION_129_130,
-        MIGRATION_130_131
+        MIGRATION_130_131,
+        MIGRATION_131_132
     )
 }
 }

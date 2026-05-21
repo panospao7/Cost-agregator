@@ -57,4 +57,10 @@ data class ExportTransaction(
     // link references for roundtrip export/import completeness. Currently
     // receipt links are not exported, so restored databases may lose the
     // association between scanned receipts and their expenses.
+
+    // ── Provenance / source link fields ────────────────────────────
+    /** PR7: Source link provenance data for this expense. */
+    val sourceLinks: List<SourceLinkExportRef> = emptyList(),
+    /** PR7: Source link provenance data serialized as JSON (for flat formats). */
+    val sourceLinksJson: String? = null
 )

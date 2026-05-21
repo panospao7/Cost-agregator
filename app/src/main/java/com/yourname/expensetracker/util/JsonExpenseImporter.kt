@@ -14,7 +14,10 @@ class JsonExpenseImporter @Inject constructor(
     private val coordinator: TransactionLifecycleCoordinator,
     private val categoryDao: CategoryDao
 ) {
-    suspend fun importFromContent(jsonContent: String): ImportResult {
+    suspend fun importFromContent(
+        jsonContent: String,
+        fileImportRunId: Long? = null
+    ): ImportResult {
         return try {
             val json = JSONObject(jsonContent)
             val rows = json.optJSONArray("rows") ?: return ImportResult(false, 0, 0, 1, listOf("No rows array found"), emptyList())
@@ -27,7 +30,7 @@ class JsonExpenseImporter @Inject constructor(
             for (i in 0 until rows.length()) {
                 try {
                     val row = rows.getJSONObject(i)
-                    val request = if (version >= 2) parseV2Row(row, i) else parseV1Row(row, i)
+                    val request = if (version >= 2) parseV2Row(row, i, fileImportRunId) else parseV1Row(row, i, fileImportRunId)
                     @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
                     when (val result = coordinator.createExpense(request)) {
                         is CreateExpenseResult.Created -> { imported++; expenseIds.add(result.expenseId) }
@@ -45,7 +48,7 @@ class JsonExpenseImporter @Inject constructor(
         }
     }
 
-    private suspend fun parseV2Row(row: JSONObject, i: Int): CreateExpenseRequest {
+    private suspend fun parseV2Row(row: JSONObject, i: Int, fileImportRunId: Long? = null): CreateExpenseRequest {
         val merchant = row.getString("merchant")
         val amount = row.optDouble("amount", row.optDouble("effectiveAmount", 0.0))
         val currency = row.optString("currency", "EUR")
@@ -69,11 +72,12 @@ class JsonExpenseImporter @Inject constructor(
             isBusinessExpense = row.optBoolean("isBusinessExpense", false),
             businessPurpose = row.optString("businessPurpose", "").takeIf { it.isNotBlank() },
             deduplicationMode = DeduplicationMode.STANDARD,
-            idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null }
+            idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null },
+            fileImportRunId = fileImportRunId
         )
     }
 
-    private suspend fun parseV1Row(row: JSONObject, i: Int): CreateExpenseRequest {
+    private suspend fun parseV1Row(row: JSONObject, i: Int, fileImportRunId: Long? = null): CreateExpenseRequest {
         val categoryId = row.optString("category", null)?.let { name ->
             categoryDao.getByName(name)?.id ?: categoryDao.insert(com.yourname.expensetracker.data.database.entity.Category(name = name, icon = "📂", color = "#888888"))
         }
@@ -86,7 +90,8 @@ class JsonExpenseImporter @Inject constructor(
             categoryId = categoryId,
             notes = row.optString("notes", "").takeIf { it.isNotBlank() },
             deduplicationMode = DeduplicationMode.STANDARD,
-            idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null }
+            idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null },
+            fileImportRunId = fileImportRunId
         )
     }
 }

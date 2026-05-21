@@ -48,6 +48,7 @@ class CsvExpenseImporter @Inject constructor(
      */
     suspend fun importFromContent(
         csvContent: String,
+        fileImportRunId: Long? = null,
         onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): ImportResult = withContext(Dispatchers.IO) {
         try {
@@ -84,7 +85,7 @@ class CsvExpenseImporter @Inject constructor(
             val total = dataLines.size
 
             dataLines.forEachIndexed { index, line ->
-                val rowResult = parseAndImportLine(line, columnIndex)
+                val rowResult = parseAndImportLine(line, columnIndex, fileImportRunId)
                 perRowResults.add(rowResult)
 
                 when (rowResult) {
@@ -115,7 +116,8 @@ class CsvExpenseImporter @Inject constructor(
      */
     private suspend fun parseAndImportLine(
         line: String,
-        columnIndex: Map<String, Int>
+        columnIndex: Map<String, Int>,
+        fileImportRunId: Long? = null
     ): RowResult {
         return try {
             val parts = parseCsvLine(line)
@@ -170,7 +172,8 @@ class CsvExpenseImporter @Inject constructor(
                 transactionType = TransactionType.PURCHASE,
                 source = ExpenseSource.CSV_IMPORT,
                 categoryId = categoryId,
-                notes = notesFromCol.ifEmpty { null }
+                notes = notesFromCol.ifEmpty { null },
+                fileImportRunId = fileImportRunId
             )
 
             @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
