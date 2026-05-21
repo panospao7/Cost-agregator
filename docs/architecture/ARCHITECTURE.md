@@ -29,11 +29,11 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v129 (migrated from v124 through v125–v129 for durable diagnostics, barrier system, lifecycle events)
-- 888 Kotlin source files (388 domain, 280 data, 164 ui, 31 di, 25 other)
+- Database version: v131 (migrated from v124 through v125–v131 for durable diagnostics, barrier system, lifecycle events, privacy hashing, and currency normalization)
+- 926 Kotlin source files (388 domain, 280 data, 164 ui, 31 di, 63 other/util)
 - 62 DAOs (58 in DaoModule + 3 in AiModule + 1 unbound), 64 entities registered in AppDatabase
 - 39 @HiltViewModel (38 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
-- 29 @Module Hilt modules
+- 30 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
 - Bank statement AI parsing: **complete** (on-device→cloud→parser 3-tier validation with per-transaction source tracking)
@@ -116,8 +116,43 @@
 - **External review fixes** (21 P0/P1 + P2/P3 items): privacy gate unification, trend normalization, budget wiring, geocoding gate fix, purpose-aware redaction, `AccountBalanceProvider` integration, `NetCashflowBalanceProvider` implementation.
 - **Leftover issues tracker** (`docs/LEFTOVER_ISSUES_PIPELINES_1_8.md`) — 55 P2/P3/enhancement items for all 8 pipelines tracked for future sprints.
 
+### Architecture Drift Updates (2026-05-18 — currency normalization + privacy overhaul)
+
+#### Currency Normalization Overhaul (CURR series, 10 commits)
+- **DB upgraded to v131** (from v129). Migration 129→130 adds nullable email fields + hash columns to `email_receipt_source` (privacy). Migration 130→131 backfills `validDate` for legacy `exchange_rates` rows.
+- **New `domain/core/money/` package** — 14 files: `ConversionOutcome` (sealed: Converted/Failed), `ConversionFailureType` enum, `RateBasis` enum (LATEST_AVAILABLE/TRANSACTION_DATE/PERIOD_START/PERIOD_END/FORECAST_DATE/PERIOD_MIDPOINT_ESTIMATE), `StaleRatePolicy`, `ConversionPath`, `ConversionQuality`, `MoneyNormalizationEngine`, `MoneyAggregateMetadata`, `MoneyAggregateResult` (sealed: Available/Unavailable), `HomeCurrencyForMoneyMath`, `BucketDatePolicy`, `NormalizationResult`, `NormalizedExpense`, `TransactionTypeFilter`.
+- **`CurrencyConverter`** — new `convertOutcome()` returning typed result; fails immediately if historical basis requested without `atMillis` (no silent fallback); `convertMultiple()` refactored.
+- **`MoneyAggregate`** — new `rateBasis` field, `quality`, metadata counters; `MoneyAggregateBuilder.fromBuckets()` enforces `RequireBucketDate`.
+- **`ExchangeRateStoreAdapter`** — rejects `validDate=null/0` at storage boundary; `storeRate/storeRates` set `validDate = startOfDay(now)`.
+- **`ExchangeRateDao`** — `getRate()` uses `ORDER BY validDate DESC`; new `getLatestRateForPair()`.
+- **`HomeCurrencyResolution`** — sealed interface (`Resolved`/`FirstRunDefault`/`Failed`); `CurrencySettingsRepository.resolveHomeCurrency()` typed resolution.
+- **`DashboardNormalizedInput`** — aggregates with `CurrencyDataQuality`, `CurrencyQualityUi`; `produceDashboardNormalizedInput()` method; typed `DashboardNormalizedInputResult`.
+- **`BudgetForecastResult`** — typed unavailable state; `BudgetForecastingEngine.generateForecastResult` real implementation (no zero/UNKNOWN sentinel inference).
+- **`ForecastRiskLevel.UNKNOWN`** added; `BudgetScreen` exhaustive matching; `BudgetForecast` entity updated for `rateBasis`.
+- **All silent EUR fallbacks removed** from 10+ domain components: `AnalyticsRepository`, `AdvancedAnalyticsEngine`, `CashFlowCalculator`, `FinancialStressForecastEngine`, `HistoricalSpendingDistribution`, `FinancialHealthCalculator`, `FinancialHealthScoreV2`, `InvestmentTracker`, `SubscriptionManagerEngine`, `MonthlySavingsSweepUseCase`, `ExpenseUseCases`, `NarrativeGenerator`.
+- **Legacy API deprecations** — `getHomeCurrencyPurchaseTotal` raised to `DeprecationLevel.ERROR`; legacy `fromBuckets` restricted to `LATEST_AVAILABLE` + `@Deprecated`.
+- **Guard script**: `scripts/verify_money_boundaries.py` (G-MONEY-01 through G-MONEY-21 rules).
+- **New docs**: `docs/currency/rate-basis-policy.md`, `docs/currency/money-aggregate-contract.md`, `docs/currency/money-boundary-guard.md`.
+
+#### Global Privacy / Raw-Storage / Redaction Overhaul (PRIV series, 16 commits)
+- **PrivacySettings load state** — `PrivacySettingsLoadState` sealed interface (`Loaded`/`FirstRunDefault`/`CorruptedFailClosed`); `FAIL_CLOSED_DEFAULTS` (all raw modes `DO_NOT_STORE`); corruption sentinel via `ReplaceFileCorruptionHandler`.
+- **Raw Persistence Policy framework** — `RawSourceType` enum, `RawPersistencePolicy` (hashMode + storageMode), `RawPersistencePolicyResolver`, `RawContentSanitizer` HMAC-safe variants (removed `String.hashCode()`).
+- **`SensitiveHashingService`** — interface + `DefaultSensitiveHashingService` (HMAC-SHA256); used for messageId hashing, fingerprint hashing, diagnostic sourceId hashing.
+- **`SafePrivacyMetadata`** — blocks 14 sensitive key substrings; `put()` sanitizes base64/Bearer/IBAN/card numbers/file paths/JWTs → `[REDACTED]`; `putHash()` validates approved key set + hex-like value format.
+- **Notification privacy** — `NotificationCaptureGate` checks settings + PrivacyGate before extras extraction; `NotificationPersistencePayload` sanitized for all 4 modes; `NotificationProcessingPipeline` title/text sanitized per `rawNotificationStorageMode`; `isPackageBlockedFast` returns true (fail-closed) until first cache emission.
+- **Cloud/AI privacy** — `CloudPayloadPolicy` interface + `DefaultCloudPayloadPolicy`; `PreparedCloudPayload` contract for all 7 cloud providers; `CloudPayloadRedactor` replaced entirely by `CloudPayloadPolicy`; new `CloudPayloadPurpose` enum values (`BANK_STATEMENT_VALIDATION`, `BANK_TRANSACTION_CLASSIFICATION`, `EXPORT_SUMMARY`).
+- **Bank privacy** — `BankTransactionPersistencePayload` hashes `providerTransactionId/accountId/counterparty`; `BankApiIntegration` idempotencyKey hashed, description/notes redacted per policy.
+- **Export/Backup privacy** — `ExportPrivacyGate` with typed capabilities (`EXPENSE_EXPORT_RAW`/`ENCRYPTED`/`REDACTED`/`DEBUG_RAW_EXPORT`/`RAW_DATABASE_EXPORT`); added to composite `PrivacyGate`.
+- **Privacy Gate wiring** — `PrivacyCapabilityHandlingPolicy` covering all 26 `PrivacyCapability` values; `CompositePrivacyGate` fails closed for unhandled sensitive capabilities; all secondary constructors changed from `Allowed` to `FailClosed` gate.
+- **Retention system** — `RetentionTarget` interface + `RetentionPurgeResult`; `RetentionRegistry` with 5 registered targets; new `RetentionModule` (`di/RetentionModule.kt`); `DataRetentionWorker` injects `RetentionRegistry` instead of inline list; `EmailReceiptDao` has `redactSensitiveFieldsOlderThan()` (redact not delete).
+- **Email privacy** — `EmailReceiptSource`: `emailSender`/`emailSubject` nullable; added `emailMessageIdHash` + `contentFingerprintHash` columns (DB v130); raw messageId only stored in `STORE_RAW` mode; HMAC-SHA256 for messageId hashing (no plaintext fallback — fails closed on hash failure); `createFingerprint` removed `hashCode().toString(16)` fallback.
+- **Privacy audit** — `PrivacyAuditContext` typed audit context with `forCloudCall()` factory; `PrivacyAuditLogger` with typed `logDecision`/`logCloudCall` overloads.
+- **Guard script**: `scripts/verify_privacy_boundaries.py` (G1-G13 rules).
+- **New docs**: `docs/privacy/raw-storage-policy.md`.
+- **18 new test files** for privacy behavioral verification.
+
 ### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
-- **Database version upgraded to v129** (from v124). Migrations 124→129 add durable diagnostics tables (`operation_runs`, `operation_run_events`), expand `pipeline_diagnostic_events` with 9 new columns, add `correlationId`/`causationId` to `transaction_events`, and add `isTerminal`/`eventId` to `operation_run_events`.
+- **Database version upgraded to v129** (from v124) — later superseded by v130→v131 in the currency/privacy overhaul. Migrations 124→129 add durable diagnostics tables (`operation_runs`, `operation_run_events`), expand `pipeline_diagnostic_events` with 9 new columns, add `correlationId`/`causationId` to `transaction_events`, and add `isTerminal`/`eventId` to `operation_run_events`.
 - **WorkerRegistry** (`domain/workers/WorkerRegistry.kt`) — `object` with typed `Entry` list (specName + schedule lambda) for all 7 background workers. `scheduleAll(context)` iterates entries with `runCatching` for resilience. Replaces hardcoded lists in `RestoreMaintenanceMode.scheduleAllWorkers()` and `AppStartupCoordinator.scheduleStartupWork()` (P7-P1-07).
 - **PrivacyBlocked** (`domain/privacy/PrivacyBlocked.kt`) — sealed interface with concrete subclasses: `CloudAiDisabled`, `ReceiptImageUploadDisabled`, `ExternalGeocodingDisabled`, `NotificationCaptureDisabled`, `RawExportDisabled`, `Custom`. All 4 privacy gates (`NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`) now return `PrivacyBlocked` instead of ad-hoc `Denied(reason)` strings. Provides consistent UI messaging for privacy-denied states.
 - **PrivacySettings** — added `blockCloudAi: Boolean` field for explicit cloud AI blocking independent of the `cloudAiEnabled` toggle.

@@ -1,8 +1,8 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all 59 DAOs (56 in DaoModule + 3 in AiModule) to their entities and consuming repositories/services.
+> Complete mapping of all 62 DAOs (58 in DaoModule + 3 in AiModule + 1 unbound) to their entities and consuming repositories/services.
 >
-> Last updated: 2026-05-10
+> Last updated: 2026-05-18
 
 ---
 
@@ -158,6 +158,8 @@
 | `StressForecastSnapshotDao` | `StressForecastSnapshot` | `FinancialStressForecastEngine` | Cash flow |
 | `SourceStatsEventDao` | `SourceStatsEvent` | — | Source stats event tracking (event-based, v117+) |
 | `PipelineDiagnosticEventDao` | `PipelineDiagnosticEvent` | `NotificationProcessingPipeline` | Cross-pipeline diagnostic tracking |
+| `OperationRunDao` | `OperationRun` | `CompositeOperationRunRecorder` | Durable operation run tracking |
+| `OperationRunEventDao` | `OperationRunEvent` | `CompositeOperationRunRecorder` | Durable operation run events |
 
 ---
 
@@ -183,5 +185,7 @@
 | `SourceStatsEventDao` | **0** direct repositories | 🟢 LOW (event-based tracking) |
 | `GroupLifecycleEventDao` | **1** consumer | 🟢 LOW (append-only event log) |
 | `PipelineDiagnosticEventDao` | **1** consumer | 🟢 LOW (diagnostic tracking) |
-| **Total: 59 DAOs (56 DaoModule + 3 AiModule)** | | |
+| `OperationRunDao` | **1** consumer | 🟢 LOW (operation run tracking) |
+| `OperationRunEventDao` | **1** consumer | 🟢 LOW (run events) |
+| **Total: 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound)** | | |
 

@@ -1,6 +1,6 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 27 Hilt @Module files (+ 1 @EntryPoint).
+> Complete interface → implementation binding map for all 30 Hilt @Module files (+ 1 @EntryPoint).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -21,7 +21,7 @@ Dependencies:
 
 ### `DaoModule` — `di/DaoModule.kt`
 ```
-Provides (56 DAOs):
+Provides (58 DAOs):
   PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, BlockedPackageDao,
   ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao, MerchantCategoryDao,
   PendingReviewDao, UserCorrectionDao, SourceStatsDao, SourceStatsEventDao, RecurringExpenseDao,
@@ -40,7 +40,7 @@ Provides (56 DAOs):
   SavingsSweepPlanDao, SpendingChallengeDao, TransactionEventDao,
   ReceiptEventDao, ReceiptExpenseLinkDao, RecurringOccurrenceDao,
   RecurringReminderDeliveryDao, RecurringLifecycleEventDao, PrivacyAuditDao,
-  GroupLifecycleEventDao, PipelineDiagnosticEventDao
+  GroupLifecycleEventDao, PipelineDiagnosticEventDao, OperationRunDao, OperationRunEventDao
 Dependencies:
   AppDatabase
 
@@ -363,6 +363,24 @@ Binds:
 
 ---
 
+### `DiagnosticsModule` — `di/DiagnosticsModule.kt`
+Binds:
+- `DiagnosticEventWriter` → `CompositeDiagnosticEventWriter`
+- `TransactionLifecycleEventWriter` → `RoomTransactionLifecycleEventWriter`
+- `ReceiptLifecycleEventWriter` → `RoomReceiptLifecycleEventWriter`
+- `RecurringLifecycleEventWriter` → `RoomRecurringLifecycleEventWriter`
+- `OperationRunRecorder` → `CompositeOperationRunRecorder`
+- `WorkerRunLogger` → `WorkerRunLoggerImpl`
+- `DiagnosticsRepository` → `DiagnosticsRepositoryImpl`
+
+---
+
+### `RetentionModule` — `di/RetentionModule.kt`
+`@Module @InstallIn(SingletonComponent::class)` providing:
+- `RetentionRegistry` with 5 registered `RetentionTarget` entries: `raw_notifications`, `scanned_receipts.rawOcrText`, `ai_artifacts`, `ai_chat_messages`, `email_receipt_sources`
+
+---
+
 ## 5. Entry Points
 
 ### `AppStartupDelegate` — `startup/AppStartupDelegate.kt`
@@ -393,4 +411,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 27 Hilt @Module files · 65+ repositories · 59 DAOs (56 DaoModule + 3 AiModule) · 62 entities
+**Stats:** 30 Hilt @Module files · 65+ repositories · 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound) · 64 entities · DB v131

@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-05-11 (snapshot)  
-**Database Version:** 124  
+**Generated:** 2026-05-18 (snapshot)  
+**Database Version:** v131  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
