@@ -488,7 +488,7 @@ class AssistantViewModel @Inject constructor(
 
         is FinancialQueryResult.Clarification -> JSONObject()
             .put("type", "clarification")
-            .put("prompt", prompt)
+            .put("clarificationPrompt", prompt)
             .put("options", JSONArray(options))
             .toString()
 

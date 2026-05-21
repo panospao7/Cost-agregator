@@ -281,7 +281,11 @@ class SourceLinkWriterImpl @Inject constructor(
                 sourceEntityLocalId?.let { SourceIdentityKeyFactory.debugTool(it) }
                     ?: "local:debug_tool:unknown"
             SourceEntityType.MIGRATION ->
-                SourceIdentityKeyFactory.migration(1)
+                // P2: Derive identity from operation run ID for traceability,
+                // falling back to a versioned default only when no run context exists.
+                operationRunId?.let { runId ->
+                    SourceIdentityKeyFactory.migrationFromRun(runId)
+                } ?: SourceIdentityKeyFactory.migration(1)
             else -> "unknown:unknown"
         }
     }

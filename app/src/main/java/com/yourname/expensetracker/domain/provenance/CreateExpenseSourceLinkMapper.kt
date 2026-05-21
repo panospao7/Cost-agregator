@@ -89,6 +89,14 @@ object CreateExpenseSourceLinkMapper {
 
         // bankSyncRunId → BANK_SYNC_RUN / CREATED_FROM
         request.bankSyncRunId?.let { syncRunId ->
+            val metadataMap = mutableMapOf<String, Any?>()
+            request.bankProviderTransactionIdHash?.let { metadataMap["providerTransactionHash"] = it }
+            request.bankAccountIdHash?.let { metadataMap["accountHash"] = it }
+            val metadata = if (metadataMap.isNotEmpty()) {
+                SafeProvenanceMetadata.fromMap(metadataMap)
+            } else {
+                SafeProvenanceMetadata.empty()
+            }
             payloads.add(
                 SourceLinkPayload(
                     sourceType = request.source.name,
@@ -97,7 +105,8 @@ object CreateExpenseSourceLinkMapper {
                     role = SourceLinkRole.CREATED_FROM,
                     status = SourceLinkStatus.ACTIVE,
                     isPrimary = false,
-                    operationRunId = syncRunId
+                    operationRunId = syncRunId,
+                    metadata = metadata
                 )
             )
         }

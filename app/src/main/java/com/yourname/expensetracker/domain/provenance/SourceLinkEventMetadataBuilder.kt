@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.provenance
 
+import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import org.json.JSONArray
 import org.json.JSONObject
@@ -65,6 +66,12 @@ object SourceLinkEventMetadataBuilder {
 
     /**
      * Builds metadata for CREATE_DUPLICATE_SKIPPED events.
+     *
+     * P3: Privacy-trimmed — only includes safe summary fields.
+     * - Amount and currency are safe (non-identifying).
+     * - Merchant is truncated to first 4 chars + hash to prevent full name leakage.
+     * - MerchantKey is omitted (internal identifier).
+     * - Date is omitted (exact timestamps reveal user patterns).
      */
     fun duplicateMetadata(
         policy: DuplicateSourceLinkPolicy,
@@ -75,11 +82,17 @@ object SourceLinkEventMetadataBuilder {
         return JSONObject().apply {
             put("reason", "Duplicate expense detected")
             put("duplicateSourceLinkPolicy", policy.name)
+            // P3: Only safe summary fields — amount and currency are non-identifying
             put("attemptedAmount", attemptedExpense.amount)
-            put("attemptedMerchant", attemptedExpense.merchant)
-            put("attemptedDate", attemptedExpense.date)
             put("attemptedCurrency", attemptedExpense.currency)
-            put("attemptedMerchantKey", attemptedExpense.merchantKey)
+            // P3: Truncate merchant to prevent full name leakage in event logs
+            val merchant = attemptedExpense.merchant
+            if (merchant.length > 4) {
+                put("attemptedMerchantPrefix", merchant.take(4) + "…")
+                put("attemptedMerchantKeyHash", merchant.sha256Prefix(8))
+            } else {
+                put("attemptedMerchantPrefix", merchant)
+            }
             if (sourceLinkPayloads.isNotEmpty()) {
                 put("sourceLinkCount", sourceLinkPayloads.size)
                 put("sourceLinks", buildSafeLinksArray(sourceLinkPayloads))

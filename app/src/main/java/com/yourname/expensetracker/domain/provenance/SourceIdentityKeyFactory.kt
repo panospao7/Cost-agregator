@@ -82,4 +82,12 @@ object SourceIdentityKeyFactory {
 
     fun migration(migrationVersion: Int): String =
         "migration:v$migrationVersion"
+
+    /**
+     * P2: Derives a migration identity key from an operation run ID.
+     * This allows each migration/backfill run to have a unique identity
+     * rather than collapsing all migrations into a single key.
+     */
+    fun migrationFromRun(operationRunId: Long): String =
+        "migration:run:$operationRunId"
 }

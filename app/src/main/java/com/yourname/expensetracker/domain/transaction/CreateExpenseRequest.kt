@@ -48,6 +48,8 @@ import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
  * @property emailReceiptSourceId Optional. Linked email receipt source ID.
  * @property groupId Optional. Linked expense group ID.
  * @property bankSyncRunId Optional. Linked bank sync run ID.
+ * @property bankProviderTransactionIdHash Optional. Hashed provider transaction ID for bank provenance identity.
+ * @property bankAccountIdHash Optional. Hashed bank account ID for provenance traceability.
  * @property fileImportRunId Optional. Linked file import run ID (CSV/JSON import provenance).
  * @property csvImportBatchId Optional. CSV import batch identifier.
  * @property csvRowNumber Optional. Row number within CSV import.
@@ -104,6 +106,10 @@ data class CreateExpenseRequest(
     val emailReceiptSourceId: Long? = null,
     val groupId: Long? = null,
     val bankSyncRunId: Long? = null,
+    /** P0: Hashed provider transaction ID for deterministic bank provenance identity. */
+    val bankProviderTransactionIdHash: String? = null,
+    /** P0: Hashed bank account ID for provenance traceability. */
+    val bankAccountIdHash: String? = null,
     val fileImportRunId: Long? = null,
     val csvImportBatchId: String? = null,
     val csvRowNumber: Int? = null,

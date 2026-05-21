@@ -354,6 +354,10 @@ class BankApiIntegration @Inject constructor(
             if (safeReference != null) append(" (Ref: $safeReference)")
         }.takeIf { it.isNotBlank() }
 
+        // P0: Compute hashed identity fields for deterministic bank provenance
+        val providerTxHash = hashingService.hmacSha256Prefix(transaction.id, "providerTransactionId")
+        val accountHash = hashingService.hmacSha256Prefix(connection.id.toString(), "bankAccountId")
+
         return CreateExpenseRequest(
             merchant = transaction.merchant,
             amount = kotlin.math.abs(transaction.amount),
@@ -364,9 +368,11 @@ class BankApiIntegration @Inject constructor(
             categoryId = connection.defaultCategoryId,
             transferDirection = transaction.transferDirection.takeIf { transactionType == TransactionType.TRANSFER },
             transferAccountName = safeTransferAccountName,
-            idempotencyKey = hashingService.hmacSha256Prefix(transaction.id, "providerTransactionId") ?: transaction.id,
+            idempotencyKey = providerTxHash ?: transaction.id,
             notes = notes,
-            bankSyncRunId = syncRunId
+            bankSyncRunId = syncRunId,
+            bankProviderTransactionIdHash = providerTxHash,
+            bankAccountIdHash = accountHash
         )
     }
 

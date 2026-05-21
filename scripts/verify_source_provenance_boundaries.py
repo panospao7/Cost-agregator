@@ -6,8 +6,12 @@ PR10: Verifies that source link provenance code maintains proper boundaries
 around sensitive data, identity key completeness, metadata allowlist
 consistency, ExpenseSource coverage, and EntitySourceLink construction.
 
+P1: Extended to detect JSONObject.put(), putString(), buildJsonObject, and
+JSONObject().apply{put()} patterns with blocked keys.
+
 Rules enforced:
   G-PROV-01  No raw sensitive content in source link metadata
+             (covers metadataMap[], JSONObject.put(), putString(), buildJsonObject)
   G-PROV-02  All SourceEntityType values have identity key handlers
   G-PROV-03  SafeProvenanceMetadata allowlist is consistent
   G-PROV-04  All ExpenseSource values are handled in TransactionLifecycleCoordinator
@@ -65,6 +69,26 @@ BLOCKED_METADATA_KEYS = [
 # Build regex: matches metadataMap["blockedKey"] or metadataMap["blockedKeyWithMore"]
 RAW_METADATA_RE = re.compile(
     r'metadataMap\s*\[\s*"(?:' + '|'.join(re.escape(k) for k in BLOCKED_METADATA_KEYS) + r')"\s*\]'
+)
+
+# P1: JSONObject.put("blockedKey", ...) — catches direct JSON construction leaks
+JSONOBJECT_PUT_RE = re.compile(
+    r'\.put\s*\(\s*"(?:' + '|'.join(re.escape(k) for k in BLOCKED_METADATA_KEYS) + r')"\s*[,)]'
+)
+
+# P1: putString("blockedKey", ...) — catches builder-style leaks
+PUT_STRING_RE = re.compile(
+    r'putString\s*\(\s*"(?:' + '|'.join(re.escape(k) for k in BLOCKED_METADATA_KEYS) + r')"\s*[,)]'
+)
+
+# P1: buildJsonObject { put("blockedKey", ...) } — catches Kotlin DSL leaks
+BUILD_JSON_OBJECT_RE = re.compile(
+    r'buildJsonObject\s*\{[^}]*put\s*\(\s*"(?:' + '|'.join(re.escape(k) for k in BLOCKED_METADATA_KEYS) + r')"\s*[,)]'
+)
+
+# P1: JSONObject().apply { put("blockedKey", ...) } — catches apply-style leaks
+JSONOBJECT_APPLY_PUT_RE = re.compile(
+    r'JSONObject\s*\(\s*\)\s*\.apply\s*\{[^}]*\.put\s*\(\s*"(?:' + '|'.join(re.escape(k) for k in BLOCKED_METADATA_KEYS) + r')"\s*[,)]'
 )
 
 # ── Check 2: SourceEntityType enum values ──────────────────────────────────────
@@ -212,7 +236,11 @@ def extract_metadata_map_keys(content: str) -> Set[str]:
 # ── Check functions ────────────────────────────────────────────────────────────
 
 def check_raw_metadata(kt_file: Path) -> List[Violation]:
-    """G-PROV-01: No raw sensitive content in source link metadata."""
+    """G-PROV-01: No raw sensitive content in source link metadata.
+
+    P1: Extended to also detect JSONObject.put(), putString(), buildJsonObject,
+    and JSONObject().apply { put() } patterns with blocked keys.
+    """
     violations: List[Violation] = []
     try:
         content = kt_file.read_text(encoding='utf-8')
@@ -227,6 +255,38 @@ def check_raw_metadata(kt_file: Path) -> List[Violation]:
                 line_num=idx + 1,
                 rule='G-PROV-01',
                 description='Raw sensitive key used in metadataMap — hash or use allowed key instead',
+                line=line.strip()
+            ))
+        # P1: JSONObject.put("blockedKey", ...)
+        if JSONOBJECT_PUT_RE.search(line):
+            violations.append(Violation(
+                line_num=idx + 1,
+                rule='G-PROV-01',
+                description='Raw sensitive key in JSONObject.put() — use SafeProvenanceMetadata instead',
+                line=line.strip()
+            ))
+        # P1: putString("blockedKey", ...)
+        if PUT_STRING_RE.search(line):
+            violations.append(Violation(
+                line_num=idx + 1,
+                rule='G-PROV-01',
+                description='Raw sensitive key in putString() — use SafeProvenanceMetadata instead',
+                line=line.strip()
+            ))
+        # P1: buildJsonObject { put("blockedKey", ...) }
+        if BUILD_JSON_OBJECT_RE.search(line):
+            violations.append(Violation(
+                line_num=idx + 1,
+                rule='G-PROV-01',
+                description='Raw sensitive key in buildJsonObject — use SafeProvenanceMetadata instead',
+                line=line.strip()
+            ))
+        # P1: JSONObject().apply { put("blockedKey", ...) }
+        if JSONOBJECT_APPLY_PUT_RE.search(line):
+            violations.append(Violation(
+                line_num=idx + 1,
+                rule='G-PROV-01',
+                description='Raw sensitive key in JSONObject().apply{put()} — use SafeProvenanceMetadata instead',
                 line=line.strip()
             ))
 
@@ -407,7 +467,7 @@ def main():
     all_violations: List[Tuple[str, List[Violation]]] = []
 
     # ── Check 1: Raw metadata (scan all Kotlin source files) ─────────────────
-    print("Check G-PROV-01: Scanning for raw sensitive keys in metadataMap...")
+    print("Check G-PROV-01: Scanning for raw sensitive keys in metadata (mapOf, JSONObject.put, putString, buildJsonObject)...")
     raw_violations: List[Violation] = []
     kt_files = [f for f in src_dir.rglob('*.kt') if not is_excluded(f)]
     for kt_file in sorted(kt_files):
