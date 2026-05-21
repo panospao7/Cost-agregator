@@ -72,6 +72,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
             timeProvider,
             geocodingService,
             currencySettingsRepository = mockk(),
+            sourceLinkQueryService = mockk(relaxed = true),
         )
     }
 

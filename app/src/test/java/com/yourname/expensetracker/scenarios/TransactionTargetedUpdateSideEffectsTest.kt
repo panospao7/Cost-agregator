@@ -78,12 +78,15 @@ class TransactionTargetedUpdateSideEffectsTest {
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             sideEffectDispatcher = sideEffectDispatcher,
+            planner = mockk(relaxed = true),
+            runner = mockk(relaxed = true),
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
                 every { it.isWritesAllowed() } returns true
             },
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true)
+            currencySettingsRepository = mockk(relaxed = true),
+            sourceLinkWriter = mockk(relaxed = true)
         )
     }
 

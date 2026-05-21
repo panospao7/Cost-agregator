@@ -1,150 +1,62 @@
-Yes — many issues are **universal**, so I would **not** fix strictly pipeline-by-pipeline from 1 → 12.
+Here’s the prioritized bug list with exact file-level fixes.
 
-Best approach:
+## P0 — Bank provenance can degrade to weak/unknown identity
+**Problem:** bank links may not reliably carry `providerTransactionIdHash`, `accountIdHash`, and `operationRunId`, so `BANK_TRANSACTION` identity can collapse or lose run traceability.
 
-1. Fix **cross-cutting foundation issues first**.
-2. Then fix each pipeline’s local bugs.
-3. Avoid implementing the same pattern differently in every pipeline.
+**Fix files:**
+- `app/src/main/java/.../domain/bank/BankApiIntegration.kt`
+  - ensure every bank create/review path builds a full `BankTransactionSourceContext`
+  - pass `providerId`, `providerTransactionIdHash`, `accountIdHash`, `operationRunId`, `bookingDate`, `valueDate`, `transactionStatus`
+- `app/src/main/java/.../domain/bank/provenance/BankSourceLinkPayloadFactory.kt`
+  - make `sourceIdentityKey` deterministic and non-fallback by default
+  - require bank-specific identity fields for `BANK_TRANSACTION`
+- `app/src/main/java/.../domain/bank/provenance/BankSourceEventMetadataBuilder.kt`
+  - mirror the same safe identity summary into event metadata
+- Tests:
+  - `app/src/test/java/.../domain/bank/provenance/BankSourceLinkPayloadFactoryTest.kt`
+  - `app/src/test/java/.../domain/bank/provenance/BankSourceEventMetadataBuilderTest.kt`
+  - `app/src/test/java/.../domain/bank/BankApiIntegrationTest.kt`
 
-## Universal issues to fix once
+## P1 — Static guard misses JSONObject-style metadata leaks
+**Problem:** `verify_source_provenance_boundaries.py` only catches some `mapOf(...)` patterns, but provenance builders may use `JSONObject.put(...)`, `putString(...)`, etc.
 
-### 1. Write/read/restore barrier
-Affects Pipelines **1,2,3,4,6,7,9,10,11,12**.
+**Fix files:**
+- `scripts/verify_source_provenance_boundaries.py`
+  - extend scanning to detect blocked keys in:
+    - `JSONObject.put(...)`
+    - `putString(...)`
+    - `buildJsonObject { ... }`
+    - raw string literals in provenance builders
+- `scripts/source_boundary_rules.json`
+  - add broader blocked-key patterns and provenance-builder file allowlists
+- `scripts/tests/test_verify_source_provenance_boundaries.py`
+  - add fixtures proving `JSONObject.put("rawText", ...)` and similar now fail
 
-Create one rule:
+## P2 — MIGRATION identity is too coarse
+**Problem:** `SourceLinkWriterImpl` maps `SourceEntityType.MIGRATION` to one fixed identity, which collapses all migration provenance.
 
-```text
-No DB write unless DatabaseWriteBarrier allows it.
-No export/read during restore unless DatabaseReadBarrier allows it.
-No direct DAO mutation outside approved lifecycle/coordinator paths.
-```
+**Fix files:**
+- `app/src/main/java/.../domain/provenance/SourceLinkWriterImpl.kt`
+  - replace hardcoded `migration:v1`
+  - derive identity from migration/backfill context, e.g. migration key + phase + operation run
+- `app/src/main/java/.../domain/provenance/backfill/SourceLinkBackfillPayloadFactory.kt`
+  - pass a stable migration/backfill identifier into payloads
+- Tests:
+  - `app/src/test/java/.../domain/provenance/SourceLinkWriterImplTest.kt`
+  - backfill worker/factory tests
 
-This should be fixed globally, not per pipeline.
+## P3 — Duplicate metadata may be broader than desired
+**Problem:** `duplicateMetadata()` may include too much attempted business context.
 
----
-
-### 2. Durable diagnostics / lifecycle events
-Affects almost every pipeline.
-
-You repeatedly have:
-
-```text
-operation failed/skipped/dropped
-but no durable event explains why
-```
-
-Create common event/diagnostic contracts for:
-
-```text
-RECEIVED
-ATTEMPTED
-DROPPED
-SKIPPED
-DUPLICATE
-VALIDATION_FAILED
-PRIVACY_BLOCKED
-RESTORE_BLOCKED
-SIDE_EFFECT_FAILED
-COMPLETED
-```
-
-Then each pipeline can use them.
-
----
-
-### 3. Privacy / raw-storage / redaction
-Affects Pipelines **1,3,7,8,10,11,12**.
-
-Do this once:
-
-```text
-RawStorageMode applies to every persisted table, not only primary raw rows.
-Cloud payloads must use EffectiveCloudAiPolicy.
-Debug/export/backup must respect the same privacy policy.
-```
-
-This is universal and should be foundation work.
-
----
-
-### 4. Currency normalization / MoneyAggregate
-Affects Pipelines **5,6,10,12**, indirectly **2/3/11**.
-
-Do not fix currency separately in dashboards, budgets, exports, forecasts.
-
-Create one canonical rule:
-
-```text
-Financial aggregates must declare rate basis:
-HISTORICAL_TRANSACTION_DATE
-PERIOD_END
-LATEST_AVAILABLE
-```
-
-And never fallback to raw foreign amount silently.
-
----
-
-### 5. Source links / provenance
-Affects Pipelines **1,2,3,10,11,12**.
-
-You need one source-link model:
-
-```text
-expenseId
-sourceType
-sourceEntityId
-providerId
-externalFingerprintHash
-metadataJson
-```
-
-This solves review, receipt, email, notification, bank, import/export traceability.
-
----
-
-### 6. Side-effect dispatch contract
-Affects Pipelines **2,3,4,6,9,11**.
-
-Universal rule:
-
-```text
-DB transaction commits first.
-Side effects dispatch once.
-Nested coordinator calls must defer side effects to the outer owner.
-```
-
-This prevents double dispatch and rollback-observer bugs.
-
----
-
-### 7. Worker execution contract
-Affects Pipelines **4,7,8,9**, indirectly backup/restore.
-
-Fix globally:
-
-```text
-WorkerExecutionGuard
-WorkerRunLogger
-worker drain during restore/backup
-cancellation finalization
-typed skip reasons
-stale RUNNING recovery
-```
-
----
+**Fix file:**
+- `app/src/main/java/.../domain/provenance/SourceLinkEventMetadataBuilder.kt`
+  - review `attemptedMerchant`, `attemptedMerchantKey`, `attemptedDate`, `attemptedCurrency`
+  - keep only what your privacy policy explicitly allows
 
 ## Recommended order
+1. Bank provenance identity
+2. Static guard coverage
+3. Migration identity semantics
+4. Duplicate metadata review
 
-Do this before pipeline-local fixes:
-
-1. **Write/read barrier + DAO mutation guard**
-2. **Privacy/raw-storage/cloud redaction contract**
-3. **Diagnostics/lifecycle event outcome model**
-4. **Side-effect post-commit contract**
-5. **Currency/MoneyAggregate canonical contract**
-6. **Source-link/provenance model**
-7. **Worker guard/drain/recovery**
-8. Then go pipeline by pipeline.
-
-So: **do not fix purely pipeline-by-pipeline**. Fix these universal foundations first, otherwise you will duplicate work and re-break earlier pipelines.
+If you want, I can turn this into an execution checklist per file next.

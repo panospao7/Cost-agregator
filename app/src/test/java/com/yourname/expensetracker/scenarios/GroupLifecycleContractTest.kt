@@ -26,6 +26,8 @@ import com.yourname.expensetracker.domain.groups.Result
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -88,15 +90,19 @@ class GroupLifecycleContractTest {
             database, expenseDao, transactionEventDao, timeProvider,
             mockk<CurrencyConverter>(relaxed = true),
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
+            mockk<TransactionSideEffectPlanner>(relaxed = true),
+            mockk<PostCommitActionRunner>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
             mockk<RestoreMaintenanceMode>(relaxed = true),
             mockk<DatabaseWriteBarrier>(relaxed = true),
-            currencySettingsRepository
+            currencySettingsRepository,
+            mockk(relaxed = true)
         )
 
         groupTxCoordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, database.groupExpenseDao(), expenseDao,
             mockk(relaxed = true), txLifecycle,
+            mockk(relaxed = true), mockk<PostCommitActionRunner>(relaxed = true),
             mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
         )
 

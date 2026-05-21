@@ -10,6 +10,10 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEven
 import com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter
 import com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunnerImpl
+import com.yourname.expensetracker.domain.sideeffect.SideEffectEventWriter
+import com.yourname.expensetracker.domain.sideeffect.DiagnosticSideEffectEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.workers.WorkerRunLogger
@@ -44,4 +48,10 @@ abstract class DiagnosticsModule {
 
     @Binds @Singleton
     abstract fun bindDiagnosticsRepository(impl: DiagnosticsRepositoryImpl): DiagnosticsRepository
+
+    @Binds @Singleton
+    abstract fun bindPostCommitActionRunner(impl: PostCommitActionRunnerImpl): PostCommitActionRunner
+
+    @Binds @Singleton
+    abstract fun bindSideEffectEventWriter(impl: DiagnosticSideEffectEventWriter): SideEffectEventWriter
 }

@@ -23,6 +23,8 @@ import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifec
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import io.mockk.coEvery
@@ -104,14 +106,18 @@ class GroupTransactionCoordinatorTest {
             database, expenseDao, transactionEventDao, timeProvider,
             mockk<CurrencyConverter>(relaxed = true),
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
+            mockk<TransactionSideEffectPlanner>(relaxed = true),
+            mockk<PostCommitActionRunner>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
             restoreMode,
             tlcWriteBarrier,
-            mockk<CurrencySettingsRepository>(relaxed = true)
+            mockk<CurrencySettingsRepository>(relaxed = true),
+            mockk(relaxed = true)
         )
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
             mockk(relaxed = true), transactionLifecycleCoordinator,
+            mockk(relaxed = true), mockk<PostCommitActionRunner>(relaxed = true),
             writeBarrier, timeProvider, Dispatchers.Unconfined
         )
     }
@@ -194,6 +200,7 @@ class GroupTransactionCoordinatorTest {
         val mockCoordinator = GroupTransactionCoordinator(
             database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao,
             mockk(relaxed = true), transactionLifecycleCoordinator,
+            mockk(relaxed = true), mockk<PostCommitActionRunner>(relaxed = true),
             mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
         )
 

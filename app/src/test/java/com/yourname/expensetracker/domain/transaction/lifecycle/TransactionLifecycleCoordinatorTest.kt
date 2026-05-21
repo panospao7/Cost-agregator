@@ -74,10 +74,13 @@ class TransactionLifecycleCoordinatorTest {
             timeProvider = timeProvider,
             currencyConverter = currencyConverter,
             sideEffectDispatcher = sideEffectDispatcher,
+            planner = mockk(relaxed = true),
+            runner = mockk(relaxed = true),
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            sourceLinkWriter = mockk(relaxed = true)
         )
     }
 

@@ -117,6 +117,7 @@ class ReceiptRepositoryStatementDuplicateTest {
             receiptLifecycleCoordinator = mockk(relaxed = true),
             writeBarrier = mockk(relaxed = true),
             privacySettingsRepository = mockk(relaxed = true),
+            pendingReviewSourceLinkService = mockk(relaxed = true),
         )
     }
 

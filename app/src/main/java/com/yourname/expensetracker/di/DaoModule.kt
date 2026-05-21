@@ -298,4 +298,9 @@ object DaoModule {
     @Singleton
     fun provideOperationRunEventDao(database: AppDatabase): OperationRunEventDao =
         database.operationRunEventDao()
+
+    @Provides
+    @Singleton
+    fun provideEntitySourceLinkDao(database: AppDatabase): EntitySourceLinkDao =
+        database.entitySourceLinkDao()
 }

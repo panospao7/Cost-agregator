@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -51,18 +52,12 @@ class EmailReceiptIngestionServiceTransactionTest {
 
         service = EmailReceiptIngestionService(
             receiptParser = receiptParser,
-            processReceiptUseCase = processReceiptUseCase,
-            expenseDao = database.expenseDao(),
-            emailReceiptDao = database.emailReceiptDao(),
             receiptLifecycleCoordinator = mockk<ReceiptLifecycleCoordinator>(relaxed = true),
-            receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
             merchantNormalizer = merchantNormalizer,
-            categorizationEngine = categorizationEngine,
-            timeProvider = timeProvider,
-            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true),
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
-            privacySettingsRepository = mockk<PrivacySettingsRepository>(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true),
+            hashingService = mockk(relaxed = true),
+            transactionRunner = { block -> block() }
         )
 
         every { receiptParser.lineItemsToJson(any()) } returns "[]"

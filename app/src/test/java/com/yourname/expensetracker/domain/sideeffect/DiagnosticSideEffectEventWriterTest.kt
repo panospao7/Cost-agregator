@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.test.runTest
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -45,10 +46,6 @@ class DiagnosticSideEffectEventWriterTest {
         diagnosticWriter = mockk(relaxed = true)
         sanitizer = EventMetadataSanitizer()
         timeProvider = mockk(relaxed = true)
-
-        // Capture events by delegating to our list
-        coVerify { diagnosticWriter.emit(captureLambda()) } returns Unit
-        // We'll use a custom approach below with a fake DiagnosticEventWriter
 
         writer = DiagnosticSideEffectEventWriter(
             writer = FakeDiagnosticEventWriter(capturedEvents),

@@ -84,7 +84,8 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             returnWindowDao = database.returnWindowDao(),
             expenseDao = database.expenseDao(),
             timeProvider = timeProvider,
-            restoreMaintenanceMode = restoreMaintenanceMode
+            restoreMaintenanceMode = restoreMaintenanceMode,
+            sourceLinkWriter = mockk(relaxed = true)
         )
 
         // Real matcher

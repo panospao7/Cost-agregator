@@ -88,10 +88,13 @@ class ReceiptLifecycleCoordinatorTest {
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = mockk(relaxed = true),
             transactionLifecycleCoordinator = mockk(relaxed = true),
+            postCommitActionRunner = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
             privacySettingsRepository = mockk(relaxed = true),
-            diagnosticEventWriter = mockk(relaxed = true)
+            diagnosticEventWriter = mockk(relaxed = true),
+            sourceLinkWriter = mockk(relaxed = true),
+            receiptSideEffectPlanner = mockk(relaxed = true)
         )
     }
 

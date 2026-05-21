@@ -86,7 +86,11 @@ class ReviewQueueRepositoryTest {
             parserRegistry = parserRegistry,
             timeProvider = timeProvider,
             confidenceRouter = confidenceRouter,
-            transactionLifecycleCoordinator = transactionLifecycleCoordinator
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator,
+            pendingReviewSourceLinkService = mockk(relaxed = true),
+            pendingReviewSourceLinkPromoter = mockk(relaxed = true),
+            transactionEventDao = database.transactionEventDao(),
+            postCommitActionRunner = mockk(relaxed = true),
         )
     }
 
