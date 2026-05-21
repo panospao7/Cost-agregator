@@ -21,6 +21,9 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.sideeffect.runBestEffortAfterCommit
+import com.yourname.expensetracker.domain.sideeffect.runBestEffortPostCommit
+import kotlinx.coroutines.CancellationException
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.provenance.ReceiptSourceLinkPayloadFactory
@@ -399,19 +402,20 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             }
 
             // 7. Plan and run post-save side effects (warranty, categorization, matching, etc.)
-            try {
-                val receiptActions = receiptSideEffectPlanner.planAfterReceiptSaved(
-                    receipt = updated,
-                    correlationId = null
-                )
-                postCommitActionRunner.run(receiptActions)
-            } catch (e: Exception) {
-                Timber.e(e, "Post-save side effects failed for receipt %d", updated.id)
-                // Non-fatal — receipt is already saved
-            }
+            val receiptActions = receiptSideEffectPlanner.planAfterReceiptSaved(
+                receipt = updated,
+                correlationId = null
+            )
+            postCommitActionRunner.runBestEffortAfterCommit(
+                batch = receiptActions,
+                logMessage = "Post-save side effects failed for receipt",
+                targetId = updated.id
+            )
 
             Timber.d("Receipt processed via coordinator: id=%d, imagePath=%s", updated.id, updated.imagePath)
             Result.success(updated)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "processReceipt failed for %s, falling back to manual record", uri)
 
@@ -818,11 +822,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             receiptPlanToRun
         }
 
-        if (combinedBatch.actions.isNotEmpty()) {
-            runCatching {
-                postCommitActionRunner.run(combinedBatch)
-            }
-        }
+        postCommitActionRunner.runBestEffortAfterCommit(
+            batch = combinedBatch,
+            logMessage = "Email receipt post-commit side effects failed",
+            targetId = savedId
+        )
 
         return EmailReceiptProcessResult.Success(
             receiptId = savedId,
@@ -857,6 +861,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     .put("reason", reason.take(128))
                     .build()
             ))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.w(e, "Failed to write email receipt diagnostic event")
         }
@@ -902,6 +908,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             Timber.d("Receipt deleted: id=%d, assetPath=%s", receiptId, receipt.imagePath)
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Failed to delete receipt: id=%d", receiptId)
             Result.failure(e)
@@ -1076,25 +1084,27 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     correctCategoryId = finalCategoryId,
                     amount = effectiveAmount
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.w(e, "Classifier learning failed after expense creation from receipt %d", receiptId)
             }
         }
         // Run combined side effects for the created expense and receipt link
         if (outerResult is DomainResult.Success) {
-            try {
-                val expenseId = outerResult.data
-                val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
-                    receiptId = receiptId,
-                    expenseId = expenseId,
-                    linkType = "DIRECT_SAVE",
-                    correlationId = null
-                )
-                val combined = transactionActions + receiptActions
-                postCommitActionRunner.run(combined)
-            } catch (e: Exception) {
-                Timber.w(e, "Post-creation side effects failed for receipt expense %d", receiptId)
-            }
+            val expenseId = outerResult.data
+            val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
+                receiptId = receiptId,
+                expenseId = expenseId,
+                linkType = "DIRECT_SAVE",
+                correlationId = null
+            )
+            val combined = transactionActions + receiptActions
+            postCommitActionRunner.runBestEffortAfterCommit(
+                batch = combined,
+                logMessage = "Post-creation side effects failed for receipt expense",
+                targetId = expenseId
+            )
         }
         return outerResult
     }
@@ -1158,18 +1168,18 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         // S7-66F-001: Dispatch side effects only after successful commit
         expenseIdResult.onSuccess { expenseId ->
-            try {
-                val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
-                    receiptId = receiptId,
-                    expenseId = expenseId,
-                    linkType = "DIRECT_SAVE",
-                    correlationId = null
-                )
-                val combined = transactionActions + receiptActions
-                postCommitActionRunner.run(combined)
-            } catch (e: Exception) {
-                Timber.w(e, "Post-creation side effects failed for receipt expense %d", expenseId)
-            }
+            val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
+                receiptId = receiptId,
+                expenseId = expenseId,
+                linkType = "DIRECT_SAVE",
+                correlationId = null
+            )
+            val combined = transactionActions + receiptActions
+            postCommitActionRunner.runBestEffortAfterCommit(
+                batch = combined,
+                logMessage = "Post-creation side effects failed for receipt expense",
+                targetId = expenseId
+            )
         }
 
         return expenseIdResult

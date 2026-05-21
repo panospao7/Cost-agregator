@@ -25,6 +25,8 @@ import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycle
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.sideeffect.runBestEffortAfterCommit
+import kotlinx.coroutines.CancellationException
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
@@ -779,12 +781,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // Post-update side effects via planner + runner (best-effort, fire-and-forget)
-        try {
-            val batch = planner.planUpdated(expense.id, source, correlationId, TransactionUpdateKind.FULL)
-            runner.run(batch)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updating expense %d", expense.id)
-        }
+        val batch = planner.planUpdated(expense.id, source, correlationId, TransactionUpdateKind.FULL)
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after updating expense",
+            targetId = expense.id
+        )
     }
 
     /**
@@ -837,12 +839,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // Post-update side effects via planner + runner (best-effort)
-        try {
-            val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.CATEGORY_ONLY)
-            runner.run(batch)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updating category for expense %d", expenseId)
-        }
+        val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.CATEGORY_ONLY)
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after updating category for expense",
+            targetId = expenseId
+        )
     }
 
     /**
@@ -976,12 +978,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // Post-update side effects via planner + runner (best-effort)
-        try {
-            val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.BUSINESS_FLAGS_ONLY)
-            runner.run(batch)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updating business/tax fields for expense %d", expenseId)
-        }
+        val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.BUSINESS_FLAGS_ONLY)
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after updating business/tax fields for expense",
+            targetId = expenseId
+        )
 
         Timber.d("T10: Business/tax fields updated for expense %d", expenseId)
     }
@@ -1059,12 +1061,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // Post-update side effects via planner + runner (best-effort)
-        try {
-            val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.MERCHANT)
-            runner.run(batch)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updating merchant for expense %d", expenseId)
-        }
+        val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.MERCHANT)
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after updating merchant for expense",
+            targetId = expenseId
+        )
     }
 
     /**
@@ -1138,12 +1140,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // Post-update side effects via planner + runner (best-effort)
-        try {
-            val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.TYPE)
-            runner.run(batch)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updating type for expense %d", expenseId)
-        }
+        val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.TYPE)
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after updating type for expense",
+            targetId = expenseId
+        )
     }
 
     /**
@@ -1199,12 +1201,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // Post-update side effects via planner + runner (best-effort)
-        try {
-            val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.TRANSFER_DETAILS)
-            runner.run(batch)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updating transfer details for expense %d", expenseId)
-        }
+        val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.TRANSFER_DETAILS)
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after updating transfer details for expense",
+            targetId = expenseId
+        )
     }
 
     /**
@@ -1279,12 +1281,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // One side-effect dispatch after commit via planner + runner
-        try {
-            val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.FULL)
-            runner.run(batch)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updateTypeAndTransferDetails for expense %d", expenseId)
-        }
+        val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.FULL)
+        runner.runBestEffortAfterCommit(
+            batch = batch,
+            logMessage = "Non-critical: side effects failed after updateTypeAndTransferDetails for expense",
+            targetId = expenseId
+        )
     }
 
     /**
@@ -1498,11 +1500,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * still ensuring holistic state freshness.
      */
     private suspend fun dispatchBulkPostCommitSideEffects(source: String, affectedCount: Int) {
+        val batch = planner.planBulkUpdated(source, affectedCount, null)
         try {
-            val batch = planner.planBulkUpdated(source, affectedCount, null)
             runner.run(batch)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "Non-critical: aggregate bulk side effects failed (affectedCount=%d)", affectedCount)
         }
     }
@@ -1667,12 +1670,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 return Result.failure(IllegalArgumentException("Expense not found: $expenseId"))
             }
             // Post-delete side effects via planner + runner (best-effort)
-            try {
-                val batch = planner.planDeleted(expenseId, source, correlationId)
-                runner.run(batch)
-            } catch (e: Exception) {
-                Timber.w(e, "Non-critical: side effects failed after deleting expense %d", expenseId)
-            }
+            val batch = planner.planDeleted(expenseId, source, correlationId)
+            runner.runBestEffortAfterCommit(
+                batch = batch,
+                logMessage = "Non-critical: side effects failed after deleting expense",
+                targetId = expenseId
+            )
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -1727,12 +1730,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
 
             // Post-delete side effects via planner + runner (best-effort)
-            try {
-                val batch = planner.planDeleted(expense.id, source, correlationId)
-                runner.run(batch)
-            } catch (e: Exception) {
-                Timber.w(e, "Non-critical: side effects failed after deleting expense %d", expense.id)
-            }
+            val batch = planner.planDeleted(expense.id, source, correlationId)
+            runner.runBestEffortAfterCommit(
+                batch = batch,
+                logMessage = "Non-critical: side effects failed after deleting expense",
+                targetId = expense.id
+            )
 
             Result.success(Unit)
         } catch (e: Exception) {

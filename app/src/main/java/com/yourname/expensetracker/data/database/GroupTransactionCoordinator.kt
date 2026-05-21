@@ -236,6 +236,8 @@ class GroupTransactionCoordinator @Inject constructor(
             }
             
             GroupCreationResult.Success(groupId)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             GroupCreationResult.Error("Group creation failed: ${e.message}")
         }
@@ -294,6 +296,8 @@ class GroupTransactionCoordinator @Inject constructor(
             }
         } catch (e: SQLiteConstraintException) {
             Result.Error(mapAddMemberConstraintError(e, groupId, name))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.Error(GroupValidationError.Unknown(e.message))
         }
@@ -388,6 +392,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     expenseId = 0 // No linked expense
                 )
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
         }
@@ -561,6 +567,8 @@ class GroupTransactionCoordinator @Inject constructor(
                 runGroupPostCommitActions(outcome.postCommitActions)
             }
             outcome.result
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
         }
@@ -575,6 +583,8 @@ class GroupTransactionCoordinator @Inject constructor(
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.deleteGroup")
             groupDao.archiveGroup(groupId)
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }
@@ -589,6 +599,8 @@ class GroupTransactionCoordinator @Inject constructor(
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.archiveGroup")
             groupDao.archiveGroup(groupId)
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }
@@ -618,6 +630,8 @@ class GroupTransactionCoordinator @Inject constructor(
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.permanentlyDeleteGroup")
             deleteGroupAtomic(groupId)
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }
@@ -852,6 +866,8 @@ class GroupTransactionCoordinator @Inject constructor(
                 runGroupPostCommitActions(txOutcome.postCommitActions)
             }
             txOutcome.result
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to create group expense atomically: ${e.message}")
         }

@@ -27,6 +27,13 @@ import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideE
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.SideEffectCategory
+import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
+import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
+import kotlinx.coroutines.CancellationException
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -82,6 +89,9 @@ class GroupTransactionCoordinatorTest {
     private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+    private val postCommitActionRunner = mockk<PostCommitActionRunner>(relaxed = true)
+    private val transactionSideEffectPlanner = mockk<TransactionSideEffectPlanner>(relaxed = true)
+    private val tlcPlanner = mockk<TransactionSideEffectPlanner>(relaxed = true)
     private val testDispatcher: TestDispatcher = StandardTestDispatcher()
 
     @Before
@@ -106,7 +116,7 @@ class GroupTransactionCoordinatorTest {
             database, expenseDao, transactionEventDao, timeProvider,
             mockk<CurrencyConverter>(relaxed = true),
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
-            mockk<TransactionSideEffectPlanner>(relaxed = true),
+            tlcPlanner,
             mockk<PostCommitActionRunner>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
             restoreMode,
@@ -117,7 +127,7 @@ class GroupTransactionCoordinatorTest {
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
             mockk(relaxed = true), transactionLifecycleCoordinator,
-            mockk(relaxed = true), mockk<PostCommitActionRunner>(relaxed = true),
+            transactionSideEffectPlanner, postCommitActionRunner,
             writeBarrier, timeProvider, Dispatchers.Unconfined
         )
     }
@@ -879,5 +889,159 @@ class GroupTransactionCoordinatorTest {
         assertThat(thrown).isNotNull()
         assertThat(thrown).isInstanceOf(android.database.sqlite.SQLiteConstraintException::class.java)
         assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).hasSize(1)
+    }
+
+    private fun nonEmptyBatch(): PostCommitActionBatch {
+        val action = PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "test_action",
+            category = SideEffectCategory.BUDGET,
+            triggerType = SideEffectTriggerType.EXPENSE_CREATED,
+            targetEntityType = "expense",
+            targetEntityId = 42L,
+            source = "test",
+            correlationId = "test",
+            causationId = null,
+            idempotencyKey = "key-1",
+            execute = { SideEffectOutcome.Completed }
+        )
+        return PostCommitActionBatch("test", listOf(action))
+    }
+
+    @Test
+    fun `createSystemExpenseAndLinkToGroup runner cancellation rethrows`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Cancel Test Group", defaultCurrency = "EUR")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first().id
+
+        coEvery { tlcPlanner.planCreated(any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } throws CancellationException("Cancelled")
+
+        // Act & Assert
+        var exception: Throwable? = null
+        try {
+            coordinator.createSystemExpenseAndLinkToGroup(
+                groupId = groupId,
+                description = "Cancel Test",
+                amount = 50.0,
+                paidById = aliceId,
+                currency = "EUR",
+                splitType = SplitType.EQUAL,
+                date = TEST_DATE,
+                transactionType = TransactionType.PURCHASE,
+                notes = null
+            )
+        } catch (e: CancellationException) {
+            exception = e
+        }
+        assertThat(exception).isNotNull()
+        assertThat(exception).isInstanceOf(CancellationException::class.java)
+    }
+
+    @Test
+    fun `addExpenseWithLink runner cancellation rethrows`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Cancel Link Group", defaultCurrency = "EUR")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first().id
+
+        val expense = Expense(
+            amount = 75.0, merchant = "Cancel Link",
+            transactionType = TransactionType.PURCHASE, date = TEST_DATE
+        )
+        val systemExpenseId = expenseDao.insert(expense)
+
+        coEvery { tlcPlanner.planUpdated(any(), any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } throws CancellationException("Cancelled")
+
+        // Act & Assert
+        var exception: Throwable? = null
+        try {
+            coordinator.addExpenseWithLink(
+                groupId = groupId,
+                systemExpenseId = systemExpenseId,
+                description = "Cancel Link",
+                amount = 75.0,
+                paidById = aliceId,
+                currency = "EUR",
+                splitType = SplitType.EQUAL,
+                date = TEST_DATE
+            )
+        } catch (e: CancellationException) {
+            exception = e
+        }
+        assertThat(exception).isNotNull()
+        assertThat(exception).isInstanceOf(CancellationException::class.java)
+    }
+
+    @Test
+    fun `permanentlyDeleteGroup runner cancellation rethrows`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Permanent Delete Group", defaultCurrency = "EUR")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first().id
+
+        val expense = Expense(
+            amount = 50.0, merchant = "Delete Me",
+            transactionType = TransactionType.PURCHASE, date = TEST_DATE
+        )
+        val expenseId = expenseDao.insert(expense)
+        groupExpenseDao.insert(
+            GroupExpense(
+                groupId = groupId, expenseId = expenseId,
+                paidById = aliceId, date = TEST_DATE,
+                description = "Delete Me", totalAmount = 50.0,
+                currency = "EUR"
+            )
+        )
+
+        coEvery { transactionSideEffectPlanner.planBulkUpdated(any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } throws CancellationException("Cancelled")
+
+        // Act & Assert
+        var exception: Throwable? = null
+        try {
+            coordinator.permanentlyDeleteGroup(groupId)
+        } catch (e: CancellationException) {
+            exception = e
+        }
+        assertThat(exception).isNotNull()
+        assertThat(exception).isInstanceOf(CancellationException::class.java)
+    }
+
+    @Test
+    fun `createSystemExpenseAndLinkToGroup runner non-cancellation failure returns success after commit`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Best Effort Group", defaultCurrency = "EUR")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first().id
+
+        coEvery { tlcPlanner.planCreated(any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } throws RuntimeException("Best-effort failure")
+
+        // Act
+        val result = coordinator.createSystemExpenseAndLinkToGroup(
+            groupId = groupId,
+            description = "Best Effort Test",
+            amount = 50.0,
+            paidById = aliceId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = TEST_DATE,
+            transactionType = TransactionType.PURCHASE,
+            notes = null
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
     }
 }
