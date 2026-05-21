@@ -865,8 +865,9 @@ fun TransactionsScreen(
                                 }
 
                                 // Links
-                                if (provenanceLinks != null) {
-                                    if (provenanceLinks.isEmpty()) {
+                                val links = provenanceLinks
+                                if (links != null) {
+                                    if (links.isEmpty()) {
                                         item {
                                             Text(
                                                 text = "No provenance data available for this expense.",
@@ -878,14 +879,14 @@ fun TransactionsScreen(
                                     } else {
                                         item {
                                             Text(
-                                                text = "${provenanceLinks.size} source link(s):",
+                                                text = "${links.size} source link(s):",
                                                 style = MaterialTheme.typography.titleSmall,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(vertical = 4.dp)
                                             )
                                         }
 
-                                        items(provenanceLinks) { link ->
+                                        items(links) { link ->
                                             ProvenanceLinkCard(link)
                                         }
                                     }

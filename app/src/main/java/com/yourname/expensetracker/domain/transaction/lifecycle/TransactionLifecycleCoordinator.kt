@@ -18,9 +18,13 @@ import com.yourname.expensetracker.domain.provenance.DuplicateSourceLinkPolicy
 import com.yourname.expensetracker.domain.provenance.SourceLinkEventMetadataBuilder
 import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriteResult
+import com.yourname.expensetracker.domain.provenance.SourceLinkWriteException
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.sideeffect.MutationResult
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
@@ -60,6 +64,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val sideEffectDispatcher: TransactionSideEffectDispatcher,
+    private val planner: TransactionSideEffectPlanner,
+    private val runner: PostCommitActionRunner,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
@@ -509,13 +515,65 @@ class TransactionLifecycleCoordinator @Inject constructor(
             return CreateExpenseResult.InsertConflict(expense.dedupeKey ?: "unknown")
         }
 
-        // 6. Side effects — only if IMMEDIATE; DEFER shifts responsibility to caller
+        // 6. Plan side effects
+        val plannedBatch = if (insertedId > 0L) {
+            planner.planCreated(insertedId, request.source, correlationId)
+        } else {
+            PostCommitActionBatch.empty(correlationId)
+        }
+
+        // 7. Side effects — only if IMMEDIATE; DEFER shifts responsibility to caller
         if (sideEffectMode == SideEffectMode.IMMEDIATE) {
-            dispatchPostCreationSideEffects(insertedId, request.source, correlationId)
+            runner.run(plannedBatch)
         }
 
         return CreateExpenseResult.Created(insertedId)
     }
+
+    // ── V2 create API ────────────────────────────────────────────────────────
+
+    /**
+     * Creates an expense with full lifecycle handling but returns the planned
+     * side effects as a [MutationResult] instead of executing them.
+     *
+     * The caller can inspect [MutationResult.postCommitActions] and either run
+     * them via [PostCommitActionRunner] or merge them into an outer batch.
+     *
+     * @param request The creation request containing all expense fields.
+     * @return A [MutationResult] containing the [CreateExpenseResult] and planned actions.
+     */
+    suspend fun createExpenseDbOnlyV2(
+        request: CreateExpenseRequest
+    ): MutationResult<CreateExpenseResult> {
+        @Suppress("DEPRECATION_ERROR")
+        val result = createExpense(request, SideEffectMode.DEFER)
+        val batch = when (result) {
+            is CreateExpenseResult.Created -> planner.planCreated(result.expenseId, request.source, request.correlationId)
+            else -> PostCommitActionBatch.empty(request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId())
+        }
+        return MutationResult(result, batch)
+    }
+
+    /**
+     * Creates an expense with full lifecycle handling and dispatches all
+     * post-creation side effects immediately after the database transaction
+     * commits, using the new planner+runner pipeline.
+     *
+     * This is the preferred method for standalone create operations where
+     * no outer database transaction is being managed by the caller.
+     *
+     * @param request The creation request containing all expense fields.
+     * @return A [CreateExpenseResult] indicating the outcome.
+     */
+    suspend fun createExpenseStandaloneV2(request: CreateExpenseRequest): CreateExpenseResult {
+        val dbOnly = createExpenseDbOnlyV2(request)
+        if (dbOnly.value is CreateExpenseResult.Created) {
+            runner.run(dbOnly.postCommitActions)
+        }
+        return dbOnly.value
+    }
+
+    // ── Compatibility wrappers ───────────────────────────────────────────────
 
     /**
      * Dispatch post-creation side effects for an already-committed expense.
@@ -534,8 +592,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         causationId: String? = null
     ) {
         // DDL-F876-11: propagate create-boundary correlation into side effects
-        sideEffectDispatcher.dispatchOnCreated(expenseId, source, correlationId, causationId)
-        // Note: recurring occurrence linking is handled inside dispatchOnCreated
+        val batch = planner.planCreated(expenseId, source, correlationId)
+        runner.run(batch)
     }
 
     /**
@@ -543,15 +601,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * post-creation side effects (budget recheck, recurring linking, anomaly
      * detection) immediately after the database transaction commits.
      *
-     * This is the preferred method for standalone create operations where
-     * no outer database transaction is being managed by the caller.
+     * Delegates to [createExpenseStandaloneV2].
      *
      * @param request The creation request containing all expense fields.
      * @return A [CreateExpenseResult] indicating the outcome.
      */
     suspend fun createExpenseStandalone(request: CreateExpenseRequest): CreateExpenseResult {
-        @Suppress("DEPRECATION_ERROR") // TODO: inline createExpense logic once SideEffectMode is removed
-        return createExpense(request, SideEffectMode.IMMEDIATE)
+        return createExpenseStandaloneV2(request)
     }
 
     /**
@@ -562,15 +618,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * Call [dispatchPostCreationSideEffects] with the returned expense ID
      * after the outer transaction succeeds.
      *
-     * If the result is [CreateExpenseResult.Created], side effects MUST be
-     * dispatched manually by the caller — the coordinator will not do it.
+     * Delegates to [createExpenseDbOnlyV2] and returns only the value.
      *
      * @param request The creation request containing all expense fields.
      * @return A [CreateExpenseResult] indicating the outcome.
      */
     suspend fun createExpenseDbOnly(request: CreateExpenseRequest): CreateExpenseResult {
-        @Suppress("DEPRECATION_ERROR") // TODO: inline createExpense logic once SideEffectMode is removed
-        return createExpense(request, SideEffectMode.DEFER)
+        return createExpenseDbOnlyV2(request).value
     }
 
     /**
@@ -724,24 +778,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
-        // Post-update side effects (best-effort, fire-and-forget)
+        // Post-update side effects via planner + runner (best-effort, fire-and-forget)
         try {
-            sideEffectDispatcher.dispatchOnUpdated(expense.id, source)
+            val batch = planner.planUpdated(expense.id, source, correlationId, TransactionUpdateKind.FULL)
+            runner.run(batch)
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: side effects failed after updating expense %d", expense.id)
-        }
-
-        // Reconcile recurring occurrence link if expense fields changed
-        try {
-            if (existing.amount != expense.amount || existing.date != expense.date ||
-                existing.merchant != expense.merchant || existing.currency != expense.currency ||
-                existing.transactionType != expense.transactionType
-            ) {
-                recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expense.id)
-                recurringLifecycleCoordinator.linkExpenseToOccurrence(expense.id)
-            }
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: recurring reconciliation failed for expense %d", expense.id)
         }
     }
 
@@ -794,9 +836,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
-        // Post-update side effects (best-effort)
+        // Post-update side effects via planner + runner (best-effort)
         try {
-            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+            val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.CATEGORY_ONLY)
+            runner.run(batch)
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: side effects failed after updating category for expense %d", expenseId)
         }
@@ -932,9 +975,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
-        // Post-update side effects (best-effort)
+        // Post-update side effects via planner + runner (best-effort)
         try {
-            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+            val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.BUSINESS_FLAGS_ONLY)
+            runner.run(batch)
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: side effects failed after updating business/tax fields for expense %d", expenseId)
         }
@@ -1014,19 +1058,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
-        // Post-update side effects (best-effort)
+        // Post-update side effects via planner + runner (best-effort)
         try {
-            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+            val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.MERCHANT)
+            runner.run(batch)
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: side effects failed after updating merchant for expense %d", expenseId)
-        }
-
-        // Reconcile recurring link — merchant changed
-        try {
-            recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId)
-            recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: recurring reconciliation failed for expense %d", expenseId)
         }
     }
 
@@ -1100,19 +1137,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
-        // Post-update side effects (best-effort)
+        // Post-update side effects via planner + runner (best-effort)
         try {
-            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+            val batch = planner.planUpdated(expenseId, source, correlationId, TransactionUpdateKind.TYPE)
+            runner.run(batch)
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: side effects failed after updating type for expense %d", expenseId)
-        }
-
-        // Reconcile recurring link — transaction type changed
-        try {
-            recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId)
-            recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: recurring reconciliation failed for expense %d", expenseId)
         }
     }
 
@@ -1168,9 +1198,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
-        // Post-update side effects (best-effort)
+        // Post-update side effects via planner + runner (best-effort)
         try {
-            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+            val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.TRANSFER_DETAILS)
+            runner.run(batch)
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: side effects failed after updating transfer details for expense %d", expenseId)
         }
@@ -1247,9 +1278,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
-        // One side-effect dispatch after commit
+        // One side-effect dispatch after commit via planner + runner
         try {
-            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+            val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.FULL)
+            runner.run(batch)
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: side effects failed after updateTypeAndTransferDetails for expense %d", expenseId)
         }
@@ -1259,6 +1291,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * Updates all six ownership fields atomically with [Expense.normalizeOwnership]
      * enforcement, with full lifecycle tracking. Writes a UPDATED TransactionEvent
      * with before/after snapshots.
+     *
+     * This is a compatibility wrapper that calls [updateOwnershipDbOnlyV2] and then
+     * runs the returned post-commit action batch. It keeps existing callers working
+     * while giving group code a safe DB-only method (the DbOnlyV2 variant) that
+     * does NOT run side effects.
      *
      * @param expenseId       The ID of the expense to update.
      * @param isNotMine       Whether the expense is not mine.
@@ -1281,11 +1318,73 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         source: String = "USER_EDIT"
     ) {
+        val mutation = updateOwnershipDbOnlyV2(
+            expenseId = expenseId,
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount,
+            reason = reason,
+            source = source,
+            correlationId = null
+        )
+        if (mutation.value is OwnershipUpdateResult.Updated) {
+            try {
+                runner.run(mutation.postCommitActions)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Non-critical: side effects failed after updating ownership for expense %d", expenseId)
+            }
+        }
+    }
+
+    /**
+     * DB-only ownership update: writes ownership fields + UPDATED lifecycle event
+     * atomically inside a database transaction, then returns the post-update action
+     * batch WITHOUT running it.
+     *
+     * Use this when calling from within an outer database transaction (e.g. group
+     * coordinator). Run the returned actions via [PostCommitActionRunner] after the
+     * outer transaction commits.
+     *
+     * @param expenseId       The ID of the expense to update.
+     * @param isNotMine       Whether the expense is not mine.
+     * @param ownerName       The owner name (nullable).
+     * @param isSharedExpense Whether the expense is shared.
+     * @param sharedWithName  The shared-with name (nullable).
+     * @param mySharePercentage The user's share percentage (nullable).
+     * @param myShareAmount   The user's share amount (nullable).
+     * @param reason          Optional human-readable explanation.
+     * @param source          The source system/component that triggered the update.
+     * @param correlationId   Correlation ID for traceability (generated if null).
+     * @return [MutationResult] containing [OwnershipUpdateResult] and post-commit actions.
+     */
+    suspend fun updateOwnershipDbOnlyV2(
+        expenseId: Long,
+        isNotMine: Boolean,
+        ownerName: String?,
+        isSharedExpense: Boolean,
+        sharedWithName: String?,
+        mySharePercentage: Int?,
+        myShareAmount: Double?,
+        reason: String? = null,
+        source: String = "USER_EDIT",
+        correlationId: String? = null
+    ): MutationResult<OwnershipUpdateResult> {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             throw IllegalStateException("Database writes blocked during restore")
         }
 
-        val existing = expenseDao.getById(expenseId) ?: return
+        val corrId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+
+        val existing = expenseDao.getById(expenseId)
+            ?: return MutationResult(
+                OwnershipUpdateResult.NotFound,
+                PostCommitActionBatch.empty(corrId)
+            )
 
         // Apply normalizeOwnership to enforce mutual exclusivity
         val normalized = existing.copy(
@@ -1304,11 +1403,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
             existing.sharedWithName == normalized.sharedWithName &&
             existing.mySharePercentage == normalized.mySharePercentage &&
             existing.myShareAmount == normalized.myShareAmount
-        ) return
+        ) {
+            return MutationResult(
+                OwnershipUpdateResult.NoOp,
+                PostCommitActionBatch.empty(corrId)
+            )
+        }
 
         val now = timeProvider.now()
         val beforeSnapshot = expenseToSnapshot(existing)
-        val updated = normalized  // for snapshot
 
         database.withTransaction {
             expenseDao.updateIsNotMine(expenseId, normalized.isNotMine)
@@ -1327,19 +1430,16 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     dedupeKey = existing.dedupeKey,
                     duplicateExpenseId = null,
                     beforeSnapshot = beforeSnapshot,
-                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    afterSnapshot = expenseToSnapshot(expenseId, normalized),
                     metadata = null,
-                    reason = reason
+                    reason = reason,
+                    correlationId = corrId
                 )
             )
         }
 
-        // Post-update side effects (best-effort)
-        try {
-            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
-        } catch (e: Exception) {
-            Timber.w(e, "Non-critical: side effects failed after updating ownership for expense %d", expenseId)
-        }
+        val batch = planner.planUpdated(expenseId, source, corrId, TransactionUpdateKind.FULL)
+        return MutationResult(OwnershipUpdateResult.Updated(expenseId), batch)
     }
 
     /**
@@ -1399,7 +1499,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
      */
     private suspend fun dispatchBulkPostCommitSideEffects(source: String, affectedCount: Int) {
         try {
-            sideEffectDispatcher.dispatchOnBulkUpdated(source, affectedCount)
+            val batch = planner.planBulkUpdated(source, affectedCount, null)
+            runner.run(batch)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "Non-critical: aggregate bulk side effects failed (affectedCount=%d)", affectedCount)
@@ -1565,15 +1666,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
             if (loadedExpense == null) {
                 return Result.failure(IllegalArgumentException("Expense not found: $expenseId"))
             }
+            // Post-delete side effects via planner + runner (best-effort)
             try {
-                sideEffectDispatcher.dispatchOnDeleted(expenseId, source)
+                val batch = planner.planDeleted(expenseId, source, correlationId)
+                runner.run(batch)
             } catch (e: Exception) {
                 Timber.w(e, "Non-critical: side effects failed after deleting expense %d", expenseId)
-            }
-            try {
-                recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId)
-            } catch (e: Exception) {
-                Timber.w(e, "Non-critical: failed to unlink expense %d from recurring occurrence", expenseId)
             }
             Result.success(Unit)
         } catch (e: Exception) {
@@ -1628,18 +1726,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 expenseDao.delete(expense)
             }
 
-            // Post-delete side effects (best-effort)
+            // Post-delete side effects via planner + runner (best-effort)
             try {
-                sideEffectDispatcher.dispatchOnDeleted(expense.id, source)
+                val batch = planner.planDeleted(expense.id, source, correlationId)
+                runner.run(batch)
             } catch (e: Exception) {
                 Timber.w(e, "Non-critical: side effects failed after deleting expense %d", expense.id)
-            }
-
-            // Unlink any recurring occurrence that was linked to this expense
-            try {
-                recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expense.id)
-            } catch (e: Exception) {
-                Timber.w(e, "Non-critical: failed to unlink expense %d from recurring occurrence", expense.id)
             }
 
             Result.success(Unit)
@@ -1853,3 +1945,18 @@ class TransactionLifecycleCoordinator @Inject constructor(
  * Exception thrown when an update would create a duplicate expense.
  */
 class DuplicateUpdateException(message: String) : IllegalStateException(message)
+
+/**
+ * Result of a DB-only ownership update operation.
+ * Returned by [TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2].
+ */
+sealed interface OwnershipUpdateResult {
+    /** The expense was found and its ownership fields were updated. */
+    data class Updated(val expenseId: Long) : OwnershipUpdateResult
+
+    /** The expense was found but no ownership fields changed (no-op). */
+    data object NoOp : OwnershipUpdateResult
+
+    /** The expense was not found in the database. */
+    data object NotFound : OwnershipUpdateResult
+}

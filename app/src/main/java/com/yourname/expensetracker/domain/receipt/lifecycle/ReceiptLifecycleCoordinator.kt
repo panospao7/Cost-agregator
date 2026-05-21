@@ -19,8 +19,9 @@ import com.yourname.expensetracker.domain.model.Result as DomainResult
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
-import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.provenance.ReceiptSourceLinkPayloadFactory
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
@@ -94,11 +95,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val postCommitActionRunner: PostCommitActionRunner,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
-    private val sourceLinkWriter: SourceLinkWriter
+    private val sourceLinkWriter: SourceLinkWriter,
+    private val receiptSideEffectPlanner: ReceiptSideEffectPlanner
 ) {
 
     companion object {
@@ -395,9 +398,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
             }
 
-            // 7. Dispatch post-save side effects (warranty, categorization, matching, etc.)
+            // 7. Plan and run post-save side effects (warranty, categorization, matching, etc.)
             try {
-                sideEffectDispatcher.dispatchAfterSave(updated)
+                val receiptActions = receiptSideEffectPlanner.planAfterReceiptSaved(
+                    receipt = updated,
+                    correlationId = null
+                )
+                postCommitActionRunner.run(receiptActions)
             } catch (e: Exception) {
                 Timber.e(e, "Post-save side effects failed for receipt %d", updated.id)
                 // Non-fatal — receipt is already saved
@@ -629,7 +636,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
         val effectiveOcrText = RawContentSanitizer.sanitizeRawOcr(rawEmailBody, emailStorageMode)
         var savedId = 0L
-        var expenseIds = mutableListOf<Long>()
+        val createdExpenseIds = mutableListOf<Long>()
+        val linkedExistingExpenseIds = mutableListOf<Long>()
+        var receiptPlan: PostCommitActionBatch? = null
+        val transactionActionBatches = mutableListOf<PostCommitActionBatch>()
         var capturedDuplicate: EmailReceiptProcessResult.Duplicate? = null
 
         database.withTransaction {
@@ -726,7 +736,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 errorDetails = null
             ))
 
-            // Create expense if we have enough data
+            // Create expense (and link) first so the planner below can see the linked state.
             if (emailData.amount != null && emailData.amount > 0 &&
                 !emailData.merchant.isNullOrBlank() &&
                 emailData.date != null && emailData.date > 0
@@ -744,12 +754,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     deduplicationMode = DeduplicationMode.STANDARD,
                     correlationId = correlationId  // PRIV-441-11: propagate email correlation
                 )
-                @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-                when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
+                val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
+                when (mutation.value) {
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
-                        expenseIds.add(result.expenseId)
+                        val created = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created
+                        createdExpenseIds.add(created.expenseId)
+                        transactionActionBatches.add(mutation.postCommitActions)
                         val linkResult = receiptLinkService.linkReceiptToExpense(
-                            savedId, result.expenseId, "EMAIL_RECEIPT",
+                            savedId, created.expenseId, "EMAIL_RECEIPT",
                             source = ExpenseSource.EMAIL_RECEIPT.name,
                             writeSourceLink = false
                         )
@@ -758,10 +770,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         }
                     }
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped -> {
-                        Timber.d("Email receipt %d matched existing expense %d", savedId, result.existingExpenseId)
-                        expenseIds.add(result.existingExpenseId)
+                        val dupSkipped = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped
+                        Timber.d("Email receipt %d matched existing expense %d", savedId, dupSkipped.existingExpenseId)
+                        linkedExistingExpenseIds.add(dupSkipped.existingExpenseId)
+                        // No transaction action batch collected for duplicates — only reporting/linking
                         val linkResult = receiptLinkService.linkReceiptToExpense(
-                            savedId, result.existingExpenseId, "EMAIL_RECEIPT",
+                            savedId, dupSkipped.existingExpenseId, "EMAIL_RECEIPT",
                             source = ExpenseSource.EMAIL_RECEIPT.name,
                             writeSourceLink = false
                         )
@@ -770,10 +784,23 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         }
                     }
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
-                        Timber.w("Email receipt %d validation failed: %s", savedId, result.errors)
+                        val vf = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed
+                        Timber.w("Email receipt %d validation failed: %s", savedId, vf.errors)
                     }
                     else -> {}
                 }
+            }
+
+            // Plan receipt side-effects AFTER expense creation and linking so the
+            // planner knows which expenses are already linked (prevents double-dispatch).
+            val allLinkedExpenseIds = (createdExpenseIds + linkedExistingExpenseIds).toSet()
+            val freshReceipt = scannedReceiptDao.getById(savedId)
+            if (freshReceipt != null) {
+                receiptPlan = receiptSideEffectPlanner.planAfterReceiptSaved(
+                    receipt = freshReceipt,
+                    correlationId = correlationId,
+                    linkedExpenseIds = allLinkedExpenseIds
+                )
             }
         }
 
@@ -783,20 +810,26 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             return capturedDuplicate!!
         }
 
-        // Post-commit side effects (best-effort)
-        val saved = scannedReceiptDao.getById(savedId)
-        if (saved != null) {
-            runCatching { sideEffectDispatcher.dispatchAfterSave(saved) }
-            for (expenseId in expenseIds) {
-                runCatching {
-                    transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                        expenseId, ExpenseSource.EMAIL_RECEIPT, correlationId ?: ""
-                    )
-                }
+        // Single post-commit dispatch: combine receipt actions + transaction actions for created expenses only
+        val receiptPlanToRun = receiptPlan ?: PostCommitActionBatch.empty(correlationId ?: "")
+        val combinedBatch = if (transactionActionBatches.isNotEmpty()) {
+            transactionActionBatches.fold(receiptPlanToRun) { acc, batch -> acc + batch }
+        } else {
+            receiptPlanToRun
+        }
+
+        if (combinedBatch.actions.isNotEmpty()) {
+            runCatching {
+                postCommitActionRunner.run(combinedBatch)
             }
         }
 
-        return EmailReceiptProcessResult.Success(receiptId = savedId, expenseIds = expenseIds)
+        return EmailReceiptProcessResult.Success(
+            receiptId = savedId,
+            createdExpenseIds = createdExpenseIds,
+            linkedExistingExpenseIds = linkedExistingExpenseIds,
+            expenseIds = createdExpenseIds + linkedExistingExpenseIds
+        )
     }
 
     private suspend fun emitEmailReceiptDiagnostic(
@@ -983,9 +1016,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         // P3-P1-05: Wrap expense creation + receipt linking in a single
         // database transaction to ensure atomicity — both succeed or both roll back.
-        return database.withTransaction {
+        val txResult = database.withTransaction {
             @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-            when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
+            val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
+            when (val result = mutation.value) {
                 is CreateExpenseResult.Created -> {
                     val expenseId = result.expenseId
                     // Link receipt to the newly created expense
@@ -1001,53 +1035,68 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     }
 
                     // Side effects are deferred — dispatch after commit
-                    DomainResult.Success(expenseId)
+                    Pair(DomainResult.Success(expenseId), mutation.postCommitActions)
                 }
                 is CreateExpenseResult.DuplicateSkipped -> {
-                    DomainResult.Duplicate
+                    Pair(DomainResult.Duplicate as DomainResult<Long>, PostCommitActionBatch.empty("receipt_scan_dup"))
                 }
                 is CreateExpenseResult.ValidationFailed -> {
-                    DomainResult.Error(
-                        message = "Validation failed: ${result.errors.joinToString(", ")}"
+                    Pair(
+                        DomainResult.Error(
+                            message = "Validation failed: ${result.errors.joinToString(", ")}"
+                        ) as DomainResult<Long>,
+                        PostCommitActionBatch.empty("receipt_scan_vf")
                     )
                 }
                 is CreateExpenseResult.InsertConflict -> {
-                    DomainResult.Error(
-                        message = "Insert conflict: ${result.dedupeKey}"
+                    Pair(
+                        DomainResult.Error(
+                            message = "Insert conflict: ${result.dedupeKey}"
+                        ) as DomainResult<Long>,
+                        PostCommitActionBatch.empty("receipt_scan_ic")
                     )
                 }
                 is CreateExpenseResult.Error -> {
-                    DomainResult.Error(
-                        exception = result.exception,
-                        message = result.exception.message ?: "Unknown error"
+                    Pair(
+                        DomainResult.Error(
+                            exception = result.exception,
+                            message = result.exception.message ?: "Unknown error"
+                        ) as DomainResult<Long>,
+                        PostCommitActionBatch.empty("receipt_scan_err")
                     )
-                }
-            }
-        }.also { outerResult ->
-            // Classifier learning (best-effort side effect, post-commit)
-            if (outerResult is DomainResult.Success && finalCategoryId != null) {
-                try {
-                    hybridClassifier.learnFromCorrection(
-                        merchantName = normalizedMerchant,
-                        correctCategoryId = finalCategoryId,
-                        amount = effectiveAmount
-                    )
-                } catch (e: Exception) {
-                    Timber.w(e, "Classifier learning failed after expense creation from receipt %d", receiptId)
-                }
-            }
-            // Dispatch post-creation side effects for the created expense
-            if (outerResult is DomainResult.Success) {
-                try {
-                    transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                        outerResult.data,
-                        ExpenseSource.RECEIPT_SCAN
-                    )
-                } catch (e: Exception) {
-                    Timber.w(e, "Post-creation side effects failed for receipt expense %d", receiptId)
                 }
             }
         }
+        val (outerResult, transactionActions) = txResult
+        // Classifier learning (best-effort side effect, post-commit)
+        if (outerResult is DomainResult.Success && finalCategoryId != null) {
+            try {
+                hybridClassifier.learnFromCorrection(
+                    merchantName = normalizedMerchant,
+                    correctCategoryId = finalCategoryId,
+                    amount = effectiveAmount
+                )
+            } catch (e: Exception) {
+                Timber.w(e, "Classifier learning failed after expense creation from receipt %d", receiptId)
+            }
+        }
+        // Run combined side effects for the created expense and receipt link
+        if (outerResult is DomainResult.Success) {
+            try {
+                val expenseId = outerResult.data
+                val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
+                    receiptId = receiptId,
+                    expenseId = expenseId,
+                    linkType = "DIRECT_SAVE",
+                    correlationId = null
+                )
+                val combined = transactionActions + receiptActions
+                postCommitActionRunner.run(combined)
+            } catch (e: Exception) {
+                Timber.w(e, "Post-creation side effects failed for receipt expense %d", receiptId)
+            }
+        }
+        return outerResult
     }
 
     /**
@@ -1069,15 +1118,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val receiptId = request.scannedReceiptId
             ?: return Result.failure(IllegalArgumentException("scannedReceiptId is required for atomic create+link"))
 
-        // S7-66F-001: Use DEFER so side effects are NOT dispatched inside the transaction.
+        // S7-66F-001: Use createExpenseDbOnlyV2 so side effects are NOT dispatched inside the transaction.
         // If linking fails and the transaction rolls back, no side effects will have run.
-        val expenseIdResult: Result<Long> = try {
+        val txResult: Pair<Result<Long>, PostCommitActionBatch> = try {
             database.withTransaction {
-                @Suppress("DEPRECATION_ERROR")
-                when (val result = transactionLifecycleCoordinator.createExpense(
-                    request,
-                    com.yourname.expensetracker.domain.transaction.SideEffectMode.DEFER
-                )) {
+                val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
+                when (val result = mutation.value) {
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
                         val linkResult = receiptLinkService.linkReceiptToExpense(
                             receiptId = receiptId,
@@ -1092,29 +1138,35 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                                 linkResult.exceptionOrNull()
                             )
                         }
-                        Result.success(result.expenseId)
+                        Pair(Result.success(result.expenseId), mutation.postCommitActions)
                     }
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped ->
-                        Result.failure(IllegalStateException("Duplicate transaction detected"))
+                        Pair(Result.failure(IllegalStateException("Duplicate transaction detected")), PostCommitActionBatch.empty("receipt_link_dup"))
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed ->
-                        Result.failure(IllegalArgumentException("Validation failed: ${result.errors.joinToString()}"))
+                        Pair(Result.failure(IllegalArgumentException("Validation failed: ${result.errors.joinToString()}")), PostCommitActionBatch.empty("receipt_link_vf"))
                     else ->
-                        Result.failure(IllegalStateException("Expense creation failed"))
+                        Pair(Result.failure(IllegalStateException("Expense creation failed")), PostCommitActionBatch.empty("receipt_link_err"))
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e  // S7-66F-005: never swallow cancellation
         } catch (e: Exception) {
-            Result.failure(e)
+            return Result.failure(e)
         }
+
+        val (expenseIdResult, transactionActions) = txResult
 
         // S7-66F-001: Dispatch side effects only after successful commit
         expenseIdResult.onSuccess { expenseId ->
             try {
-                transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                    expenseId,
-                    com.yourname.expensetracker.domain.transaction.ExpenseSource.RECEIPT_SCAN
+                val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
+                    receiptId = receiptId,
+                    expenseId = expenseId,
+                    linkType = "DIRECT_SAVE",
+                    correlationId = null
                 )
+                val combined = transactionActions + receiptActions
+                postCommitActionRunner.run(combined)
             } catch (e: Exception) {
                 Timber.w(e, "Post-creation side effects failed for receipt expense %d", expenseId)
             }

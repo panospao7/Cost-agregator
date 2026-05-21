@@ -2,41 +2,17 @@ package com.yourname.expensetracker.data.email
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
-import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
-import com.yourname.expensetracker.data.database.entity.MatchStatus
-import com.yourname.expensetracker.data.database.entity.ScannedReceipt
-import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
 import com.yourname.expensetracker.data.email.provider.AppleReceiptParser
 import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
 import com.yourname.expensetracker.data.email.provider.UberReceiptParser
-import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
-import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
+import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
-import com.yourname.expensetracker.domain.receipt.ReceiptSource
-import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
-import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
-import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
-import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
-import com.yourname.expensetracker.domain.transaction.ExpenseSource
-import com.yourname.expensetracker.domain.transaction.SideEffectMode
-import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
-import com.yourname.expensetracker.domain.usecase.receipt.ProcessedReceipt
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
-import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
-import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
-import com.yourname.expensetracker.domain.privacy.RawStorageMode
-import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -56,37 +32,29 @@ sealed class EmailReceiptResult {
 /**
  * Service for ingesting email receipts from providers (Amazon, Uber, Apple, etc.).
  *
- * This service is a **detector and delegate** — it does NOT create expenses
+ * This service is a thin **parser/delegate** layer — it does NOT create expenses
  * or receipts directly. All mutation is delegated to [ReceiptLifecycleCoordinator].
+ * No post-commit side-effect dispatch happens in this service; the coordinator
+ * owns the complete dispatch lifecycle.
  *
  * Flow:
  * 1. Detect provider from sender/subject/body
  * 2. Parse email body for receipt data via provider-specific parsers
  * 3. Compute content-only dedup fingerprint (merchant+amount+date bucket)
  * 4. Delegate to [ReceiptLifecycleCoordinator.processEmailReceipt] which
- *    handles deduplication, receipt save, expense creation, linking, and
- *    diagnostic events atomically
- * 5. Dispatch post-creation side effects for any expenses created
+ *    handles deduplication, receipt save, expense creation, linking,
+ *    side-effect planning, diagnostics, and post-commit dispatch atomically
  *
  * If the coordinator returns a non-Success result (Duplicate, Error), the
  * service returns the corresponding error directly — there is NO inline
- * fallback path.
+ * fallback path and NO independent dispatch ability.
  */
 @Singleton
 class EmailReceiptIngestionService(
     private val receiptParser: ReceiptParser,
-    private val processReceiptUseCase: ProcessReceiptUseCase,
-    private val expenseDao: ExpenseDao,
-    private val emailReceiptDao: EmailReceiptDao,
     private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
-    private val receiptLinkService: ReceiptLinkService,
     private val merchantNormalizer: MerchantNormalizer,
-    private val categorizationEngine: CategorizationEngine,
-    private val timeProvider: TimeProvider,
-    private val coordinator: TransactionLifecycleCoordinator,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val privacySettingsRepository: PrivacySettingsRepository,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val hashingService: SensitiveHashingService,
     private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
@@ -94,35 +62,17 @@ class EmailReceiptIngestionService(
     @Inject
     constructor(
         receiptParser: ReceiptParser,
-        processReceiptUseCase: ProcessReceiptUseCase,
-        expenseDao: ExpenseDao,
-        emailReceiptDao: EmailReceiptDao,
         receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
-        receiptLinkService: ReceiptLinkService,
         merchantNormalizer: MerchantNormalizer,
-        categorizationEngine: CategorizationEngine,
-        timeProvider: TimeProvider,
-        coordinator: TransactionLifecycleCoordinator,
-        database: AppDatabase,
-        restoreMaintenanceMode: RestoreMaintenanceMode,
         writeBarrier: DatabaseWriteBarrier,
-        privacySettingsRepository: PrivacySettingsRepository,
         diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
-        hashingService: SensitiveHashingService
+        hashingService: SensitiveHashingService,
+        database: AppDatabase
     ) : this(
         receiptParser = receiptParser,
-        processReceiptUseCase = processReceiptUseCase,
-        expenseDao = expenseDao,
-        emailReceiptDao = emailReceiptDao,
         receiptLifecycleCoordinator = receiptLifecycleCoordinator,
-        receiptLinkService = receiptLinkService,
         merchantNormalizer = merchantNormalizer,
-        categorizationEngine = categorizationEngine,
-        timeProvider = timeProvider,
-        coordinator = coordinator,
-        restoreMaintenanceMode = restoreMaintenanceMode,
         writeBarrier = writeBarrier,
-        privacySettingsRepository = privacySettingsRepository,
         diagnosticEventWriter = diagnosticEventWriter,
         hashingService = hashingService,
         transactionRunner = { block -> database.withTransaction { block() } }
@@ -130,32 +80,14 @@ class EmailReceiptIngestionService(
 
     constructor(
         receiptParser: ReceiptParser,
-        processReceiptUseCase: ProcessReceiptUseCase,
-        expenseDao: ExpenseDao,
-        emailReceiptDao: EmailReceiptDao,
         receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
-        receiptLinkService: ReceiptLinkService,
         merchantNormalizer: MerchantNormalizer,
-        categorizationEngine: CategorizationEngine,
-        timeProvider: TimeProvider,
-        coordinator: TransactionLifecycleCoordinator,
-        restoreMaintenanceMode: RestoreMaintenanceMode,
-        writeBarrier: DatabaseWriteBarrier,
-        privacySettingsRepository: PrivacySettingsRepository
+        writeBarrier: DatabaseWriteBarrier
     ) : this(
         receiptParser = receiptParser,
-        processReceiptUseCase = processReceiptUseCase,
-        expenseDao = expenseDao,
-        emailReceiptDao = emailReceiptDao,
         receiptLifecycleCoordinator = receiptLifecycleCoordinator,
-        receiptLinkService = receiptLinkService,
         merchantNormalizer = merchantNormalizer,
-        categorizationEngine = categorizationEngine,
-        timeProvider = timeProvider,
-        coordinator = coordinator,
-        restoreMaintenanceMode = restoreMaintenanceMode,
         writeBarrier = writeBarrier,
-        privacySettingsRepository = privacySettingsRepository,
         diagnosticEventWriter = object : com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter {
             override suspend fun emit(event: com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent) {}
         },

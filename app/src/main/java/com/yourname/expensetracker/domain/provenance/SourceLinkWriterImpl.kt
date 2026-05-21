@@ -234,8 +234,9 @@ class SourceLinkWriterImpl @Inject constructor(
                     importRowNumber?.let { row -> SourceIdentityKeyFactory.jsonImportRow(batch, row) }
                 } ?: "import:json:unknown:row:0"
             SourceEntityType.BANK_TRANSACTION ->
-                externalIdHash?.let { hash ->
-                    SourceIdentityKeyFactory.externalBankTransaction(providerId ?: "unknown", hash)
+                externalId?.let { extId ->
+                    val hash = hashingService.hmacSha256Prefix(extId, "source_link_external_id")
+                    SourceIdentityKeyFactory.externalBankTransaction(providerId ?: "unknown", hash ?: "unhashed")
                 } ?: "external:bank_transaction:unknown:unknown"
             SourceEntityType.GROUP ->
                 sourceEntityLocalId?.let { SourceIdentityKeyFactory.groupExpense(it) }

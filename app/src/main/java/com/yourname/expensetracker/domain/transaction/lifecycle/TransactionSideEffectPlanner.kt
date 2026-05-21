@@ -1,0 +1,378 @@
+package com.yourname.expensetracker.domain.transaction.lifecycle
+
+import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
+import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.sideeffect.*
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import dagger.Lazy
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class TransactionSideEffectPlanner @Inject constructor(
+    private val budgetMonitor: Lazy<BudgetMonitor>,
+    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
+    private val merchantCategoryRepository: MerchantCategoryRepository,
+    private val merchantNormalizationRepository: MerchantNormalizationRepository,
+    private val recurringLifecycleCoordinator: Lazy<RecurringLifecycleCoordinator>,
+    private val expenseDao: ExpenseDao,
+    private val categoryDao: CategoryDao
+) {
+
+    fun planCreated(
+        expenseId: Long,
+        source: ExpenseSource,
+        correlationId: String?
+    ): PostCommitActionBatch {
+        val corrId = correlationId ?: CorrelationIds.newId()
+        val actions = listOf(
+            makeBudgetCheckAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_CREATED),
+            makeAnomalyAlertAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED),
+            makeMerchantCategoryLearningAction(expenseId, source.name, corrId),
+            makeMerchantCanonicalStatsAction(expenseId, source.name, corrId),
+            makeRecurringMatchingAction(expenseId, source, corrId)
+        )
+        return PostCommitActionBatch(corrId, actions)
+    }
+
+    fun planUpdated(
+        expenseId: Long,
+        source: String,
+        correlationId: String?,
+        kind: TransactionUpdateKind
+    ): PostCommitActionBatch {
+        val corrId = correlationId ?: CorrelationIds.newId()
+        val actions = mutableListOf<PostCommitAction>()
+
+        when (kind) {
+            TransactionUpdateKind.LOCATION_ONLY -> {
+                return PostCommitActionBatch.empty(corrId)
+            }
+            TransactionUpdateKind.CATEGORY_ONLY, TransactionUpdateKind.BUSINESS_FLAGS_ONLY -> {
+                actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+                actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+            }
+            TransactionUpdateKind.FULL, TransactionUpdateKind.MERCHANT, TransactionUpdateKind.TYPE, TransactionUpdateKind.TRANSFER_DETAILS -> {
+                actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+                actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+                actions.add(makeMerchantCategoryLearningAction(expenseId, source, corrId))
+                actions.add(makeMerchantCanonicalStatsAction(expenseId, source, corrId))
+                if (kind == TransactionUpdateKind.MERCHANT || kind == TransactionUpdateKind.TYPE || kind == TransactionUpdateKind.FULL) {
+                    actions.add(makeRecurringReconcileAction(expenseId, source, corrId))
+                }
+            }
+        }
+
+        return PostCommitActionBatch(corrId, actions)
+    }
+
+    fun planDeleted(
+        expenseId: Long,
+        source: String,
+        correlationId: String?
+    ): PostCommitActionBatch {
+        val corrId = correlationId ?: CorrelationIds.newId()
+        val actions = listOf(
+            makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_DELETED),
+            makeRecurringUnlinkAction(expenseId, source, corrId)
+        )
+        return PostCommitActionBatch(corrId, actions)
+    }
+
+    fun planBulkUpdated(
+        source: String,
+        affectedCount: Int,
+        correlationId: String?
+    ): PostCommitActionBatch {
+        val corrId = correlationId ?: CorrelationIds.newId()
+        if (affectedCount <= 0) {
+            return PostCommitActionBatch(corrId, listOf(
+                PostCommitAction(
+                    pipeline = AppPipeline.TRANSACTION,
+                    name = "bulk_budget_check",
+                    category = SideEffectCategory.BUDGET,
+                    triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+                    targetEntityType = "EXPENSE",
+                    targetEntityId = null,
+                    source = source,
+                    correlationId = corrId,
+                    causationId = null,
+                    idempotencyKey = "bulk:$source:0:budget_check",
+                    priority = SideEffectPriority.LOW,
+                    metadata = SafeEventMetadata.builder().put("affectedCount", "0").build()
+                ) { SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK) }
+            ))
+        }
+        val actions = listOf(
+            PostCommitAction(
+                pipeline = AppPipeline.TRANSACTION,
+                name = "bulk_budget_check",
+                category = SideEffectCategory.BUDGET,
+                triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+                targetEntityType = "EXPENSE",
+                targetEntityId = null,
+                source = source,
+                correlationId = corrId,
+                causationId = null,
+                idempotencyKey = "bulk:$source:$affectedCount:budget_check",
+                priority = SideEffectPriority.LOW,
+                metadata = SafeEventMetadata.builder()
+                    .put("affectedCount", affectedCount.toString())
+                    .put("source", source)
+                    .build()
+            ) {
+                try {
+                    budgetMonitor.get().checkBudgets()
+                    SideEffectOutcome.Completed
+                } catch (e: Exception) {
+                    SideEffectOutcome.FailedRetryable(e.message ?: "Bulk budget check failed", e.javaClass.name)
+                }
+            }
+        )
+        return PostCommitActionBatch(corrId, actions)
+    }
+
+    // --- Private action factory methods ---
+
+    private fun makeBudgetCheckAction(
+        expenseId: Long,
+        source: ExpenseSource,
+        correlationId: String,
+        triggerType: SideEffectTriggerType
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "budget_check",
+            category = SideEffectCategory.BUDGET,
+            triggerType = triggerType,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source.name,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "expense:$expenseId:${triggerType.name.lowercase()}:budget_check",
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .put("source", source.name)
+                .build()
+        ) {
+            try {
+                budgetMonitor.get().checkBudgets()
+                SideEffectOutcome.Completed
+            } catch (e: Exception) {
+                SideEffectOutcome.FailedRetryable(e.message ?: "Budget check failed", e.javaClass.name)
+            }
+        }
+    }
+
+    private fun makeAnomalyAlertAction(
+        expenseId: Long,
+        source: String,
+        correlationId: String,
+        triggerType: SideEffectTriggerType
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "anomaly_alert_check",
+            category = SideEffectCategory.ANOMALY,
+            triggerType = triggerType,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "expense:$expenseId:${triggerType.name.lowercase()}:anomaly_alert_check",
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .build()
+        ) {
+            val expense = expenseDao.getById(expenseId)
+            if (expense == null) {
+                SideEffectOutcome.Skipped(SideEffectSkipReason.MISSING_ENTITY)
+            } else {
+                try {
+                    val category = expense.categoryId?.let { categoryDao.getById(it) }
+                    anomalyAlertOrchestrator.checkAndAlert(ExpenseWithCategory(expense = expense, category = category))
+                    SideEffectOutcome.Completed
+                } catch (e: Exception) {
+                    SideEffectOutcome.FailedRetryable(e.message ?: "Anomaly check failed", e.javaClass.name)
+                }
+            }
+        }
+    }
+
+    private fun makeMerchantCategoryLearningAction(
+        expenseId: Long,
+        source: String,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "merchant_category_pattern_learning",
+            category = SideEffectCategory.MERCHANT_LEARNING,
+            triggerType = SideEffectTriggerType.EXPENSE_CREATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "expense:$expenseId:created:merchant_category_learning",
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .build()
+        ) {
+            val expense = expenseDao.getById(expenseId)
+            if (expense == null || expense.categoryId == null) {
+                SideEffectOutcome.Skipped(SideEffectSkipReason.MISSING_ENTITY)
+            } else {
+                try {
+                    merchantCategoryRepository.learnPattern(expense.merchant, expense.categoryId!!)
+                    SideEffectOutcome.Completed
+                } catch (e: Exception) {
+                    SideEffectOutcome.FailedRetryable(e.message ?: "Merchant category learning failed", e.javaClass.name)
+                }
+            }
+        }
+    }
+
+    private fun makeMerchantCanonicalStatsAction(
+        expenseId: Long,
+        source: String,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "merchant_canonical_stats_update",
+            category = SideEffectCategory.MERCHANT_LEARNING,
+            triggerType = SideEffectTriggerType.EXPENSE_CREATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "expense:$expenseId:created:merchant_stats",
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .build()
+        ) {
+            val expense = expenseDao.getById(expenseId)
+            if (expense == null) {
+                SideEffectOutcome.Skipped(SideEffectSkipReason.MISSING_ENTITY)
+            } else {
+                val searchKey = expense.merchantKey ?: expense.merchant
+                val canonical = merchantNormalizationRepository.getCanonicalBySearchKey(searchKey)
+                if (canonical == null) {
+                    SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+                } else {
+                    try {
+                        merchantNormalizationRepository.incrementMerchantStats(
+                            id = canonical.id,
+                            amount = expense.amount,
+                            timestamp = expense.date
+                        )
+                        SideEffectOutcome.Completed
+                    } catch (e: Exception) {
+                        SideEffectOutcome.FailedRetryable(e.message ?: "Merchant stats update failed", e.javaClass.name)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun makeRecurringMatchingAction(
+        expenseId: Long,
+        source: ExpenseSource,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "recurring_occurrence_matching",
+            category = SideEffectCategory.RECURRING,
+            triggerType = SideEffectTriggerType.EXPENSE_CREATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source.name,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "expense:$expenseId:created:recurring_matching",
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .build()
+        ) {
+            try {
+                recurringLifecycleCoordinator.get().linkExpenseToOccurrence(expenseId)
+                SideEffectOutcome.Completed
+            } catch (e: Exception) {
+                SideEffectOutcome.FailedRetryable(e.message ?: "Recurring matching failed", e.javaClass.name)
+            }
+        }
+    }
+
+    private fun makeRecurringReconcileAction(
+        expenseId: Long,
+        source: String,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "recurring_reconcile",
+            category = SideEffectCategory.RECURRING,
+            triggerType = SideEffectTriggerType.EXPENSE_UPDATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "expense:$expenseId:updated:recurring_reconcile",
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .build()
+        ) {
+            try {
+                recurringLifecycleCoordinator.get().unlinkExpenseFromOccurrence(expenseId)
+                recurringLifecycleCoordinator.get().linkExpenseToOccurrence(expenseId)
+                SideEffectOutcome.Completed
+            } catch (e: Exception) {
+                SideEffectOutcome.FailedRetryable(e.message ?: "Recurring reconcile failed", e.javaClass.name)
+            }
+        }
+    }
+
+    private fun makeRecurringUnlinkAction(
+        expenseId: Long,
+        source: String,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "recurring_unlink",
+            category = SideEffectCategory.RECURRING,
+            triggerType = SideEffectTriggerType.EXPENSE_DELETED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = expenseId,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "expense:$expenseId:deleted:recurring_unlink",
+            metadata = SafeEventMetadata.builder()
+                .put("expenseId", expenseId.toString())
+                .build()
+        ) {
+            try {
+                recurringLifecycleCoordinator.get().unlinkExpenseFromOccurrence(expenseId)
+                SideEffectOutcome.Completed
+            } catch (e: Exception) {
+                SideEffectOutcome.FailedRetryable(e.message ?: "Recurring unlink failed", e.javaClass.name)
+            }
+        }
+    }
+}

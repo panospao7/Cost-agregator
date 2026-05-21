@@ -27,8 +27,9 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
-import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkPromoter
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
@@ -54,7 +55,8 @@ class ReviewQueueRepository @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val pendingReviewSourceLinkPromoter: PendingReviewSourceLinkPromoter,
-    private val transactionEventDao: TransactionEventDao
+    private val transactionEventDao: TransactionEventDao,
+    private val postCommitActionRunner: PostCommitActionRunner
 ) {
     private companion object {
         private const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
@@ -92,6 +94,14 @@ class ReviewQueueRepository @Inject constructor(
 
     /** Recover reviews stuck in PROCESSING state after process death mid-approval. */
     suspend fun recoverStuckReviews(): Int = pendingReviewDao.recoverStuckProcessing()
+
+    private data class ReviewApprovalTxOutcome(
+        val type: ReviewApprovalTxType,
+        val expenseId: Long? = null,
+        val transactionActions: PostCommitActionBatch = PostCommitActionBatch.empty("")
+    )
+
+    private enum class ReviewApprovalTxType { CREATED, DUPLICATE, ALREADY_PROCESSED }
 
     suspend fun approveReview(
         reviewId: Long,
@@ -204,151 +214,147 @@ class ReviewQueueRepository @Inject constructor(
             resolvedAddress = if (locationCleared) null else finalAddress
         )
 
-        val txAlreadyProcessed = -2L
-        val txDuplicate = -1L
-        // S6-D5-009: validationError removed — ValidationFailed now throws inside transaction
-
-        val txnResult: Long = try {
+        val txOutcome = try {
             database.withTransaction {
-            val rowsUpdated = pendingReviewDao.transitionStatus(
-                id = reviewId,
-                expectedStatus = PendingReviewStatus.PENDING,
-                newStatus = PendingReviewStatus.PROCESSING
-            )
-            if (rowsUpdated == 0) {
-                return@withTransaction txAlreadyProcessed
-            }
+                val rowsUpdated = pendingReviewDao.transitionStatus(
+                    id = reviewId,
+                    expectedStatus = PendingReviewStatus.PENDING,
+                    newStatus = PendingReviewStatus.PROCESSING
+                )
+                if (rowsUpdated == 0) {
+                    return@withTransaction ReviewApprovalTxOutcome(ReviewApprovalTxType.ALREADY_PROCESSED)
+                }
 
-            // ── Delegate to TransactionLifecycleCoordinator ─────────────────────────
-            // The coordinator handles key generation, dedup check, atomic insert,
-            // lifecycle event logging, and source-link writing.
-            val request = CreateExpenseRequest(
-                merchant = expense.merchant,
-                amount = expense.amount,
-                currency = expense.currency,
-                date = expense.date,
-                transactionType = expense.transactionType,
-                source = ExpenseSource.REVIEW_APPROVAL,
-                categoryId = expense.categoryId,
-                notes = expense.notes,
-                paymentMethod = expense.paymentMethod,
-                isManualEntry = expense.isManualEntry,
-                transferDirection = expense.transferDirection,
-                transferAccountName = expense.transferAccountName,
-                latitude = expense.latitude,
-                longitude = expense.longitude,
-                locationSource = expense.locationSource,
-                placeId = expense.placeId,
-                resolvedAddress = expense.resolvedAddress,
-                rawNotificationId = review.rawNotificationId,
-                pendingReviewId = reviewId,
-                scannedReceiptId = review.scannedReceiptId,
-                skipDeduplication = false
-            )
+                // ── Delegate to TransactionLifecycleCoordinator ─────────────────────────
+                // The coordinator handles key generation, dedup check, atomic insert,
+                // lifecycle event logging, and source-link writing.
+                val request = CreateExpenseRequest(
+                    merchant = expense.merchant,
+                    amount = expense.amount,
+                    currency = expense.currency,
+                    date = expense.date,
+                    transactionType = expense.transactionType,
+                    source = ExpenseSource.REVIEW_APPROVAL,
+                    categoryId = expense.categoryId,
+                    notes = expense.notes,
+                    paymentMethod = expense.paymentMethod,
+                    isManualEntry = expense.isManualEntry,
+                    transferDirection = expense.transferDirection,
+                    transferAccountName = expense.transferAccountName,
+                    latitude = expense.latitude,
+                    longitude = expense.longitude,
+                    locationSource = expense.locationSource,
+                    placeId = expense.placeId,
+                    resolvedAddress = expense.resolvedAddress,
+                    rawNotificationId = review.rawNotificationId,
+                    pendingReviewId = reviewId,
+                    scannedReceiptId = review.scannedReceiptId,
+                    skipDeduplication = false
+                )
 
-            @Suppress("DEPRECATION_ERROR")
-            when (val result = transactionLifecycleCoordinator.createExpenseDbOnly(request)) {
-                is CreateExpenseResult.Created -> {
-                    val id = result.expenseId
+                val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
+                when (val result = mutation.value) {
+                    is CreateExpenseResult.Created -> {
+                        val id = result.expenseId
 
-                    // PR3: Promote pending-review source links to expense
-                    val promotion = pendingReviewSourceLinkPromoter.promotePendingReviewLinksToExpense(
-                        pendingReviewId = reviewId,
-                        expenseId = id,
-                        correlationId = null,
-                        source = ExpenseSource.REVIEW_APPROVAL
-                    )
-                    if (promotion.hasFatalFailure) {
-                        throw IllegalStateException(
-                            "Fatal failure promoting source links for reviewId=$reviewId: ${promotion.failures.joinToString(", ")}"
-                        )
-                    }
-
-                    // Write SOURCE_LINKED event for promotion
-                    if (promotion.inserted > 0) {
-                        transactionEventDao.insert(
-                            com.yourname.expensetracker.data.database.entity.TransactionEvent(
-                                expenseId = id,
-                                eventType = LifecycleEventType.SOURCE_LINKED.name,
-                                source = ExpenseSource.REVIEW_APPROVAL.name,
-                                actor = null,
-                                occurredAt = timeProvider.now(),
-                                dedupeKey = null,
-                                duplicateExpenseId = null,
-                                beforeSnapshot = null,
-                                afterSnapshot = null,
-                                metadata = JSONObject().apply {
-                                    put("operation", "PENDING_REVIEW_SOURCE_PROMOTION")
-                                    put("pendingReviewId", reviewId)
-                                    put("attempted", promotion.attempted)
-                                    put("inserted", promotion.inserted)
-                                    put("alreadyExists", promotion.alreadyExists)
-                                }.toString(),
-                                reason = "Source links promoted from pending review",
-                                correlationId = null
-                            )
-                        )
-                    }
-
-                    review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
-                    sourceStatsDao.incrementAccepted(review.packageName)
-                    sourceStatsDao.decrementPending(review.packageName)
-                    review.scannedReceiptId?.let { receiptId ->
-                        val linkResult = receiptLinkService.linkReceiptToExpense(
-                            receiptId = receiptId,
+                        // PR3: Promote pending-review source links to expense
+                        val promotion = pendingReviewSourceLinkPromoter.promotePendingReviewLinksToExpense(
+                            pendingReviewId = reviewId,
                             expenseId = id,
-                            linkType = "REVIEW_APPROVAL",
-                            source = ExpenseSource.REVIEW_APPROVAL.name
+                            correlationId = null,
+                            source = ExpenseSource.REVIEW_APPROVAL
                         )
-                        if (linkResult.isFailure) {
+                        if (promotion.hasFatalFailure) {
                             throw IllegalStateException(
-                                "Failed to link receipt $receiptId to expense $id during review approval",
-                                linkResult.exceptionOrNull()
+                                "Fatal failure promoting source links for reviewId=$reviewId: ${promotion.failures.joinToString(", ")}"
                             )
                         }
-                    }
-                    pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
 
-                    val correction = UserCorrection(
-                        packageName = review.packageName,
-                        originalMerchant = review.suggestedMerchant,
-                        correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
-                            finalMerchant else null,
-                        originalAmount = review.suggestedAmount ?: 0.0,
-                        correctedAmount = if (finalAmount != null && finalAmount != (review.suggestedAmount ?: 0.0))
-                            finalAmount else null,
-                        originalCategoryId = review.suggestedCategoryId,
-                        correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
-                            finalCategoryId else null,
-                        originalType = review.suggestedType,
-                        correctedType = if (finalType != null && finalType.name != review.suggestedType)
-                            finalType.name else null,
-                        wasRejected = false,
-                        wasApproved = true,
-                        notificationTitle = review.notificationTitle,
-                        notificationText = review.notificationText
-                    )
-                    userCorrectionDao.insert(correction)
-                    id
+                        // Write SOURCE_LINKED event for promotion
+                        if (promotion.inserted > 0) {
+                            transactionEventDao.insert(
+                                com.yourname.expensetracker.data.database.entity.TransactionEvent(
+                                    expenseId = id,
+                                    eventType = LifecycleEventType.SOURCE_LINKED.name,
+                                    source = ExpenseSource.REVIEW_APPROVAL.name,
+                                    actor = null,
+                                    occurredAt = timeProvider.now(),
+                                    dedupeKey = null,
+                                    duplicateExpenseId = null,
+                                    beforeSnapshot = null,
+                                    afterSnapshot = null,
+                                    metadata = JSONObject().apply {
+                                        put("operation", "PENDING_REVIEW_SOURCE_PROMOTION")
+                                        put("pendingReviewId", reviewId)
+                                        put("attempted", promotion.attempted)
+                                        put("inserted", promotion.inserted)
+                                        put("alreadyExists", promotion.alreadyExists)
+                                    }.toString(),
+                                    reason = "Source links promoted from pending review",
+                                    correlationId = null
+                                )
+                            )
+                        }
+
+                        review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
+                        sourceStatsDao.incrementAccepted(review.packageName)
+                        sourceStatsDao.decrementPending(review.packageName)
+                        review.scannedReceiptId?.let { receiptId ->
+                            val linkResult = receiptLinkService.linkReceiptToExpense(
+                                receiptId = receiptId,
+                                expenseId = id,
+                                linkType = "REVIEW_APPROVAL",
+                                source = ExpenseSource.REVIEW_APPROVAL.name
+                            )
+                            if (linkResult.isFailure) {
+                                throw IllegalStateException(
+                                    "Failed to link receipt $receiptId to expense $id during review approval",
+                                    linkResult.exceptionOrNull()
+                                )
+                            }
+                        }
+                        pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
+
+                        val correction = UserCorrection(
+                            packageName = review.packageName,
+                            originalMerchant = review.suggestedMerchant,
+                            correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
+                                finalMerchant else null,
+                            originalAmount = review.suggestedAmount ?: 0.0,
+                            correctedAmount = if (finalAmount != null && finalAmount != (review.suggestedAmount ?: 0.0))
+                                finalAmount else null,
+                            originalCategoryId = review.suggestedCategoryId,
+                            correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
+                                finalCategoryId else null,
+                            originalType = review.suggestedType,
+                            correctedType = if (finalType != null && finalType.name != review.suggestedType)
+                                finalType.name else null,
+                            wasRejected = false,
+                            wasApproved = true,
+                            notificationTitle = review.notificationTitle,
+                            notificationText = review.notificationText
+                        )
+                        userCorrectionDao.insert(correction)
+                        ReviewApprovalTxOutcome(ReviewApprovalTxType.CREATED, id, mutation.postCommitActions)
+                    }
+                    is CreateExpenseResult.DuplicateSkipped -> {
+                        sourceStatsDao.incrementDuplicate(review.packageName)
+                        sourceStatsDao.decrementPending(review.packageName)
+                        pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
+                        ReviewApprovalTxOutcome(ReviewApprovalTxType.DUPLICATE)
+                    }
+                    is CreateExpenseResult.InsertConflict -> {
+                        sourceStatsDao.incrementDuplicate(review.packageName)
+                        sourceStatsDao.decrementPending(review.packageName)
+                        pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
+                        ReviewApprovalTxOutcome(ReviewApprovalTxType.DUPLICATE)
+                    }
+                    is CreateExpenseResult.ValidationFailed -> {
+                        // S6-001: Throw inside transaction — rolls back PROCESSING status to PENDING
+                        throw IllegalArgumentException("Validation failed: ${result.errors.joinToString(", ")}")
+                    }
+                    is CreateExpenseResult.Error -> throw result.exception
                 }
-                is CreateExpenseResult.DuplicateSkipped -> {
-                    sourceStatsDao.incrementDuplicate(review.packageName)
-                    sourceStatsDao.decrementPending(review.packageName)
-                    pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
-                    txDuplicate
-                }
-                is CreateExpenseResult.InsertConflict -> {
-                    sourceStatsDao.incrementDuplicate(review.packageName)
-                    sourceStatsDao.decrementPending(review.packageName)
-                    pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
-                    txDuplicate
-                }
-                is CreateExpenseResult.ValidationFailed -> {
-                    // S6-001: Throw inside transaction — rolls back PROCESSING status to PENDING
-                    throw IllegalArgumentException("Validation failed: ${result.errors.joinToString(", ")}")
-                }
-                is CreateExpenseResult.Error -> throw result.exception
-            }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e  // S6-D5-001: never swallow cancellation
@@ -359,62 +365,58 @@ class ReviewQueueRepository @Inject constructor(
             return Result.Error(message = e.message ?: "Approval failed")
         }
 
-        if (txnResult == txAlreadyProcessed) {
-            return Result.Error(message = ERROR_REVIEW_ALREADY_PROCESSED)
-        }
+        when (txOutcome.type) {
+            ReviewApprovalTxType.ALREADY_PROCESSED ->
+                return Result.Error(message = ERROR_REVIEW_ALREADY_PROCESSED)
 
-        if (txnResult == txDuplicate) {
-            val fullText = listOfNotNull(
-                review.notificationTitle,
-                review.notificationText
-            ).joinToString(" ")
-            runPostCommitSafely(
-                action = "classifier training after duplicate review approval (reviewId=$reviewId, package=${review.packageName})"
-            ) {
-                classifier.train(fullText, isTransaction = true)
+            ReviewApprovalTxType.DUPLICATE -> {
+                val fullText = listOfNotNull(
+                    review.notificationTitle,
+                    review.notificationText
+                ).joinToString(" ")
+                runPostCommitSafely(
+                    action = "classifier training after duplicate review approval (reviewId=$reviewId, package=${review.packageName})"
+                ) {
+                    classifier.train(fullText, isTransaction = true)
+                }
+
+                runPostCommitSafely(
+                    action = "source stats cache invalidation after duplicate review approval (reviewId=$reviewId, package=${review.packageName})"
+                ) {
+                    // AIML-13: Use comprehensive invalidation after user action
+                    confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
+                }
+                return Result.Duplicate
             }
 
-            runPostCommitSafely(
-                action = "source stats cache invalidation after duplicate review approval (reviewId=$reviewId, package=${review.packageName})"
-            ) {
-                // AIML-13: Use comprehensive invalidation after user action
-                confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
-            }
-            return Result.Duplicate
-        }
+            ReviewApprovalTxType.CREATED -> {
+                // ── Deferred lifecycle side effects (now safely post-commit) ──────────
+                postCommitActionRunner.run(txOutcome.transactionActions)
 
-        // ── Deferred lifecycle side effects (now safely post-commit) ──────────
-        runPostCommitSafely(
-            action = "lifecycle side effects after review approval (reviewId=$reviewId, expenseId=$txnResult)"
-        ) {
-            transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                txnResult,
-                ExpenseSource.REVIEW_APPROVAL
-            )
-        }
+                // ── Source-specific post-commit side effects ─────────────────────────
+                runPostCommitSafely(
+                    action = "classifier retraining after review approval (reviewId=$reviewId)"
+                ) {
+                    classifier.retrainFromCorrections()
+                }
 
-        // ── Source-specific post-commit side effects ─────────────────────────
-        runPostCommitSafely(
-            action = "classifier retraining after review approval (reviewId=$reviewId)"
-        ) {
-            classifier.retrainFromCorrections()
-        }
+                if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
+                    runPostCommitSafely(
+                        action = "merchant alias learning after review approval (reviewId=$reviewId, from=${review.suggestedMerchant}, to=$finalMerchant)"
+                    ) {
+                        merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
+                    }
+                }
 
-        if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
-            runPostCommitSafely(
-                action = "merchant alias learning after review approval (reviewId=$reviewId, from=${review.suggestedMerchant}, to=$finalMerchant)"
-            ) {
-                merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
+                runPostCommitSafely(
+                    action = "source stats cache invalidation after review approval (reviewId=$reviewId, package=${review.packageName})"
+                ) {
+                    // AIML-13: Use comprehensive invalidation after user action
+                    confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
+                }
+                return Result.Success(txOutcome.expenseId!!)
             }
         }
-
-        runPostCommitSafely(
-            action = "source stats cache invalidation after review approval (reviewId=$reviewId, package=${review.packageName})"
-        ) {
-            // AIML-13: Use comprehensive invalidation after user action
-            confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
-        }
-        return Result.Success(txnResult)
     }
 
     suspend fun rejectReview(reviewId: Long) {
@@ -588,7 +590,8 @@ class ReviewQueueRepository @Inject constructor(
         data class MarkAsRelevantOutcome(
             val shouldTrainAsTransaction: Boolean,
             val shouldCheckBudgets: Boolean,
-            val createdExpenseId: Long? = null
+            val createdExpenseId: Long? = null,
+            val transactionActions: PostCommitActionBatch = PostCommitActionBatch.empty("")
         )
 
         val outcome = database.withTransaction {
@@ -625,16 +628,16 @@ class ReviewQueueRepository @Inject constructor(
                         notes = expense.notes,
                         isManualEntry = false
                     )
-                    @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-                    val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)
-                    if (result is CreateExpenseResult.Created) {
-                        val expenseId = result.expenseId
+                    val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
+                    if (mutation.value is CreateExpenseResult.Created) {
+                        val expenseId = (mutation.value as CreateExpenseResult.Created).expenseId
                         sourceStatsDao.incrementAccepted(notification.packageName)
                         userCorrectionDao.insert(correction)
                         MarkAsRelevantOutcome(
                             shouldTrainAsTransaction = true,
                             shouldCheckBudgets = true,
-                            createdExpenseId = expenseId
+                            createdExpenseId = expenseId,
+                            transactionActions = mutation.postCommitActions
                         )
                     } else {
                         sourceStatsDao.incrementDuplicate(notification.packageName)
@@ -681,26 +684,22 @@ class ReviewQueueRepository @Inject constructor(
             }
         }
 
-        outcome.createdExpenseId?.let { expenseId ->
+        if (outcome.createdExpenseId != null) {
             runPostCommitSafely(
-                action = "lifecycle side effects after markAsRelevant (notificationId=$id, expenseId=$expenseId)"
+                action = "transaction side effects after markAsRelevant (notificationId=$id, expenseId=${outcome.createdExpenseId})"
             ) {
-                transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                    expenseId,
-                    ExpenseSource.NOTIFICATION_AUTO_ACCEPT
-                )
+                postCommitActionRunner.run(outcome.transactionActions)
             }
         }
 
         if (outcome.shouldCheckBudgets) {
-            // Lifecycle side effects (dispatchPostCreationSideEffects →
-            // dispatchOnCreated) already handle budget monitoring via
-            // budgetMonitor.checkBudgets(). Only check here if lifecycle
-            // dispatch was skipped (e.g. duplicate or pendingReview paths).
-            // Currently shouldCheckBudgets is only true when createdExpenseId
-            // is non-null, so the lifecycle dispatch already covers it.
-            // This guard is kept for future scenarios where lifecycle dispatch
-            // may be skipped but budget checks are still needed.
+            // Transaction side effects (via postCommitActionRunner) already
+            // handle budget monitoring via budgetMonitor.checkBudgets().
+            // Only check here if lifecycle dispatch was skipped (e.g. duplicate
+            // or pendingReview paths). Currently shouldCheckBudgets is only true
+            // when createdExpenseId is non-null, so the lifecycle dispatch
+            // already covers it. This guard is kept for future scenarios where
+            // lifecycle dispatch may be skipped but budget checks are still needed.
         }
 
         if (outcome.shouldTrainAsTransaction) {

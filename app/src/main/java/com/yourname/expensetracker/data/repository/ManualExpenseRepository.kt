@@ -20,8 +20,9 @@ import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
-import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -52,6 +53,7 @@ class ManualExpenseRepository @Inject constructor(
     private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
     private val recommendationRepository: RecommendationRepository,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val postCommitActionRunner: PostCommitActionRunner,
     private val recurringExpenseRepository: RecurringExpenseRepository,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
@@ -152,9 +154,14 @@ class ManualExpenseRepository @Inject constructor(
         // ── Delegate to coordinator (DEFER side effects until outer tx commits) ─
         var insertedExpenseForHook: Expense? = null
 
-        val result = database.withTransaction {
-            @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-            when (val coordinatorResult = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
+        data class ManualExpenseTxOutcome(
+            val result: Result<Long>,
+            val transactionActions: PostCommitActionBatch
+        )
+
+        val txOutcome = database.withTransaction {
+            val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
+            when (val coordinatorResult = mutation.value) {
                 is CreateExpenseResult.Created -> {
                     val id = coordinatorResult.expenseId
 
@@ -211,36 +218,43 @@ class ManualExpenseRepository @Inject constructor(
                         }
                     }
 
-                    Result.Success(id)
+                    ManualExpenseTxOutcome(Result.Success(id), mutation.postCommitActions)
                 }
 
                 is CreateExpenseResult.DuplicateSkipped,
                 is CreateExpenseResult.InsertConflict -> {
-                    return@withTransaction Result.Duplicate
+                    return@withTransaction ManualExpenseTxOutcome(
+                        Result.Duplicate,
+                        PostCommitActionBatch.empty("manual_dup")
+                    )
                 }
 
                 is CreateExpenseResult.ValidationFailed -> {
-                    return@withTransaction Result.Error(
-                        message = coordinatorResult.errors.joinToString("; ")
+                    return@withTransaction ManualExpenseTxOutcome(
+                        Result.Error(
+                            message = coordinatorResult.errors.joinToString("; ")
+                        ),
+                        PostCommitActionBatch.empty("manual_vf")
                     )
                 }
 
                 is CreateExpenseResult.Error -> {
-                    return@withTransaction Result.Error(
-                        message = coordinatorResult.exception.message
-                            ?: "Failed to create expense"
+                    return@withTransaction ManualExpenseTxOutcome(
+                        Result.Error(
+                            message = coordinatorResult.exception.message
+                                ?: "Failed to create expense"
+                        ),
+                        PostCommitActionBatch.empty("manual_err")
                     )
                 }
             }
         }
 
         // ── Deferred lifecycle side effects (now safely post-commit) ──────────
-        if (result is Result.Success) {
-            transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                result.data,
-                ExpenseSource.MANUAL_ENTRY
-            )
+        if (txOutcome.result is Result.Success) {
+            postCommitActionRunner.run(txOutcome.transactionActions)
         }
+        val result = txOutcome.result
 
         // ── Source-specific post-transaction side effects ─────────────────────
         if (result is Result.Success) {

@@ -191,8 +191,7 @@ class BankApiIntegration @Inject constructor(
                 try {
                     val request = mapTransactionToExpense(transaction, connection, syncRunId)
                         .copy(correlationId = run.correlationId)  // DDL-016-15: propagate bank sync correlation
-                    @Suppress("DEPRECATION_ERROR")
-                    when (val result = coordinator.createExpense(request)) {
+                    when (val result = coordinator.createExpenseStandaloneV2(request)) {
                         is CreateExpenseResult.Created -> {
                             importedCount++
                             run.event("TRANSACTION_IMPORTED",

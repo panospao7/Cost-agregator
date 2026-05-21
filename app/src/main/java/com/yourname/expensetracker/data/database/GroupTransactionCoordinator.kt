@@ -24,12 +24,18 @@ import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
-import com.yourname.expensetracker.domain.transaction.SideEffectMode
+import com.yourname.expensetracker.domain.transaction.lifecycle.OwnershipUpdateResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -60,8 +66,9 @@ import javax.inject.Singleton
  * 4. Route all group deletions through archiveGroup() for soft-delete
  * 5. Add currentUserGroupKey invariant enforcement (G01): when inserting members,
  *    automatically set groupId = currentUserGroupKey on the current-user member.
- * 6. Add deferred side-effect list (G02): collect post-commit effects from
- *    TransactionLifecycleCoordinator and dispatch after outer transaction commits.
+ * 6. G02 (DONE in PR6): PostCommitActionBatch collected from TransactionLifecycleCoordinator
+ *    via DB-only APIs (createExpenseDbOnlyV2, updateOwnershipDbOnlyV2) and run after
+ *    outer transaction commit via PostCommitActionRunner.
  * 7. Reject mixed-currency settlements (G04) or convert to group defaultCurrency.
  * 8. Add lifecycle event logging (audit table) for all group mutations.
  *
@@ -77,9 +84,9 @@ import javax.inject.Singleton
  *     - Fire GROUP_MEMBER_REMOVED lifecycle event.
  * 12. Hard-delete guard (G08): permanentlyDeleteGroup() should require an explicit
  *     boolean flag `confirmPermanentDelete: Boolean` to prevent accidental data loss.
- * 13. Side-effect dispatch (G02): in createSystemExpenseAndLinkToGroup, the .also{}
- *     block dispatches side effects after transaction commit. Ensure the same pattern
- *     is used in all group mutation methods that create system expenses.
+ * 13. Side-effect dispatch (G02, DONE in PR6): PostCommitActionBatch is collected from
+ *     DB-only APIs and run after outer transaction commit via PostCommitActionRunner.
+ *     No side effects are dispatched inside transactions — rollback means no actions.
  * Design goals:
  * - GroupLifecycleCoordinator wraps GroupTransactionCoordinator + domain services
  *   to provide a single entry point for all group lifecycle operations.
@@ -129,8 +136,8 @@ import javax.inject.Singleton
  *
  * State invariants:
  * - currentUserGroupKey: at most one member per group has isCurrentUser=true
- * - deferred side effects: post-commit dispatch via
- *   transactionLifecycleCoordinator.dispatchPostCreationSideEffects()
+ * - deferred side effects: PostCommitActionBatch collected from DB-only APIs
+ *   and run after outer transaction commit via PostCommitActionRunner
  * - lifecycle event logging: each mutation writes a GroupLifecycleEvent to audit table
  */
 @Singleton
@@ -142,16 +149,45 @@ class GroupTransactionCoordinator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val transactionSideEffectPlanner: TransactionSideEffectPlanner,
+    private val postCommitActionRunner: PostCommitActionRunner,
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
+
+    private data class GroupMutationTxOutcome(
+        val result: GroupExpenseCreationResult,
+        val postCommitActions: PostCommitActionBatch
+    )
+
+    private data class GroupDeleteTxOutcome(
+        val success: Boolean,
+        val postCommitActions: PostCommitActionBatch
+    )
 
     private companion object {
         const val INVALID_EQUAL_SPLIT_MESSAGE =
             "Equal split is invalid for the selected date because the payer is excluded or no participant qualifies"
         const val LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE =
             "Linked system expense is already attached to a group expense"
+    }
+
+    /**
+     * Runs a [PostCommitActionBatch] after the outer group transaction commits.
+     *
+     * Cancellation is rethrown; non-cancellation failures are logged but do not
+     * propagate — the primary group mutation has already committed.
+     */
+    private suspend fun runGroupPostCommitActions(batch: PostCommitActionBatch) {
+        if (batch.actions.isEmpty()) return
+        try {
+            postCommitActionRunner.run(batch)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Group post-commit side effects failed")
+        }
     }
 
     private fun validateSingleCurrentUser(members: List<GroupMember>) {
@@ -363,11 +399,9 @@ class GroupTransactionCoordinator @Inject constructor(
      * B.4 Batch 2: Wrapped in database.withTransaction so validation + insert
      * are atomic (Risk 2).
      *
-     * TODO (E4-003): normalizeLinkedSystemExpense() dispatches ownership-update side effects
-     * (via TransactionLifecycleCoordinator.updateOwnership) inside the outer transaction.
-     * If the transaction rolls back after side effects fire, the system is in an inconsistent
-     * state. Side effects should be deferred until after the outer transaction commits,
-     * similar to createSystemExpenseAndLinkToGroup's .also{} pattern.
+     * PostCommitActionBatch is collected via updateOwnershipDbOnlyV2 and run after
+     * the outer group transaction commit. No side effects are dispatched inside the
+     * transaction — rollback means no action execution.
      */
     override suspend fun addExpenseWithLink(
         groupId: Long,
@@ -382,28 +416,39 @@ class GroupTransactionCoordinator @Inject constructor(
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseWithLink")
-            database.withTransaction {
+            val correlationId = CorrelationIds.newId()
+            val outcome = database.withTransaction {
                 // Verify group exists and is active
                 val group = groupDao.getById(groupId)
                 if (group == null || !group.isActive) {
-                    return@withTransaction GroupExpenseCreationResult.Error("Group not found or inactive")
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error("Group not found or inactive"),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
                 // Verify payer is a member
                 val members = memberDao.getAllForGroup(groupId)
                 if (members.none { it.id == paidById }) {
-                    return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error("Payer is not a member of this group"),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
-                validateCustomSplitPayloadFormat(
+                val customSplitError = validateCustomSplitPayloadFormat(
                     splitType = splitType,
                     customSplitsJson = customSplitsJson,
                     memberCount = members.size
-                )?.let { validationError ->
-                    return@withTransaction validationError
+                )
+                if (customSplitError != null) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        customSplitError,
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
-                validateExpenseParticipants(
+                val participantError = validateExpenseParticipants(
                     groupId = groupId,
                     linkedExpenseId = systemExpenseId,
                     description = description,
@@ -414,8 +459,12 @@ class GroupTransactionCoordinator @Inject constructor(
                     customSplitsJson = customSplitsJson,
                     date = date,
                     members = members
-                )?.let { validationError ->
-                    return@withTransaction validationError
+                )
+                if (participantError != null) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        participantError,
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
                 val currentUserShare = resolveCurrentUserShare(
@@ -429,23 +478,35 @@ class GroupTransactionCoordinator @Inject constructor(
                     customSplitsJson = customSplitsJson,
                     date = date,
                     members = members
-                ) ?: return@withTransaction GroupExpenseCreationResult.Error(
-                    "Current user member not found or share could not be calculated"
+                ) ?: return@withTransaction GroupMutationTxOutcome(
+                    GroupExpenseCreationResult.Error(
+                        "Current user member not found or share could not be calculated"
+                    ),
+                    PostCommitActionBatch.empty(correlationId)
                 )
 
                 val existingExpense = expenseDao.getById(systemExpenseId)
-                    ?: return@withTransaction GroupExpenseCreationResult.Error("Linked system expense not found")
+                    ?: return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error("Linked system expense not found"),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
 
                 // G03: Reject mixed-currency group expenses — groups are single-currency.
                 if (existingExpense.currency != group.defaultCurrency) {
-                    return@withTransaction GroupExpenseCreationResult.Error(
-                        "Expense currency '${existingExpense.currency}' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error(
+                            "Expense currency '${existingExpense.currency}' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
+                        ),
+                        PostCommitActionBatch.empty(correlationId)
                     )
                 }
 
                 if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {
-                    return@withTransaction GroupExpenseCreationResult.Error(
-                        LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error(
+                            LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
+                        ),
+                        PostCommitActionBatch.empty(correlationId)
                     )
                 }
 
@@ -467,19 +528,39 @@ class GroupTransactionCoordinator @Inject constructor(
                 val groupExpenseId = groupExpenseDao.insert(expense)
 
                 if (groupExpenseId <= 0) {
-                    return@withTransaction GroupExpenseCreationResult.Error("Failed to create group expense")
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error("Failed to create group expense"),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
-                normalizeLinkedSystemExpense(
-                    expense = existingExpense,
-                    myShareAmount = currentUserShare
-                )
+                // Ownership update via DB-only API — no side effects inside transaction
+                val ownershipMutation =
+                    transactionLifecycleCoordinator.updateOwnershipDbOnlyV2(
+                        expenseId = systemExpenseId,
+                        isNotMine = false,
+                        ownerName = null,
+                        isSharedExpense = true,
+                        sharedWithName = null,
+                        mySharePercentage = null,
+                        myShareAmount = currentUserShare,
+                        reason = "Group expense linking: set shared-expense metadata",
+                        source = "GROUP_EXPENSE",
+                        correlationId = correlationId
+                    )
 
-                GroupExpenseCreationResult.Success(
-                    groupExpenseId = groupExpenseId,
-                    expenseId = systemExpenseId
+                GroupMutationTxOutcome(
+                    result = GroupExpenseCreationResult.Success(
+                        groupExpenseId = groupExpenseId,
+                        expenseId = systemExpenseId
+                    ),
+                    postCommitActions = ownershipMutation.postCommitActions
                 )
             }
+            if (outcome.result is GroupExpenseCreationResult.Success) {
+                runGroupPostCommitActions(outcome.postCommitActions)
+            }
+            outcome.result
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
         }
@@ -601,28 +682,39 @@ class GroupTransactionCoordinator @Inject constructor(
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup")
-            database.withTransaction {
+            val correlationId = CorrelationIds.newId()
+            val txOutcome = database.withTransaction {
                 // 1. Validate group exists and is active
                 val group = groupDao.getById(groupId)
                 if (group == null || !group.isActive) {
-                    return@withTransaction GroupExpenseCreationResult.Error("Group not found or inactive")
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error("Group not found or inactive"),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
                 // 2. Validate payer is a member of the group
                 val members = memberDao.getAllForGroup(groupId)
                 if (members.none { it.id == paidById }) {
-                    return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error("Payer is not a member of this group"),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
-                validateCustomSplitPayloadFormat(
+                val customSplitError = validateCustomSplitPayloadFormat(
                     splitType = splitType,
                     customSplitsJson = customSplitsJson,
                     memberCount = members.size
-                )?.let { validationError ->
-                    return@withTransaction validationError
+                )
+                if (customSplitError != null) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        customSplitError,
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
-                validateExpenseParticipants(
+                val participantError = validateExpenseParticipants(
                     groupId = groupId,
                     linkedExpenseId = null,
                     description = description,
@@ -633,8 +725,12 @@ class GroupTransactionCoordinator @Inject constructor(
                     customSplitsJson = customSplitsJson,
                     date = date,
                     members = members
-                )?.let { validationError ->
-                    return@withTransaction validationError
+                )
+                if (participantError != null) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        participantError,
+                        PostCommitActionBatch.empty(correlationId)
+                    )
                 }
 
                 val payer = members.first { it.id == paidById }
@@ -652,17 +748,19 @@ class GroupTransactionCoordinator @Inject constructor(
                     customSplitsJson = customSplitsJson,
                     date = date,
                     members = members
-                ) ?: return@withTransaction GroupExpenseCreationResult.Error(
-                    "Current user member not found or share could not be calculated"
                 )
+                if (currentUserShare == null) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error(
+                            "Current user member not found or share could not be calculated"
+                        ),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
+                }
 
-                // G02-VERIFIED: createExpense is called with SideEffectMode.DEFER inside
-                // database.withTransaction. Side effects are dispatched after the outer
-                // transaction commits (see .also block below). No changes needed.
                 // 3. Create system expense via TransactionLifecycleCoordinator
-                // Side effects are deferred until after this outer transaction commits
-                @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-                val createResult = transactionLifecycleCoordinator.createExpense(
+                // Side effects are returned as PostCommitActionBatch and run after outer commit
+                val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(
                     CreateExpenseRequest(
                         merchant = description,
                         amount = amount,
@@ -673,75 +771,87 @@ class GroupTransactionCoordinator @Inject constructor(
                         notes = notes ?: "Group expense via ${payer.name}",
                         isManualEntry = true,
                         isSharedExpense = true,
-                        myShareAmount = currentUserShare
-                    ),
-                    SideEffectMode.DEFER
-                )
-
-                val systemExpenseId = when (createResult) {
-                    is CreateExpenseResult.Created -> createResult.expenseId
-                    is CreateExpenseResult.DuplicateSkipped -> {
-                        return@withTransaction GroupExpenseCreationResult.Error(
-                            "Duplicate expense: ${createResult.reason}"
-                        )
-                    }
-                    is CreateExpenseResult.ValidationFailed -> {
-                        return@withTransaction GroupExpenseCreationResult.Error(
-                            createResult.errors.joinToString("; ")
-                        )
-                    }
-                    is CreateExpenseResult.InsertConflict -> {
-                        return@withTransaction GroupExpenseCreationResult.Error(
-                            "Insert conflict: dedupeKey=${createResult.dedupeKey}"
-                        )
-                    }
-                    is CreateExpenseResult.Error -> {
-                        return@withTransaction GroupExpenseCreationResult.Error(
-                            "Failed to create system expense: ${createResult.exception.message}"
-                        )
-                    }
-                }
-
-                if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {
-                    return@withTransaction GroupExpenseCreationResult.Error(
-                        LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
+                        myShareAmount = currentUserShare,
+                        correlationId = correlationId
                     )
-                }
-
-                // 4. Create group expense linked to system expense
-                val groupExpense = GroupExpense(
-                    groupId = groupId,
-                    expenseId = systemExpenseId,
-                    description = description,
-                    totalAmount = amount,
-                    paidById = paidById,
-                    date = date,
-                    currency = expenseCurrency,
-                    splitType = splitType,
-                    customSplitsJson = customSplitsJson
                 )
 
-                val groupExpenseId = groupExpenseDao.insert(groupExpense)
-                if (groupExpenseId <= 0) {
-                    return@withTransaction GroupExpenseCreationResult.Error("Failed to create group expense link")
-                }
+                when (val createResult = mutation.value) {
+                    is CreateExpenseResult.Created -> {
+                        val systemExpenseId = createResult.expenseId
 
-                GroupExpenseCreationResult.Success(
-                    groupExpenseId = groupExpenseId,
-                    expenseId = systemExpenseId
-                )
-            }.also { result ->
-                if (result is GroupExpenseCreationResult.Success) {
-                    try {
-                        transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
-                            result.expenseId,
-                            ExpenseSource.GROUP_EXPENSE
+                        if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {
+                            return@withTransaction GroupMutationTxOutcome(
+                                GroupExpenseCreationResult.Error(
+                                    LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
+                                ),
+                                PostCommitActionBatch.empty(correlationId)
+                            )
+                        }
+
+                        // 4. Create group expense linked to system expense
+                        val groupExpense = GroupExpense(
+                            groupId = groupId,
+                            expenseId = systemExpenseId,
+                            description = description,
+                            totalAmount = amount,
+                            paidById = paidById,
+                            date = date,
+                            currency = expenseCurrency,
+                            splitType = splitType,
+                            customSplitsJson = customSplitsJson
                         )
-                    } catch (e: Exception) {
-                        // Best-effort; do not fail the successful creation
+
+                        val groupExpenseId = groupExpenseDao.insert(groupExpense)
+                        if (groupExpenseId <= 0) {
+                            return@withTransaction GroupMutationTxOutcome(
+                                GroupExpenseCreationResult.Error("Failed to create group expense link"),
+                                PostCommitActionBatch.empty(correlationId)
+                            )
+                        }
+
+                        GroupMutationTxOutcome(
+                            GroupExpenseCreationResult.Success(
+                                groupExpenseId = groupExpenseId,
+                                expenseId = systemExpenseId
+                            ),
+                            mutation.postCommitActions
+                        )
                     }
+                    is CreateExpenseResult.DuplicateSkipped ->
+                        GroupMutationTxOutcome(
+                            GroupExpenseCreationResult.Error(
+                                "Duplicate expense: ${createResult.reason}"
+                            ),
+                            PostCommitActionBatch.empty(correlationId)
+                        )
+                    is CreateExpenseResult.ValidationFailed ->
+                        GroupMutationTxOutcome(
+                            GroupExpenseCreationResult.Error(
+                                createResult.errors.joinToString("; ")
+                            ),
+                            PostCommitActionBatch.empty(correlationId)
+                        )
+                    is CreateExpenseResult.InsertConflict ->
+                        GroupMutationTxOutcome(
+                            GroupExpenseCreationResult.Error(
+                                "Insert conflict: dedupeKey=${createResult.dedupeKey}"
+                            ),
+                            PostCommitActionBatch.empty(correlationId)
+                        )
+                    is CreateExpenseResult.Error ->
+                        GroupMutationTxOutcome(
+                            GroupExpenseCreationResult.Error(
+                                "Failed to create system expense: ${createResult.exception.message}"
+                            ),
+                            PostCommitActionBatch.empty(correlationId)
+                        )
                 }
             }
+            if (txOutcome.result is GroupExpenseCreationResult.Success) {
+                runGroupPostCommitActions(txOutcome.postCommitActions)
+            }
+            txOutcome.result
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to create group expense atomically: ${e.message}")
         }
@@ -791,18 +901,19 @@ class GroupTransactionCoordinator @Inject constructor(
         writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.deleteGroupAtomic")
         // Collect linked expense IDs before deleting
         val linkedExpenseIds = groupExpenseDao.getExpensesForGroupOnce(groupId).mapNotNull { it.expenseId }
+        val correlationId = CorrelationIds.newId()
 
         database.withTransaction {
             // Delete expenses first (child table)
             groupExpenseDao.deleteAllForGroup(groupId)
-            
+
             // Delete members
             // TODO (G09): Add validation before member delete — check that:
             // 1. Member has no outstanding balance (unsettled debts)
             // 2. Member is not the last currentUser (block or transfer ownership first)
             // 3. A GROUP_MEMBER_REMOVED lifecycle event is emitted for audit trail
             memberDao.deleteAllForGroup(groupId)
-            
+
             // Delete group last (parent table)
             val group = groupDao.getGroupById(groupId)
             group?.let { groupDao.delete(it) }
@@ -811,66 +922,34 @@ class GroupTransactionCoordinator @Inject constructor(
             linkedExpenseIds.forEach { expenseId ->
                 expenseDao.clearSharedExpenseFlags(expenseId)
             }
-        }
 
-        // P2-06: Write a single BULK_UPDATED event for the hard-delete
-        if (linkedExpenseIds.isNotEmpty()) {
-            // TODO P2-CURRENT-018: Replace System.currentTimeMillis() with TimeProvider.now()
-            // for testability. Requires adding TimeProvider to constructor injection.
-            val now = System.currentTimeMillis()
-            val metadata = org.json.JSONObject().apply {
-                put("action", "clearSharedExpenseFlags")
-                put("expenseIds", org.json.JSONArray(linkedExpenseIds))
-                put("count", linkedExpenseIds.size)
-            }.toString()
-            try {
-                transactionLifecycleEventWriter.write(
-                    com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
-                        expenseId = null,
-                        eventType = LifecycleEventType.BULK_UPDATED.name,
-                        source = "GROUP_HARD_DELETE",
-                        actor = "system:group_transaction_coordinator",
-                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                            .put("count", linkedExpenseIds.size)
-                            .build(),
-                        reason = "Group hard-delete cleared shared expense flags for ${linkedExpenseIds.size} expenses"
-                    )
+            // Write BULK_UPDATED event atomically inside the transaction
+            transactionLifecycleEventWriter.write(
+                com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
+                    expenseId = null,
+                    eventType = LifecycleEventType.BULK_UPDATED.name,
+                    source = "GROUP_HARD_DELETE",
+                    actor = "system:group_transaction_coordinator",
+                    correlationId = correlationId,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("groupId", groupId.toString())
+                        .put("count", linkedExpenseIds.size)
+                        .put("source", "GROUP_HARD_DELETE")
+                        .build(),
+                    reason = "Group hard-delete cleared shared expense flags for ${linkedExpenseIds.size} expenses"
                 )
-            } catch (_: Exception) {
-                // Best-effort audit event
-            }
+            )
         }
-    }
 
-    /**
-     * Normalizes a system expense's ownership fields when it is linked to a group.
-     *
-     * G03: Routes through [TransactionLifecycleCoordinator.updateOwnership] so the
-     * operation writes a UPDATED lifecycle event and dispatches post-update side
-     * effects (budget, anomaly, merchant learning). The coordinator is available
-     * (injected as [transactionLifecycleCoordinator]) so there is no circular
-     * dependency — the data-layer [GroupTransactionCoordinator] owns the DB
-     * transaction, and the domain-layer coordinator handles audit/side-effects.
-     *
-     * A UPDATED event is intentionally produced here: linking a system expense to a
-     * group is a semantic ownership change that should appear in the audit trail.
-     * Side effects are best-effort (caught inside [TransactionLifecycleCoordinator.updateOwnership]).
-     */
-    private suspend fun normalizeLinkedSystemExpense(
-        expense: Expense,
-        myShareAmount: Double
-    ) {
-        transactionLifecycleCoordinator.updateOwnership(
-            expenseId = expense.id,
-            isNotMine = false,
-            ownerName = null,
-            isSharedExpense = true,
-            sharedWithName = null,
-            mySharePercentage = null,
-            myShareAmount = myShareAmount,
-            reason = "Group expense linking: set shared-expense metadata",
-            source = "GROUP_EXPENSE"
-        )
+        // After commit: plan and run bulk updated actions
+        if (linkedExpenseIds.isNotEmpty()) {
+            val actions = transactionSideEffectPlanner.planBulkUpdated(
+                source = "GROUP_HARD_DELETE",
+                affectedCount = linkedExpenseIds.size,
+                correlationId = correlationId
+            )
+            runGroupPostCommitActions(actions)
+        }
     }
 
     private fun resolveCurrentUserShare(

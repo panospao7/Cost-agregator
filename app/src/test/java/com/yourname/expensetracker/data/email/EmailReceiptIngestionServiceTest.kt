@@ -1,28 +1,17 @@
 package com.yourname.expensetracker.data.email
 
-import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
 import com.yourname.expensetracker.data.email.provider.AppleReceiptParser
 import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
 import com.yourname.expensetracker.data.email.provider.ReceiptItem
 import com.yourname.expensetracker.data.email.provider.UberReceiptParser
-import com.yourname.expensetracker.domain.categorization.CategorizationEngine
-import com.yourname.expensetracker.domain.categorization.CategorizationResult
-import com.yourname.expensetracker.domain.categorization.MatchType as CategorizationMatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MerchantMatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
-import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
-import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
-import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
-import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -34,18 +23,12 @@ import org.junit.Test
 class EmailReceiptIngestionServiceTest {
 
     private val receiptParser = mockk<ReceiptParser>()
-    private val processReceiptUseCase = mockk<ProcessReceiptUseCase>(relaxed = true)
-    private val expenseDao = mockk<ExpenseDao>()
-    private val emailReceiptDao = mockk<EmailReceiptDao>()
-    private val scannedReceiptDao = mockk<ScannedReceiptDao>()
     private val receiptLifecycleCoordinator = mockk<ReceiptLifecycleCoordinator>(relaxed = true)
-    private val receiptLinkService = mockk<ReceiptLinkService>(relaxed = true)
     private val amazonParser = mockk<AmazonReceiptParser>()
     private val uberParser = mockk<UberReceiptParser>()
     private val appleParser = mockk<AppleReceiptParser>()
     private val merchantNormalizer = mockk<MerchantNormalizer>()
-    private val categorizationEngine = mockk<CategorizationEngine>()
-    private val timeProvider = FakeTimeProvider(FIXED_NOW)
+    private val writeBarrier = mockk<com.yourname.expensetracker.data.backup.DatabaseWriteBarrier>(relaxed = true)
 
     private lateinit var service: EmailReceiptIngestionService
 
@@ -53,18 +36,9 @@ class EmailReceiptIngestionServiceTest {
     fun setup() {
         service = EmailReceiptIngestionService(
             receiptParser = receiptParser,
-            processReceiptUseCase = processReceiptUseCase,
-            expenseDao = expenseDao,
-            emailReceiptDao = emailReceiptDao,
             receiptLifecycleCoordinator = receiptLifecycleCoordinator,
-            receiptLinkService = receiptLinkService,
             merchantNormalizer = merchantNormalizer,
-            categorizationEngine = categorizationEngine,
-            timeProvider = timeProvider,
-            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            restoreMaintenanceMode = mockk(relaxed = true),
-            writeBarrier = mockk(relaxed = true),
-            privacySettingsRepository = mockk(relaxed = true)
+            writeBarrier = writeBarrier
         )
 
         // Inject provider parsers (normally created as private fields)
@@ -88,13 +62,6 @@ class EmailReceiptIngestionServiceTest {
                 )
             }
         }
-        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
-            categoryId = 42L,
-            categoryName = "Shopping",
-            confidence = 0.88,
-            matchType = CategorizationMatchType.EXACT,
-            explanation = "test"
-        )
 
         every { amazonParser.canParse(any(), any(), any()) } answers {
             firstArg<String>().contains("amazon", ignoreCase = true)

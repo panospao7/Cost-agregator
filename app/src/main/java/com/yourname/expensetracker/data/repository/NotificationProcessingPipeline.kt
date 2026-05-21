@@ -15,7 +15,8 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
-import com.yourname.expensetracker.domain.transaction.SideEffectMode
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
@@ -150,6 +151,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val recommendationRepository: RecommendationRepository,
     private val subscriptionDetector: NotificationSubscriptionDetector,
     private val coordinator: TransactionLifecycleCoordinator,
+    private val postCommitActionRunner: PostCommitActionRunner,
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val sourceLinkWriter: SourceLinkWriter,
     private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
@@ -873,7 +875,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         data class AutoAccepted(
             val rawId: Long,
             val expenseId: Long,
-            val insertedExpense: Expense
+            val insertedExpense: Expense,
+            val transactionActions: PostCommitActionBatch
         ) : ParsedDbOutcome()
     }
 
@@ -1100,8 +1103,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             correlationId = correlationId  // DDL-512-05: propagate notification listener correlation
         )
 
-        @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-        return when (val result = coordinator.createExpense(request, SideEffectMode.DEFER)) {
+        val mutation = coordinator.createExpenseDbOnlyV2(request)
+        return when (val result = mutation.value) {
             is CreateExpenseResult.Created -> {
                 val expenseId = result.expenseId
                 dao.markRelevance(rawId, true)
@@ -1149,7 +1152,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 ParsedDbOutcome.AutoAccepted(
                     rawId = rawId,
                     expenseId = expenseId,
-                    insertedExpense = expense
+                    insertedExpense = expense,
+                    transactionActions = mutation.postCommitActions
                 )
             }
 
@@ -1320,12 +1324,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
 
             is ParsedDbOutcome.AutoAccepted -> {
-                runPostCommitSafely("lifecycle side effects after auto-accept (expenseId=${dbOutcome.expenseId})") {
-                    coordinator.dispatchPostCreationSideEffects(
-                        dbOutcome.expenseId,
-                        ExpenseSource.NOTIFICATION_AUTO_ACCEPT,
-                        correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
-                    )
+                runPostCommitSafely("transaction side effects after auto-accept (expenseId=${dbOutcome.expenseId})") {
+                    postCommitActionRunner.run(dbOutcome.transactionActions)
                 }
 
                 runTransferAnalyticsPostCommit(
