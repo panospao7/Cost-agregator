@@ -1038,20 +1038,12 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             null
         }
 
-        // PR 10: Best-effort location capture outside DB transaction.
-        // ForegroundLocationProvider internally gates by runtime permission and
-        // PrivacyGate (DEVICE_GPS_LOCATION), so this never bypasses user privacy.
-        // Returns null silently when GPS is unavailable or denied.
-        val deviceGps = if (shouldPrepareAcceptedOrReviewData) {
-            try {
-                locationProvider.getLastKnownLocation()
-            } catch (e: Exception) {
-                Timber.w(e, "GPS unavailable at notification time for merchant: $correctedMerchant")
-                null
-            }
-        } else {
-            null
-        }
+        // PR 3 (P1-NEW-16): Location enrichment removed from notification pipeline.
+        // Notification capture uses FOREGROUND_SERVICE_TYPE_DATA_SYNC only and does not
+        // read GPS by default. If location enrichment is desired, it must be explicitly
+        // gated behind: user feature toggle + PrivacyGate.DEVICE_GPS_LOCATION + runtime
+        // permission + foreground-service type declaration.
+        val deviceGps: Pair<Double, Double>? = null
 
         val eventDate = parsed.date ?: notification.timestamp
         val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)

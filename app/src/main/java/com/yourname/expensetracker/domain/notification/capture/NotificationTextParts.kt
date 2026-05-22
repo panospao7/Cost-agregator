@@ -103,8 +103,12 @@ data class NotificationTextParts(
 }
 
 /**
- * Compute a fast content hash from the combined notification body.
- * Used for in-memory deduplication.
+ * Deprecated: Use computeNotificationContentFingerprint in NotificationCaptureService
+ * for SHA-256 based fingerprinting. This hashCode-based helper is kept for test compatibility.
  */
+@Deprecated(
+    "Use SHA-256 based computeNotificationContentFingerprint in NotificationCaptureService instead",
+    ReplaceWith("computeNotificationContentFingerprint(parts.combinedBody)")
+)
 fun computeNotificationContentHash(parts: NotificationTextParts): Int =
     parts.combinedBody.hashCode()

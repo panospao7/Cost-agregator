@@ -187,28 +187,12 @@ class NotificationProcessingPipelineReliabilityTest {
                 notification.packageName
             )
         } returns null
-        coEvery {
-            rawDao.exists(
-                packageName = notification.packageName,
-                timestamp = notification.timestamp,
-                title = notification.title,
-                text = notification.text,
-                bigText = null,
-            )
-        } returns true
+        coEvery { rawDao.findIdByDedupeFingerprint(any()) } returns 123L
 
         val result = pipeline.process(notification)
 
         assertTrue("Expected Duplicate outcome, got $result", result is NotificationPipelineOutcome.Duplicate)
-        coVerify(exactly = 1) {
-            rawDao.exists(
-                packageName = notification.packageName,
-                timestamp = notification.timestamp,
-                title = notification.title,
-                text = notification.text,
-                bigText = null,
-            )
-        }
+        coVerify(exactly = 1) { rawDao.findIdByDedupeFingerprint(any()) }
         coVerify(exactly = 0) { rawDao.insertOrIgnore(any()) }
         coVerify(exactly = 0) { sourceStatsDao.insertIfNotExists(any()) }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(any(), any()) }
@@ -230,29 +214,14 @@ class NotificationProcessingPipelineReliabilityTest {
                 notification.packageName
             )
         } returns null
-        coEvery {
-            rawDao.exists(
-                packageName = notification.packageName,
-                timestamp = notification.timestamp,
-                title = notification.title,
-                text = notification.text,
-                bigText = null,
-            )
-        } returns false
-        coEvery { rawDao.insertOrIgnore(notification) } returns 42L
+        coEvery { rawDao.insertOrIgnore(any()) } returns 42L
 
         val result = pipeline.process(notification)
 
         assertTrue("Expected AutoRejected outcome, got $result", result is NotificationPipelineOutcome.AutoRejected)
         coVerifyOrder {
-            rawDao.exists(
-                packageName = notification.packageName,
-                timestamp = notification.timestamp,
-                title = notification.title,
-                text = notification.text,
-                bigText = null,
-            )
-            rawDao.insertOrIgnore(notification)
+            rawDao.findIdByDedupeFingerprint(any())
+            rawDao.insertOrIgnore(any())
         }
         coVerify(exactly = 1) { sourceStatsDao.insertIfNotExists(any()) }
     }
@@ -409,16 +378,7 @@ class NotificationProcessingPipelineReliabilityTest {
             confidence = 0f,
             matchType = MatchType.FALLBACK
         )
-        coEvery { rawDao.insertOrIgnore(notification) } returns 123L
-        coEvery {
-            rawDao.exists(
-                packageName = notification.packageName,
-                timestamp = notification.timestamp,
-                title = notification.title,
-                text = notification.text,
-                bigText = null,
-            )
-        } returns false
+        coEvery { rawDao.insertOrIgnore(any()) } returns 123L
         coEvery {
             expenseDao.isDuplicateCurrencyAware(
                 amount = 50.0,
@@ -523,26 +483,7 @@ class NotificationProcessingPipelineReliabilityTest {
             confidence = 0f,
             matchType = MatchType.FALLBACK
         )
-        coEvery {
-            rawDao.exists(
-                packageName = notification1.packageName,
-                timestamp = notification1.timestamp,
-                title = notification1.title,
-                text = notification1.text,
-                bigText = null,
-            )
-        } returns false
-        coEvery {
-            rawDao.exists(
-                packageName = notification2.packageName,
-                timestamp = notification2.timestamp,
-                title = notification2.title,
-                text = notification2.text,
-                bigText = null,
-            )
-        } returns false
-        coEvery { rawDao.insertOrIgnore(notification1) } returns 1L
-        coEvery { rawDao.insertOrIgnore(notification2) } returns 2L
+        coEvery { rawDao.insertOrIgnore(any()) } returnsMany listOf(1L, 2L)
         coEvery {
             expenseDao.isDuplicateCurrencyAware(
                 amount = 9.99,
@@ -621,7 +562,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 bigText = null,
             )
         } returns false
-        coEvery { rawDao.insertOrIgnore(notification) } returns 50L
+        coEvery { rawDao.insertOrIgnore(any()) } returns 50L
         coEvery {
             expenseDao.isDuplicateCurrencyAware(
                 amount = 4.08,
@@ -653,7 +594,7 @@ class NotificationProcessingPipelineReliabilityTest {
         coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
         assertEquals(4.08, reviewSlot.captured.suggestedAmount!!, 0.0001)
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
-        coVerify(exactly = 1) { rawDao.markRelevance(50L, true) }
+        coVerify(exactly = 1) { rawDao.markRelevance(any(), true) }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
     }
 
@@ -806,21 +747,12 @@ class NotificationProcessingPipelineReliabilityTest {
             reason = "Unknown merchant"
         )
         coEvery { merchantNormalizer.normalize("Unknown", any(), any()) } returns merchantLookupResult("unknown")
-        coEvery {
-            rawDao.exists(
-                packageName = notification.packageName,
-                timestamp = notification.timestamp,
-                title = notification.title,
-                text = notification.text,
-                bigText = null,
-            )
-        } returns false
-        coEvery { rawDao.insertOrIgnore(notification) } returns 56L
+        coEvery { rawDao.insertOrIgnore(any()) } returns 56L
 
         val result = pipeline.process(notification)
 
         assertTrue("Expected AutoRejected outcome, got $result", result is NotificationPipelineOutcome.AutoRejected)
-        coVerify(exactly = 1) { rawDao.markRelevance(56L, false) }
+        coVerify(exactly = 1) { rawDao.markRelevance(any(), false) }
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
         coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
     }

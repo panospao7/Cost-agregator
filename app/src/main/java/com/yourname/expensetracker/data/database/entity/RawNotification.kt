@@ -77,8 +77,8 @@ data class RawNotification(
     val capturedAt: Long,          // When we captured it
     
     // Processing status
-    // TODO P1-CURRENT-015: isProcessed is never set to true anywhere in the codebase.
-    // Either update it after pipeline processing or remove the field in a migration.
+    // P1-NEW-14: isProcessed is set by NotificationIntakeWorker after terminal pipeline outcome.
+    // For authoritative processing state, see NotificationIntakeEntity.status.
     val isProcessed: Boolean = false,
     val isRelevant: Boolean? = null,  // null = unknown, true = expense, false = ignore
     val parseResult: String? = null,    // JSON of parsed data or error message

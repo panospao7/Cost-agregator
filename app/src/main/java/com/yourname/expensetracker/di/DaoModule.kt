@@ -32,6 +32,12 @@ object DaoModule {
 
     @Provides
     @Singleton
+    fun provideNotificationIntakeDao(database: AppDatabase): NotificationIntakeDao {
+        return database.notificationIntakeDao()
+    }
+
+    @Provides
+    @Singleton
     fun provideBlockedPackageDao(database: AppDatabase): BlockedPackageDao {
         return database.blockedPackageDao()
     }

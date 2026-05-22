@@ -86,6 +86,14 @@ interface RawNotificationDao {
     @Query("UPDATE raw_notifications SET isRelevant = :isRelevant WHERE id = :id")
     suspend fun markRelevance(id: Long, isRelevant: Boolean)
 
+    /**
+     * Mark a raw notification as processed after a terminal pipeline outcome.
+     *
+     * @return Number of rows updated (should be 1).
+     */
+    @Query("UPDATE raw_notifications SET isProcessed = 1 WHERE id = :rawId")
+    suspend fun markProcessed(rawId: Long): Int
+
     // ── Raw data retention (Phase 6, Batch 3) ──────────────────────────────────
 
     @Query("""

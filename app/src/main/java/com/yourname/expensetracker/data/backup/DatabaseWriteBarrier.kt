@@ -23,6 +23,13 @@ class DatabaseWriteBarrier @Inject constructor(
         }
     }
 
+    /**
+     * Returns true if writes are currently allowed (NORMAL mode).
+     */
+    fun writesAllowed(): Boolean {
+        return restoreMaintenanceMode.isWritesAllowed()
+    }
+
     suspend fun <T> runWrite(
         operation: DatabaseAccessOperation,
         block: suspend () -> T
