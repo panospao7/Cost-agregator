@@ -3,8 +3,8 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.*
-import com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.ProcessingResult
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -205,7 +205,7 @@ class NotificationRepositoryStressTest {
 
     @Test
     fun `stress - processAndSave calls pipeline process`() = runTest {
-        coEvery { pipeline.process(any()) } returns NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted(rawId = 1L, expenseId = 1L)
+        coEvery { pipeline.process(any()) } returns NotificationPipelineOutcome.AutoAccepted(packageName = "com.test", correlationId = null, rawId = 1L, expenseId = 1L)
         val notification = RawNotification(
             packageName = "com.revolut.revolut",
             appName = "Revolut",

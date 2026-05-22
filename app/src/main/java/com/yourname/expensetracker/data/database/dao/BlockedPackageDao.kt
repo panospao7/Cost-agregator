@@ -23,6 +23,9 @@ interface BlockedPackageDao {
 
     @Query("SELECT packageName FROM blocked_packages")
     fun getAllPackageNamesFlow(): Flow<List<String>>
+
+    @Query("SELECT packageName FROM blocked_packages")
+    suspend fun getAllPackageNamesOnce(): List<String>
     
     @Query("SELECT EXISTS(SELECT 1 FROM blocked_packages WHERE packageName = :packageName)")
     suspend fun isBlocked(packageName: String): Boolean

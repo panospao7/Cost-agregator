@@ -59,6 +59,30 @@ interface RawNotificationDao {
     """)
     suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?, bigText: String?): Boolean
 
+    /**
+     * Fast duplicate pre-check using the canonical [dedupeFingerprint].
+     * Works correctly under all [RawStorageMode] values because the fingerprint
+     * is based on the original notification content, not sanitized stored fields.
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM raw_notifications
+            WHERE dedupeFingerprint = :fingerprint
+        )
+    """)
+    suspend fun existsByDedupeFingerprint(fingerprint: String): Boolean
+
+    /**
+     * Find an existing raw notification by its dedupe fingerprint.
+     * Returns the raw ID if found, null otherwise.
+     */
+    @Query("""
+        SELECT id FROM raw_notifications
+        WHERE dedupeFingerprint = :fingerprint
+        LIMIT 1
+    """)
+    suspend fun findIdByDedupeFingerprint(fingerprint: String): Long?
+
     @Query("UPDATE raw_notifications SET isRelevant = :isRelevant WHERE id = :id")
     suspend fun markRelevance(id: Long, isRelevant: Boolean)
 

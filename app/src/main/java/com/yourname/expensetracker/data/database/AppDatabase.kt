@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 132
+const val APP_DATABASE_SCHEMA_VERSION = 133
 
 @Database(
     entities = [
@@ -106,7 +106,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 132
         PipelineDiagnosticEvent::class,
         OperationRun::class,
         OperationRunEvent::class,
-        EntitySourceLink::class
+        EntitySourceLink::class,
+        NotificationIntakeEntity::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -177,6 +178,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun operationRunDao(): OperationRunDao
     abstract fun operationRunEventDao(): OperationRunEventDao
     abstract fun entitySourceLinkDao(): EntitySourceLinkDao
+    abstract fun notificationIntakeDao(): NotificationIntakeDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -7913,6 +7915,74 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_132_133 = object : androidx.room.migration.Migration(132, 133) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS notification_intake (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        packageName TEXT NOT NULL,
+                        appName TEXT,
+                        notificationKeyHash TEXT,
+                        postTime INTEGER NOT NULL,
+                        capturedAt INTEGER NOT NULL,
+                        source TEXT NOT NULL,
+                        correlationId TEXT NOT NULL,
+                        dedupeFingerprint TEXT NOT NULL,
+                        contentHash TEXT,
+                        title TEXT,
+                        text TEXT,
+                        bigText TEXT,
+                        subText TEXT,
+                        extrasJson TEXT,
+                        rawStorageMode TEXT NOT NULL,
+                        payloadMode TEXT NOT NULL,
+                        rawPayloadPurgedAt INTEGER,
+                        status TEXT NOT NULL,
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        maxAttempts INTEGER NOT NULL DEFAULT 5,
+                        nextAttemptAt INTEGER,
+                        lockedAt INTEGER,
+                        lockedBy TEXT,
+                        lastAttemptAt INTEGER,
+                        terminalAt INTEGER,
+                        rawNotificationId INTEGER,
+                        expenseId INTEGER,
+                        pendingReviewId INTEGER,
+                        lastFailureCode TEXT,
+                        lastFailureMessageHash TEXT,
+                        finalOutcome TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_notification_intake_dedupeFingerprint
+                    ON notification_intake(dedupeFingerprint)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_notification_intake_status_nextAttemptAt
+                    ON notification_intake(status, nextAttemptAt)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_notification_intake_status_updatedAt
+                    ON notification_intake(status, updatedAt)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_notification_intake_correlationId
+                    ON notification_intake(correlationId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_notification_intake_packageName_postTime
+                    ON notification_intake(packageName, postTime)
+                """.trimIndent())
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -8080,7 +8150,8 @@ MIGRATION_91_92,
         MIGRATION_128_129,
         MIGRATION_129_130,
         MIGRATION_130_131,
-        MIGRATION_131_132
+        MIGRATION_131_132,
+        MIGRATION_132_133
     )
 }
 }

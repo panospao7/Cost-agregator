@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.RoutingResult
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
+import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.intelligence.ml.ClassificationResult
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
@@ -124,7 +125,7 @@ class NotificationProcessingPipelineReliabilityTest {
         pendingReviewSourceLinkService = mockk(relaxed = true),
         sourceLinkWriter = mockk(relaxed = true),
         transactionLifecycleEventWriter = mockk(relaxed = true),
-        diagnosticEventWriter = mockk(relaxed = true),
+            diagnosticEmitter = mockk(relaxed = true),
         writeBarrier = writeBarrier,
         privacySettingsRepository = mockk(relaxed = true),
         applicationScope = applicationScope
@@ -193,7 +194,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertTrue("Expected Duplicate outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.Duplicate)
+        assertTrue("Expected Duplicate outcome, got $result", result is NotificationPipelineOutcome.Duplicate)
         coVerify(exactly = 1) {
             rawDao.exists(
                 packageName = notification.packageName,
@@ -237,7 +238,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected)
+        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationPipelineOutcome.AutoRejected)
         coVerifyOrder {
             rawDao.exists(
                 packageName = notification.packageName,
@@ -429,7 +430,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertTrue("Expected AutoAccepted outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted)
+        assertTrue("Expected AutoAccepted outcome, got $result", result is NotificationPipelineOutcome.AutoAccepted)
         coVerify {
             coordinator.createExpense(match {
                 it.amount == 50.0 &&
@@ -583,8 +584,8 @@ class NotificationProcessingPipelineReliabilityTest {
         val result2 = pipeline.process(notification2)
         testDispatcher.scheduler.advanceUntilIdle()
 
-        assertTrue("Expected AutoAccepted for notification1, got $result1", result1 is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted)
-        assertTrue("Expected AutoAccepted for notification2, got $result2", result2 is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted)
+        assertTrue("Expected AutoAccepted for notification1, got $result1", result1 is NotificationPipelineOutcome.AutoAccepted)
+        assertTrue("Expected AutoAccepted for notification2, got $result2", result2 is NotificationPipelineOutcome.AutoAccepted)
         coVerify(exactly = 4) { subscriptionCandidateDao.getPendingCanonicalMerchants(listOf(merchant)) }
         coVerify(exactly = 2) { subscriptionCandidateDao.insert(candidateEntity) }
     }
@@ -643,7 +644,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertTrue("Expected NeedsReview outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview)
+        assertTrue("Expected NeedsReview outcome, got $result", result is NotificationPipelineOutcome.NeedsReview)
         coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
         assertEquals(4.08, reviewSlot.captured.suggestedAmount!!, 0.0001)
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
@@ -680,7 +681,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected)
+        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationPipelineOutcome.AutoRejected)
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
         coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
     }
@@ -765,7 +766,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertTrue("Expected NeedsReview outcome (salvaged from AUTO_REJECT for financial package), got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview)
+        assertTrue("Expected NeedsReview outcome (salvaged from AUTO_REJECT for financial package), got $result", result is NotificationPipelineOutcome.NeedsReview)
         coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(any()) }
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
@@ -813,7 +814,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected)
+        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationPipelineOutcome.AutoRejected)
         coVerify(exactly = 1) { rawDao.markRelevance(56L, false) }
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
         coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }

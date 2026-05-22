@@ -21,5 +21,6 @@ enum class DiagnosticReasonCode {
     CANCELLED_BY_SYSTEM,
     CANCELLED_BY_USER,
     SIDE_EFFECT_EXCEPTION,
+    SOURCE_LINK_FAILED,
     UNKNOWN_ERROR
 }

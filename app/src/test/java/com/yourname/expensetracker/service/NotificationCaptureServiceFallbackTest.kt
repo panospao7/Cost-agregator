@@ -6,7 +6,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlinx.coroutines.test.runTest
-import com.yourname.expensetracker.service.NotificationTextParts
+import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
+import com.yourname.expensetracker.domain.notification.capture.computeNotificationContentHash
 
 class NotificationCaptureServiceFallbackTest {
 
@@ -81,8 +82,8 @@ class NotificationCaptureServiceFallbackTest {
                 infoText = null,
                 summaryText = null,
                 effectiveBigText = null,
-                textLines = emptyList(),
-                messages = emptyList(),
+                textLines = emptyList<String>(),
+                messages = emptyList<String>(),
                 combinedBody = "Card charged 10.00 EUR"
             )
         )
@@ -95,8 +96,8 @@ class NotificationCaptureServiceFallbackTest {
                 infoText = null,
                 summaryText = null,
                 effectiveBigText = "",
-                textLines = emptyList(),
-                messages = emptyList(),
+                textLines = emptyList<String>(),
+                messages = emptyList<String>(),
                 combinedBody = "Card charged 10.00 EUR"
             )
         )
@@ -115,8 +116,8 @@ class NotificationCaptureServiceFallbackTest {
                 infoText = null,
                 summaryText = null,
                 effectiveBigText = null,
-                textLines = emptyList(),
-                messages = emptyList(),
+                textLines = emptyList<String>(),
+                messages = emptyList<String>(),
                 combinedBody = "Card charged 10.00 EUR"
             )
         )
@@ -129,8 +130,8 @@ class NotificationCaptureServiceFallbackTest {
                 infoText = null,
                 summaryText = null,
                 effectiveBigText = null,
-                textLines = emptyList(),
-                messages = emptyList(),
+                textLines = emptyList<String>(),
+                messages = emptyList<String>(),
                 combinedBody = "Card charged 12.00 EUR"
             )
         )

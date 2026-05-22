@@ -36,6 +36,7 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
+import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
@@ -125,8 +126,7 @@ import javax.inject.Singleton
  * See also [TransactionEvent] KDoc for the proposed `ai_audit_log` table schema.
  */
 
-// TODO (P2-1): Return sealed ProcessingOutcome from processInternal() instead of
-// flattening everything to Success/Error. See pipeline-1 debug report.
+// DONE (P2-1): processInternal() now returns NotificationPipelineOutcome with packageName+correlationId.
 
 @Singleton
 class NotificationProcessingPipeline @Inject constructor(
@@ -155,29 +155,11 @@ class NotificationProcessingPipeline @Inject constructor(
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val sourceLinkWriter: SourceLinkWriter,
     private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
-    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+    private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter,
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
-    // TODO P1-CURRENT-016: ProcessingResult is dead code — replaced by NotificationPipelineOutcome.
-    // Remove in next cleanup pass.
-    sealed interface ProcessingResult {
-        data class Success(val packageName: String) : ProcessingResult
-        data class Rejected(val packageName: String, val reason: String) : ProcessingResult
-        data class Error(val packageName: String, val error: Throwable) : ProcessingResult
-    }
-
-    sealed interface NotificationPipelineOutcome {
-        data class AutoAccepted(val rawId: Long, val expenseId: Long) : NotificationPipelineOutcome
-        data class NeedsReview(val rawId: Long, val reviewId: Long) : NotificationPipelineOutcome
-        data class Duplicate(val packageName: String, val reason: String) : NotificationPipelineOutcome
-        data class ParserFailed(val rawId: Long?, val reason: String) : NotificationPipelineOutcome
-        data class AutoRejected(val rawId: Long?, val reason: String) : NotificationPipelineOutcome
-        data class Dropped(val packageName: String, val reason: String) : NotificationPipelineOutcome
-        data class Error(val packageName: String, val throwable: Throwable) : NotificationPipelineOutcome
-    }
-
     private val processMutex = Mutex()
     /**
      * App-scoped background enrichment for recommendations.
@@ -203,7 +185,7 @@ class NotificationProcessingPipeline @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, e)
+                val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, cid, e)
                 // DDL-F876-08: use the same cid so exceptions are traceable from listener
                 writePipelineDiagnosticEvent(errorOutcome, notification.packageName, correlationId = cid)
                 errorOutcome
@@ -232,7 +214,7 @@ class NotificationProcessingPipeline @Inject constructor(
                     throw e
                 } catch (e: Exception) {
                     Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
-                    val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, e)
+                    val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, null, e)
                     writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
                     results += errorOutcome
                 }
@@ -248,18 +230,21 @@ class NotificationProcessingPipeline @Inject constructor(
         val sourceStatsTimestamp = timeProvider.now()
 
         // ── TRN-8: Fast fingerprint dedup check before expensive parse ──────────
-        if (dao.exists(
+        // Uses dedupeFingerprint (canonical content hash) instead of raw fields
+        // so duplicate detection works under all RawStorageMode values.
+        val dedupeFingerprint = notification.dedupeFingerprint
+            ?: com.yourname.expensetracker.domain.notification.RawNotificationFingerprint.compute(
                 packageName = notification.packageName,
-                timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = notification.bigText
+                bigText = notification.bigText,
+                timestamp = notification.timestamp
             )
-        ) {
-            Timber.d("TRN-8: Duplicate notification detected before parse, skipping: ${notification.packageName}")
+        if (dao.existsByDedupeFingerprint(dedupeFingerprint)) {
+            Timber.d("TRN-8: Duplicate notification detected by fingerprint before parse: ${notification.packageName}")
             Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
-            return NotificationPipelineOutcome.Duplicate(notification.packageName, "Fast fingerprint dedup")
+            return NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Fingerprint duplicate before parse")
         }
 
         // Phase 1: Pre-DB work (no transaction held)
@@ -271,32 +256,22 @@ class NotificationProcessingPipeline @Inject constructor(
             packageName = notification.packageName
         )
 
-        // P2-12: AI parser provenance — determine whether AI fallback was used
-        // TODO P1-CURRENT-017: parserRegistry.parse() is called a second time here just to
-        // determine provenance. This duplicates CPU work. Instead, have parseWithAiFallback()
-        // return a result that includes whether the deterministic parser succeeded.
-        val deterministicResult = parserRegistry.parse(
-            title = notification.title,
-            text = notification.text,
-            bigText = notification.bigText,
-            subText = notification.subText,
-            packageName = notification.packageName
-        )
-        val parserSource = if (deterministicResult != null) "PARSER_USED" else if (parsed != null) "AI_FALLBACK_USED" else null
-        if (parserSource != null) {
-            runCatching {
-                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                    stage = "parse",
-                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
-                    // DDL-F876-07: use listener correlationId so parse traces back to RECEIVED
-                    correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .putHashed("packageName", notification.packageName)
-                        .put("parserSource", parserSource)
-                        .build()
-                ))
-            }
+        // P2-12: AI parser provenance — emit parse-stage diagnostic.
+        // parseWithAiFallback() internally tries deterministic parsers first,
+        // then falls back to AI. We record the fact that parsing was attempted.
+        // A full ParseOutcome contract would carry provenance metadata directly
+        // from the registry, eliminating any ambiguity about which parser won.
+        if (parsed != null) {
+            diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "parse",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .putHashed("packageName", notification.packageName)
+                    .put("parserSource", "PARSE_SUCCEEDED")
+                    .build()
+            ))
         }
 
         if (parsed == null) {
@@ -312,7 +287,7 @@ class NotificationProcessingPipeline @Inject constructor(
             database.withTransaction {
                 val rawId = insertRawNotificationIfNotDuplicate(notification, storageNotification)
                 if (rawId == -1L) {
-                    parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Raw duplicate before parser")
+                    parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Raw duplicate before parser")
                     return@withTransaction
                 }
 
@@ -356,7 +331,7 @@ class NotificationProcessingPipeline @Inject constructor(
                             matchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate",
                             correlationId = correlationId
                         )
-                        parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Oversized duplicate")
+                        parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Oversized duplicate")
                         return@withTransaction
                     }
 
@@ -398,7 +373,7 @@ class NotificationProcessingPipeline @Inject constructor(
                     Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                     dao.markRelevance(rawId, true)
-                    parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(rawId, reviewId)
+                    parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(notification.packageName, correlationId, rawId, reviewId)
                 } else {
                     val transactionSignalCandidate = detectTransactionSignalCandidate(
                         title = notification.title,
@@ -439,7 +414,7 @@ class NotificationProcessingPipeline @Inject constructor(
                                 matchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate",
                                 correlationId = correlationId
                             )
-                            parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Signal duplicate")
+                            parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Signal duplicate")
                             return@withTransaction
                         }
 
@@ -465,7 +440,7 @@ class NotificationProcessingPipeline @Inject constructor(
                             review = review,
                             reviewId = reviewId,
                             sourceType = ExpenseSource.REVIEW_APPROVAL,
-                            correlationId = correlationId,
+                correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
                             context = PendingReviewSourceContext(
                                 stage = "notification_transaction_signal_parse_failed",
                                 reason = "Transaction signal detected but parser failed",
@@ -481,12 +456,12 @@ class NotificationProcessingPipeline @Inject constructor(
                         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, true)
-                        parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(rawId, reviewId)
+                        parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(notification.packageName, correlationId, rawId, reviewId)
                     } else {
                         Timber.d("Pipeline outcome: AUTO_REJECTED reason=%s", "Unparseable notification with no transaction signal")
                         sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, false)
-                        parserFailedOutcome = NotificationPipelineOutcome.AutoRejected(rawId, "Unparseable notification with no transaction signal")
+                        parserFailedOutcome = NotificationPipelineOutcome.AutoRejected(notification.packageName, correlationId, rawId, "Unparseable notification with no transaction signal")
                     }
                 }
             }
@@ -495,7 +470,7 @@ class NotificationProcessingPipeline @Inject constructor(
             runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
                 confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             }
-            return parserFailedOutcome ?: NotificationPipelineOutcome.ParserFailed(null, "No outcome tracked")
+            return parserFailedOutcome ?: NotificationPipelineOutcome.ParserFailed(notification.packageName, correlationId, null, "No outcome tracked")
         }
 
         val preDbContext = buildPreDbContext(notification, parsed)
@@ -548,23 +523,31 @@ class NotificationProcessingPipeline @Inject constructor(
 
         val outcome = when (dbOutcome) {
             is ParsedDbOutcome.AutoAccepted -> NotificationPipelineOutcome.AutoAccepted(
+                packageName = notification.packageName,
+                correlationId = correlationId,
                 rawId = dbOutcome.rawId,
                 expenseId = dbOutcome.expenseId
             )
             is ParsedDbOutcome.NeedsReviewCreated -> NotificationPipelineOutcome.NeedsReview(
+                packageName = notification.packageName,
+                correlationId = correlationId,
                 rawId = dbOutcome.rawId,
                 reviewId = dbOutcome.reviewId
             )
             ParsedDbOutcome.AutoRejected -> NotificationPipelineOutcome.AutoRejected(
+                packageName = notification.packageName,
+                correlationId = correlationId,
                 rawId = null,
                 reason = "Routing decision rejected"
             )
             ParsedDbOutcome.RawDuplicate -> NotificationPipelineOutcome.Duplicate(
                 notification.packageName,
+                correlationId,
                 "Raw duplicate in transaction"
             )
             ParsedDbOutcome.Duplicate -> NotificationPipelineOutcome.Duplicate(
                 notification.packageName,
+                correlationId,
                 "Canonical duplicate"
             )
         }
@@ -594,7 +577,7 @@ class NotificationProcessingPipeline @Inject constructor(
         correlationId: String?,
         confidence: Double? = null
     ) {
-        runCatching {
+        try {
             val payload = NotificationSourceLinkPayloadFactory.forDedupeMatch(
                 sourceNotificationId = rawId,
                 matchedNotificationId = rawId,
@@ -607,67 +590,88 @@ class NotificationProcessingPipeline @Inject constructor(
                 payload = payload,
                 correlationId = correlationId
             )
-        }
-    }
-
-    private suspend fun writePipelineDiagnosticEvent(outcome: NotificationPipelineOutcome, packageName: String, correlationId: String? = null) {
-        runCatching {
-            val (stage, outcomeStr) = when (outcome) {
-                is NotificationPipelineOutcome.AutoAccepted -> "create" to "AUTO_ACCEPTED"
-                is NotificationPipelineOutcome.NeedsReview -> "review" to "NEEDS_REVIEW"
-                is NotificationPipelineOutcome.Duplicate -> "dedup" to "DUPLICATE"
-                is NotificationPipelineOutcome.ParserFailed -> "parse" to "PARSER_FAILED"
-                is NotificationPipelineOutcome.AutoRejected -> "reject" to "AUTO_REJECTED"
-                is NotificationPipelineOutcome.Dropped -> "drop" to "DROPPED"
-                is NotificationPipelineOutcome.Error -> "error" to "ERROR"
-            }
-            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+        } catch (t: Throwable) {
+            Timber.w(t, "Failed to write notification dedupe source link: rawId=%d matchType=%s", rawId, matchType)
+            // NEW-18: emit SOURCE_LINK_FAILED diagnostic instead of silently swallowing
+            diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = stage,
-                outcome = when (outcome) {
-                    is NotificationPipelineOutcome.AutoAccepted -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED
-                    is NotificationPipelineOutcome.NeedsReview -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.NEEDS_REVIEW
-                    is NotificationPipelineOutcome.Duplicate -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE
-                    is NotificationPipelineOutcome.ParserFailed -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL
-                    is NotificationPipelineOutcome.AutoRejected -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED
-                    is NotificationPipelineOutcome.Dropped -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED
-                    is NotificationPipelineOutcome.Error -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL
-                },
-                reasonCode = when (outcome) {
-                    is NotificationPipelineOutcome.Duplicate -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE
-                    is NotificationPipelineOutcome.ParserFailed -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PARSER_FAILED
-                    is NotificationPipelineOutcome.Dropped -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED
-                    else -> null
-                },
-                // DDL-512-05: propagate listener correlationId into pipeline diagnostic event
+                stage = "source_link",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.SOURCE_LINK_FAILED,
                 correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
-                entityType = when (outcome) {
-                    is NotificationPipelineOutcome.AutoAccepted -> "Expense"
-                    is NotificationPipelineOutcome.NeedsReview -> "PendingReview"
-                    else -> null
-                },
-                entityId = when (outcome) {
-                    is NotificationPipelineOutcome.AutoAccepted -> outcome.expenseId
-                    is NotificationPipelineOutcome.NeedsReview -> outcome.reviewId
-                    else -> null
-                },
+                entityType = "RawNotification",
+                entityId = rawId,
                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                    .putHashed("packageName", packageName)
+                    .put("matchType", matchType)
                     .build(),
-                isTerminal = true
+                isTerminal = false
             ))
         }
     }
 
+    private suspend fun writePipelineDiagnosticEvent(outcome: NotificationPipelineOutcome, packageName: String, correlationId: String? = null) {
+        val (stage, outcomeStr) = when (outcome) {
+            is NotificationPipelineOutcome.AutoAccepted -> "create" to "AUTO_ACCEPTED"
+            is NotificationPipelineOutcome.NeedsReview -> "review" to "NEEDS_REVIEW"
+            is NotificationPipelineOutcome.Duplicate -> "dedup" to "DUPLICATE"
+            is NotificationPipelineOutcome.ParserFailed -> "parse" to "PARSER_FAILED"
+            is NotificationPipelineOutcome.AutoRejected -> "reject" to "AUTO_REJECTED"
+            is NotificationPipelineOutcome.Dropped -> "drop" to "DROPPED"
+            is NotificationPipelineOutcome.Error -> "error" to "ERROR"
+        }
+        diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+            stage = stage,
+            outcome = when (outcome) {
+                is NotificationPipelineOutcome.AutoAccepted -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED
+                is NotificationPipelineOutcome.NeedsReview -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.NEEDS_REVIEW
+                is NotificationPipelineOutcome.Duplicate -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE
+                is NotificationPipelineOutcome.ParserFailed -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL
+                is NotificationPipelineOutcome.AutoRejected -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED
+                is NotificationPipelineOutcome.Dropped -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED
+                is NotificationPipelineOutcome.Error -> com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL
+            },
+            reasonCode = when (outcome) {
+                is NotificationPipelineOutcome.Duplicate -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE
+                is NotificationPipelineOutcome.ParserFailed -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PARSER_FAILED
+                is NotificationPipelineOutcome.Dropped -> com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED
+                else -> null
+            },
+            correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
+            entityType = when (outcome) {
+                is NotificationPipelineOutcome.AutoAccepted -> "Expense"
+                is NotificationPipelineOutcome.NeedsReview -> "PendingReview"
+                else -> null
+            },
+            entityId = when (outcome) {
+                is NotificationPipelineOutcome.AutoAccepted -> outcome.expenseId
+                is NotificationPipelineOutcome.NeedsReview -> outcome.reviewId
+                else -> null
+            },
+            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                .putHashed("packageName", packageName)
+                .build(),
+            isTerminal = true
+        ))
+    }
+
     private suspend fun insertRawNotificationIfNotDuplicate(notification: RawNotification, storageNotification: RawNotification = notification): Long {
-        val alreadyExists = dao.exists(
-            packageName = notification.packageName,
-            timestamp = notification.timestamp,
-            title = notification.title,
-            text = notification.text,
-            bigText = notification.bigText
-        )
-        if (alreadyExists) {
+        // Use dedupeFingerprint for the duplicate pre-check so it works under
+        // all RawStorageMode values (including METADATA_ONLY/DO_NOT_STORE where
+        // stored fields are null/redacted).
+        val fingerprint = notification.dedupeFingerprint
+        if (fingerprint != null && dao.existsByDedupeFingerprint(fingerprint)) {
+            return -1L
+        }
+        // Legacy raw-field fallback for pre-fingerprint rows (null dedupeFingerprint)
+        if (fingerprint == null && dao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText
+            )
+        ) {
             return -1L
         }
         // Persist the storage-safe version (sanitized per privacy settings)
@@ -734,16 +738,21 @@ class NotificationProcessingPipeline @Inject constructor(
          */
         private val FINANCIAL_PACKAGES: Set<String>
             get() = com.yourname.expensetracker.service.NotificationFilter.FINANCE_PACKAGES
-        private val CURRENCY_HINT_REGEX = Regex("""(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
+        // PR 9: Expanded currency support beyond EUR/USD/GBP.
+        // Symbols: € $ £ ¥ ₺; ISO codes: EUR USD GBP CHF PLN RON TRY CAD AUD JPY SEK NOK DKK HUF CZK
+        private val CURRENCY_HINT_REGEX = Regex(
+            """(€|\$|£|¥|₺|\bEUR\b|\bUSD\b|\bGBP\b|\bCHF\b|\bPLN\b|\bRON\b|\bTRY\b|\bCAD\b|\bAUD\b|\bJPY\b|\bSEK\b|\bNOK\b|\bDKK\b|\bHUF\b|\bCZK\b|\bTL\b|\bkr\b|\bFt\b|\bKč\b|\bKc\b)""",
+            RegexOption.IGNORE_CASE
+        )
         private val TRANSACTION_HINT_REGEX = Regex(
             """(paid|payment|purchase|transaction|transfer|sent|received|χρεωση|πληρωμη|αγορα|καταθεση|πιστωση)""",
             RegexOption.IGNORE_CASE
         )
-private val CURRENCY_SUFFIX_REGEX = Regex("""\s*(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
+private val CURRENCY_SUFFIX_REGEX = Regex("""\s*(€|\$|£|¥|₺|\bEUR\b|\bUSD\b|\bGBP\b|\bCHF\b|\bPLN\b|\bRON\b|\bTRY\b|\bCAD\b|\bAUD\b|\bJPY\b|\bSEK\b|\bNOK\b|\bDKK\b|\bHUF\b|\bCZK\b|\bTL\b|\bkr\b|\bFt\b|\bKč\b|\bKc\b)""", RegexOption.IGNORE_CASE)
 private val CARD_TAIL_REGEX = Regex("""\*+\d{4}\b""")
 
 private val AMOUNT_TOKEN_REGEX = Regex(
-    """(?:€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)?\s*[+-]?\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?(?:\s*(?:€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b))?""",
+    """(?:€|\$|£|¥|₺|\bEUR\b|\bUSD\b|\bGBP\b|\bCHF\b|\bPLN\b|\bRON\b|\bTRY\b|\bCAD\b|\bAUD\b|\bJPY\b|\bSEK\b|\bNOK\b|\bDKK\b|\bHUF\b|\bCZK\b|\bTL\b|\bkr\b|\bFt\b|\bKč\b|\bKc\b)?\s*[+-]?\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?(?:\s*(?:€|\$|£|¥|₺|\bEUR\b|\bUSD\b|\bGBP\b|\bCHF\b|\bPLN\b|\bRON\b|\bTRY\b|\bCAD\b|\bAUD\b|\bJPY\b|\bSEK\b|\bNOK\b|\bDKK\b|\bHUF\b|\bCZK\b|\bTL\b|\bkr\b|\bFt\b|\bKč\b|\bKc\b))?""",
     RegexOption.IGNORE_CASE
 )
 
@@ -767,9 +776,26 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 .firstOrNull { it > AppConfig.MAX_TRANSACTION_AMOUNT }
                 ?: return null
 
+            // PR 9: Currency detection expanded beyond EUR/USD/GBP.
+            // Order: explicit ISO codes first, then unambiguous symbols, then common symbols.
             val currency = when {
-                fullText.contains("USD", ignoreCase = true) || fullText.contains("$") -> "USD"
+                fullText.contains("USD", ignoreCase = true) || fullText.contains("\$") && !fullText.contains("CAD", ignoreCase = true) && !fullText.contains("AUD", ignoreCase = true) && !fullText.contains("C\$") && !fullText.contains("A\$") -> "USD"
+                fullText.contains("EUR", ignoreCase = true) || fullText.contains("€") -> "EUR"
                 fullText.contains("GBP", ignoreCase = true) || fullText.contains("£") -> "GBP"
+                fullText.contains("CHF", ignoreCase = true) -> "CHF"
+                fullText.contains("PLN", ignoreCase = true) || fullText.contains("zł", ignoreCase = true) || fullText.contains("zl") -> "PLN"
+                fullText.contains("RON", ignoreCase = true) || fullText.contains("lei") || fullText.contains("leu") -> "RON"
+                fullText.contains("TRY", ignoreCase = true) || fullText.contains("₺") || fullText.contains("TL") -> "TRY"
+                fullText.contains("CAD", ignoreCase = true) || fullText.contains("C\$") -> "CAD"
+                fullText.contains("AUD", ignoreCase = true) || fullText.contains("A\$") -> "AUD"
+                fullText.contains("JPY", ignoreCase = true) || fullText.contains("¥") -> "JPY"
+                fullText.contains("SEK", ignoreCase = true) -> "SEK"
+                fullText.contains("NOK", ignoreCase = true) -> "NOK"
+                fullText.contains("DKK", ignoreCase = true) -> "DKK"
+                fullText.contains("HUF", ignoreCase = true) || fullText.contains("Ft") -> "HUF"
+                fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
+                // Ambiguous symbols: try home-currency context or default to EUR as last resort
+                fullText.contains("\$") -> "USD"
                 else -> "EUR"
             }
 
@@ -830,17 +856,34 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         ) ?: return null
         val amount = best.amount
 
-        val currency = when {
-            fullText.contains("USD", ignoreCase = true) || fullText.contains("$") -> "USD"
-            fullText.contains("GBP", ignoreCase = true) || fullText.contains("£") -> "GBP"
-            else -> "EUR"
-        }
+            // PR 9: Currency detection expanded beyond EUR/USD/GBP.
+            // Order: explicit ISO codes first, then unambiguous symbols, then common symbols.
+            val currency = when {
+                fullText.contains("USD", ignoreCase = true) || fullText.contains("\$") && !fullText.contains("CAD", ignoreCase = true) && !fullText.contains("AUD", ignoreCase = true) && !fullText.contains("C\$") && !fullText.contains("A\$") -> "USD"
+                fullText.contains("EUR", ignoreCase = true) || fullText.contains("€") -> "EUR"
+                fullText.contains("GBP", ignoreCase = true) || fullText.contains("£") -> "GBP"
+                fullText.contains("CHF", ignoreCase = true) -> "CHF"
+                fullText.contains("PLN", ignoreCase = true) || fullText.contains("zł", ignoreCase = true) || fullText.contains("zl") -> "PLN"
+                fullText.contains("RON", ignoreCase = true) || fullText.contains("lei") || fullText.contains("leu") -> "RON"
+                fullText.contains("TRY", ignoreCase = true) || fullText.contains("₺") || fullText.contains("TL") -> "TRY"
+                fullText.contains("CAD", ignoreCase = true) || fullText.contains("C\$") -> "CAD"
+                fullText.contains("AUD", ignoreCase = true) || fullText.contains("A\$") -> "AUD"
+                fullText.contains("JPY", ignoreCase = true) || fullText.contains("¥") -> "JPY"
+                fullText.contains("SEK", ignoreCase = true) -> "SEK"
+                fullText.contains("NOK", ignoreCase = true) -> "NOK"
+                fullText.contains("DKK", ignoreCase = true) -> "DKK"
+                fullText.contains("HUF", ignoreCase = true) || fullText.contains("Ft") -> "HUF"
+                fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
+                // Ambiguous symbols: try home-currency context or default to EUR as last resort
+                fullText.contains("\$") -> "USD"
+                else -> "EUR"
+            }
 
-        val merchantHint = extractMerchantHint(title ?: text ?: bigText)
-        return TransactionSignalCandidate(
-            amount = amount, currency = currency, merchantHint = merchantHint
-        )
-    }
+            val merchantHint = extractMerchantHint(title ?: text ?: bigText)
+            return TransactionSignalCandidate(
+                amount = amount, currency = currency, merchantHint = merchantHint
+            )
+        }
 
     private fun extractMerchantHint(input: String?): String? {
             val raw = input ?: return null
@@ -969,7 +1012,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             null
         }
 
-        // Best-effort location capture outside DB transaction.
+        // PR 10: Best-effort location capture outside DB transaction.
+        // ForegroundLocationProvider internally gates by runtime permission and
+        // PrivacyGate (DEVICE_GPS_LOCATION), so this never bypasses user privacy.
+        // Returns null silently when GPS is unavailable or denied.
         val deviceGps = if (shouldPrepareAcceptedOrReviewData) {
             try {
                 locationProvider.getLastKnownLocation()
@@ -1116,9 +1162,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     put("routingDecision", preDb.routingResult.decision.name)
                     put("rawNotificationId", rawId)
                 }.toString()
+                // NEW-09: Do not include raw notification title/text in audit payload.
+                // Store safe metadata only — package name is already hashed in the event metadata.
                 val auditReason = JSONObject().apply {
                     put("packageName", notification.packageName)
-                    put("title", notification.title)
                     put("amount", preDb.parsed.amount)
                     put("merchant", preDb.correctedMerchant)
                 }.toString()

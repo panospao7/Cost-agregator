@@ -36,91 +36,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import javax.inject.Inject
 
+import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
+import com.yourname.expensetracker.domain.notification.capture.computeNotificationContentHash
+
 /**
- * Holds all text fields extracted from a notification's [android.os.Bundle].
- *
- * A single extraction pass produces this struct; every downstream consumer
- * (filter, content hash, fingerprint, raw-notification entity, parser) uses the
- * same instance so that fallback resolution is consistent everywhere.
+ * Originally defined here; extracted to [NotificationTextParts] for reuse across
+ * the service and future intake worker. Type kept for backward compatibility.
  */
-internal data class NotificationTextParts(
-    val title: String?,
-    val text: String?,
-    val bigText: String?,
-    val subText: String?,
-    val infoText: String?,
-    val summaryText: String?,
-    /** Resolved bigText with infoText/summaryText fallback. */
-    val effectiveBigText: String?,
-    /** Lines from `Notification.EXTRA_TEXT_LINES` — many bank/SMS notifications place transaction details here. */
-    val textLines: List<String>,
-    /** Messages from `Notification.EXTRA_MESSAGES` — messaging-style extras. */
-    val messages: List<String>,
-    /** All unique non-blank text joined into a single body for filter/hash/parser. */
-    val combinedBody: String
-) {
-    companion object {
-        fun extract(extras: android.os.Bundle): NotificationTextParts {
-            val title = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString()
-            val text = extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString()
-            val bigText = extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT)?.toString()
-            val subText = extras.getCharSequence(android.app.Notification.EXTRA_SUB_TEXT)?.toString()
-            val infoText = extras.getCharSequence(android.app.Notification.EXTRA_INFO_TEXT)?.toString()
-            val summaryText = extras.getCharSequence(android.app.Notification.EXTRA_SUMMARY_TEXT)?.toString()
-            val effectiveBigText = bigText?.takeIf { it.isNotBlank() }
-                ?: infoText?.takeIf { it.isNotBlank() }
-                ?: summaryText?.takeIf { it.isNotBlank() }
-
-            val textLines = try {
-                extras.getCharSequenceArray(android.app.Notification.EXTRA_TEXT_LINES)
-                    ?.mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
-                    ?: emptyList()
-            } catch (_: Exception) { emptyList() }
-
-            // Improved messaging-style extraction: try the typed API first (API 33+)
-            // which returns CharSequence objects directly, then fall back to the
-            // deprecated getParcelableArray for older API levels. Both paths cast
-            // each item to CharSequence before toString() to handle Bundle-style
-            // message objects (e.g. android.app.Notification.MessagingStyle.Message).
-            val messages = try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    extras.getParcelableArrayList(android.app.Notification.EXTRA_MESSAGES, CharSequence::class.java)
-                        ?.mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
-                        ?: emptyList()
-                } else {
-                    @Suppress("DEPRECATION")
-                    extras.getParcelableArray(android.app.Notification.EXTRA_MESSAGES)
-                        ?.mapNotNull { (it as? CharSequence)?.toString()?.takeIf { s -> s.isNotBlank() } }
-                        ?: emptyList()
-                }
-            } catch (_: Exception) { emptyList() }
-
-            // Deterministic combinedBody: title/top-level fields first, then textLines,
-            // then messages. linkedSetOf preserves insertion order and deduplicates blanks.
-            val uniqueParts = linkedSetOf<String>()
-            listOfNotNull(title, text, bigText, subText, infoText, summaryText).forEach { uniqueParts += it }
-            textLines.forEach { uniqueParts += it }
-            messages.forEach { uniqueParts += it }
-            val combinedBody = uniqueParts.joinToString(" ")
-
-            return NotificationTextParts(
-                title = title,
-                text = text,
-                bigText = bigText,
-                subText = subText,
-                infoText = infoText,
-                summaryText = summaryText,
-                effectiveBigText = effectiveBigText,
-                textLines = textLines,
-                messages = messages,
-                combinedBody = combinedBody
-            )
-        }
-    }
-}
-
-internal fun computeNotificationContentHash(parts: NotificationTextParts): Int =
-    parts.combinedBody.hashCode()
 
 internal class NotificationServiceWorkTracker {
     private val lock = Any()
@@ -221,13 +143,13 @@ class NotificationCaptureService : NotificationListenerService() {
     lateinit var privacySettingsRepository: PrivacySettingsRepository
 
     @Inject
-    lateinit var diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
-
-    @Inject
-    lateinit var diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
+    lateinit var notificationDiagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter
 
     @Inject
     lateinit var blockedPackageDao: com.yourname.expensetracker.data.database.dao.BlockedPackageDao
+
+    @Inject
+    lateinit var captureGate: com.yourname.expensetracker.domain.notification.capture.NotificationCaptureGate
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
@@ -245,27 +167,7 @@ class NotificationCaptureService : NotificationListenerService() {
     @Volatile
     private var isShuttingDown = false
 
-    /**
-     * P1-05: Cached privacy gate for fast pre-extraction denial.
-     * Updated reactively from [PrivacySettingsRepository] settings flow.
-     */
-    @Volatile
-    private var capturePrivacyDenied = true  // fail-closed until first settings emission confirms capture allowed
-
-    /**
-     * PRIV-441-06: In-memory blocked-package cache for pre-extraction package check.
-     * Updated reactively from [BlockedPackageDao.getAllPackageNamesFlow].
-     */
-    @Volatile
-    private var blockedPackagesCache: Set<String> = emptySet()
-
-    /**
-     * PRIV-6825-07: Tracks whether the blocked-package cache has received its first emission.
-     * Until loaded, isPackageBlockedFast() returns true (fail-closed) to prevent
-     * notification extras from being read before the cache is ready.
-     */
-    @Volatile
-    private var blockedPackageCacheLoaded = false
+    // PR3: Fast caches removed — unified NotificationCaptureGate handles pre-extraction checks
     
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
@@ -301,32 +203,11 @@ class NotificationCaptureService : NotificationListenerService() {
         } catch (e: Exception) {
             Timber.e(e, "Failed to schedule restart alarm, continuing without")
         }
-        observePrivacySettings()
-    }
-
-    private fun observePrivacySettings() {
+        // PR3: Initialize capture gate synchronously before listener processes notifications
         serviceScope.launch {
-            try {
-                privacySettingsRepository.observeSettings().collect { settings ->
-                    capturePrivacyDenied = !settings.notificationCaptureEnabled
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to observe privacy settings, defaulting to allowed")
-                capturePrivacyDenied = true  // fail-closed on observer error
-            }
+            captureGate.warmUp()
         }
-        // PRIV-441-06: Observe blocked packages for pre-extraction cache
-        serviceScope.launch {
-            try {
-                blockedPackageDao.getAllPackageNamesFlow().collect { packages ->
-                    blockedPackagesCache = packages.toSet()
-                    blockedPackageCacheLoaded = true
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to observe blocked packages cache")
-                // Keep existing cache on error — fail-safe (don't clear)
-            }
-        }
+        captureGate.startObservers(serviceScope)
     }
 
     private fun scheduleRestartAlarm() {
@@ -490,44 +371,53 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
-        // PRIV-441-07: Fast privacy gate BEFORE dedupe cache insertion to prevent poisoning
-        if (isPrivacyDeniedFast()) {
-            Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
-            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "privacy_gate_fast",
-                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
-                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                correlationId = correlationId,
-                sourceType = "notification",
-                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                    .putHashed("packageName", packageName).build(),
-                isTerminal = true
-            ))
-            return
+        // PR3: Unified capture gate check before dedupe cache insertion and extras extraction
+        val gateDecision = kotlinx.coroutines.runBlocking {
+            captureGate.decide(packageName, isShuttingDown)
+        }
+        when (gateDecision) {
+            is com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDecision.Allowed -> { /* proceed */ }
+            is com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDecision.Blocked -> {
+                Timber.d("Capture gate blocked notification from $packageName: ${gateDecision.reason}")
+                emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "capture_gate",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                    reasonCode = gateDecision.diagnosticReasonCode,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName).build(),
+                    isTerminal = true
+                ))
+                return
+            }
+            is com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDecision.TemporarilyUnavailable -> {
+                Timber.d("Capture gate temporarily unavailable for $packageName: ${gateDecision.reason}")
+                emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "capture_gate",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName).build(),
+                    isTerminal = true
+                ))
+                return
+            }
         }
 
-        // PRIV-441-06: Blocked-package pre-extraction check using in-memory cache
-        if (isPackageBlockedFast(packageName)) {
-            Timber.d("Blocked package pre-extraction drop: $packageName")
-            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "package_policy_fast",
-                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE,
-                correlationId = correlationId,
-                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                    .putHashed("packageName", packageName).build(),
-                isTerminal = true
-            ))
-            return
-        }
+        val extras = sbn.notification.extras
+        val parts = NotificationTextParts.extract(extras)
 
-        // PRIV-441-07: Dedupe cache insertion AFTER privacy/package gate — no poisoning
+        // PR 6: Content-aware dedupe after extraction — combines packageName,
+        // notificationKey, and content hash for a precise dedupe key.
         val now = timeProvider.now()
-        val coarseDedupeKey = notificationKey
-        val lastProcessed = processedNotifications[coarseDedupeKey]
+        val contentHash = computeNotificationContentHash(parts)
+        val dedupeKey = "${packageName}|${notificationKey}|${contentHash}"
+        val lastProcessed = processedNotifications[dedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
             emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -543,49 +433,43 @@ class NotificationCaptureService : NotificationListenerService() {
             ))
             return
         }
-        processedNotifications[coarseDedupeKey] = now
+        processedNotifications[dedupeKey] = now
         cleanupCacheIfNeeded()
-
-        val extras = sbn.notification.extras
-        val parts = NotificationTextParts.extract(extras)
 
         workTracker.launch(serviceScope) {
             // DDL-512-14: emit RECEIVED as first thing inside the work-tracked coroutine
             // so it is always written before any terminal event for this notification
-            runCatching {
-                diagnosticEventWriter.emit(receivedEvent)
-            }
+            notificationDiagnosticEmitter.emit(receivedEvent)
+            
             // E7: filter terminal event
             if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
-                try {
-                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                        stage = "filter",
-                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
-                        correlationId = correlationId,
-                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                            .putHashed("packageName", packageName).build(),
-                        isTerminal = true
-                    ))
-                } catch (_: Exception) {}
+                notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "filter",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
+                    correlationId = correlationId,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName).build(),
+                    isTerminal = true
+                ))
                 return@launch
             }
 
+            // PR 6: Track pipeline outcome for dedupe key retention
+            var pipelineOutcome: com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome? = null
             try {
                 when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                     is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                         Timber.d("Privacy gate denied notification capture from $packageName")
-                        try {
-                            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                                stage = "privacy_gate",
-                                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                                correlationId = correlationId,
-                                isTerminal = true
-                            ))
-                        } catch (_: Exception) {}
+                        notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                            stage = "privacy_gate",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                            correlationId = correlationId,
+                            isTerminal = true
+                        ))
                         return@launch
                     }
                     is PrivacyDecision.Allowed -> { /* proceed */ }
@@ -594,10 +478,16 @@ class NotificationCaptureService : NotificationListenerService() {
                     }
                 }
                 // E9: pass correlationId to processNotification
-                processNotification(sbn, packageName, parts, extras, correlationId)
+                pipelineOutcome = processNotification(sbn, packageName, parts, extras, correlationId)
             } finally {
-                synchronized(processedNotifications) {
-                    processedNotifications.remove(coarseDedupeKey)
+                // PR 6: Only remove dedupe key on cancellation or error — retain on success
+                // so that immediate repeat callbacks are suppressed until TTL expiration.
+                val shouldRemove = pipelineOutcome == null ||
+                    pipelineOutcome is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.Error
+                if (shouldRemove) {
+                    synchronized(processedNotifications) {
+                        processedNotifications.remove(dedupeKey)
+                    }
                 }
             }
         }
@@ -616,21 +506,6 @@ class NotificationCaptureService : NotificationListenerService() {
     }
 
     /**
-     * P1-05: Fast in-memory privacy check using a cached flag.
-     * Avoids calling the suspend [PrivacyGate.check] on the main thread and
-     * allows rejecting notifications BEFORE any text extraction from extras.
-     */
-    private fun isPrivacyDeniedFast(): Boolean = capturePrivacyDenied
-
-    /**
-     * PRIV-441-06 / PRIV-6825-07: Fast in-memory blocked-package check.
-     * Returns true (fail-closed) until the cache has received its first emission,
-     * preventing extras extraction before the blocked-package list is available.
-     */
-    private fun isPackageBlockedFast(packageName: String): Boolean =
-        !blockedPackageCacheLoaded || packageName in blockedPackagesCache
-
-    /**
      * DDL-512-14: Emit RECEIVED then terminal in a single work-tracked coroutine so
      * ordering is guaranteed and neither event can be cancelled independently.
      */
@@ -639,8 +514,7 @@ class NotificationCaptureService : NotificationListenerService() {
         terminal: com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
     ) {
         workTracker.launch(serviceScope) {
-            runCatching { diagnosticEventWriter.emit(received) }
-            runCatching { diagnosticEventWriter.emit(terminal) }
+            notificationDiagnosticEmitter.emitOrdered(received, terminal)
         }
     }
 
@@ -650,14 +524,23 @@ class NotificationCaptureService : NotificationListenerService() {
         parts: NotificationTextParts,
         extras: android.os.Bundle,
         correlationId: String
-    ) {
-        // Note: package-block check is done pre-extraction via isPackageBlockedFast().
-        // The DB check below is defense-in-depth for cache staleness.
+    ): com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome? {
+        // Note: Package-block and privacy checks are done pre-extraction via NotificationCaptureGate.
+        // The DB and privacy gate checks below are defense-in-depth for cache staleness.
 
-        val extrasJson = try {
-            buildExtrasJson(extras)
-        } catch (e: Exception) {
-            "{\"error\": \"${e.message}\"}"
+        // NEW-07: Get storage mode BEFORE building extras JSON to avoid
+        // materializing sensitive extras when raw storage is disabled.
+        val settings = privacySettingsRepository.getSettings()
+
+        val extrasJson = when (settings.rawNotificationStorageMode) {
+            RawStorageMode.STORE_RAW -> try {
+                buildExtrasJson(extras)
+            } catch (e: Exception) {
+                "{\"error\": \"${e.message}\"}"
+            }
+            RawStorageMode.STORE_REDACTED -> """{"redacted":true}"""
+            RawStorageMode.STORE_METADATA_ONLY -> null
+            RawStorageMode.DO_NOT_STORE -> null
         }
 
         val appName = try {
@@ -666,8 +549,6 @@ class NotificationCaptureService : NotificationListenerService() {
         } catch (e: PackageManager.NameNotFoundException) {
             null
         }
-
-        val settings = privacySettingsRepository.getSettings()
 
         // Processing always uses the real ephemeral text (in-memory only).
         // Storage payload is sanitized according to user's privacy settings.
@@ -719,42 +600,56 @@ class NotificationCaptureService : NotificationListenerService() {
             )
         }
 
-        try {
-            repository.processAndSave(processingNotification, storageNotification, correlationId = correlationId)
-            Timber.d("Processed notification from: $packageName")
+        return try {
+            val outcome = repository.processAndSave(processingNotification, storageNotification, correlationId = correlationId)
+            // Log truthfully based on the real pipeline outcome
+            when (outcome) {
+                is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.AutoAccepted ->
+                    Timber.d("Notification auto-accepted from: $packageName (expenseId=${outcome.expenseId})")
+                is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.NeedsReview ->
+                    Timber.d("Notification queued for review from: $packageName (reviewId=${outcome.reviewId})")
+                is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.Duplicate ->
+                    Timber.d("Notification duplicate from: $packageName (reason=${outcome.reason})")
+                is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.ParserFailed ->
+                    Timber.w("Notification parser failed from: $packageName (reason=${outcome.reason})")
+                is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.AutoRejected ->
+                    Timber.i("Notification auto-rejected from: $packageName (reason=${outcome.reason})")
+                is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.Dropped ->
+                    Timber.w("Notification dropped from: $packageName (reason=${outcome.reason})")
+                is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.Error ->
+                    Timber.e(outcome.throwable, "Notification processing error for: $packageName")
+            }
+            outcome
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                    try {
-                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                            stage = "repository",
-                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
-                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
-                            correlationId = correlationId,
-                            isTerminal = true
-                        ))
-                    } catch (_: Exception) {}
+                    notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "repository",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
                 }
                 throw e
             }
-            Timber.e(e, "Failed to process notification")
-            try {
-                val retryable = e is java.io.IOException ||
-                    e.message?.contains("database is locked", ignoreCase = true) == true
-                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                    stage = "repository",
-                    outcome = if (retryable) com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE
-                              else com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
-                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
-                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
-                    correlationId = correlationId,
-                    sourceType = "notification",
-                    exception = e,
-                    isTerminal = true
-                ))
-            } catch (_: Exception) {}
+            Timber.e(e, "Failed to process notification from: $packageName")
+            val retryable = e is java.io.IOException ||
+                e.message?.contains("database is locked", ignoreCase = true) == true
+            notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "repository",
+                outcome = if (retryable) com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE
+                          else com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                correlationId = correlationId,
+                sourceType = "notification",
+                exception = e,
+                isTerminal = true
+            ))
+            null
         }
     }
 
@@ -816,33 +711,42 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
-        if (isPrivacyDeniedFast()) {
-            Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction, refresh path)")
-            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "refresh_privacy_fast",
-                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                correlationId = correlationId,
-                isTerminal = true
-            ))
-            return
+        // PR3: Unified capture gate check before extras extraction (refresh path)
+        val gateDecision = kotlinx.coroutines.runBlocking {
+            captureGate.decide(packageName, isShuttingDown)
         }
-
-        // PRIV-43B-06: Blocked-package cache check before extras extraction (mirrors normal path)
-        if (isPackageBlockedFast(packageName)) {
-            Timber.d("Blocked package pre-extraction drop (refresh): $packageName")
-            emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "refresh_package_policy_fast",
-                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.BLOCKED_PACKAGE,
-                correlationId = correlationId,
-                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                    .putHashed("packageName", packageName).build(),
-                isTerminal = true
-            ))
-            return
+        when (gateDecision) {
+            is com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDecision.Allowed -> { /* proceed */ }
+            is com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDecision.Blocked -> {
+                Timber.d("Capture gate blocked refresh notification from $packageName: ${gateDecision.reason}")
+                emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "refresh_capture_gate",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                    reasonCode = gateDecision.diagnosticReasonCode,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName).build(),
+                    isTerminal = true
+                ))
+                return
+            }
+            is com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDecision.TemporarilyUnavailable -> {
+                Timber.d("Capture gate temporarily unavailable for refresh notification from $packageName: ${gateDecision.reason}")
+                emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                    stage = "refresh_capture_gate",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                    correlationId = correlationId,
+                    sourceType = "notification",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .putHashed("packageName", packageName).build(),
+                    isTerminal = true
+                ))
+                return
+            }
         }
 
         val extras = sbn.notification.extras
@@ -863,20 +767,18 @@ class NotificationCaptureService : NotificationListenerService() {
 
         workTracker.launch(serviceScope) {
             // DDL-512-14: emit RECEIVED first in the work-tracked coroutine
-            runCatching { diagnosticEventWriter.emit(receivedEvent) }
+            notificationDiagnosticEmitter.emit(receivedEvent)
             when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                 is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                     Timber.d("Privacy gate denied notification capture from $packageName")
-                    try {
-                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                            stage = "refresh_privacy_gate",
-                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                            correlationId = correlationId,
-                            isTerminal = true
-                        ))
-                    } catch (_: Exception) {}
+                    notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "refresh_privacy_gate",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                        correlationId = correlationId,
+                        isTerminal = true
+                    ))
                     return@launch
                 }
                 is PrivacyDecision.Allowed -> { /* proceed */ }

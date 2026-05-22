@@ -15,6 +15,7 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
+import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -71,51 +72,63 @@ class NotificationRepository @Inject constructor(
     suspend fun getClassifierStats() = classifier.getStats()
 
     // === Core Processing Pipeline (delegated) ===
-    suspend fun processAndSave(notification: RawNotification) {
-        processAndSave(notification, notification)
+
+    /**
+     * Process a raw notification through the pipeline and return the outcome.
+     * Uses the same notification for both processing and storage.
+     */
+    suspend fun processAndSave(notification: RawNotification): NotificationPipelineOutcome {
+        return processAndSave(notification, notification)
     }
 
     /**
      * Process using [processingNotification] (ephemeral text for parsing) but persist
      * [storageNotification] (sanitized per privacy settings) to the database.
+     *
+     * @return The [NotificationPipelineOutcome] so callers can react truthfully
+     *         (e.g. dedupe retention, user-facing feedback, diagnostics).
      */
     suspend fun processAndSave(processingNotification: RawNotification, storageNotification: RawNotification,
-                               correlationId: String? = null) {
-        when (val outcome = pipeline.process(processingNotification, storageNotification, correlationId = correlationId)) {
-            is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted ->
+                               correlationId: String? = null): NotificationPipelineOutcome {
+        val outcome = pipeline.process(processingNotification, storageNotification, correlationId = correlationId)
+        when (outcome) {
+            is NotificationPipelineOutcome.AutoAccepted ->
                 Timber.i("Notification auto-accepted: expenseId=%d", outcome.expenseId)
-            is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview ->
+            is NotificationPipelineOutcome.NeedsReview ->
                 Timber.i("Notification queued for review: reviewId=%d", outcome.reviewId)
-            is NotificationProcessingPipeline.NotificationPipelineOutcome.Duplicate ->
+            is NotificationPipelineOutcome.Duplicate ->
                 Timber.w("Notification duplicate: reason=%s", outcome.reason)
-            is NotificationProcessingPipeline.NotificationPipelineOutcome.ParserFailed ->
+            is NotificationPipelineOutcome.ParserFailed ->
                 Timber.w("Notification parser failed: reason=%s", outcome.reason)
-            is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected ->
+            is NotificationPipelineOutcome.AutoRejected ->
                 Timber.w("Notification auto-rejected: reason=%s", outcome.reason)
-            is NotificationProcessingPipeline.NotificationPipelineOutcome.Dropped ->
+            is NotificationPipelineOutcome.Dropped ->
                 Timber.w("Notification dropped: reason=%s", outcome.reason)
-            is NotificationProcessingPipeline.NotificationPipelineOutcome.Error ->
+            is NotificationPipelineOutcome.Error ->
                 Timber.e(outcome.throwable, "Notification processing failed for ${outcome.packageName}")
         }
+        return outcome
     }
 
-    suspend fun processAndSaveAll(notifications: List<RawNotification>) {
-        pipeline.processBatch(notifications).forEach { outcome ->
-            when (outcome) {
-                is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted ->
-                    Timber.i("Batch auto-accepted: expenseId=%d", outcome.expenseId)
-                is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview ->
-                    Timber.i("Batch queued for review: reviewId=%d", outcome.reviewId)
-                is NotificationProcessingPipeline.NotificationPipelineOutcome.Duplicate ->
-                    Timber.w("Batch duplicate: reason=%s", outcome.reason)
-                is NotificationProcessingPipeline.NotificationPipelineOutcome.ParserFailed ->
-                    Timber.w("Batch parser failed: reason=%s", outcome.reason)
-                is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected ->
-                    Timber.w("Batch auto-rejected: reason=%s", outcome.reason)
-                is NotificationProcessingPipeline.NotificationPipelineOutcome.Dropped ->
-                    Timber.w("Batch dropped: reason=%s", outcome.reason)
-                is NotificationProcessingPipeline.NotificationPipelineOutcome.Error ->
-                    Timber.e(outcome.throwable, "Batch notification failed for ${outcome.packageName}")
+    suspend fun processAndSaveAll(notifications: List<RawNotification>): List<NotificationPipelineOutcome> {
+        return pipeline.processBatch(notifications).also { outcomes ->
+            outcomes.forEach { outcome ->
+                when (outcome) {
+                    is NotificationPipelineOutcome.AutoAccepted ->
+                        Timber.i("Batch auto-accepted: expenseId=%d", outcome.expenseId)
+                    is NotificationPipelineOutcome.NeedsReview ->
+                        Timber.i("Batch queued for review: reviewId=%d", outcome.reviewId)
+                    is NotificationPipelineOutcome.Duplicate ->
+                        Timber.w("Batch duplicate: reason=%s", outcome.reason)
+                    is NotificationPipelineOutcome.ParserFailed ->
+                        Timber.w("Batch parser failed: reason=%s", outcome.reason)
+                    is NotificationPipelineOutcome.AutoRejected ->
+                        Timber.w("Batch auto-rejected: reason=%s", outcome.reason)
+                    is NotificationPipelineOutcome.Dropped ->
+                        Timber.w("Batch dropped: reason=%s", outcome.reason)
+                    is NotificationPipelineOutcome.Error ->
+                        Timber.e(outcome.throwable, "Batch notification failed for ${outcome.packageName}")
+                }
             }
         }
     }
