@@ -64,6 +64,8 @@ import org.json.JSONObject
 import timber.log.Timber
 import kotlin.math.abs
 import javax.inject.Inject
+import com.yourname.expensetracker.domain.notification.RawNotificationInsertResult
+import com.yourname.expensetracker.domain.notification.DuplicateBasis
 import javax.inject.Singleton
 
 /**
@@ -285,11 +287,13 @@ class NotificationProcessingPipeline @Inject constructor(
             // Phase 2: DB transaction (DB-only mutations)
             var parserFailedOutcome: NotificationPipelineOutcome? = null
             database.withTransaction {
-                val rawId = insertRawNotificationIfNotDuplicate(notification, storageNotification)
-                if (rawId == -1L) {
-                    parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Raw duplicate before parser")
-                    return@withTransaction
-                }
+                when (val insertResult = insertRawNotificationIfNotDuplicate(notification, storageNotification)) {
+                    is RawNotificationInsertResult.Duplicate -> {
+                        parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Insert ${insertResult.basis.name}")
+                        return@withTransaction
+                    }
+                    is RawNotificationInsertResult.Inserted -> {
+                        val rawId = insertResult.rawId
 
                 sourceStatsDao.insertIfNotExists(
                     SourceStats(
@@ -464,7 +468,9 @@ class NotificationProcessingPipeline @Inject constructor(
                         parserFailedOutcome = NotificationPipelineOutcome.AutoRejected(notification.packageName, correlationId, rawId, "Unparseable notification with no transaction signal")
                     }
                 }
-            }
+                    } // close Inserted
+                } // close when
+            } // close withTransaction
 
             // Phase 3: Post-commit best-effort actions
             runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
@@ -477,8 +483,10 @@ class NotificationProcessingPipeline @Inject constructor(
 
         // Phase 2: DB transaction (DB-only mutations)
         val dbOutcome = database.withTransaction {
-            val rawId = insertRawNotificationIfNotDuplicate(notification, storageNotification)
-            if (rawId == -1L) return@withTransaction ParsedDbOutcome.RawDuplicate
+            val rawId = when (val insertResult = insertRawNotificationIfNotDuplicate(notification, storageNotification)) {
+                is RawNotificationInsertResult.Duplicate -> return@withTransaction ParsedDbOutcome.RawDuplicate
+                is RawNotificationInsertResult.Inserted -> insertResult.rawId
+            }
 
             sourceStatsDao.insertIfNotExists(
                 SourceStats(
@@ -655,29 +663,47 @@ class NotificationProcessingPipeline @Inject constructor(
         ))
     }
 
-    private suspend fun insertRawNotificationIfNotDuplicate(notification: RawNotification, storageNotification: RawNotification = notification): Long {
-        // Use dedupeFingerprint for the duplicate pre-check so it works under
-        // all RawStorageMode values (including METADATA_ONLY/DO_NOT_STORE where
-        // stored fields are null/redacted).
+    private suspend fun insertRawNotificationIfNotDuplicate(
+        notification: RawNotification,
+        storageNotification: RawNotification = notification
+    ): RawNotificationInsertResult {
+        // Always resolve the canonical fingerprint from the processing notification
         val fingerprint = notification.dedupeFingerprint
-        if (fingerprint != null && dao.existsByDedupeFingerprint(fingerprint)) {
-            return -1L
-        }
-        // Legacy raw-field fallback for pre-fingerprint rows (null dedupeFingerprint)
-        if (fingerprint == null && dao.exists(
+            ?: com.yourname.expensetracker.domain.notification.RawNotificationFingerprint.compute(
                 packageName = notification.packageName,
-                timestamp = notification.timestamp,
                 title = notification.title,
                 text = notification.text,
-                bigText = notification.bigText
+                bigText = notification.bigText,
+                timestamp = notification.timestamp
             )
-        ) {
-            return -1L
+
+        // Fast pre-check using fingerprint (works under all RawStorageMode values)
+        val existingId = dao.findIdByDedupeFingerprint(fingerprint)
+        if (existingId != null) {
+            return RawNotificationInsertResult.Duplicate(
+                existingRawId = existingId,
+                dedupeFingerprint = fingerprint,
+                basis = DuplicateBasis.DEDUPE_FINGERPRINT_PRECHECK
+            )
         }
-        // Persist the storage-safe version (sanitized per privacy settings)
-        return dao.insertOrIgnore(storageNotification.copy(
-            dedupeFingerprint = notification.dedupeFingerprint
-        ))
+
+        // Always persist the resolved fingerprint in the storage row
+        val insertId = dao.insertOrIgnore(
+            storageNotification.copy(dedupeFingerprint = fingerprint)
+        )
+
+        return if (insertId == -1L) {
+            RawNotificationInsertResult.Duplicate(
+                existingRawId = dao.findIdByDedupeFingerprint(fingerprint),
+                dedupeFingerprint = fingerprint,
+                basis = DuplicateBasis.DEDUPE_FINGERPRINT_INSERT_CONFLICT
+            )
+        } else {
+            RawNotificationInsertResult.Inserted(
+                rawId = insertId,
+                dedupeFingerprint = fingerprint
+            )
+        }
     }
 
     internal data class OversizedAmountCandidate(

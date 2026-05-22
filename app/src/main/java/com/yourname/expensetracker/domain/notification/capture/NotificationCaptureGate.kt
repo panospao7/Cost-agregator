@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -27,8 +28,9 @@ import javax.inject.Singleton
  *  - Full [PrivacyGate.check(NOTIFICATION_CAPTURE)]
  *  - Blocked-package list
  *
- * The gate is warmed up synchronously on service start to avoid fail-closed
- * false drops before the first flow emission.
+ * The gate is warmed up on service start. If a notification arrives before
+ * warm-up completes, [decide] performs self-healing one-shot loads with a
+ * short timeout so valid notifications are not falsely dropped.
  */
 @Singleton
 class NotificationCaptureGate @Inject constructor(
@@ -50,6 +52,9 @@ class NotificationCaptureGate @Inject constructor(
     @Volatile
     private var blockedPackagesLoaded: Boolean = false
 
+    /** Max time to wait for a self-healing one-shot load inside [decide]. */
+    private val selfHealTimeoutMs = 300L
+
     private val _state = MutableStateFlow<GateState>(GateState.NotReady)
     val state: StateFlow<GateState> = _state.asStateFlow()
 
@@ -60,8 +65,9 @@ class NotificationCaptureGate @Inject constructor(
     }
 
     /**
-     * Synchronously load privacy settings and blocked packages once.
-     * Must be called before any [decide] calls.
+     * One-shot load of privacy settings and blocked packages.
+     * Launched asynchronously from service, but [decide] will self-heal
+     * if called before this completes.
      */
     suspend fun warmUp() {
         try {
@@ -70,7 +76,6 @@ class NotificationCaptureGate @Inject constructor(
             settingsLoaded = true
         } catch (e: Exception) {
             Timber.w(e, "CaptureGate: failed to load privacy settings during warmUp")
-            // Fail closed — leave notificationCaptureEnabled=false, settingsLoaded=false
         }
 
         try {
@@ -78,10 +83,9 @@ class NotificationCaptureGate @Inject constructor(
             blockedPackagesLoaded = true
         } catch (e: Exception) {
             Timber.w(e, "CaptureGate: failed to load blocked packages during warmUp")
-            blockedPackagesLoaded = false
         }
 
-        _state.value = if (settingsLoaded || blockedPackagesLoaded) {
+        _state.value = if (settingsLoaded && blockedPackagesLoaded) {
             GateState.Ready
         } else {
             GateState.Error("Failed to load both privacy settings and blocked packages")
@@ -97,7 +101,7 @@ class NotificationCaptureGate @Inject constructor(
                 privacySettingsRepository.observeSettings().collect { settings ->
                     notificationCaptureEnabled = settings.notificationCaptureEnabled
                     settingsLoaded = true
-                    if (_state.value !is GateState.Ready) {
+                    if (_state.value !is GateState.Ready && blockedPackagesLoaded) {
                         _state.value = GateState.Ready
                     }
                 }
@@ -111,7 +115,7 @@ class NotificationCaptureGate @Inject constructor(
                 blockedPackageDao.getAllPackageNamesFlow().collect { packages ->
                     blockedPackages = packages.toSet()
                     blockedPackagesLoaded = true
-                    if (_state.value !is GateState.Ready) {
+                    if (_state.value !is GateState.Ready && settingsLoaded) {
                         _state.value = GateState.Ready
                     }
                 }
@@ -126,6 +130,9 @@ class NotificationCaptureGate @Inject constructor(
      *
      * This MUST be called before accessing [android.app.Notification.extras]
      * or extracting any text.
+     *
+     * If the gate is not fully warmed up, this method performs self-healing
+     * one-shot loads with a short timeout to avoid false startup drops.
      */
     suspend fun decide(
         packageName: String,
@@ -147,8 +154,43 @@ class NotificationCaptureGate @Inject constructor(
             )
         }
 
-        // 3. Gate not ready
-        if (!settingsLoaded && !blockedPackagesLoaded) {
+        // 3. Self-healing: if either settings or blocked packages not loaded,
+        //    try one-shot loads with a short timeout. This prevents false
+        //    startup drops while keeping gate readiness bounded.
+        val needSettings = !settingsLoaded
+        val needBlocked = !blockedPackagesLoaded
+
+        if (needSettings) {
+            settingsLoaded = withTimeoutOrNull(selfHealTimeoutMs) {
+                try {
+                    val settings = privacySettingsRepository.getSettings()
+                    notificationCaptureEnabled = settings.notificationCaptureEnabled
+                    true
+                } catch (e: Exception) {
+                    Timber.w(e, "CaptureGate: self-heal settings load failed")
+                    false
+                }
+            } ?: false
+        }
+
+        if (needBlocked) {
+            blockedPackagesLoaded = withTimeoutOrNull(selfHealTimeoutMs) {
+                try {
+                    blockedPackages = blockedPackageDao.getAllPackageNamesOnce().toSet()
+                    true
+                } catch (e: Exception) {
+                    Timber.w(e, "CaptureGate: self-heal blocked packages load failed")
+                    false
+                }
+            } ?: false
+        }
+
+        // 3b. Gate not ready — BOTH must be loaded to proceed safely.
+        // BUG-B fix: if only blocked packages loaded but settings are not,
+        // we can't verify notificationCaptureEnabled or run the full privacy gate.
+        // BUG-A fix: if only settings loaded but blocked packages are not,
+        // we must check this specific package one-shot.
+        if (!settingsLoaded) {
             return NotificationCaptureDecision.TemporarilyUnavailable(
                 reason = NotificationCaptureBlockReason.GATE_NOT_READY,
                 retryable = true
@@ -156,7 +198,7 @@ class NotificationCaptureGate @Inject constructor(
         }
 
         // 4. Privacy setting disabled
-        if (settingsLoaded && !notificationCaptureEnabled) {
+        if (!notificationCaptureEnabled) {
             return NotificationCaptureDecision.Blocked(
                 reason = NotificationCaptureBlockReason.PRIVACY_SETTING_DISABLED,
                 diagnosticReasonCode = DiagnosticReasonCode.PRIVACY_DENIED
@@ -191,7 +233,23 @@ class NotificationCaptureGate @Inject constructor(
         }
 
         // 6. Blocked package check
-        if (blockedPackagesLoaded && packageName in blockedPackages) {
+        // BUG-A fix: if blocked packages list still not loaded after self-heal,
+        // fall back to a one-shot isBlocked() query for this specific package.
+        val isBlocked = if (blockedPackagesLoaded) {
+            packageName in blockedPackages
+        } else {
+            withTimeoutOrNull(selfHealTimeoutMs) {
+                try {
+                    blockedPackageDao.isBlocked(packageName)
+                } catch (e: Exception) {
+                    Timber.w(e, "CaptureGate: one-shot isBlocked query failed for %s", packageName)
+                    // Fail closed: treat as blocked if we can't verify
+                    true
+                }
+            } ?: true // timeout → fail closed (treat as blocked)
+        }
+
+        if (isBlocked) {
             return NotificationCaptureDecision.Blocked(
                 reason = NotificationCaptureBlockReason.BLOCKED_PACKAGE,
                 diagnosticReasonCode = DiagnosticReasonCode.BLOCKED_PACKAGE

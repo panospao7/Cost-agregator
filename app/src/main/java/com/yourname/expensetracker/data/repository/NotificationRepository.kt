@@ -134,11 +134,15 @@ class NotificationRepository @Inject constructor(
     }
 
     // === Package blocking ===
-    suspend fun blockPackage(packageName: String) =
+    suspend fun blockPackage(packageName: String) {
+        writeBarrier.checkWritesAllowed("NotificationRepository.blockPackage")
         blockedPackageDao.block(BlockedPackage(packageName))
+    }
 
-    suspend fun unblockPackage(packageName: String) =
+    suspend fun unblockPackage(packageName: String) {
+        writeBarrier.checkWritesAllowed("NotificationRepository.unblockPackage")
         blockedPackageDao.unblock(packageName)
+    }
 
     suspend fun isPackageBlocked(packageName: String): Boolean =
         blockedPackageDao.isBlocked(packageName)
@@ -247,6 +251,7 @@ class NotificationRepository @Inject constructor(
     }
 
     suspend fun restoreSourceStatsSnapshot(stats: List<SourceStats>) {
+        writeBarrier.checkWritesAllowed("NotificationRepository.restoreSourceStatsSnapshot")
         database.withTransaction {
             sourceStatsDao.deleteAll()
             if (stats.isNotEmpty()) {

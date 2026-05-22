@@ -71,7 +71,12 @@ import java.util.concurrent.atomic.AtomicInteger
 class NotificationProcessingPipelineReliabilityTest {
 
     private val database = mockk<AppDatabase>(relaxed = true)
-    private val rawDao = mockk<RawNotificationDao>(relaxed = true)
+    private val rawDao = mockk<RawNotificationDao>(relaxed = true).also {
+        // Repair C: Default returns for new fingerprint methods — must return null/false
+        // to avoid false duplicate detection (relaxed mock returns 0L for Long?).
+        coEvery { it.findIdByDedupeFingerprint(any()) } returns null
+        coEvery { it.existsByDedupeFingerprint(any()) } returns false
+    }
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val sourceStatsDao = mockk<SourceStatsDao>(relaxed = true)
