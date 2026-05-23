@@ -269,6 +269,7 @@ class NotificationProcessingPipeline @Inject constructor(
         // a ParseProvenance alongside the ParsedTransaction, the provenance metadata
         // will flow directly from the registry, eliminating any ambiguity about
         // which parser won and whether AI fallback was attempted.
+        // P2-12: Full ParseProvenance integration pending — parseWithProvenance() not yet wired in AppParserRegistry.
         if (parsed != null) {
             diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -277,7 +278,7 @@ class NotificationProcessingPipeline @Inject constructor(
                 correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                     .putHashed("packageName", notification.packageName)
-                    .put("parserSource", "PARSE_SUCCEEDED")
+                    .put("parserSource", "PARSE_ATTEMPTED")
                     .build()
             ))
         }

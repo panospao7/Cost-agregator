@@ -519,6 +519,10 @@ class NotificationCaptureService : NotificationListenerService() {
                     extrasJson = extrasJson,
                     rawStorageMode = settings.rawNotificationStorageMode,
                     correlationId = correlationId,
+                    // GAP-REFRESH-SOURCE: When called from refreshActiveNotifications(), this
+                    // should be "refresh" instead of "listener" to distinguish diagnostics.
+                    // However, both paths flow through onNotificationPosted(), so a common
+                    // parameter or context flag is needed to differentiate the source.
                     source = "listener"
                     )
                 }

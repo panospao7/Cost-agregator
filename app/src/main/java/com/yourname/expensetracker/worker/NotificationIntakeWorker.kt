@@ -60,6 +60,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 failureHash = null,
                 nowMs = now
             )
+            purgePayloadBestEffort(intake, now)
             return Result.failure()
         }
 
@@ -90,6 +91,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 finalOutcome = "FILTER_REJECTED",
                 nowMs = now
             )
+            purgePayloadBestEffort(current, now)
             return Result.success()
         }
 
@@ -201,6 +203,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     failureHash = null,
                     nowMs = now
                 )
+                purgePayloadBestEffort(current, now)
                 Result.failure()
             }
         }

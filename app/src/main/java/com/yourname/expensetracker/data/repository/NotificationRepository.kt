@@ -86,6 +86,7 @@ class NotificationRepository @Inject constructor(
      * and migration scenarios where privacy sanitization has already been
      * applied upstream or is not required.
      */
+    // P2-11: Uses raw notification as storage. Callers should use the two-arg version with a pre-sanitized storageNotification.
     suspend fun processAndSave(notification: RawNotification): NotificationPipelineOutcome {
         return processAndSave(notification, notification)
     }
@@ -145,6 +146,15 @@ class NotificationRepository @Inject constructor(
                         Timber.w("Batch dropped: reason=%s", outcome.reason)
                     is NotificationPipelineOutcome.Error ->
                         Timber.e(outcome.throwable, "Batch notification failed for ${outcome.packageName}")
+                }
+            }
+            outcomes.forEach { outcome ->
+                when (outcome) {
+                    is NotificationPipelineOutcome.AutoAccepted -> dao.markProcessed(outcome.rawId)
+                    is NotificationPipelineOutcome.NeedsReview -> dao.markProcessed(outcome.rawId)
+                    is NotificationPipelineOutcome.ParserFailed -> outcome.rawId?.let { dao.markProcessed(it) }
+                    is NotificationPipelineOutcome.AutoRejected -> outcome.rawId?.let { dao.markProcessed(it) }
+                    else -> {}
                 }
             }
         }
