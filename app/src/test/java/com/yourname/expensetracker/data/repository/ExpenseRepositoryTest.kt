@@ -62,7 +62,8 @@ class ExpenseRepositoryTest {
             merchantCategoryRepository,
             merchantNormalizer,
             transferDirectionAnalytics,
-            transactionLifecycleCoordinator
+            transactionLifecycleCoordinator,
+            mockk(relaxed = true)
         )
     }
 

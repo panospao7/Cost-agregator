@@ -94,10 +94,11 @@ class TransactionLifecycleCoordinatorTest {
             planner = planner,
             runner = runner,
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
-            restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
             currencySettingsRepository = currencySettingsRepository,
-            sourceLinkWriter = mockk(relaxed = true)
+            sourceLinkWriter = mockk(relaxed = true),
+            transactionValidator = mockk(relaxed = true),
+            diagnosticEventWriter = mockk(relaxed = true)
         )
     }
 

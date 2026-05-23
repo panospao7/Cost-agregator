@@ -75,7 +75,8 @@ class ExpenseRepositoryTruncationTest {
             merchantCategoryRepository,
             merchantNormalizer,
             transferDirectionAnalytics,
-            transactionLifecycleCoordinator
+            transactionLifecycleCoordinator,
+            mockk(relaxed = true)
         )
     }
 

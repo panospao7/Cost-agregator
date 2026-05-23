@@ -91,7 +91,8 @@ class TransactionSideEffectPlanner @Inject constructor(
     fun planBulkUpdated(
         source: String,
         affectedCount: Int,
-        correlationId: String?
+        correlationId: String?,
+        changedFields: Set<BulkChangedField> = setOf(BulkChangedField.UNKNOWN)
     ): PostCommitActionBatch {
         val corrId = correlationId ?: CorrelationIds.newId()
         if (affectedCount <= 0) {
@@ -112,32 +113,27 @@ class TransactionSideEffectPlanner @Inject constructor(
                 ) { SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK) }
             ))
         }
-        val actions = listOf(
-            PostCommitAction(
-                pipeline = AppPipeline.TRANSACTION,
-                name = "bulk_budget_check",
-                category = SideEffectCategory.BUDGET,
-                triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
-                targetEntityType = "EXPENSE",
-                targetEntityId = null,
-                source = source,
-                correlationId = corrId,
-                causationId = null,
-                idempotencyKey = "bulk:$source:$affectedCount:budget_check",
-                priority = SideEffectPriority.LOW,
-                metadata = SafeEventMetadata.builder()
-                    .put("affectedCount", affectedCount.toString())
-                    .put("source", source)
-                    .build()
-            ) {
-                try {
-                    budgetMonitor.get().checkBudgets()
-                    SideEffectOutcome.Completed
-                } catch (e: Exception) {
-                    SideEffectOutcome.FailedRetryable(e.message ?: "Bulk budget check failed", e.javaClass.name)
-                }
-            }
-        )
+
+        val normalizedFields = changedFields.ifEmpty { setOf(BulkChangedField.UNKNOWN) }
+        val actions = mutableListOf<PostCommitAction>()
+
+        if (normalizedFields.affectsBudget()) {
+            actions += makeBulkBudgetCheckAction(source, affectedCount, normalizedFields, corrId)
+        }
+        if (normalizedFields.affectsAnomaly()) {
+            actions += makeBulkAnomalyInvalidationAction(source, affectedCount, normalizedFields, corrId)
+        }
+        if (normalizedFields.affectsMerchantLearning()) {
+            actions += makeBulkMerchantCategoryDirtyAction(source, affectedCount, normalizedFields, corrId)
+            actions += makeBulkMerchantCanonicalStatsDirtyAction(source, affectedCount, normalizedFields, corrId)
+        }
+        if (normalizedFields.affectsAnalyticsCache()) {
+            actions += makeBulkAnalyticsCacheInvalidationAction(source, affectedCount, normalizedFields, corrId)
+        }
+        if (normalizedFields.affectsRecurring()) {
+            actions += makeBulkRecurringReconciliationAction(source, affectedCount, normalizedFields, corrId)
+        }
+
         return PostCommitActionBatch(corrId, actions)
     }
 
@@ -373,6 +369,176 @@ class TransactionSideEffectPlanner @Inject constructor(
             } catch (e: Exception) {
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring unlink failed", e.javaClass.name)
             }
+        }
+    }
+
+    // --- Bulk action factory methods ---
+
+    private fun makeBulkBudgetCheckAction(
+        source: String,
+        affectedCount: Int,
+        changedFields: Set<BulkChangedField>,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "bulk_budget_check",
+            category = SideEffectCategory.BUDGET,
+            triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = null,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "bulk:$source:$affectedCount:budget_check",
+            priority = SideEffectPriority.LOW,
+            metadata = SafeEventMetadata.builder()
+                .put("affectedCount", affectedCount.toString())
+                .put("source", source)
+                .put("changedFields", changedFields.joinToString(",") { it.name })
+                .build()
+        ) {
+            try {
+                budgetMonitor.get().checkBudgets()
+                SideEffectOutcome.Completed
+            } catch (e: Exception) {
+                SideEffectOutcome.FailedRetryable(e.message ?: "Bulk budget check failed", e.javaClass.name)
+            }
+        }
+    }
+
+    private fun makeBulkAnomalyInvalidationAction(
+        source: String,
+        affectedCount: Int,
+        changedFields: Set<BulkChangedField>,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "bulk_anomaly_invalidation",
+            category = SideEffectCategory.ANOMALY,
+            triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = null,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "bulk:$source:$affectedCount:anomaly_invalidation",
+            priority = SideEffectPriority.LOW,
+            metadata = SafeEventMetadata.builder()
+                .put("affectedCount", affectedCount.toString())
+                .put("changedFields", changedFields.joinToString(",") { it.name })
+                .build()
+        ) {
+            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+        }
+    }
+
+    private fun makeBulkMerchantCategoryDirtyAction(
+        source: String,
+        affectedCount: Int,
+        changedFields: Set<BulkChangedField>,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "bulk_merchant_category_dirty",
+            category = SideEffectCategory.MERCHANT_LEARNING,
+            triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = null,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "bulk:$source:$affectedCount:merchant_category_dirty",
+            priority = SideEffectPriority.LOW,
+            metadata = SafeEventMetadata.builder()
+                .put("affectedCount", affectedCount.toString())
+                .put("changedFields", changedFields.joinToString(",") { it.name })
+                .build()
+        ) {
+            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+        }
+    }
+
+    private fun makeBulkMerchantCanonicalStatsDirtyAction(
+        source: String,
+        affectedCount: Int,
+        changedFields: Set<BulkChangedField>,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "bulk_merchant_canonical_stats_dirty",
+            category = SideEffectCategory.MERCHANT_LEARNING,
+            triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = null,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "bulk:$source:$affectedCount:merchant_stats_dirty",
+            priority = SideEffectPriority.LOW,
+            metadata = SafeEventMetadata.builder()
+                .put("affectedCount", affectedCount.toString())
+                .put("changedFields", changedFields.joinToString(",") { it.name })
+                .build()
+        ) {
+            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+        }
+    }
+
+    private fun makeBulkAnalyticsCacheInvalidationAction(
+        source: String,
+        affectedCount: Int,
+        changedFields: Set<BulkChangedField>,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "bulk_analytics_cache_invalidation",
+            category = SideEffectCategory.CACHE_INVALIDATION,
+            triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = null,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "bulk:$source:$affectedCount:analytics_cache",
+            priority = SideEffectPriority.LOW,
+            metadata = SafeEventMetadata.builder()
+                .put("affectedCount", affectedCount.toString())
+                .put("changedFields", changedFields.joinToString(",") { it.name })
+                .build()
+        ) {
+            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+        }
+    }
+
+    private fun makeBulkRecurringReconciliationAction(
+        source: String,
+        affectedCount: Int,
+        changedFields: Set<BulkChangedField>,
+        correlationId: String
+    ): PostCommitAction {
+        return PostCommitAction(
+            pipeline = AppPipeline.TRANSACTION,
+            name = "bulk_recurring_reconciliation",
+            category = SideEffectCategory.RECURRING,
+            triggerType = SideEffectTriggerType.EXPENSE_BULK_UPDATED,
+            targetEntityType = "EXPENSE",
+            targetEntityId = null,
+            source = source,
+            correlationId = correlationId,
+            causationId = null,
+            idempotencyKey = "bulk:$source:$affectedCount:recurring_reconciliation",
+            priority = SideEffectPriority.LOW,
+            metadata = SafeEventMetadata.builder()
+                .put("affectedCount", affectedCount.toString())
+                .put("changedFields", changedFields.joinToString(",") { it.name })
+                .build()
+        ) {
+            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
         }
     }
 }

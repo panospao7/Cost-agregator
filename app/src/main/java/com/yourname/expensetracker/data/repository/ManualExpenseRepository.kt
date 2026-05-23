@@ -165,39 +165,10 @@ class ManualExpenseRepository @Inject constructor(
                 is CreateExpenseResult.Created -> {
                     val id = coordinatorResult.expenseId
 
-                    // TODO P2-CURRENT-019: This synthetic Expense may diverge from the actual
-                    // persisted row (e.g. baseAmount, exchangeRateUsed are missing). Fetch the
-                    // real entity via expenseDao.getById(id) or have the coordinator return it.
-                    // Build a synthetic Expense for downstream hooks (anomaly, recommendations)
-                    insertedExpenseForHook = Expense(
-                        id = id,
-                        amount = amount,
-                        currency = currency,
-                        merchant = normalizedMerchant,
-                        merchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
-                        transactionType = transactionType,
-                        date = date,
-                        rawNotificationId = null,
-                        categoryId = finalCategoryId,
-                        createdAt = timeProvider.now(),
-                        paymentMethod = paymentMethod,
-                        isManualEntry = true,
-                        notes = notes,
-                        dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                            amount, normalizedMerchant, date, currency, transactionType
-                        ),
-                        transferDirection = transferDirection,
-                        transferAccountName = transferAccountName,
-                        isNotMine = isNotMine,
-                        ownerName = ownerName,
-                        isSharedExpense = isSharedExpense,
-                        sharedWithName = sharedWithName,
-                        mySharePercentage = mySharePercentage,
-                        myShareAmount = myShareAmount,
-                        latitude = latitude,
-                        longitude = longitude,
-                        locationSource = locationSource
-                    ).normalizeOwnership()
+                    // Fetch the real persisted expense for downstream hooks
+                    // instead of building a synthetic one that may diverge
+                    insertedExpenseForHook = expenseDao.getById(id)
+                        ?: throw IllegalStateException("Created expense $id was not found after coordinator insert")
 
                     // ── Source-specific side effects ──
 

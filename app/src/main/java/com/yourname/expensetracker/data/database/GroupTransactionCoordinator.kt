@@ -782,6 +782,7 @@ class GroupTransactionCoordinator @Inject constructor(
                         date = date,
                         transactionType = transactionType,
                         source = ExpenseSource.GROUP_EXPENSE,
+                        groupId = groupId,
                         notes = notes ?: "Group expense via ${payer.name}",
                         isManualEntry = true,
                         isSharedExpense = true,

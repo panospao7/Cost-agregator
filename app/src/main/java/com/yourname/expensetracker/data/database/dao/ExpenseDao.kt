@@ -301,6 +301,12 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchantKey = :merchantKey")
     suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: Long): Int
 
+    @Query("UPDATE expenses SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
+    suspend fun updateCategoryForCategory(oldCategoryId: Long, newCategoryId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM expenses")
+    suspend fun countAllExpenses(): Int
+
 @Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey, dedupeKey = NULL WHERE merchantKey = :oldMerchantKey")
 suspend fun updateMerchantForMerchant(oldMerchantKey: String, newMerchant: String, newMerchantKey: String)
 

@@ -83,7 +83,8 @@ class AnalyticsStressTest {
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
-            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            debugExpenseAuditWriter = mockk(relaxed = true)
         )
 
         val engine = AdvancedAnalyticsEngine(

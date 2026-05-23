@@ -119,7 +119,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = mockk(relaxed = true),
-            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            debugExpenseAuditWriter = mockk(relaxed = true)
         )
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)

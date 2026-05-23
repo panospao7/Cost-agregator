@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.transaction.lifecycle
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
@@ -12,6 +12,13 @@ import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.EventSeverity
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.provenance.CreateExpenseSourceLinkMapper
 import com.yourname.expensetracker.domain.provenance.DuplicateSourceLinkPolicy
@@ -27,12 +34,17 @@ import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.sideeffect.runBestEffortAfterCommit
 import kotlinx.coroutines.CancellationException
+import com.yourname.expensetracker.domain.transaction.BusinessExpensePatch
+import com.yourname.expensetracker.domain.transaction.BusinessExpenseUpdateResult
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
+import com.yourname.expensetracker.domain.transaction.validation.TransactionValidationError
+import com.yourname.expensetracker.domain.transaction.validation.TransactionValidationException
+import com.yourname.expensetracker.domain.transaction.validation.TransactionValidator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -53,11 +65,12 @@ import javax.inject.Singleton
  * As each existing creation path is migrated (PRs 2-10), its logic is moved into
  * this class and the old path is removed.
  *
+ * Validation is delegated to TransactionValidator for shared create/update rules.
+ * Write guards use DatabaseWriteBarrier for centralized blocking.
+ * Restore-blocked creates emit durable diagnostics via DiagnosticEventWriter.
+ *
  * @constructor Inject dependencies needed for validation, persistence, and event logging.
  */
-// TODO P2-CURRENT-007: This class uses restoreMaintenanceMode.isWritesAllowed() directly
-// instead of writeBarrier.checkWritesAllowed(). The writeBarrier is injected but unused.
-// Migrate all guards to writeBarrier for consistent error reporting and centralized control.
 @Singleton
 class TransactionLifecycleCoordinator @Inject constructor(
     private val database: AppDatabase,
@@ -69,11 +82,197 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val planner: TransactionSideEffectPlanner,
     private val runner: PostCommitActionRunner,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val sourceLinkWriter: SourceLinkWriter
+    private val sourceLinkWriter: SourceLinkWriter,
+    private val transactionValidator: TransactionValidator,
+    private val diagnosticEventWriter: DiagnosticEventWriter
 ) {
+    // ---- Write-barrier guard ----
+
+    /**
+     * Centralized write permission check. All mutating methods must call this
+     * instead of querying RestoreMaintenanceMode directly.
+     */
+    private fun checkWritesAllowed(operation: String) {
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.$operation")
+    }
+
+    // ---- Canonical dedupe key helpers ----
+
+    private fun strictExternalIdentityKey(request: CreateExpenseRequest): String? {
+        return request.idempotencyKey
+            ?.takeIf { it.isNotBlank() }
+            ?: request.externalFingerprint?.takeIf { it.isNotBlank() }
+    }
+
+    private fun strictExternalDedupeKey(request: CreateExpenseRequest): String? {
+        val key = strictExternalIdentityKey(request) ?: return null
+        return "idem:${request.source.name}:$key"
+    }
+
+    private fun standardCreateDedupeKey(request: CreateExpenseRequest): String {
+        return DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            amount = request.amount,
+            merchant = request.merchant,
+            date = request.date,
+            currency = request.currency,
+            transactionType = request.transactionType
+        )
+    }
+
+    private fun createAttemptDedupeKey(request: CreateExpenseRequest): String? {
+        return when (request.deduplicationMode) {
+            DeduplicationMode.STRICT_EXTERNAL_ID -> strictExternalDedupeKey(request)
+            else -> standardCreateDedupeKey(request)
+        }
+    }
+
+    // ---- Duplicate/conflict resolution helpers ----
+
+    private suspend fun findDuplicateIdForExpense(expense: Expense): Long? {
+        val byPolicy = expenseDao.findDuplicateIdCurrencyAware(
+            amount = expense.amount,
+            merchant = expense.merchant,
+            date = expense.date,
+            currency = expense.currency,
+            transactionType = expense.transactionType.name,
+            merchantKey = expense.merchantKey,
+            dedupeKey = expense.dedupeKey
+        )
+
+        if (byPolicy != null) return byPolicy
+
+        return expense.dedupeKey
+            ?.takeIf { it.isNotBlank() }
+            ?.let { expenseDao.findIdByDedupeKey(it) }
+    }
+
+    private suspend fun resolveExistingIdAfterInsertConflict(
+        expense: Expense,
+        dedupMode: DeduplicationMode
+    ): Long? {
+        // 1. Exact dedupe-key lookup first.
+        val byDedupeKey = expense.dedupeKey
+            ?.takeIf { it.isNotBlank() }
+            ?.let { expenseDao.findIdByDedupeKey(it) }
+
+        if (byDedupeKey != null) return byDedupeKey
+
+        // 2. STRICT_EXTERNAL_ID should not fuzzy-match.
+        if (dedupMode == DeduplicationMode.STRICT_EXTERNAL_ID) {
+            return null
+        }
+
+        // 3. Debug restore intentionally skips dedupe.
+        if (dedupMode == DeduplicationMode.SKIP_FOR_DEBUG_RESTORE) {
+            return null
+        }
+
+        // 4. STANDARD/BULK fallback: resolve by same policy as duplicate precheck.
+        return expenseDao.findDuplicateIdCurrencyAware(
+            amount = expense.amount,
+            merchant = expense.merchant,
+            date = expense.date,
+            currency = expense.currency,
+            transactionType = expense.transactionType.name,
+            merchantKey = expense.merchantKey,
+            dedupeKey = expense.dedupeKey
+        )
+    }
+
+    // ---- Diagnostics helpers ----
+
+    private fun createBlockedDiagnosticMetadata(
+        request: CreateExpenseRequest,
+        operation: String,
+        blocked: Throwable
+    ): SafeEventMetadata {
+        return SafeEventMetadata.builder()
+            .put("operation", operation)
+            .put("source", request.source.name)
+            .put("deduplicationMode", request.deduplicationMode.name)
+            .put("transactionType", request.transactionType.name)
+            .put("currency", request.currency)
+            .put("hasIdempotencyKey", request.idempotencyKey != null)
+            .put("hasExternalFingerprint", request.externalFingerprint != null)
+            .put("exceptionClass", blocked.javaClass.simpleName)
+            .build()
+    }
+
+    private suspend fun emitCreateBlockedDiagnosticBestEffort(
+        request: CreateExpenseRequest,
+        correlationId: String,
+        blocked: Throwable
+    ): Boolean {
+        return try {
+            diagnosticEventWriter.emit(
+                DiagnosticEvent(
+                    pipeline = AppPipeline.TRANSACTION,
+                    stage = "CREATE_EXPENSE",
+                    outcome = EventOutcome.BLOCKED,
+                    severity = EventSeverity.WARNING,
+                    reasonCode = when (blocked) {
+                        is DatabaseAccessBlockedException -> DiagnosticReasonCode.RESTORE_BLOCKED
+                        else -> DiagnosticReasonCode.WRITE_BARRIER_DENIED
+                    },
+                    entityType = "Expense",
+                    entityId = null,
+                    sourceType = request.source.name,
+                    correlationId = correlationId,
+                    metadata = createBlockedDiagnosticMetadata(
+                        request = request,
+                        operation = "createExpense",
+                        blocked = blocked
+                    ),
+                    exception = blocked,
+                    isTerminal = true
+                )
+            )
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to emit restore-blocked create diagnostic")
+            false
+        }
+    }
+
+    private suspend fun writeUpdateValidationFailedEventBestEffort(
+        expenseId: Long,
+        source: String,
+        reason: String?,
+        correlationId: String?,
+        errors: List<TransactionValidationError>
+    ) {
+        runCatching {
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATE_VALIDATION_FAILED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = timeProvider.now(),
+                    dedupeKey = null,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = null,
+                    afterSnapshot = null,
+                    metadata = JSONObject().apply {
+                        put("operation", "updateExpense")
+                        put("errorCount", errors.size)
+                        put("errorCodes", errors.joinToString(",") { it.code })
+                        put("fields", errors.mapNotNull { it.field }.distinct().joinToString(","))
+                    }.toString(),
+                    reason = reason ?: "Update validation failed: ${errors.firstOrNull()?.message}",
+                    correlationId = correlationId
+                )
+            )
+        }.onFailure {
+            if (it is CancellationException) throw it
+            Timber.w(it, "Failed to write UPDATE_VALIDATION_FAILED for expense %d", expenseId)
+        }
+    }
+
     /**
      * Creates an expense with full lifecycle handling:
      * validate → normalize → dedupe → insert atomic → event.
@@ -106,32 +305,39 @@ class TransactionLifecycleCoordinator @Inject constructor(
         request: CreateExpenseRequest,
         sideEffectMode: SideEffectMode = SideEffectMode.IMMEDIATE
     ): CreateExpenseResult {
+        val correlationId = request.correlationId
+            ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+
         // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            // P2-CURRENT-011: Diagnostic for restore-blocked create
-            Timber.w("CreateExpense blocked: restore maintenance mode active (source=%s, merchant=%s)", request.source.name, request.merchant)
-            return CreateExpenseResult.Error(IllegalStateException("Database writes blocked during restore"))
+        try {
+            checkWritesAllowed("createExpense")
+        } catch (blocked: DatabaseAccessBlockedException) {
+            emitCreateBlockedDiagnosticBestEffort(
+                request = request,
+                correlationId = correlationId,
+                blocked = blocked
+            )
+            return CreateExpenseResult.Error(blocked)
+        } catch (blocked: RuntimeException) {
+            if (blocked is CancellationException) throw blocked
+            emitCreateBlockedDiagnosticBestEffort(
+                request = request,
+                correlationId = correlationId,
+                blocked = blocked
+            )
+            return CreateExpenseResult.Error(blocked)
         }
 
         val now = timeProvider.now()
 
-        // DDL-512-06: use a single correlationId for every event in this create attempt
-        val correlationId = request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        // DDL-512-06: correlationId generated before barrier check, reused for all events
 
         // Compute source-link payloads once — used across all events
         val sourceLinkPayloads = CreateExpenseSourceLinkMapper.fromRequest(request)
 
         // 1. Write CREATE_ATTEMPTED event before validation
-        // TODO P2-CURRENT-012: For STRICT_EXTERNAL_ID mode, attemptDedupeKey should be
-        // "idem:${source}:${idempotencyKey}" to match the actual key used at insert time.
-        // Currently uses the standard formula which diverges from the persisted dedupeKey.
-        val attemptDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-            amount = request.amount,
-            merchant = request.merchant,
-            date = request.date,
-            currency = request.currency,
-            transactionType = request.transactionType
-        )
+        // Canonical attempt dedupe key: matches the persisted key for STRICT_EXTERNAL_ID
+        val attemptDedupeKey = createAttemptDedupeKey(request)
         runCatching {
             transactionEventDao.insert(
                 TransactionEvent(
@@ -289,8 +495,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         if (!skipDedup) {
             when (dedupMode) {
                 DeduplicationMode.STRICT_EXTERNAL_ID -> {
-                    val key = request.idempotencyKey ?: request.externalFingerprint
-                    if (key == null) {
+                    val strictKey = strictExternalDedupeKey(request)
+                    if (strictKey == null) {
                         // P2-CURRENT-010: Emit validation event for missing key
                         runCatching {
                             transactionEventDao.insert(
@@ -300,7 +506,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                     source = request.source.name,
                                     actor = null,
                                     occurredAt = now,
-                                    dedupeKey = attemptDedupeKey,
+                                    dedupeKey = null,
                                     duplicateExpenseId = null,
                                     beforeSnapshot = null,
                                     afterSnapshot = null,
@@ -316,17 +522,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             listOf("STRICT_EXTERNAL_ID mode requires idempotencyKey or externalFingerprint")
                         )
                     }
-                    // Use source namespace for the dedup key
-                    expense = expense.copy(dedupeKey = "idem:${request.source.name}:$key")
+                    // Use canonical strict key
+                    expense = expense.copy(dedupeKey = strictKey)
                     // Don't run range check, rely on unique dedupeKey index
                 }
 
                 DeduplicationMode.BULK_IMPORT -> {
-                    // TODO P2-CURRENT-005: If a STANDARD create and a BULK_IMPORT create race
-                    // for the same logical transaction, the second one silently wins via
-                    // insertAtomic IGNORE. The losing path gets no identity (expenseId).
-                    // Consider using INSERT OR REPLACE or returning the existing ID on conflict.
-                    // Run standard range-based dedup but mark result as bulk duplicate
                     val isDuplicate = expenseDao.isDuplicateCurrencyAware(
                         amount = expense.amount,
                         merchant = expense.merchant,
@@ -337,20 +538,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         dedupeKey = expense.dedupeKey
                     )
                     if (isDuplicate) {
-                        val duplicateId = expenseDao.findDuplicateIdCurrencyAware(
-                            amount = expense.amount,
-                            merchant = expense.merchant,
-                            date = expense.date,
-                            currency = expense.currency,
-                            transactionType = expense.transactionType.name,
-                            merchantKey = expense.merchantKey,
-                            dedupeKey = expense.dedupeKey
-                        )
-                        // Write duplicate resolution event
-                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate")
+                        val duplicateId = findDuplicateIdForExpense(expense)
+                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate", correlationId)
                         return CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
-                            reason = "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}",
+                            reason = if (duplicateId != null) {
+                                "Bulk import duplicate: existingExpenseId=$duplicateId"
+                            } else {
+                                "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}"
+                            },
                             eventLogged = eventLogged
                         )
                     }
@@ -372,20 +568,16 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         dedupeKey = expense.dedupeKey
                     )
                     if (isDuplicate) {
-                        val duplicateId = expenseDao.findDuplicateIdCurrencyAware(
-                            amount = expense.amount,
-                            merchant = expense.merchant,
-                            date = expense.date,
-                            currency = expense.currency,
-                            transactionType = expense.transactionType.name,
-                            merchantKey = expense.merchantKey,
-                            dedupeKey = expense.dedupeKey
-                        )
+                        val duplicateId = findDuplicateIdForExpense(expense)
                         // Write duplicate resolution event with metadata
-                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate")
+                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate", correlationId)
                         return CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
-                            reason = "Duplicate expense detected: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}",
+                            reason = if (duplicateId != null) {
+                                "Duplicate expense detected: existingExpenseId=$duplicateId"
+                            } else {
+                                "Duplicate expense detected but existing ID could not be resolved"
+                            },
                             eventLogged = eventLogged
                         )
                     }
@@ -457,7 +649,50 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         if (insertedId <= 0L) {
-            // Write CREATE_INSERT_CONFLICT event for observability
+            // Try to resolve the existing expense ID before declaring unresolved conflict
+            val existingId = resolveExistingIdAfterInsertConflict(expense, dedupMode)
+
+            if (existingId != null) {
+                // Resolved — treat as duplicate
+                val eventLogged = runCatching {
+                    transactionEventDao.insert(
+                        TransactionEvent(
+                            expenseId = existingId,
+                            eventType = LifecycleEventType.CREATE_DUPLICATE_SKIPPED.name,
+                            source = request.source.name,
+                            actor = null,
+                            occurredAt = now,
+                            dedupeKey = expense.dedupeKey,
+                            duplicateExpenseId = existingId,
+                            beforeSnapshot = null,
+                            afterSnapshot = null,
+                            metadata = SourceLinkEventMetadataBuilder.duplicateMetadata(
+                                policy = getDuplicateSourceLinkPolicy(request.source),
+                                attemptedExpense = expense,
+                                sourceLinkPayloads = sourceLinkPayloads
+                            ),
+                            reason = when (dedupMode) {
+                                DeduplicationMode.STRICT_EXTERNAL_ID ->
+                                    "STRICT_EXTERNAL_ID idempotent retry resolved to existing expense"
+                                DeduplicationMode.BULK_IMPORT ->
+                                    "BULK_IMPORT insert conflict resolved to existing expense"
+                                else ->
+                                    "Insert conflict resolved to existing duplicate expense"
+                            },
+                            correlationId = correlationId
+                        )
+                    )
+                    true
+                }.getOrDefault(false)
+
+                return CreateExpenseResult.DuplicateSkipped(
+                    existingExpenseId = existingId,
+                    reason = "Insert conflict resolved to existing expense $existingId",
+                    eventLogged = eventLogged
+                )
+            }
+
+            // Unresolved — write INSERT_CONFLICT
             runCatching {
                 transactionEventDao.insert(
                     TransactionEvent(
@@ -475,44 +710,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             dedupeKey = expense.dedupeKey,
                             payloads = sourceLinkPayloads
                         ),
-                        reason = "Insert conflict for dedupeKey=${expense.dedupeKey}",
-                        correlationId = correlationId  // DDL-512-06
+                        reason = "Unresolved insert conflict for dedupeKey=${expense.dedupeKey}",
+                        correlationId = correlationId
                     )
                 )
-            }
-            // For STRICT_EXTERNAL_ID mode, resolve the conflict by looking up existing ID
-            if (dedupMode == DeduplicationMode.STRICT_EXTERNAL_ID && expense.dedupeKey != null) {
-                val existingId = expenseDao.findIdByDedupeKey(expense.dedupeKey!!)
-                if (existingId != null) {
-                    val eventLogged = runCatching {
-                        transactionEventDao.insert(
-                            TransactionEvent(
-                                expenseId = existingId,
-                                eventType = LifecycleEventType.CREATE_DUPLICATE_SKIPPED.name,
-                                source = request.source.name,
-                                actor = null,
-                                occurredAt = now,
-                                dedupeKey = expense.dedupeKey,
-                                duplicateExpenseId = existingId,
-                                beforeSnapshot = null,
-                                afterSnapshot = null,
-                                metadata = SourceLinkEventMetadataBuilder.duplicateMetadata(
-                                    policy = getDuplicateSourceLinkPolicy(request.source),
-                                    attemptedExpense = expense,
-                                    sourceLinkPayloads = sourceLinkPayloads
-                                ),
-                                reason = "STRICT_EXTERNAL_ID idempotent retry resolved to existing expense",
-                                correlationId = correlationId  // DDL-512-06
-                            )
-                        )
-                        true
-                    }.getOrDefault(false)
-                    return CreateExpenseResult.DuplicateSkipped(
-                        existingExpenseId = existingId,
-                        reason = "Idempotent STRICT_EXTERNAL_ID duplicate resolved",
-                        eventLogged = eventLogged
-                    )
-                }
             }
             return CreateExpenseResult.InsertConflict(expense.dedupeKey ?: "unknown")
         }
@@ -648,9 +849,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateExpense")
 
         val now = timeProvider.now()
 
@@ -756,6 +955,31 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
         }
 
+        // 2b. Validate final expense state — must not be weaker than create validation
+        val finalValidationErrors = transactionValidator.validateFinalExpenseState(
+            amount = finalExpense.amount,
+            merchant = finalExpense.merchant,
+            currency = finalExpense.currency,
+            date = finalExpense.date,
+            transactionType = finalExpense.transactionType,
+            transferDirectionPresent = finalExpense.transferDirection != null,
+            transferAccountName = finalExpense.transferAccountName,
+            isNotMine = finalExpense.isNotMine,
+            isSharedExpense = finalExpense.isSharedExpense,
+            latitude = finalExpense.latitude,
+            longitude = finalExpense.longitude
+        )
+        if (finalValidationErrors.isNotEmpty()) {
+            writeUpdateValidationFailedEventBestEffort(
+                expenseId = expense.id,
+                source = source,
+                reason = reason,
+                correlationId = correlationId,
+                errors = finalValidationErrors
+            )
+            throw TransactionValidationException(finalValidationErrors)
+        }
+
         // 3. Persist the updated row + write event inside a single transaction
         database.withTransaction {
             expenseDao.update(finalExpense)
@@ -807,9 +1031,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateCategory")
 
         val existing = expenseDao.getById(expenseId) ?: return
         if (existing.categoryId == newCategoryId) return  // handles null==null correctly
@@ -869,9 +1091,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         resolvedAddress: String? = null,
         reason: String? = null
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateLocation")
         require(latitude in -90.0..90.0) { "Latitude out of range" }
         require(longitude in -180.0..180.0) { "Longitude out of range" }
 
@@ -904,62 +1124,92 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Updates business flags (`isBusinessExpense` and `requiresReceipt`) on an
-     * expense through the lifecycle coordinator.
+     * Updates business/tax fields on an expense via explicit patch contract.
      *
-     * `businessUsePercent`, `taxCategory`, and `vatEligible` are accepted for
-     * API compatibility but are **no-ops** pending entity schema changes. When
-     * any of these no-op parameters are non-null, a warning is logged via Timber.w.
-     *
-     * TODO P2-CURRENT-014: businessUsePercent, taxCategory, vatEligible are semantically
-     * partial — callers believe they are persisted but they are silently dropped.
-     * Either add columns to the Expense entity or return a result indicating which
-     * fields were actually persisted vs ignored.
+     * Supported fields: isBusinessExpense, requiresReceipt, businessPurpose,
+     * businessCategory, businessProject.
+     * Unsupported legacy fields (businessUsePercent, taxCategory, vatEligible)
+     * are explicitly rejected instead of silently ignored.
      *
      * @param expenseId The ID of the expense to update.
-     * @param isBusinessExpense Whether this expense is a business expense (persisted).
-     * @param businessUsePercent No-op — accepted for API compatibility only.
-     * @param taxCategory No-op — accepted for API compatibility only.
-     * @param vatEligible No-op — accepted for API compatibility only.
-     * @param receiptRequired Whether a receipt is required, mapped to `requiresReceipt` (persisted).
-     * @param source The source system/component that triggered the update.
+     * @param patch     The business fields patch.
+     * @param source    The source triggering the update.
+     * @param reason    Optional reason for the update.
+     * @param correlationId Optional correlation ID for traceability.
+     * @return [BusinessExpenseUpdateResult] indicating the outcome.
      */
-    suspend fun updateBusinessFlags(
+    suspend fun updateBusinessExpensePatch(
         expenseId: Long,
-        isBusinessExpense: Boolean? = null,
-        businessUsePercent: Double? = null,
-        taxCategory: String? = null,
-        vatEligible: Boolean? = null,
-        receiptRequired: Boolean? = null,
-        source: String = "BUSINESS_TAX_UPDATE"
-    ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
+        patch: BusinessExpensePatch,
+        source: String = "BUSINESS_TAX_UPDATE",
+        reason: String? = null,
+        correlationId: String? = null
+    ): BusinessExpenseUpdateResult {
+        checkWritesAllowed("updateBusinessExpensePatch")
+
+        if (patch.isEmpty()) {
+            return BusinessExpenseUpdateResult.NoChange
         }
 
-        if (businessUsePercent != null) {
-            Timber.w("businessUsePercent=%.2f ignored — not persisted (pending entity schema changes)", businessUsePercent)
-        }
-        if (taxCategory != null) {
-            Timber.w("taxCategory=%s ignored — not persisted (pending entity schema changes)", taxCategory)
-        }
-        if (vatEligible != null) {
-            Timber.w("vatEligible=%s ignored — not persisted (pending entity schema changes)", vatEligible)
+        val unsupported = patch.unsupportedFields()
+        if (unsupported.isNotEmpty()) {
+            runCatching {
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = expenseId,
+                        eventType = LifecycleEventType.UPDATE_VALIDATION_FAILED.name,
+                        source = source,
+                        actor = null,
+                        occurredAt = timeProvider.now(),
+                        dedupeKey = null,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = null,
+                        afterSnapshot = null,
+                        metadata = JSONObject().apply {
+                            put("operation", "updateBusinessExpensePatch")
+                            put("unsupportedFields", unsupported.joinToString(","))
+                        }.toString(),
+                        reason = "Unsupported business/tax fields: ${unsupported.joinToString(",")}",
+                        correlationId = correlationId
+                    )
+                )
+            }.onFailure {
+                if (it is CancellationException) throw it
+                Timber.w(it, "Failed to write UPDATE_VALIDATION_FAILED for business patch")
+            }
+
+            return BusinessExpenseUpdateResult.UnsupportedFields(unsupported)
         }
 
-        val existing = expenseDao.getById(expenseId) ?: return
+        val existing = expenseDao.getById(expenseId)
+            ?: return BusinessExpenseUpdateResult.NotFound
+
+        val updated = existing.copy(
+            isBusinessExpense = patch.isBusinessExpense ?: existing.isBusinessExpense,
+            requiresReceipt = patch.requiresReceipt ?: existing.requiresReceipt,
+            businessPurpose = patch.businessPurpose ?: existing.businessPurpose,
+            businessCategory = patch.businessCategory ?: existing.businessCategory,
+            businessProject = patch.businessProject ?: existing.businessProject
+        )
+
+        val changedFields = buildSet {
+            if (updated.isBusinessExpense != existing.isBusinessExpense) add("isBusinessExpense")
+            if (updated.requiresReceipt != existing.requiresReceipt) add("requiresReceipt")
+            if (updated.businessPurpose != existing.businessPurpose) add("businessPurpose")
+            if (updated.businessCategory != existing.businessCategory) add("businessCategory")
+            if (updated.businessProject != existing.businessProject) add("businessProject")
+        }
+
+        if (changedFields.isEmpty()) {
+            return BusinessExpenseUpdateResult.NoChange
+        }
+
         val now = timeProvider.now()
         val beforeSnapshot = expenseToSnapshot(existing)
 
-        // Map receiptRequired → requiresReceipt (the actual Expense field name)
-        val updated = existing.copy(
-            isBusinessExpense = isBusinessExpense ?: existing.isBusinessExpense,
-            requiresReceipt = receiptRequired ?: existing.requiresReceipt
-        )
-
         database.withTransaction {
             expenseDao.update(updated)
-            val afterSnapshot = expenseToSnapshot(expenseId, updated)
+
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = expenseId,
@@ -970,22 +1220,64 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     dedupeKey = existing.dedupeKey,
                     duplicateExpenseId = null,
                     beforeSnapshot = beforeSnapshot,
-                    afterSnapshot = afterSnapshot,
-                    metadata = null,
-                    reason = null
+                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    metadata = JSONObject().apply {
+                        put("operation", "updateBusinessExpensePatch")
+                        put("changedFields", changedFields.joinToString(","))
+                    }.toString(),
+                    reason = reason,
+                    correlationId = correlationId
                 )
             )
         }
 
-        // Post-update side effects via planner + runner (best-effort)
-        val batch = planner.planUpdated(expenseId, source, null, TransactionUpdateKind.BUSINESS_FLAGS_ONLY)
+        val batch = planner.planUpdated(
+            expenseId,
+            source,
+            correlationId,
+            TransactionUpdateKind.BUSINESS_FLAGS_ONLY
+        )
+
         runner.runBestEffortAfterCommit(
             batch = batch,
             logMessage = "Non-critical: side effects failed after updating business/tax fields for expense",
             targetId = expenseId
         )
 
-        Timber.d("T10: Business/tax fields updated for expense %d", expenseId)
+        return BusinessExpenseUpdateResult.Updated(
+            expenseId = expenseId,
+            changedFields = changedFields
+        )
+    }
+
+    /**
+     * Legacy business flags update — delegates to [updateBusinessExpensePatch].
+     * Unsupported legacy tax fields are now rejected instead of silently ignored.
+     */
+    @Deprecated(
+        "Use updateBusinessExpensePatch(). Legacy tax fields are rejected instead of ignored.",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun updateBusinessFlags(
+        expenseId: Long,
+        isBusinessExpense: Boolean? = null,
+        businessUsePercent: Double? = null,
+        taxCategory: String? = null,
+        vatEligible: Boolean? = null,
+        receiptRequired: Boolean? = null,
+        source: String = "BUSINESS_TAX_UPDATE"
+    ): BusinessExpenseUpdateResult {
+        return updateBusinessExpensePatch(
+            expenseId = expenseId,
+            patch = BusinessExpensePatch(
+                isBusinessExpense = isBusinessExpense,
+                requiresReceipt = receiptRequired,
+                businessUsePercent = businessUsePercent,
+                taxCategory = taxCategory,
+                vatEligible = vatEligible
+            ),
+            source = source
+        )
     }
 
     /**
@@ -1005,9 +1297,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateMerchant")
 
         val existing = expenseDao.getById(expenseId) ?: return
         if (existing.merchant == newMerchant) return
@@ -1086,9 +1376,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateType")
 
         val existing = expenseDao.getById(expenseId) ?: return
         if (existing.transactionType == newType) return
@@ -1166,9 +1454,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         source: String = "USER_EDIT"
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateTransferDetails")
 
         val existing = expenseDao.getById(expenseId) ?: return
         if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) return
@@ -1179,6 +1465,31 @@ class TransactionLifecycleCoordinator @Inject constructor(
             transferDirection = transferDirection,
             transferAccountName = transferAccountName
         )
+
+        // Validate final expense state — prevent clearing transfer metadata on TRANSFER
+        val transferErrors = transactionValidator.validateFinalExpenseState(
+            amount = updated.amount,
+            merchant = updated.merchant,
+            currency = updated.currency,
+            date = updated.date,
+            transactionType = updated.transactionType,
+            transferDirectionPresent = updated.transferDirection != null,
+            transferAccountName = updated.transferAccountName,
+            isNotMine = updated.isNotMine,
+            isSharedExpense = updated.isSharedExpense,
+            latitude = updated.latitude,
+            longitude = updated.longitude
+        )
+        if (transferErrors.isNotEmpty()) {
+            writeUpdateValidationFailedEventBestEffort(
+                expenseId = expenseId,
+                source = source,
+                reason = reason,
+                correlationId = null,
+                errors = transferErrors
+            )
+            throw TransactionValidationException(transferErrors)
+        }
 
         database.withTransaction {
             expenseDao.updateTransferDirection(expenseId, transferDirection?.name)
@@ -1222,9 +1533,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         transferAccountName: String?,
         source: String = "USER_EDIT"
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateTypeAndTransferDetails")
 
         val existing = expenseDao.getById(expenseId) ?: return
         val now = timeProvider.now()
@@ -1258,6 +1567,31 @@ class TransactionLifecycleCoordinator @Inject constructor(
             transferDirection = transferDirection,
             transferAccountName = transferAccountName
         )
+
+        // Validate final expense state (shared create/update rules)
+        val typeTransferErrors = transactionValidator.validateFinalExpenseState(
+            amount = updated.amount,
+            merchant = updated.merchant,
+            currency = updated.currency,
+            date = updated.date,
+            transactionType = updated.transactionType,
+            transferDirectionPresent = updated.transferDirection != null,
+            transferAccountName = updated.transferAccountName,
+            isNotMine = updated.isNotMine,
+            isSharedExpense = updated.isSharedExpense,
+            latitude = updated.latitude,
+            longitude = updated.longitude
+        )
+        if (typeTransferErrors.isNotEmpty()) {
+            writeUpdateValidationFailedEventBestEffort(
+                expenseId = expenseId,
+                source = source,
+                reason = "Type/transfer update validation failed",
+                correlationId = null,
+                errors = typeTransferErrors
+            )
+            throw TransactionValidationException(typeTransferErrors)
+        }
 
         database.withTransaction {
             expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
@@ -1376,9 +1710,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ): MutationResult<OwnershipUpdateResult> {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("updateOwnershipDbOnlyV2")
 
         val corrId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
@@ -1461,9 +1793,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("bulkUpdateCategory")
         val merchantKey = MerchantKeyGenerator.generate(merchant)
         val now = timeProvider.now()
         var affectedCount = 0
@@ -1511,31 +1841,67 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * C11-FIXED: Basic bulk category update with lifecycle events.
-     * Moves all expenses from one category to another, writing per-expense
-     * UPDATED events via [updateCategory] so that side effects are dispatched.
-     *
-     * TODO P2-CURRENT-015: This is non-atomic — a crash mid-loop leaves partial
-     * reassignment. Wrap in database.withTransaction or use a single DAO UPDATE
-     * with a BULK_UPDATED event (like the merchant-key overload above).
-     *
-     * @param categoryId    The source category whose expenses should be reassigned.
-     * @param newCategoryId The target category to assign.
-     * @param source        The source system/component that triggered the update.
+     * Atomic category-to-category bulk reassignment.
+     * Uses a single SQL UPDATE + one BULK_UPDATED event.
+     * No partial migration possible — crash/event failure rolls back.
      */
     suspend fun bulkUpdateCategory(
         categoryId: Long,
         newCategoryId: Long,
         source: String = "CATEGORY_CORRECTION"
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
+        checkWritesAllowed("bulkUpdateCategoryByCategory")
+
+        if (categoryId == newCategoryId) {
+            Timber.d("Bulk category update skipped: source and target category are identical (%d)", categoryId)
+            return
         }
-        val expenses = expenseDao.getExpensesByCategory(categoryId, 0L, Long.MAX_VALUE)
-        for (expense in expenses) {
-            updateCategory(expense.id, newCategoryId, source = source)
+
+        val now = timeProvider.now()
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        var affectedCount = 0
+
+        database.withTransaction {
+            affectedCount = expenseDao.updateCategoryForCategory(
+                oldCategoryId = categoryId,
+                newCategoryId = newCategoryId
+            )
+
+            if (affectedCount > 0) {
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = null,
+                        eventType = LifecycleEventType.BULK_UPDATED.name,
+                        source = source,
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = null,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = null,
+                        afterSnapshot = null,
+                        metadata = JSONObject().apply {
+                            put("operation", "bulkUpdateCategoryByCategory")
+                            put("oldCategoryId", categoryId)
+                            put("newCategoryId", newCategoryId)
+                            put("affectedCount", affectedCount)
+                            put("changedFields", "categoryId")
+                            put("atomic", true)
+                        }.toString(),
+                        reason = "Bulk reassigned category $categoryId to $newCategoryId",
+                        correlationId = correlationId
+                    )
+                )
+            }
         }
-        Timber.d("Bulk category update: %d expenses moved from %d to %d", expenses.size, categoryId, newCategoryId)
+
+        if (affectedCount > 0) {
+            dispatchBulkPostCommitSideEffects(source, affectedCount)
+        }
+
+        Timber.d(
+            "Bulk category update: %d expenses moved from category %d to %d",
+            affectedCount, categoryId, newCategoryId
+        )
     }
 
     /**
@@ -1555,9 +1921,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        checkWritesAllowed("bulkUpdateMerchant")
         if (oldMerchant == newMerchant) return
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
@@ -1637,8 +2001,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
         actor: String? = null,
         correlationId: String? = null
     ): Result<Unit> {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            checkWritesAllowed("deleteExpense")
+        } catch (blocked: DatabaseAccessBlockedException) {
+            return Result.failure(blocked)
+        } catch (blocked: RuntimeException) {
+            if (blocked is CancellationException) throw blocked
+            return Result.failure(blocked)
         }
         // P2-08: Load snapshot inside the transaction to prevent TOCTOU stale snapshots.
         val now = timeProvider.now()
@@ -1700,8 +2069,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ): Result<Unit> {
         // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            checkWritesAllowed("deleteExpense")
+        } catch (blocked: DatabaseAccessBlockedException) {
+            return Result.failure(blocked)
+        } catch (blocked: RuntimeException) {
+            if (blocked is CancellationException) throw blocked
+            return Result.failure(blocked)
         }
         return try {
             val now = timeProvider.now()
@@ -1745,78 +2119,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
     /**
      * Validates a [CreateExpenseRequest] and returns a list of error messages.
+     * Delegates to [TransactionValidator] for shared create/update validation rules.
      * Returns an empty list if the request is valid.
-     *
-     * Validation rules:
-     * - Amount must be positive, finite, and ≤ 1,000,000
-     * - Merchant must not be blank or a placeholder
-     * - Currency must be a valid 3-letter ISO code (uppercase)
-     * - Date must be positive and not in the future (beyond now + 1 day)
-     * - Transfer transactions require transferDirection and transferAccountName
-     * - Ownership conflict: cannot be both isNotMine and isSharedExpense
      */
     private fun validate(request: CreateExpenseRequest): List<String> {
-        val errors = mutableListOf<String>()
-        val now = timeProvider.now()
-
-        // Amount validation
-        if (!request.amount.isFinite() || request.amount <= 0) {
-            errors.add("Amount must be positive and finite")
-        }
-        if (request.amount > 1_000_000) {
-            errors.add("Amount exceeds maximum (1,000,000)")
-        }
-
-        // Merchant validation
-        if (request.merchant.isBlank()) {
-            errors.add("Merchant cannot be blank")
-        }
-        if (request.merchant == "Unknown" || request.merchant == "Parsing Failed") {
-            errors.add("Merchant placeholder not allowed for real expenses")
-        }
-
-        // Currency ISO validation
-        if (request.currency.isBlank()) {
-            errors.add("Currency is required")
-        } else if (!CURRENCY_ISO_PATTERN.matches(request.currency)) {
-            errors.add("Currency must be a 3-letter ISO code (e.g. EUR, USD)")
-        }
-
-        // Date validation
-        if (request.date <= 0) {
-            errors.add("Date must be positive")
-        }
-        if (request.date > TimePeriodUtils.addDays(now, 1)) { // now + 1 day
-            errors.add("Date cannot be in the future")
-        }
-        // TODO P2-CURRENT-020: Make future-date tolerance configurable (e.g. via policy object).
-        // Currently uses a hardcoded 1-day tolerance. Some users may want
-        // stricter (reject any future date) or looser (allow scheduling weeks ahead).
-
-        // Transfer validation
-        if (request.transactionType == TransactionType.TRANSFER) {
-            if (request.transferDirection == null) {
-                errors.add("Transfer direction is required for TRANSFER transactions")
-            }
-            if (request.transferAccountName.isNullOrBlank()) {
-                errors.add("Transfer account name is required for TRANSFER transactions")
-            }
-        }
-
-        // Ownership conflict: can't be both isNotMine and isSharedExpense
-        if (request.isNotMine && request.isSharedExpense) {
-            errors.add("Cannot be both not-mine and shared")
-        }
-
-        // Location pair validation: both or neither must be set
-        if (request.latitude != null && request.longitude == null) {
-            errors.add("Latitude requires longitude")
-        }
-        if (request.longitude != null && request.latitude == null) {
-            errors.add("Longitude requires latitude")
-        }
-
-        return errors
+        return transactionValidator.validateCreate(request).map { it.message }
     }
 
     private fun expenseToSnapshot(e: Expense): String = expenseToSnapshot(e.id, e)
@@ -1874,7 +2181,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         request: CreateExpenseRequest,
         occurredAt: Long,
         duplicateExpenseId: Long?,
-        reason: String
+        reason: String,
+        correlationId: String
     ): Boolean {
         val sourceLinkPayloads = CreateExpenseSourceLinkMapper.fromRequest(request)
         val metadata = SourceLinkEventMetadataBuilder.duplicateMetadata(
@@ -1882,9 +2190,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
             attemptedExpense = expense,
             sourceLinkPayloads = sourceLinkPayloads
         )
-
-        // DDL-512-06: propagate correlationId so duplicate skips are traceable
-        val correlationId = request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
         return try {
             transactionEventDao.insert(
@@ -1939,9 +2244,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
     }
 
-    companion object {
-        private val CURRENCY_ISO_PATTERN = Regex("^[A-Z]{3}$")
-    }
 }
 
 /**

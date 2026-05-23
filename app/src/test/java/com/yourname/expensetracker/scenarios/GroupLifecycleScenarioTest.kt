@@ -95,9 +95,10 @@ class GroupLifecycleScenarioTest {
             mockk<TransactionSideEffectPlanner>(relaxed = true),
             mockk<PostCommitActionRunner>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
-            mockk<RestoreMaintenanceMode>(relaxed = true),
             mockk<DatabaseWriteBarrier>(relaxed = true),
             currencySettingsRepository,
+            mockk(relaxed = true),
+            mockk(relaxed = true),
             mockk(relaxed = true)
         )
 

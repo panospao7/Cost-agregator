@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycle
 import com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunnerImpl
+import com.yourname.expensetracker.domain.sideeffect.CompositeSideEffectEventWriter
 import com.yourname.expensetracker.domain.sideeffect.SideEffectEventWriter
 import com.yourname.expensetracker.domain.sideeffect.DiagnosticSideEffectEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
@@ -53,5 +54,5 @@ abstract class DiagnosticsModule {
     abstract fun bindPostCommitActionRunner(impl: PostCommitActionRunnerImpl): PostCommitActionRunner
 
     @Binds @Singleton
-    abstract fun bindSideEffectEventWriter(impl: DiagnosticSideEffectEventWriter): SideEffectEventWriter
+    abstract fun bindSideEffectEventWriter(impl: CompositeSideEffectEventWriter): SideEffectEventWriter
 }

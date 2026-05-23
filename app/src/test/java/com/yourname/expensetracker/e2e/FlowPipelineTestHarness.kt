@@ -128,7 +128,8 @@ internal fun buildPipeline(
         merchantCategoryRepository = merchantCategoryRepository,
         merchantNormalizer = merchantNormalizer,
         transferDirectionAnalytics = transferDirectionAnalytics,
-        transactionLifecycleCoordinator = transactionLifecycleCoordinator
+        transactionLifecycleCoordinator = transactionLifecycleCoordinator,
+        debugExpenseAuditWriter = mockk(relaxed = true)
     )
 
     val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository, currencyConverter = currencyConverter, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, multiCurrencyRepository = mockk(relaxed = true))

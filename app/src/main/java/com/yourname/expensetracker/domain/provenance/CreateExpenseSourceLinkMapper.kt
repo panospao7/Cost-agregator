@@ -162,7 +162,11 @@ object CreateExpenseSourceLinkMapper {
         }
 
         // If no specific source fields and no explicit sourceLinks, create a legacy backfill link
-        if (payloads.isEmpty()) {
+        // only when explicitly opted in via SourceLinkFallbackPolicy.LEGACY_BACKFILL_ONLY.
+        if (
+            payloads.isEmpty() &&
+            request.sourceLinkFallbackPolicy == SourceLinkFallbackPolicy.LEGACY_BACKFILL_ONLY
+        ) {
             payloads.add(
                 SourceLinkPayload(
                     sourceType = request.source.name,

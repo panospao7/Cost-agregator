@@ -224,7 +224,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             merchantCategoryRepository = merchantCategoryRepository,
             merchantNormalizer = merchantNormalizer,
             transferDirectionAnalytics = TransferDirectionAnalytics(),
-            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            debugExpenseAuditWriter = mockk(relaxed = true)
         )
 
         val recurringExpenseDao = mockk<ManualRecurringExpenseDao>(relaxed = true)

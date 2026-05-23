@@ -41,6 +41,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.transaction.lifecycle.DebugExpenseAuditWriter
 import javax.inject.Singleton
 
 
@@ -145,7 +146,8 @@ class ExpenseRepository @Inject constructor(
     private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer,
     private val transferDirectionAnalytics: TransferDirectionAnalytics,
-    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val debugExpenseAuditWriter: DebugExpenseAuditWriter
 ) {
     data class DebugExpenseSnapshot(
         val expenses: List<Expense>
@@ -672,30 +674,51 @@ class ExpenseRepository @Inject constructor(
     }
 
     suspend fun deleteAllExpenses() {
+        requireDebugExpenseOperation("deleteAllExpenses")
         writeBarrier.checkWritesAllowed("ExpenseRepository.deleteAllExpenses")
-        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
-            throw UnsupportedOperationException("deleteAllExpenses disabled in release")
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        database.withTransaction {
+            val affectedCount = expenseDao.countAllExpenses()
+            expenseDao.deleteAll()
+            debugExpenseAuditWriter.writeDeleteAllEvent(
+                affectedCount = affectedCount,
+                correlationId = correlationId
+            )
         }
-        expenseDao.deleteAll()
     }
 
     suspend fun createDebugSnapshot(): DebugExpenseSnapshot {
-        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
-            throw UnsupportedOperationException("Debug snapshots disabled in release")
-        }
-        return DebugExpenseSnapshot(expenses = expenseDao.getAllUncapped())
+        requireDebugExpenseOperation("createDebugSnapshot")
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        val snapshot = DebugExpenseSnapshot(expenses = expenseDao.getAllUncapped())
+        debugExpenseAuditWriter.emitSnapshotCreatedDiagnosticBestEffort(
+            snapshotCount = snapshot.expenses.size,
+            correlationId = correlationId
+        )
+        return snapshot
     }
 
     suspend fun restoreDebugSnapshot(snapshot: DebugExpenseSnapshot) {
+        requireDebugExpenseOperation("restoreDebugSnapshot")
         writeBarrier.checkWritesAllowed("ExpenseRepository.restoreDebugSnapshot")
-        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
-            throw UnsupportedOperationException("Debug snapshots disabled in release")
-        }
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
         database.withTransaction {
+            val beforeCount = expenseDao.countAllExpenses()
             expenseDao.deleteAll()
             if (snapshot.expenses.isNotEmpty()) {
                 expenseDao.insertAll(snapshot.expenses)
             }
+            debugExpenseAuditWriter.writeRestoreSnapshotEvent(
+                beforeCount = beforeCount,
+                restoredCount = snapshot.expenses.size,
+                correlationId = correlationId
+            )
+        }
+    }
+
+    private fun requireDebugExpenseOperation(operation: String) {
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            throw UnsupportedOperationException("$operation disabled in release")
         }
     }
     

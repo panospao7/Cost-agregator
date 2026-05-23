@@ -63,7 +63,8 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = TransferDirectionAnalytics(),
-            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            debugExpenseAuditWriter = mockk(relaxed = true)
         )
 
         val recurringExpenseRepository = RecurringExpenseRepository(

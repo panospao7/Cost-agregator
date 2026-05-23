@@ -121,7 +121,8 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
-            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            debugExpenseAuditWriter = mockk(relaxed = true)
         )
         val totalsEngine = TotalsAggregationEngine(repository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()

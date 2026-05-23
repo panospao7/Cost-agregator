@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.transaction
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.provenance.SourceLinkFallbackPolicy
 import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
 
 /**
@@ -122,5 +123,7 @@ data class CreateExpenseRequest(
     val skipDeduplication: Boolean = false,
     val idempotencyKey: String? = null,
     /** Optional correlation ID propagated from the triggering input (notification/bank/email). */
-    val correlationId: String? = null
+    val correlationId: String? = null,
+    /** Controls whether a legacy source-only fallback is created when no source fields present. */
+    val sourceLinkFallbackPolicy: SourceLinkFallbackPolicy = SourceLinkFallbackPolicy.NONE
 )

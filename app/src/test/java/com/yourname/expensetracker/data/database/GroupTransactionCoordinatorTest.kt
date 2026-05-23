@@ -119,9 +119,10 @@ class GroupTransactionCoordinatorTest {
             tlcPlanner,
             mockk<PostCommitActionRunner>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
-            restoreMode,
             tlcWriteBarrier,
             mockk<CurrencySettingsRepository>(relaxed = true),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
             mockk(relaxed = true)
         )
         coordinator = GroupTransactionCoordinator(
