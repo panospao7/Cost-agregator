@@ -163,6 +163,19 @@ class GroupTransactionCoordinator @Inject constructor(
         val postCommitActions: PostCommitActionBatch
     )
 
+    /**
+     * P2-NEW-10: Internal rollback signal for createSystemExpenseAndLinkToGroup.
+     * Must be thrown inside [database.withTransaction] after the system expense
+     * has already been created by the nested coordinator call. Throwing ensures
+     * Room rolls back the whole outer transaction (including the expense).
+     *
+     * If the method returned a normal [GroupExpenseCreationResult.Error] instead,
+     * Room would commit the outer transaction and leave an orphan system expense.
+     */
+    private class GroupExpenseAtomicRollback(
+        val publicResult: GroupExpenseCreationResult
+    ) : RuntimeException()
+
     private data class GroupDeleteTxOutcome(
         val success: Boolean,
         val postCommitActions: PostCommitActionBatch
@@ -557,6 +570,18 @@ class GroupTransactionCoordinator @Inject constructor(
                         correlationId = correlationId
                     )
 
+                // P2-NEW-12: Verify ownership update succeeded before committing group link
+                when (ownershipMutation.value) {
+                    is OwnershipUpdateResult.NotFound -> {
+                        throw GroupExpenseAtomicRollback(
+                            GroupExpenseCreationResult.Error("Ownership update failed: expense not found")
+                        )
+                    }
+                    is OwnershipUpdateResult.Updated, is OwnershipUpdateResult.NoOp -> {
+                        // Success or already in correct state — proceed
+                    }
+                }
+
                 GroupMutationTxOutcome(
                     result = GroupExpenseCreationResult.Success(
                         groupExpenseId = groupExpenseId,
@@ -798,11 +823,8 @@ class GroupTransactionCoordinator @Inject constructor(
                         val systemExpenseId = createResult.expenseId
 
                         if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {
-                            return@withTransaction GroupMutationTxOutcome(
-                                GroupExpenseCreationResult.Error(
-                                    LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
-                                ),
-                                PostCommitActionBatch.empty(correlationId)
+                            throw GroupExpenseAtomicRollback(
+                                GroupExpenseCreationResult.Error(LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE)
                             )
                         }
 
@@ -821,9 +843,8 @@ class GroupTransactionCoordinator @Inject constructor(
 
                         val groupExpenseId = groupExpenseDao.insert(groupExpense)
                         if (groupExpenseId <= 0) {
-                            return@withTransaction GroupMutationTxOutcome(
-                                GroupExpenseCreationResult.Error("Failed to create group expense link"),
-                                PostCommitActionBatch.empty(correlationId)
+                            throw GroupExpenseAtomicRollback(
+                                GroupExpenseCreationResult.Error("Failed to create group expense link")
                             )
                         }
 
@@ -871,11 +892,13 @@ class GroupTransactionCoordinator @Inject constructor(
             txOutcome.result
         } catch (e: CancellationException) {
             throw e
+        } catch (e: GroupExpenseAtomicRollback) {
+            e.publicResult
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to create group expense atomically: ${e.message}")
         }
     }
-    
+
     /**
      * Atomically insert a group expense record.
      *
