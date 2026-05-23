@@ -3,6 +3,8 @@ package com.yourname.expensetracker.di
 import android.content.Context
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.domain.notification.capture.NotificationTransientKeyProvider
+import com.yourname.expensetracker.domain.notification.capture.AndroidKeystoreNotificationTransientKeyProvider
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -32,5 +34,11 @@ object SecurityModule {
         // Keys must now be configured via runtime secure storage
         // Users should set keys through app settings or secure configuration
         return SecureKeyStorage(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideNotificationTransientKeyProvider(): NotificationTransientKeyProvider {
+        return AndroidKeystoreNotificationTransientKeyProvider()
     }
 }

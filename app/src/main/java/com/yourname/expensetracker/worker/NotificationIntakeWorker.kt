@@ -79,25 +79,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
         // Reload after claim
         val current = intakeDao.getById(intakeId) ?: return Result.failure()
 
-        // Run filter
-        if (!NotificationFilter.shouldCapture(
-                current.packageName,
-                current.title,
-                current.text,
-                current.bigText
-            )) {
-            intakeDao.markTerminal(
-                id = intakeId,
-                status = NotificationIntakeStatus.FILTER_REJECTED.name,
-                rawId = null, expenseId = null, reviewId = null,
-                finalOutcome = "FILTER_REJECTED",
-                nowMs = now
-            )
-            purgePayloadBestEffort(current, now)
-            return Result.success()
-        }
-
-        // Build RawNotification for processing
+        // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
+        // Previously filtered on null visible fields (broken for encrypted transient modes).
         val isRaw = current.rawStorageMode == "STORE_RAW"
         val processingTitle: String?
         val processingText: String?
@@ -138,6 +121,24 @@ class NotificationIntakeWorker @AssistedInject constructor(
             return Result.success()
         }
 
+        // Run filter on the processing payload (decrypted or raw)
+        if (!NotificationFilter.shouldCapture(
+                current.packageName,
+                processingTitle,
+                processingText,
+                processingBody
+            )) {
+            intakeDao.markTerminal(
+                id = intakeId,
+                status = NotificationIntakeStatus.FILTER_REJECTED.name,
+                rawId = null, expenseId = null, reviewId = null,
+                finalOutcome = "FILTER_REJECTED",
+                nowMs = now
+            )
+            purgePayloadBestEffort(current, now)
+            return Result.success()
+        }
+
         val processingNotification = RawNotification(
             packageName = current.packageName,
             appName = current.appName,
@@ -156,13 +157,26 @@ class NotificationIntakeWorker @AssistedInject constructor(
             rawStorageMode = current.rawStorageMode
         )
 
+        // PR 4: Build captured persistence context from intake row
+        val rawMode = try {
+            com.yourname.expensetracker.domain.privacy.RawStorageMode.valueOf(current.rawStorageMode)
+        } catch (e: IllegalArgumentException) {
+            com.yourname.expensetracker.domain.privacy.RawStorageMode.DO_NOT_STORE
+        }
+        val persistenceContext = com.yourname.expensetracker.domain.notification.NotificationPersistenceContext(
+            rawStorageMode = rawMode,
+            payloadMode = current.payloadMode,
+            source = current.source
+        )
+
         // Process through pipeline
         var terminalMarked = false
         return try {
             val outcome = repository.processAndSave(
                 processingNotification,
                 storageNotification,
-                correlationId = current.correlationId
+                correlationId = current.correlationId,
+                persistenceContext = persistenceContext
             )
 
             val terminalStatus = when (outcome) {
