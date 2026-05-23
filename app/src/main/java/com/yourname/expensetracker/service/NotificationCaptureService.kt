@@ -448,8 +448,9 @@ class NotificationCaptureService : NotificationListenerService() {
                 return@launch
             }
 
-            // Step 4: Filter
-            if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
+            // Step 4: Filter with structured decision
+            val filterDecision = NotificationFilter.decide(packageName, parts.title, parts.text, parts.combinedBody)
+            if (!filterDecision.capture) {
                 notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                     stage = "filter",
@@ -457,7 +458,10 @@ class NotificationCaptureService : NotificationListenerService() {
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.FILTER_REJECTED,
                     correlationId = correlationId,
                     metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .putHashed("packageName", packageName).build(),
+                        .putHashed("packageName", packageName)
+                        .put("filterReason", filterDecision.reason.name)
+                        .put("filterConfidence", filterDecision.confidence.toString())
+                        .build(),
                     isTerminal = true
                 ))
                 return@launch
@@ -761,9 +765,9 @@ class NotificationCaptureService : NotificationListenerService() {
         cancelRestartAlarm()
         diagnostics.recordServiceKilled()
         Timber.d("Service destroyed")
-        // Shutdown trades drain for fast foreground-service timeout compliance.
-        // Active notifications are recovered via refreshActiveNotifications().
-        // Durable intake is active — workers handle recovery.
+        // Durable intake is active via NotificationIntakeCoordinator + Worker.
+        // NonCancellable protects the insert+enqueue section. Remaining loss window
+        // is before the NonCancellable block (gate/extract/filter in serviceScope).
         // Cancel all in-flight work without blocking the main thread.
         // Previously used runBlocking { workTracker.stopAcceptingAndDrain() } which could
         // cause ForegroundServiceDidNotStopInTimeException by blocking the main thread

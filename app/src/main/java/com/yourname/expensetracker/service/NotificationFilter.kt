@@ -150,20 +150,67 @@ object NotificationFilter {
      * @param bigText Big text content (if any)
      */
     fun shouldCapture(packageName: String, title: String?, text: String?, bigText: String?): Boolean {
-        if (IGNORED_PACKAGES.contains(packageName)) return false
+        return decide(packageName, title, text, bigText).capture
+    }
+
+    /**
+     * Structured filter decision with reason, confidence, and direction.
+     *
+     * Returns a [NotificationFilterDecision] that includes why the notification
+     * was captured or rejected, enabling richer diagnostics and analytics.
+     *
+     * @param packageName App package that posted the notification
+     * @param title Notification title
+     * @param text Notification body text
+     * @param bigText Big text content (if any)
+     */
+    fun decide(packageName: String, title: String?, text: String?, bigText: String?): NotificationFilterDecision {
+        if (IGNORED_PACKAGES.contains(packageName)) {
+            return NotificationFilterDecision(
+                capture = false,
+                reason = NotificationFilterReason.IGNORED_PACKAGE,
+                confidence = 1.0f,
+                direction = TransactionDirection.UNKNOWN,
+                hasMoneySignal = false
+            )
+        }
+
+        val combined = listOfNotNull(title, text, bigText).joinToString(" ").lowercase()
+        val hasAmount = COMBINED_CURRENCY_REGEX.containsMatchIn(combined) ||
+            REGEX_AMOUNT.containsMatchIn(combined)
 
         // === Finance package path (P2-09) ===
         if (FINANCE_PACKAGES.contains(packageName)) {
-            val combined = listOfNotNull(title, text, bigText).joinToString(" ").lowercase()
-
             // Step 1: Hard-deny for security, promo, balance, account, FX, incoming
-            if (FINANCE_DENY_KEYWORDS.any { combined.contains(it) }) return false
-            if (DENY_KEYWORDS.any { combined.contains(it) }) return false
+            if (FINANCE_DENY_KEYWORDS.any { combined.contains(it) }) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.SECURITY_OR_AUTH,
+                    confidence = 1.0f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
+            if (DENY_KEYWORDS.any { combined.contains(it) }) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.SECURITY_OR_AUTH,
+                    confidence = 1.0f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
 
             // Step 2: Must have an amount/currency signal
-            val hasAmount = COMBINED_CURRENCY_REGEX.containsMatchIn(combined) ||
-                REGEX_AMOUNT.containsMatchIn(combined)
-            if (!hasAmount) return false
+            if (!hasAmount) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.NO_AMOUNT,
+                    confidence = 1.0f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = false
+                )
+            }
 
             // Step 3: Must have an expense signal or a review-worthy transaction signal.
             // Finance packages no longer pass solely because of currency amounts.
@@ -171,23 +218,66 @@ object NotificationFilter {
             val hasTransactionSignal = combined.contains("transaction") ||
                 combined.contains("transfer") || combined.contains("payment") ||
                 combined.contains("sent") || combined.contains("purchase")
-            if (!hasExpenseSignal && !hasTransactionSignal) return false
+            if (!hasExpenseSignal && !hasTransactionSignal) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.NO_TRANSACTION_SIGNAL,
+                    confidence = 1.0f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
 
-            return true
+            return NotificationFilterDecision(
+                capture = true,
+                reason = if (hasExpenseSignal) NotificationFilterReason.ALLOW_STRONG_EXPENSE
+                         else NotificationFilterReason.ALLOW_REVIEWABLE_FINANCIAL_SIGNAL,
+                confidence = 0.8f,
+                direction = TransactionDirection.UNKNOWN,
+                hasMoneySignal = hasAmount
+            )
         }
 
         // === Communication / unknown package path ===
-        val content = listOf(title, text, bigText)
-            .joinToString(separator = " ") { it.orEmpty() }
-            .lowercase()
-
         // PRV-2: Deny-keyword check for non-finance packages
-        if (DENY_KEYWORDS.any { content.contains(it) }) return false
+        if (DENY_KEYWORDS.any { combined.contains(it) }) {
+            return NotificationFilterDecision(
+                capture = false,
+                reason = NotificationFilterReason.SECURITY_OR_AUTH,
+                confidence = 1.0f,
+                direction = TransactionDirection.UNKNOWN,
+                hasMoneySignal = hasAmount
+            )
+        }
 
         // Communication apps and unknown packages require amount + financial keyword
-        val hasAmount = REGEX_CURRENCY.containsMatchIn(content) || REGEX_AMOUNT.containsMatchIn(content)
-        if (!hasAmount) return false
+        if (!hasAmount) {
+            return NotificationFilterDecision(
+                capture = false,
+                reason = NotificationFilterReason.NO_AMOUNT,
+                confidence = 1.0f,
+                direction = TransactionDirection.UNKNOWN,
+                hasMoneySignal = false
+            )
+        }
 
-        return FINANCIAL_KEYWORDS.any { content.contains(it) }
+        val hasFinancialKeyword = FINANCIAL_KEYWORDS.any { combined.contains(it) }
+        if (!hasFinancialKeyword) {
+            return NotificationFilterDecision(
+                capture = false,
+                reason = NotificationFilterReason.NO_TRANSACTION_SIGNAL,
+                confidence = 1.0f,
+                direction = TransactionDirection.UNKNOWN,
+                hasMoneySignal = hasAmount
+            )
+        }
+
+        return NotificationFilterDecision(
+            capture = true,
+            reason = NotificationFilterReason.ALLOW_REVIEWABLE_FINANCIAL_SIGNAL,
+            confidence = 0.8f,
+            direction = TransactionDirection.UNKNOWN,
+            hasMoneySignal = hasAmount
+        )
     }
 }

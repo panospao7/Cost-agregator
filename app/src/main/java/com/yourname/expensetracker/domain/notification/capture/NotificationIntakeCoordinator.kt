@@ -67,9 +67,15 @@ class NotificationIntakeCoordinator @Inject constructor(
             return null
         }
 
-        // PR 1 fix: Always store processing payload so the worker can parse.
-        // payloadMode indicates whether payload is raw (STORE_RAW) or transient
-        // (must be purged after terminal outcome for non-raw modes).
+        // P2-11: DO_NOT_STORE cannot use durable intake — plaintext payload would violate
+        // the user's raw-storage promise. These notifications are processed synchronously
+        // by the service caller with sanitized storage only.
+        if (rawStorageMode == RawStorageMode.DO_NOT_STORE) {
+            Timber.d("Intake: DO_NOT_STORE — skipping durable intake for $packageName")
+            return null
+        }
+
+        // STORE_RAW → raw payload retained | STORE_REDACTED/METADATA_ONLY → transient payload purged after processing
         val payloadMode = when (rawStorageMode) {
             RawStorageMode.STORE_RAW -> "RAW"
             else -> "TRANSIENT"
