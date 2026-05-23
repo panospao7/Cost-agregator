@@ -90,15 +90,18 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE id = :id")
     suspend fun getById(id: Long): Expense?
 
+    @RestrictedExpenseDaoMutation
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(expense: Expense): Long
 
+    @RestrictedExpenseDaoMutation
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAtomic(expense: Expense): Long
 
     /**
      * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
      */
+    @RestrictedExpenseDaoMutation
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(expenses: List<Expense>)
 
@@ -106,6 +109,7 @@ interface ExpenseDao {
      * Update an existing expense row matched by primary key.
      * All columns are replaced with the values in [expense].
      */
+    @RestrictedExpenseDaoMutation
     @Update
     suspend fun update(expense: Expense)
 
@@ -286,66 +290,86 @@ interface ExpenseDao {
     @Query("SELECT COUNT(*) FROM expenses")
     fun observeExpenseMutationClock(): Flow<Int>
 
+    @RestrictedExpenseDaoMutation
     @Query("DELETE FROM expenses")
     suspend fun deleteAll()
 
+    @RestrictedExpenseDaoMutation
     @Delete
     suspend fun delete(expense: Expense)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE id = :expenseId")
     suspend fun updateCategory(expenseId: Long, categoryId: Long)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE id = :expenseId")
     suspend fun updateCategoryNullable(expenseId: Long, categoryId: Long?)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchantKey = :merchantKey")
     suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: Long): Int
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
     suspend fun updateCategoryForCategory(oldCategoryId: Long, newCategoryId: Long): Int
 
     @Query("SELECT COUNT(*) FROM expenses")
     suspend fun countAllExpenses(): Int
 
+    @RestrictedExpenseDaoMutation
 @Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey, dedupeKey = NULL WHERE merchantKey = :oldMerchantKey")
 suspend fun updateMerchantForMerchant(oldMerchantKey: String, newMerchant: String, newMerchantKey: String)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET merchant = :merchant WHERE id = :expenseId")
     suspend fun updateMerchant(expenseId: Long, merchant: String)
 
+    @RestrictedExpenseDaoMutation
 @Query("UPDATE expenses SET merchant = :merchant, merchantKey = :merchantKey, dedupeKey = :dedupeKey WHERE id = :expenseId")
 suspend fun updateMerchantAndKey(expenseId: Long, merchant: String, merchantKey: String, dedupeKey: String)
 
+    @RestrictedExpenseDaoMutation
 @Query("UPDATE expenses SET transactionType = :type, dedupeKey = :dedupeKey WHERE id = :expenseId")
 suspend fun updateTransactionType(expenseId: Long, type: String, dedupeKey: String)
 
+    @RestrictedExpenseDaoMutation
 @Query("UPDATE expenses SET dedupeKey = :dedupeKey WHERE id = :expenseId")
 suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET transferDirection = :direction WHERE id = :expenseId")
     suspend fun updateTransferDirection(expenseId: Long, direction: String?)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET transferAccountName = :name WHERE id = :expenseId")
     suspend fun updateTransferAccountName(expenseId: Long, name: String?)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET isNotMine = :isNotMine WHERE id = :expenseId")
     suspend fun updateIsNotMine(expenseId: Long, isNotMine: Boolean)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET ownerName = :name WHERE id = :expenseId")
     suspend fun updateOwnerName(expenseId: Long, name: String?)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET isSharedExpense = :isShared WHERE id = :expenseId")
     suspend fun updateIsSharedExpense(expenseId: Long, isShared: Boolean)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET sharedWithName = :name WHERE id = :expenseId")
     suspend fun updateSharedWithName(expenseId: Long, name: String?)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET mySharePercentage = :percentage WHERE id = :expenseId")
     suspend fun updateMySharePercentage(expenseId: Long, percentage: Int?)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET myShareAmount = :amount WHERE id = :expenseId")
     suspend fun updateMyShareAmount(expenseId: Long, amount: Double?)
 
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET isSharedExpense = 0, myShareAmount = NULL, mySharePercentage = NULL, sharedWithName = NULL WHERE id = :expenseId")
     suspend fun clearSharedExpenseFlags(expenseId: Long)
 
@@ -1832,6 +1856,7 @@ AND LENGTH(:merchantKey) >= 8
      * Also resets [backfillAttempts] so that if the location is later cleared,
      * the backfill worker can retry from scratch.
      */
+    @RestrictedExpenseDaoMutation
     @Query("""
         UPDATE expenses
         SET latitude = :latitude,
@@ -1883,6 +1908,7 @@ AND LENGTH(:merchantKey) >= 8
 
     /** Clear all location fields for an expense (e.g. user removes a pin). 
      *  Also resets backfillAttempts so the backfill worker can retry this expense. */
+    @RestrictedExpenseDaoMutation
     @Query("""
         UPDATE expenses
         SET latitude = NULL,
@@ -2025,6 +2051,7 @@ AND LENGTH(:merchantKey) >= 8
     /**
      * Write the computed canonical key back for a single expense row.
      */
+    @RestrictedExpenseDaoMutation
     @Query("UPDATE expenses SET merchantKey = :merchantKey WHERE id = :expenseId")
     suspend fun updateMerchantKey(expenseId: Long, merchantKey: String)
 

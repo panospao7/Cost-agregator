@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.database
 import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
@@ -140,6 +141,7 @@ import javax.inject.Singleton
  *   and run after outer transaction commit via PostCommitActionRunner
  * - lifecycle event logging: each mutation writes a GroupLifecycleEvent to audit table
  */
+@OptIn(RestrictedExpenseDaoMutation::class)
 @Singleton
 class GroupTransactionCoordinator @Inject constructor(
     private val database: AppDatabase,

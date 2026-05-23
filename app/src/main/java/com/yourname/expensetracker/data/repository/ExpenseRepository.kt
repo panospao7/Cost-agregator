@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.dao.ExpenseDao.Companion.EFFECTIVE_AMOUNT_E_SQL
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
@@ -136,6 +137,7 @@ enum class OwnershipFilter {
  * for the full inventory and migration plan.
  * See docs/expense-mutation-inventory.md for the complete classified callsite inventory.
  */
+@OptIn(RestrictedExpenseDaoMutation::class)
 @Singleton
 class ExpenseRepository @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
