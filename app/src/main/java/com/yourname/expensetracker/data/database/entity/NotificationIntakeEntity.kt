@@ -59,6 +59,15 @@ data class NotificationIntakeEntity(
     /** When raw payload fields were purged (null = not purged). */
     val rawPayloadPurgedAt: Long? = null,
 
+    /** Encrypted transient processing payload (null = no encrypted payload). */
+    val transientPayloadCiphertext: String? = null,
+    /** Nonce/IV for the encrypted payload. */
+    val transientPayloadNonce: String? = null,
+    /** Version of the encryption scheme (for future key rotation). */
+    val transientPayloadVersion: Int? = null,
+    /** When the encrypted payload was purged. */
+    val transientPayloadPurgedAt: Long? = null,
+
     /** Current processing status (see NotificationIntakeStatus). */
     val status: String,
     /** Number of processing attempts so far. */

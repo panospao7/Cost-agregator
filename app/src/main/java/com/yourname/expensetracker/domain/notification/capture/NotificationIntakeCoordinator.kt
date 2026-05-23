@@ -25,7 +25,8 @@ class NotificationIntakeCoordinator @Inject constructor(
     private val intakeDao: NotificationIntakeDao,
     private val workManager: WorkManager,
     private val diagnostics: NotificationDiagnosticEmitter,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val crypto: NotificationTransientPayloadCrypto
 ) {
     suspend fun capture(
         packageName: String,
@@ -76,9 +77,21 @@ class NotificationIntakeCoordinator @Inject constructor(
         }
 
         // STORE_RAW → raw payload retained | STORE_REDACTED/METADATA_ONLY → transient payload purged after processing
-        val payloadMode = when (rawStorageMode) {
-            RawStorageMode.STORE_RAW -> "RAW"
-            else -> "TRANSIENT"
+        val isRaw = rawStorageMode == RawStorageMode.STORE_RAW
+        val payloadMode = if (isRaw) "RAW" else "TRANSIENT"
+
+        var ciphertext: String? = null
+        var nonce: String? = null
+        var version: Int? = null
+        if (!isRaw) {
+            val transientPayload = NotificationTransientPayload(
+                title = title, text = text, bigText = combinedBody,
+                subText = subText, extrasJson = extrasJson
+            )
+            val encrypted = crypto.encrypt(transientPayload)
+            ciphertext = encrypted.ciphertext
+            nonce = encrypted.nonce
+            version = encrypted.version
         }
 
         val now = timeProvider.now()
@@ -92,13 +105,15 @@ class NotificationIntakeCoordinator @Inject constructor(
             correlationId = correlationId,
             dedupeFingerprint = dedupeFingerprint,
             contentHash = combinedBody?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { "%02x".format(it) } },
-            // Always store payload for worker processing.
-            // Non-raw modes: worker purges after terminal outcome via purgeRawPayload().
-            title = title,
-            text = text,
-            bigText = combinedBody,
-            subText = subText,
-            extrasJson = extrasJson,
+            // Raw mode: store visible fields. Transient mode: store encrypted payload, null visible fields.
+            title = if (isRaw) title else null,
+            text = if (isRaw) text else null,
+            bigText = if (isRaw) combinedBody else null,
+            subText = if (isRaw) subText else null,
+            extrasJson = if (isRaw) extrasJson else null,
+            transientPayloadCiphertext = ciphertext,
+            transientPayloadNonce = nonce,
+            transientPayloadVersion = version,
             rawStorageMode = rawStorageMode.name,
             payloadMode = payloadMode,
             status = NotificationIntakeStatus.RECEIVED.name,

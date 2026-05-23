@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
+import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NotificationFilter
 import dagger.assisted.Assisted
@@ -28,7 +29,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
     private val rawDao: RawNotificationDao,
     private val repository: NotificationRepository,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val crypto: NotificationTransientPayloadCrypto
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -96,14 +98,54 @@ class NotificationIntakeWorker @AssistedInject constructor(
         }
 
         // Build RawNotification for processing
+        val isRaw = current.rawStorageMode == "STORE_RAW"
+        val processingTitle: String?
+        val processingText: String?
+        val processingBody: String?
+        val processingSubText: String?
+        val processingExtrasJson: String?
+
+        if (isRaw) {
+            processingTitle = current.title
+            processingText = current.text
+            processingBody = current.bigText
+            processingSubText = current.subText
+            processingExtrasJson = current.extrasJson
+        } else if (current.transientPayloadCiphertext != null
+            && current.transientPayloadNonce != null
+            && current.transientPayloadVersion != null
+        ) {
+            val payload = crypto.decrypt(
+                current.transientPayloadCiphertext,
+                current.transientPayloadNonce,
+                current.transientPayloadVersion
+            )
+            processingTitle = payload.title
+            processingText = payload.text
+            processingBody = payload.bigText
+            processingSubText = payload.subText
+            processingExtrasJson = payload.extrasJson
+        } else {
+            Timber.w("IntakeWorker: no payload available for intakeId=$intakeId")
+            intakeDao.markTerminal(
+                id = intakeId,
+                status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
+                rawId = null, expenseId = null, reviewId = null,
+                finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
+                nowMs = now
+            )
+            purgePayloadBestEffort(current, now)
+            return Result.success()
+        }
+
         val processingNotification = RawNotification(
             packageName = current.packageName,
             appName = current.appName,
-            title = current.title,
-            text = current.text,
-            bigText = current.bigText,
-            subText = current.subText,
-            extrasJson = current.extrasJson,
+            title = processingTitle,
+            text = processingText,
+            bigText = processingBody,
+            subText = processingSubText,
+            extrasJson = processingExtrasJson,
             timestamp = current.postTime,
             capturedAt = current.capturedAt,
             dedupeFingerprint = current.dedupeFingerprint
@@ -222,6 +264,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
         if (row.payloadMode != "TRANSIENT") return
         try {
             intakeDao.purgeRawPayload(row.id, now)
+            intakeDao.purgeTransientPayload(row.id, now)
         } catch (e: Exception) {
             Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=${row.id}")
         }

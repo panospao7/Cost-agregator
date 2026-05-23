@@ -109,4 +109,15 @@ interface NotificationIntakeDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM notification_intake WHERE dedupeFingerprint = :fingerprint)")
     suspend fun existsByFingerprint(fingerprint: String): Boolean
+
+    @Query("""
+        UPDATE notification_intake
+        SET transientPayloadCiphertext = NULL,
+            transientPayloadNonce = NULL,
+            transientPayloadVersion = NULL,
+            transientPayloadPurgedAt = :nowMs,
+            updatedAt = :nowMs
+        WHERE id = :id
+    """)
+    suspend fun purgeTransientPayload(id: Long, nowMs: Long): Int
 }
