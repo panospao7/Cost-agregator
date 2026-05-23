@@ -95,37 +95,6 @@ object NotificationFilter {
     )
 
     /**
-     * P2-09: Finance-specific deny keywords — notifications from finance apps
-     * matching these are rejected even if they contain currency amounts.
-     * This prevents balance-only, account-summary, FX-rate, and promotional
-     * finance notifications from being captured as expenses.
-     */
-    private val FINANCE_DENY_KEYWORDS: Set<String> = setOf(
-        // Balance / account info
-        "balance", "available balance", "account balance", "υπόλοιπο",
-        "υπολοιπο", "διαθέσιμο υπόλοιπο", "διαθέσιμο", "available",
-        // Account / statement
-        "statement", "monthly summary", "account summary", "λογαριασμός",
-        "λογαριασμο", "monthly statement", "e-statement",
-        // FX / currency rate
-        "exchange rate", "fx rate", "currency rate", "ισοτιμία", "ισοτιμια",
-        "rate changed", "buy rate", "sell rate",
-        // Incoming / credit (usually not an expense)
-        "incoming transfer", "received", "credited", "deposit",
-        "salary", "refund", "cashback", "εισερχόμενο", "κατάθεση",
-        "καταθεση", "μισθός", "μισθο",
-        // Security / auth
-        "security", "login", "logged in", "new device", "otp",
-        "verification", "authenticate",
-        // Promotional
-        "offer", "promo", "promotion", "reward", "discount",
-        "deal", "προσφορά", "προσφορα",
-        // Payment failed / declined
-        "declined", "failed", "unsuccessful", "απορρίφθηκε",
-        "αποτυχία", "αποτυχια", "ακυρώθηκε", "ακυρωθηκε"
-    )
-
-    /**
      * P2-09: Strong expense signals — these keywords indicate an actual
      * debit/purchase/expense transaction, not just any financial activity.
      */
@@ -179,19 +148,20 @@ object NotificationFilter {
         val hasAmount = COMBINED_CURRENCY_REGEX.containsMatchIn(combined) ||
             REGEX_AMOUNT.containsMatchIn(combined)
 
-        // === Finance package path (P2-09) ===
+        // === Finance package path (P2-09 / PR6) ===
         if (FINANCE_PACKAGES.contains(packageName)) {
-            // Step 1: Hard-deny for security, promo, balance, account, FX, incoming
-            if (FINANCE_DENY_KEYWORDS.any { combined.contains(it) }) {
-                return NotificationFilterDecision(
-                    capture = false,
-                    reason = NotificationFilterReason.SECURITY_OR_AUTH,
-                    confidence = 1.0f,
-                    direction = TransactionDirection.UNKNOWN,
-                    hasMoneySignal = hasAmount
-                )
-            }
-            if (DENY_KEYWORDS.any { combined.contains(it) }) {
+            // --- Specific deny checks (ordered by priority) ---
+
+            // 1. Security / auth deny
+            if (combined.contains("security") || combined.contains("login") ||
+                combined.contains("otp") || combined.contains("verification") ||
+                combined.contains("authenticate") || combined.contains("logged in") ||
+                combined.contains("new device") || combined.contains("2fa") ||
+                combined.contains("two-factor") || combined.contains("auth code") ||
+                combined.contains("password reset") || combined.contains("login attempt") ||
+                combined.contains("security code") || combined.contains("one-time") ||
+                combined.contains("κωδικός ασφαλείας") || combined.contains("κωδικ επαληθ") ||
+                combined.contains("συνδεση")) {
                 return NotificationFilterDecision(
                     capture = false,
                     reason = NotificationFilterReason.SECURITY_OR_AUTH,
@@ -201,7 +171,96 @@ object NotificationFilter {
                 )
             }
 
-            // Step 2: Must have an amount/currency signal
+            // 2. Promotion deny
+            if (combined.contains("offer") || combined.contains("promo") ||
+                combined.contains("promotion") || combined.contains("reward") ||
+                combined.contains("discount") || combined.contains("deal") ||
+                combined.contains("cashback") || combined.contains("προσφορά") ||
+                combined.contains("προσφορα")) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.PROMOTION,
+                    confidence = 1.0f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
+
+            // 3. Balance / account info deny
+            val isBalanceOnly = (combined.contains("balance") ||
+                combined.contains("υπόλοιπο") || combined.contains("υπολοιπο") ||
+                combined.contains("διαθέσιμο") || combined.contains("available")) &&
+                !combined.contains("paid") && !combined.contains("spent") &&
+                !combined.contains("purchase") && !combined.contains("charged") &&
+                !combined.contains("payment") && !combined.contains("debit") &&
+                !combined.contains("πληρωμ") && !combined.contains("αγορ") &&
+                !combined.contains("χρέωσ") && !combined.contains("χρεώ")
+            val isAccountInfo = combined.contains("statement") ||
+                combined.contains("monthly summary") || combined.contains("account summary") ||
+                combined.contains("λογαριασμός") || combined.contains("λογαριασμο") ||
+                combined.contains("e-statement")
+            if (isBalanceOnly) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.BALANCE_ONLY,
+                    confidence = 0.9f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
+            if (isAccountInfo) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.ACCOUNT_INFO_ONLY,
+                    confidence = 0.9f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
+
+            // 4. FX / currency rate deny
+            if (combined.contains("exchange rate") || combined.contains("fx rate") ||
+                combined.contains("currency rate") || combined.contains("ισοτιμία") ||
+                combined.contains("ισοτιμια") || combined.contains("rate changed") ||
+                combined.contains("buy rate") || combined.contains("sell rate")) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.CURRENCY_ONLY,
+                    confidence = 0.9f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
+
+            // 5. Incoming / credit deny
+            if (combined.contains("incoming") || combined.contains("credited") ||
+                combined.contains("salary") || combined.contains("εισερχόμενο") ||
+                combined.contains("μισθός") || combined.contains("μισθο") ||
+                combined.contains("deposit")) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.INCOMING_ONLY,
+                    confidence = 0.8f,
+                    direction = TransactionDirection.CREDIT,
+                    hasMoneySignal = hasAmount
+                )
+            }
+
+            // 6. Payment failed / declined deny
+            if (combined.contains("declined") || combined.contains("failed") ||
+                combined.contains("unsuccessful") || combined.contains("απορρίφθηκε") ||
+                combined.contains("αποτυχία") || combined.contains("αποτυχια") ||
+                combined.contains("ακυρώθηκε") || combined.contains("ακυρωθηκε")) {
+                return NotificationFilterDecision(
+                    capture = false,
+                    reason = NotificationFilterReason.PAYMENT_FAILED_OR_DECLINED,
+                    confidence = 1.0f,
+                    direction = TransactionDirection.UNKNOWN,
+                    hasMoneySignal = hasAmount
+                )
+            }
+
+            // 7. Must have an amount / currency signal
             if (!hasAmount) {
                 return NotificationFilterDecision(
                     capture = false,
@@ -212,27 +271,55 @@ object NotificationFilter {
                 )
             }
 
-            // Step 3: Must have an expense signal or a review-worthy transaction signal.
-            // Finance packages no longer pass solely because of currency amounts.
+            // --- Determine direction from content ---
+            val direction = when {
+                combined.contains("sent") || combined.contains("transfer") -> TransactionDirection.TRANSFER_OUT
+                combined.contains("received") || combined.contains("credited") -> TransactionDirection.TRANSFER_IN
+                combined.contains("paid") || combined.contains("purchase") || combined.contains("charged") -> TransactionDirection.DEBIT
+                combined.contains("deposit") || combined.contains("refund") -> TransactionDirection.CREDIT
+                else -> TransactionDirection.UNKNOWN
+            }
+
+            // 8. Must have an expense signal or a review-worthy transaction signal.
             val hasExpenseSignal = EXPENSE_SIGNAL_KEYWORDS.any { combined.contains(it) }
             val hasTransactionSignal = combined.contains("transaction") ||
                 combined.contains("transfer") || combined.contains("payment") ||
                 combined.contains("sent") || combined.contains("purchase")
-            if (!hasExpenseSignal && !hasTransactionSignal) {
+
+            if (hasExpenseSignal) {
                 return NotificationFilterDecision(
-                    capture = false,
-                    reason = NotificationFilterReason.NO_TRANSACTION_SIGNAL,
-                    confidence = 1.0f,
-                    direction = TransactionDirection.UNKNOWN,
-                    hasMoneySignal = hasAmount
+                    capture = true,
+                    reason = NotificationFilterReason.ALLOW_STRONG_EXPENSE,
+                    confidence = 0.8f,
+                    direction = direction,
+                    hasMoneySignal = true
                 )
             }
 
+            if (hasTransactionSignal) {
+                return if (combined.contains("transfer") || combined.contains("sent")) {
+                    NotificationFilterDecision(
+                        capture = true,
+                        reason = NotificationFilterReason.ALLOW_OUTGOING_TRANSFER,
+                        confidence = 0.7f,
+                        direction = direction,
+                        hasMoneySignal = true
+                    )
+                } else {
+                    NotificationFilterDecision(
+                        capture = true,
+                        reason = NotificationFilterReason.ALLOW_REVIEWABLE_FINANCIAL_SIGNAL,
+                        confidence = 0.7f,
+                        direction = direction,
+                        hasMoneySignal = true
+                    )
+                }
+            }
+
             return NotificationFilterDecision(
-                capture = true,
-                reason = if (hasExpenseSignal) NotificationFilterReason.ALLOW_STRONG_EXPENSE
-                         else NotificationFilterReason.ALLOW_REVIEWABLE_FINANCIAL_SIGNAL,
-                confidence = 0.8f,
+                capture = false,
+                reason = NotificationFilterReason.NO_TRANSACTION_SIGNAL,
+                confidence = 1.0f,
                 direction = TransactionDirection.UNKNOWN,
                 hasMoneySignal = hasAmount
             )

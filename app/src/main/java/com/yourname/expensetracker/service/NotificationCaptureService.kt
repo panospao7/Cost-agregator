@@ -341,7 +341,7 @@ class NotificationCaptureService : NotificationListenerService() {
         // DDL-512-14: build RECEIVED event once and use in ordered helper
         val receivedEvent = com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
             pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-            stage = "listener",
+            stage = if (source == CaptureSource.REFRESH) "refresh" else "listener",
             outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
             correlationId = correlationId,
             sourceType = "notification",
@@ -349,6 +349,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 .putHashed("packageName", packageName)
                 .putHashed("notificationKey", notificationKey)
                 .put("postTime", sbn.postTime)
+                .put("captureSource", source.name)
                 .build()
         )
 
@@ -356,7 +357,7 @@ class NotificationCaptureService : NotificationListenerService() {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
             emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "listener",
+                stage = if (source == CaptureSource.REFRESH) "refresh" else "listener",
                 outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.BLOCKED,
                 reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.RESTORE_BLOCKED,
                 correlationId = correlationId,
@@ -370,7 +371,7 @@ class NotificationCaptureService : NotificationListenerService() {
         if (isShuttingDown) {
             emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                stage = "listener",
+                stage = if (source == CaptureSource.REFRESH) "refresh" else "listener",
                 outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
                 reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
                 correlationId = correlationId,
@@ -511,7 +512,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     null
                 }
 
-                val notificationKeyHash = notificationKey.hashCode().toString(36)
+                val notificationKeyHash = sha256(notificationKey).take(32)
                 val captureResult = withContext(NonCancellable) {
                     intakeCoordinator.capture(
                         packageName = packageName,
@@ -778,8 +779,9 @@ class NotificationCaptureService : NotificationListenerService() {
         diagnostics.recordServiceKilled()
         Timber.d("Service destroyed")
         // Durable intake is active via NotificationIntakeCoordinator + Worker.
-        // NonCancellable protects the insert+enqueue section. Remaining loss window
-        // is before the NonCancellable block (gate/extract/filter in serviceScope).
+        // withContext(NonCancellable) protects the insert+enqueue section.
+        // Intake is still inserted after gate/extract/filter in serviceScope,
+        // so P1-P1-07 full durability requires app-scope handoff (future PR).
         // Cancel all in-flight work without blocking the main thread.
         // Previously used runBlocking { workTracker.stopAcceptingAndDrain() } which could
         // cause ForegroundServiceDidNotStopInTimeException by blocking the main thread
