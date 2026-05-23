@@ -36,14 +36,14 @@ class SourceLinkWriterImpl @Inject constructor(
     ): SourceLinkWriteResult {
         // Validate
         if (payload.sourceIdentityKey().isBlank()) {
-            return SourceLinkWriteResult.Rejected("sourceIdentityKey is required")
+            return SourceLinkWriteResult.Failed("IllegalArgumentException", null, false)
         }
 
         val identityKey = payload.sourceIdentityKey()
 
         // Check if already exists
         if (sourceLinkDao.exists(targetType.name, targetId, identityKey)) {
-            return SourceLinkWriteResult.AlreadyExists
+            return SourceLinkWriteResult.AlreadyExists(null)
         }
 
         // Hash external IDs
@@ -84,9 +84,9 @@ class SourceLinkWriterImpl @Inject constructor(
 
         val insertedId = sourceLinkDao.insert(link)
         return if (insertedId > 0) {
-            SourceLinkWriteResult.Inserted(insertedId)
+            SourceLinkWriteResult.Created(insertedId)
         } else {
-            SourceLinkWriteResult.AlreadyExists
+            SourceLinkWriteResult.AlreadyExists(null)
         }
     }
 

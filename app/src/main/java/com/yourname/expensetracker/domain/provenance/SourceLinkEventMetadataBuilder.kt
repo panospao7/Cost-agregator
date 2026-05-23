@@ -154,9 +154,9 @@ object SourceLinkEventMetadataBuilder {
         return JSONArray().apply {
             results.forEach { r ->
                 put(when (r) {
-                    is SourceLinkWriteResult.Inserted -> "Inserted(id=${r.id})"
-                    SourceLinkWriteResult.AlreadyExists -> "AlreadyExists"
-                    is SourceLinkWriteResult.Rejected -> "Rejected(reason=${r.reason})"
+                    is SourceLinkWriteResult.Created -> "Created(id=${r.sourceLinkId})"
+                    is SourceLinkWriteResult.AlreadyExists -> "AlreadyExists(id=${r.sourceLinkId})"
+                    is SourceLinkWriteResult.Failed -> "Failed(class=${r.errorClass})"
                 })
             }
         }

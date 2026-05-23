@@ -53,11 +53,4 @@ data class ExpenseSourceFields(
     val importRowNumber: Int? = null
 )
 
-/**
- * CURR-SL-01: Result of a source-link write attempt.
- */
-sealed interface SourceLinkWriteResult {
-    data class Inserted(val id: Long) : SourceLinkWriteResult
-    data object AlreadyExists : SourceLinkWriteResult
-    data class Rejected(val reason: String) : SourceLinkWriteResult
-}
+// SourceLinkWriteResult is now defined in SourceLinkWriteResult.kt

@@ -56,16 +56,16 @@ class PendingReviewSourceLinkServiceImpl @Inject constructor(
                 correlationId = correlationId
             )
             when (result) {
-                is SourceLinkWriteResult.Inserted -> {
+                is SourceLinkWriteResult.Created -> {
                     inserted++
                 }
                 is SourceLinkWriteResult.AlreadyExists -> {
                     alreadyExists++
                 }
-                is SourceLinkWriteResult.Rejected -> {
+                is SourceLinkWriteResult.Failed -> {
                     failed++
-                    failures.add("Source link rejected: ${result.reason}")
-                    Timber.w("Source link rejected for pending review reviewId=%d: %s", reviewId, result.reason)
+                    failures.add("Source link failed: ${result.errorClass}")
+                    Timber.w("Source link failed for pending review reviewId=%d: %s", reviewId, result.errorClass)
                 }
             }
         }

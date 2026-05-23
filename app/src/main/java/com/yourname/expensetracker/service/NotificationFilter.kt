@@ -3,6 +3,11 @@ package com.yourname.expensetracker.service
 /**
  * Pure filter logic for deciding whether a notification should be captured.
  * Extracted for unit testing without Android/StatusBarNotification dependencies.
+ *
+ * ## P2-09: Finance filter v2
+ * Finance packages no longer pass solely because of currency amounts.
+ * Balance-only, account-info, FX-rate, security, and promotional notifications
+ * are explicitly rejected even if they contain currency-looking text.
  */
 object NotificationFilter {
 
@@ -58,7 +63,7 @@ object NotificationFilter {
     private val COMBINED_CURRENCY_REGEX = REGEX_CURRENCY
     private val REGEX_AMOUNT = Regex("""\d+[.,]\d{2}""")
 
-	val FINANCIAL_KEYWORDS = setOf(
+    val FINANCIAL_KEYWORDS = setOf(
         // English
         "paid", "spent", "purchase", "charged", "payment", "transaction", "amount",
         "card", "debit", "credit", "bank", "wallet", "deposit", "withdrawal", "transfer",
@@ -73,7 +78,7 @@ object NotificationFilter {
     /**
      * Deny-keyword list — notifications whose content (title, text, or bigText)
      * contains any of these words/phrases will be skipped even if they otherwise
-     * match financial heuristics. Customizable by the user at runtime.
+     * match financial heuristics.
      *
      * PRV-2: Added to prevent accidental capture of sensitive non-financial
      * notifications (e.g. two-factor auth codes, password resets, promotional
@@ -90,10 +95,54 @@ object NotificationFilter {
     )
 
     /**
+     * P2-09: Finance-specific deny keywords — notifications from finance apps
+     * matching these are rejected even if they contain currency amounts.
+     * This prevents balance-only, account-summary, FX-rate, and promotional
+     * finance notifications from being captured as expenses.
+     */
+    private val FINANCE_DENY_KEYWORDS: Set<String> = setOf(
+        // Balance / account info
+        "balance", "available balance", "account balance", "υπόλοιπο",
+        "υπολοιπο", "διαθέσιμο υπόλοιπο", "διαθέσιμο", "available",
+        // Account / statement
+        "statement", "monthly summary", "account summary", "λογαριασμός",
+        "λογαριασμο", "monthly statement", "e-statement",
+        // FX / currency rate
+        "exchange rate", "fx rate", "currency rate", "ισοτιμία", "ισοτιμια",
+        "rate changed", "buy rate", "sell rate",
+        // Incoming / credit (usually not an expense)
+        "incoming transfer", "received", "credited", "deposit",
+        "salary", "refund", "cashback", "εισερχόμενο", "κατάθεση",
+        "καταθεση", "μισθός", "μισθο",
+        // Security / auth
+        "security", "login", "logged in", "new device", "otp",
+        "verification", "authenticate",
+        // Promotional
+        "offer", "promo", "promotion", "reward", "discount",
+        "deal", "προσφορά", "προσφορα",
+        // Payment failed / declined
+        "declined", "failed", "unsuccessful", "απορρίφθηκε",
+        "αποτυχία", "αποτυχια", "ακυρώθηκε", "ακυρωθηκε"
+    )
+
+    /**
+     * P2-09: Strong expense signals — these keywords indicate an actual
+     * debit/purchase/expense transaction, not just any financial activity.
+     */
+    private val EXPENSE_SIGNAL_KEYWORDS: Set<String> = setOf(
+        "paid", "spent", "purchase", "purchased", "charged", "card payment",
+        "pos", "contactless", "debit", "withdrawn", "withdrawal", "payment",
+        "πληρωμή", "πληρωμη", "αγορά", "αγορα", "χρέωση", "χρεωση",
+        "κάρτα", "καρτα", "αναληψη", "ανάληψη", "ανάληψ"
+    )
+
+    /**
      * Returns true if the notification should be captured for expense tracking.
      *
-     * PRV-2: Added deny-keyword check before heuristic matching. Any keyword
-     * match in title/text/bigText causes the notification to be skipped.
+     * P2-09: For finance packages, requires an actual expense signal or
+     * review-worthy transaction signal — not just any currency amount.
+     * Balance-only, account-info, FX-rate, security, and promotional
+     * notifications from finance apps are rejected.
      *
      * @param packageName App package that posted the notification
      * @param title Notification title
@@ -103,29 +152,39 @@ object NotificationFilter {
     fun shouldCapture(packageName: String, title: String?, text: String?, bigText: String?): Boolean {
         if (IGNORED_PACKAGES.contains(packageName)) return false
 
-        // Hard-deny for clearly non-transactional finance notifications
+        // === Finance package path (P2-09) ===
         if (FINANCE_PACKAGES.contains(packageName)) {
             val combined = listOfNotNull(title, text, bigText).joinToString(" ").lowercase()
-            val hasTransactionSignal = combined.contains("transaction") || combined.contains("payment") ||
-                combined.contains("purchase") || combined.contains("transfer") || COMBINED_CURRENCY_REGEX.containsMatchIn(combined)
-            if (!hasTransactionSignal) {
-                return false // deny: security/promo/2FA notification
-            }
-            // Even with transaction signal, deny if content matches hard-deny keywords (2FA, verification codes)
+
+            // Step 1: Hard-deny for security, promo, balance, account, FX, incoming
+            if (FINANCE_DENY_KEYWORDS.any { combined.contains(it) }) return false
             if (DENY_KEYWORDS.any { combined.contains(it) }) return false
-            return true // allow: transaction-like notification
+
+            // Step 2: Must have an amount/currency signal
+            val hasAmount = COMBINED_CURRENCY_REGEX.containsMatchIn(combined) ||
+                REGEX_AMOUNT.containsMatchIn(combined)
+            if (!hasAmount) return false
+
+            // Step 3: Must have an expense signal or a review-worthy transaction signal.
+            // Finance packages no longer pass solely because of currency amounts.
+            val hasExpenseSignal = EXPENSE_SIGNAL_KEYWORDS.any { combined.contains(it) }
+            val hasTransactionSignal = combined.contains("transaction") ||
+                combined.contains("transfer") || combined.contains("payment") ||
+                combined.contains("sent") || combined.contains("purchase")
+            if (!hasExpenseSignal && !hasTransactionSignal) return false
+
+            return true
         }
 
+        // === Communication / unknown package path ===
         val content = listOf(title, text, bigText)
             .joinToString(separator = " ") { it.orEmpty() }
             .lowercase()
 
-        // PRV-2: Deny-keyword check for non-finance packages (communication +
-        // unknown) — prevents 2FA codes and promos from being captured.
+        // PRV-2: Deny-keyword check for non-finance packages
         if (DENY_KEYWORDS.any { content.contains(it) }) return false
 
-        // Communication apps (Gmail, Viber, SMS) and unknown packages both go
-        // through the same heuristic gate: require amount + financial keyword.
+        // Communication apps and unknown packages require amount + financial keyword
         val hasAmount = REGEX_CURRENCY.containsMatchIn(content) || REGEX_AMOUNT.containsMatchIn(content)
         if (!hasAmount) return false
 

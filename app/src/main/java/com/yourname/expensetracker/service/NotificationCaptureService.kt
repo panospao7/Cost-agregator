@@ -179,15 +179,8 @@ class NotificationCaptureService : NotificationListenerService() {
 
     // PR3: Fast caches removed — unified NotificationCaptureGate handles pre-extraction checks
     
-    // Thread-safe, bounded deduplication cache (INS-005)
-    private val processedNotifications = java.util.Collections.synchronizedMap(
-        object : LinkedHashMap<String, Long>(100, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
-                return size > 500 // Limit to 500 entries
-            }
-        }
-    )
-    private val processCount = java.util.concurrent.atomic.AtomicInteger(0)
+    @Inject
+    lateinit var deduper: com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDeduper
 
     companion object {
         private const val TAG = "NotificationCapture"
@@ -196,8 +189,6 @@ class NotificationCaptureService : NotificationListenerService() {
         private const val FOREGROUND_ID = 1001
         private const val CHANNEL_ID = "expense_tracker_service"
         private const val DEDUP_WINDOW_MS = 5000L
-        private const val CACHE_CLEANUP_THRESHOLD = 50
-        private const val CACHE_MAX_AGE_MS = 60_000L
         private const val SHUTDOWN_DRAIN_TIMEOUT_MS = 2_000L
         private const val RESTART_INTERVAL_MS = 900_000L // Restart no more than every 15 minutes
         
@@ -435,20 +426,11 @@ class NotificationCaptureService : NotificationListenerService() {
             val extras = sbn.notification.extras
             val parts = NotificationTextParts.extract(extras)
 
-            // Step 3: Content-aware atomic dedupe with SHA-256 fingerprint
+            // Step 3: Content-aware atomic dedupe via NotificationCaptureDeduper
             val now = timeProvider.now()
             val contentFingerprint = computeNotificationContentFingerprint(parts.combinedBody)
             val dedupeKey = computeDedupeKey(packageName, notificationKey, sbn.postTime, contentFingerprint)
-            val isDuplicate = synchronized(processedNotifications) {
-                val last = processedNotifications[dedupeKey]
-                if (last != null && (now - last) < DEDUP_WINDOW_MS) {
-                    true
-                } else {
-                    processedNotifications[dedupeKey] = now
-                    false
-                }
-            }
-            if (isDuplicate) {
+            if (deduper.tryStart(dedupeKey, DEDUP_WINDOW_MS)) {
                 notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                     stage = "dedupe",
@@ -463,7 +445,6 @@ class NotificationCaptureService : NotificationListenerService() {
                 ))
                 return@launch
             }
-            cleanupCacheIfNeeded()
 
             // Step 4: Filter
             if (!NotificationFilter.shouldCapture(packageName, parts.title, parts.text, parts.combinedBody)) {
@@ -547,9 +528,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     // Keep dedupe key — the async worker handles processing
                 } else {
                     // Duplicate detected by coordinator — remove dedupe key
-                    synchronized(processedNotifications) {
-                        processedNotifications.remove(dedupeKey)
-                    }
+                    deduper.remove(dedupeKey)
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to capture notification via coordinator from $packageName")
@@ -568,21 +547,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     isTerminal = true
                 ))
                 // Remove dedupe key on error so notification can be re-processed
-                synchronized(processedNotifications) {
-                    processedNotifications.remove(dedupeKey)
-                }
-            }
-        }
-    }
-    
-    private fun cleanupCacheIfNeeded() {
-        if (processCount.incrementAndGet() >= CACHE_CLEANUP_THRESHOLD) {
-            processCount.set(0)
-            val now = timeProvider.now()
-            synchronized(processedNotifications) {
-                processedNotifications.entries.removeIf { 
-                    now - it.value > CACHE_MAX_AGE_MS 
-                }
+                deduper.remove(dedupeKey)
             }
         }
     }

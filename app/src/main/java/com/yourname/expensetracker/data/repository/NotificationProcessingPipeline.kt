@@ -66,6 +66,7 @@ import kotlin.math.abs
 import javax.inject.Inject
 import com.yourname.expensetracker.domain.notification.RawNotificationInsertResult
 import com.yourname.expensetracker.domain.notification.DuplicateBasis
+import com.yourname.expensetracker.domain.provenance.SourceLinkWriteResult
 import javax.inject.Singleton
 
 /**
@@ -146,6 +147,8 @@ class NotificationProcessingPipeline @Inject constructor(
     private val timeProvider: TimeProvider,
     private val directionDetector: TransferDirectionDetector,
     private val analytics: TransferDirectionAnalytics,
+    // P1-NEW-16: No longer used. GPS enrichment removed from notification pipeline.
+    // Kept to avoid breaking test constructors. Remove in next cleanup pass.
     private val locationProvider: ForegroundLocationProvider,
     private val aiSettingsRepository: AiSettingsRepository,
     private val generateTransactionInsightUseCase: GenerateTransactionInsightUseCase,
@@ -579,16 +582,17 @@ class NotificationProcessingPipeline @Inject constructor(
     }
 
     /**
-     * PR5: Writes a dedupe source link for a notification that was identified as a duplicate.
+     * PR5 + P1-NEW-18: Writes a dedupe source link for a notification that was identified as a duplicate.
      * The link targets the notification itself, with metadata describing the match type.
+     * Returns a typed [SourceLinkWriteResult] instead of silently swallowing errors.
      */
     private suspend fun writeNotificationDedupeSourceLink(
         rawId: Long,
         matchType: String,
         correlationId: String?,
         confidence: Double? = null
-    ) {
-        try {
+    ): SourceLinkWriteResult {
+        return try {
             val payload = NotificationSourceLinkPayloadFactory.forDedupeMatch(
                 sourceNotificationId = rawId,
                 matchedNotificationId = rawId,
@@ -603,7 +607,7 @@ class NotificationProcessingPipeline @Inject constructor(
             )
         } catch (t: Throwable) {
             Timber.w(t, "Failed to write notification dedupe source link: rawId=%d matchType=%s", rawId, matchType)
-            // NEW-18: emit SOURCE_LINK_FAILED diagnostic instead of silently swallowing
+            // P1-NEW-18: emit SOURCE_LINK_FAILED diagnostic instead of silently swallowing
             diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                 stage = "source_link",
@@ -617,6 +621,11 @@ class NotificationProcessingPipeline @Inject constructor(
                     .build(),
                 isTerminal = false
             ))
+            SourceLinkWriteResult.Failed(
+                errorClass = t.javaClass.name,
+                errorMessageHash = t.message?.let { Integer.toHexString(it.hashCode()) },
+                retryable = true
+            )
         }
     }
 

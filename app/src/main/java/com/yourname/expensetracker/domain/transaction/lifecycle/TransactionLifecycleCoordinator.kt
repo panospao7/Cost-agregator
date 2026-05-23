@@ -427,8 +427,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 for (payload in sourceLinkPayloads) {
                     val result = sourceLinkWriter.linkExpense(id, payload, correlationId)
                     linkResults.add(result)
-                    if (result is SourceLinkWriteResult.Rejected) {
-                        throw SourceLinkWriteException("Source link rejected: ${result.reason}")
+                    if (result is SourceLinkWriteResult.Failed) {
+                        throw SourceLinkWriteException("Source link failed: ${result.errorClass}")
                     }
                 }
                 // Write SOURCE_LINKED event

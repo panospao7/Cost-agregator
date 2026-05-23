@@ -61,12 +61,12 @@ class PendingReviewSourceLinkPromoterImpl @Inject constructor(
                 correlationId = correlationId
             )
             when (result) {
-                is SourceLinkWriteResult.Inserted -> inserted++
+                is SourceLinkWriteResult.Created -> inserted++
                 is SourceLinkWriteResult.AlreadyExists -> alreadyExists++
-                is SourceLinkWriteResult.Rejected -> {
+                is SourceLinkWriteResult.Failed -> {
                     failed++
-                    failures.add("Promotion rejected for link ${link.id}: ${result.reason}")
-                    Timber.w("Source link promotion rejected for linkId=%d: %s", link.id, result.reason)
+                    failures.add("Promotion failed for link ${link.id}: ${result.errorClass}")
+                    Timber.w("Source link promotion failed for linkId=%d: %s", link.id, result.errorClass)
                 }
             }
         }
@@ -89,12 +89,12 @@ class PendingReviewSourceLinkPromoterImpl @Inject constructor(
             correlationId = correlationId
         )
         when (approvedResult) {
-            is SourceLinkWriteResult.Inserted -> inserted++
+            is SourceLinkWriteResult.Created -> inserted++
             is SourceLinkWriteResult.AlreadyExists -> alreadyExists++
-            is SourceLinkWriteResult.Rejected -> {
+            is SourceLinkWriteResult.Failed -> {
                 failed++
-                failures.add("APPROVED_FROM link rejected: ${approvedResult.reason}")
-                Timber.w("APPROVED_FROM link rejected for expenseId=%d: %s", expenseId, approvedResult.reason)
+                failures.add("APPROVED_FROM link failed: ${approvedResult.errorClass}")
+                Timber.w("APPROVED_FROM link failed for expenseId=%d: %s", expenseId, approvedResult.errorClass)
             }
         }
 

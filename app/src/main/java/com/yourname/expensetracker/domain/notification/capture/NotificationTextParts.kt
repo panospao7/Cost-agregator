@@ -71,7 +71,7 @@ data class NotificationTextParts(
                                     item.getString("text")
                                         ?: item.getCharSequence("text")?.toString()
                                 }
-                                else -> item?.toString()?.takeIf { it.isNotBlank() }
+                                else -> null // P1-NEW-16: avoid object dumps polluting parser body
                             }
                         }
                         ?: emptyList()
