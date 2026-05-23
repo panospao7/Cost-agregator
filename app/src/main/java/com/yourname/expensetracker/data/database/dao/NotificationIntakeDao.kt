@@ -107,6 +107,37 @@ interface NotificationIntakeDao {
     """)
     suspend fun purgeRawPayload(id: Long, nowMs: Long): Int
 
+    @Query("""
+        SELECT * FROM notification_intake
+        WHERE payloadMode = 'TRANSIENT'
+          AND transientPayloadCiphertext IS NULL
+          AND rawPayloadPurgedAt IS NULL
+        LIMIT :limit
+    """)
+    suspend fun getLegacyPlaintextTransientRows(limit: Int = 100): List<NotificationIntakeEntity>
+
+    @Query("""
+        UPDATE notification_intake
+        SET title = NULL, text = NULL, bigText = NULL,
+            subText = NULL, extrasJson = NULL,
+            rawPayloadPurgedAt = :nowMs, updatedAt = :nowMs
+        WHERE id = :id
+    """)
+    suspend fun purgeVisiblePayload(id: Long, nowMs: Long): Int
+
+    @Query("""
+        UPDATE notification_intake
+        SET transientPayloadCiphertext = :ciphertext,
+            transientPayloadNonce = :nonce,
+            transientPayloadVersion = :version,
+            title = NULL, text = NULL, bigText = NULL,
+            subText = NULL, extrasJson = NULL, updatedAt = :nowMs
+        WHERE id = :id
+    """)
+    suspend fun encryptAndClearVisiblePayload(
+        id: Long, ciphertext: String, nonce: String, version: Int, nowMs: Long
+    ): Int
+
     @Query("SELECT EXISTS(SELECT 1 FROM notification_intake WHERE dedupeFingerprint = :fingerprint)")
     suspend fun existsByFingerprint(fingerprint: String): Boolean
 

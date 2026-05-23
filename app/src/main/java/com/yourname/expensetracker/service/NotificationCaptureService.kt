@@ -41,6 +41,7 @@ import javax.inject.Inject
 import com.yourname.expensetracker.domain.notification.capture.CaptureSource
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCaptureResult
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator
+import com.yourname.expensetracker.domain.notification.capture.NotificationIntakePayloadRepairer
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler
 import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
@@ -163,6 +164,9 @@ class NotificationCaptureService : NotificationListenerService() {
     @Inject
     lateinit var intakeRecoveryScheduler: NotificationIntakeRecoveryScheduler
 
+    @Inject
+    lateinit var intakePayloadRepairer: NotificationIntakePayloadRepairer
+
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     private val workTracker = NotificationServiceWorkTracker()
@@ -279,6 +283,8 @@ class NotificationCaptureService : NotificationListenerService() {
         // Recover any stale/pending intake rows
         serviceScope.launch {
             intakeRecoveryScheduler.recoverPending()
+            // PR 3: Repair legacy plaintext transient rows
+            intakePayloadRepairer.repairLegacyPlaintextTransientRows()
         }
     }
     

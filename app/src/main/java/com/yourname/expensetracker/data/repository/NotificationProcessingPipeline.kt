@@ -162,6 +162,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val userCurrencyProvider: UserCurrencyProvider,
+    private val moneySignalDetector: com.yourname.expensetracker.domain.notification.money.NotificationMoneySignalDetector,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     private val processMutex = Mutex()
@@ -280,11 +281,13 @@ class NotificationProcessingPipeline @Inject constructor(
 
         if (parsed == null) {
             Timber.d("Pipeline outcome: PARSER_FAILED for package=%s", notification.packageName)
+            val fullText = listOfNotNull(notification.title, notification.text, notification.bigText).joinToString(" ").trim()
+            val homeCurrency = userCurrencyProvider.getHomeCurrency()
             val oversizedCandidate = detectOversizedAmountCandidate(
                 title = notification.title,
                 text = notification.text,
                 bigText = notification.bigText,
-                defaultCurrency = userCurrencyProvider.getHomeCurrency() ?: "EUR"
+                defaultCurrency = resolveCurrency(fullText, homeCurrency)
             )
 
             // Phase 2: DB transaction (DB-only mutations)
@@ -386,7 +389,7 @@ class NotificationProcessingPipeline @Inject constructor(
                         title = notification.title,
                         text = notification.text,
                         bigText = notification.bigText,
-                        defaultCurrency = userCurrencyProvider.getHomeCurrency() ?: "EUR"
+                        defaultCurrency = resolveCurrency(fullText, homeCurrency)
                     )
 
                     if (transactionSignalCandidate != null) {
@@ -763,6 +766,17 @@ class NotificationProcessingPipeline @Inject constructor(
      * promote these sentinel values into real expenses without explicit user
      * overrides.
      */
+
+    /**
+     * Resolve the best-guess currency from notification text using the money signal detector.
+     * Falls back to home currency or "EUR" only when no signal is detected.
+     */
+    private suspend fun resolveCurrency(fullText: String, homeCurrency: String?): String {
+        if (fullText.isBlank()) return homeCurrency ?: "EUR"
+        val signal = moneySignalDetector.bestTransactionAmount(fullText, homeCurrency)
+        return signal?.currencyCode ?: homeCurrency ?: "EUR"
+    }
+
     internal companion object {
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
         private const val RECOMMENDATION_JOB_TIMEOUT_MS = 3_000L
