@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
+import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.database.entity.RawNotification
@@ -106,9 +107,13 @@ class NotificationIntakeWorker @AssistedInject constructor(
             dedupeFingerprint = current.dedupeFingerprint
         )
 
-        val storageNotification = processingNotification
+        val storageNotification = buildStorageNotification(
+            processing = processingNotification,
+            rawStorageMode = current.rawStorageMode
+        )
 
         // Process through pipeline
+        var terminalMarked = false
         return try {
             val outcome = repository.processAndSave(
                 processingNotification,
@@ -162,24 +167,22 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 finalOutcome = outcome::class.simpleName,
                 nowMs = now
             )
+            terminalMarked = true
 
-            // Mark raw notification as processed
-            if (rawId != null) {
-                rawDao.markProcessed(rawId)
-            }
-
-            // Purge transient payload after terminal outcome
-            if (current.payloadMode == "TRANSIENT") {
-                intakeDao.purgeRawPayload(intakeId, now)
-            }
+            // Best-effort cleanup: failures must not regress the terminal status
+            markRawProcessedBestEffort(rawId)
+            purgePayloadBestEffort(current, now)
 
             Result.success()
         } catch (e: CancellationException) {
-            // PR 2: Do not mark cancellation as final failure.
-            // Stale PROCESSING rows will be released by the recovery scheduler.
             Timber.d("IntakeWorker: cancelled intakeId=$intakeId")
             throw e
         } catch (e: Exception) {
+            if (terminalMarked) {
+                // Terminal status is already set — cleanup failure must not regress
+                Timber.w(e, "IntakeWorker: post-terminal cleanup failed for intakeId=$intakeId")
+                return Result.success()
+            }
             Timber.e(e, "IntakeWorker: processing failed for intakeId=$intakeId")
             if (isRetryable(e) && current.attempts + 1 < current.maxAttempts) {
                 val backoff = computeBackoff(current.attempts + 1)
@@ -203,6 +206,24 @@ class NotificationIntakeWorker @AssistedInject constructor(
         }
     }
 
+    private suspend fun markRawProcessedBestEffort(rawId: Long?) {
+        if (rawId == null) return
+        try {
+            rawDao.markProcessed(rawId)
+        } catch (e: Exception) {
+            Timber.w(e, "IntakeWorker: markProcessed failed for rawId=$rawId")
+        }
+    }
+
+    private suspend fun purgePayloadBestEffort(row: NotificationIntakeEntity, now: Long) {
+        if (row.payloadMode != "TRANSIENT") return
+        try {
+            intakeDao.purgeRawPayload(row.id, now)
+        } catch (e: Exception) {
+            Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=${row.id}")
+        }
+    }
+
     private fun isRetryable(e: Throwable): Boolean =
         e is IOException ||
         e.message?.contains("database is locked", ignoreCase = true) == true
@@ -213,5 +234,45 @@ class NotificationIntakeWorker @AssistedInject constructor(
         3 -> 600_000
         4 -> 1_800_000
         else -> 3_600_000
+    }
+
+    /**
+     * Build a sanitized storage notification based on [rawStorageMode].
+     * The processing notification always has raw text for parsing; this
+     * method produces the sanitized version for persistent storage.
+     */
+    private fun buildStorageNotification(
+        processing: RawNotification,
+        rawStorageMode: String
+    ): RawNotification = when (rawStorageMode) {
+        "STORE_RAW" -> processing
+
+        "STORE_REDACTED" -> processing.copy(
+            title = "[REDACTED]",
+            text = "[REDACTED]",
+            bigText = "[REDACTED]",
+            subText = "[REDACTED]",
+            extrasJson = """{"redacted":true}"""
+        )
+
+        "STORE_METADATA_ONLY",
+        "DO_NOT_STORE" -> processing.copy(
+            title = null,
+            text = null,
+            bigText = null,
+            subText = null,
+            extrasJson = null
+        )
+
+        else -> {
+            Timber.w("IntakeWorker: unknown rawStorageMode=$rawStorageMode, failing closed")
+            processing.copy(
+                title = null,
+                text = null,
+                bigText = null,
+                subText = null,
+                extrasJson = null
+            )
+        }
     }
 }
