@@ -22,8 +22,10 @@ import com.yourname.expensetracker.domain.diagnostics.EventSeverity
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.provenance.CreateExpenseSourceLinkMapper
+import com.yourname.expensetracker.domain.provenance.CreateExpenseSourceLinkRequirements
 import com.yourname.expensetracker.domain.provenance.DuplicateSourceLinkPolicy
 import com.yourname.expensetracker.domain.provenance.SourceLinkEventMetadataBuilder
+import com.yourname.expensetracker.domain.provenance.SourceLinkFallbackPolicy
 import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriteResult
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriteException
@@ -360,6 +362,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             }
             return Pair(CreateExpenseResult.ValidationFailed(errors), PostCommitActionBatch.empty(correlationId))
+        }
+
+        // 2b. Provenance validation — warn if source-specific fields are missing
+        if (request.sourceLinkFallbackPolicy != SourceLinkFallbackPolicy.LEGACY_BACKFILL_ONLY) {
+            val missingSourceFields = CreateExpenseSourceLinkRequirements.missingRequirements(request)
+            if (missingSourceFields.isNotEmpty()) {
+                Timber.w(
+                    "Missing source provenance fields for %s: %s",
+                    request.source, missingSourceFields.joinToString(",")
+                )
+            }
         }
 
         // 3. Generate merchant key and dedupe key
