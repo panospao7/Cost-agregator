@@ -1,11 +1,13 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.data.currency.AppConfigCurrencyProvider
 import com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
 import com.yourname.expensetracker.data.repository.CurrencyRatesRepositoryImpl
 import com.yourname.expensetracker.data.repository.CurrencySettingsRepositoryImpl
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.UserCurrencyProvider
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -33,6 +35,12 @@ abstract class CurrencyModule {
     abstract fun bindExchangeRateStore(
         impl: ExchangeRateStoreAdapter
     ): ExchangeRateStore
+
+    @Binds
+    @Singleton
+    abstract fun bindUserCurrencyProvider(
+        impl: AppConfigCurrencyProvider
+    ): UserCurrencyProvider
     
     // Note: CurrencyConverter and MultiCurrencyRepository are injected directly
     // via their @Inject constructors - no provider methods needed

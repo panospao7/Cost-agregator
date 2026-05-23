@@ -5,6 +5,9 @@ package com.yourname.expensetracker.domain.config
  * Replaces magic numbers and hardcoded thresholds throughout the codebase.
  */
 object AppConfig {
+    // Default currency
+    const val DEFAULT_CURRENCY = "EUR"
+
     // Amount limits
     const val MAX_TRANSACTION_AMOUNT = 1_000_000.0
     const val MAX_RECEIPT_AMOUNT = 50_000.0

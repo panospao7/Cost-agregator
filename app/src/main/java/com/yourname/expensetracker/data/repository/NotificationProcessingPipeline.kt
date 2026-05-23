@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.currency.UserCurrencyProvider
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
@@ -35,6 +36,7 @@ import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.notification.NotificationPersistenceContext
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
@@ -159,6 +161,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter,
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
+    private val userCurrencyProvider: UserCurrencyProvider,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     private val processMutex = Mutex()
@@ -169,18 +172,20 @@ class NotificationProcessingPipeline @Inject constructor(
     private val asyncScope: CoroutineScope = applicationScope
     private val recommendationSemaphore = Semaphore(MAX_CONCURRENT_RECOMMENDATION_JOBS)
 
-    suspend fun process(notification: RawNotification): NotificationPipelineOutcome {
-        return process(notification, notification)
+    suspend fun process(notification: RawNotification,
+                        persistenceContext: NotificationPersistenceContext? = null): NotificationPipelineOutcome {
+        return process(notification, notification, persistenceContext = persistenceContext)
     }
 
     suspend fun process(notification: RawNotification, storageNotification: RawNotification,
-                        correlationId: String? = null): NotificationPipelineOutcome {
+                        correlationId: String? = null,
+                        persistenceContext: NotificationPersistenceContext? = null): NotificationPipelineOutcome {
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.process")
         processMutex.withLock {
             // DDL-F876-08: generate cid OUTSIDE try so the exception catch path reuses it
             val cid = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
             return try {
-                val outcome = processInternal(notification, storageNotification, initializeClassifier = true, correlationId = cid)
+                val outcome = processInternal(notification, storageNotification, initializeClassifier = true, correlationId = cid, persistenceContext = persistenceContext)
                 writePipelineDiagnosticEvent(outcome, notification.packageName, correlationId = cid)
                 outcome
             } catch (e: CancellationException) {
@@ -224,7 +229,7 @@ class NotificationProcessingPipeline @Inject constructor(
         return results
     }
 
-    private suspend fun processInternal(notification: RawNotification, storageNotification: RawNotification = notification, initializeClassifier: Boolean, correlationId: String? = null): NotificationPipelineOutcome {
+    private suspend fun processInternal(notification: RawNotification, storageNotification: RawNotification = notification, initializeClassifier: Boolean, correlationId: String? = null, persistenceContext: NotificationPersistenceContext? = null): NotificationPipelineOutcome {
         if (initializeClassifier) {
             classifier.initialize()
         }
@@ -278,7 +283,8 @@ class NotificationProcessingPipeline @Inject constructor(
             val oversizedCandidate = detectOversizedAmountCandidate(
                 title = notification.title,
                 text = notification.text,
-                bigText = notification.bigText
+                bigText = notification.bigText,
+                defaultCurrency = userCurrencyProvider.getHomeCurrency() ?: "EUR"
             )
 
             // Phase 2: DB transaction (DB-only mutations)
@@ -348,10 +354,8 @@ class NotificationProcessingPipeline @Inject constructor(
                         confidence = 0.0f,
                         explanation = "Oversized amount needs manual confirmation",
                         packageName = notification.packageName,
-                        // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
-                        notificationTitle = sanitizePendingReviewText(notification.title),
-                        // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
-                        notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText),
+                        notificationTitle = sanitizePendingReviewText(notification.title, persistenceContext?.rawStorageMode),
+                        notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText, persistenceContext?.rawStorageMode),
                         extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                     )
                     val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
@@ -381,7 +385,8 @@ class NotificationProcessingPipeline @Inject constructor(
                     val transactionSignalCandidate = detectTransactionSignalCandidate(
                         title = notification.title,
                         text = notification.text,
-                        bigText = notification.bigText
+                        bigText = notification.bigText,
+                        defaultCurrency = userCurrencyProvider.getHomeCurrency() ?: "EUR"
                     )
 
                     if (transactionSignalCandidate != null) {
@@ -433,10 +438,8 @@ class NotificationProcessingPipeline @Inject constructor(
                             confidence = 0.0f,
                             explanation = "Transaction signal detected but parser failed — needs manual confirmation",
                             packageName = notification.packageName,
-                            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
-                            notificationTitle = sanitizePendingReviewText(notification.title),
-                            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
-                            notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText),
+                            notificationTitle = sanitizePendingReviewText(notification.title, persistenceContext?.rawStorageMode),
+                            notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText, persistenceContext?.rawStorageMode),
                             extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                         )
                         val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
@@ -480,7 +483,7 @@ class NotificationProcessingPipeline @Inject constructor(
             return parserFailedOutcome ?: NotificationPipelineOutcome.ParserFailed(notification.packageName, correlationId, null, "No outcome tracked")
         }
 
-        val preDbContext = buildPreDbContext(notification, parsed)
+        val preDbContext = buildPreDbContext(notification, parsed, persistenceContext)
 
         // Phase 2: DB transaction (DB-only mutations)
         val dbOutcome = database.withTransaction {
@@ -727,19 +730,17 @@ class NotificationProcessingPipeline @Inject constructor(
 
     /**
      * PR3: Sanitize notification text before storing in PendingReview.
-     * Uses the current rawNotificationStorageMode from PrivacySettings.
+     * Uses the provided rawStorageMode (from PersistenceContext when available,
+     * falls back to current PrivacySettings).
      * Falls back to STORE_REDACTED on read failure (fail-closed).
-     *
-     * TODO P2-11: sanitizePendingReviewText should use rawStorageMode from PreDbContext,
-     * not privacySettingsRepository.getSettings() to prevent settings-change-after-capture leak.
      */
-    private suspend fun sanitizePendingReviewText(text: String?): String? {
-        val mode = try {
+    private suspend fun sanitizePendingReviewText(text: String?, mode: com.yourname.expensetracker.domain.privacy.RawStorageMode? = null): String? {
+        val resolvedMode = mode ?: try {
             privacySettingsRepository.getSettings().rawNotificationStorageMode
         } catch (_: Exception) {
             com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_REDACTED
         }
-        return RawContentSanitizer.sanitizeNotificationText(text, mode)
+        return RawContentSanitizer.sanitizeNotificationText(text, resolvedMode)
     }
 
     /**
@@ -795,7 +796,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         internal fun detectOversizedAmountCandidate(
             title: String?,
             text: String?,
-            bigText: String?
+            bigText: String?,
+            defaultCurrency: String = "EUR"
         ): OversizedAmountCandidate? {
             val fullText = listOfNotNull(title, text, bigText)
                 .joinToString(" ")
@@ -834,10 +836,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
                 // Ambiguous symbols: try home-currency context or default to EUR as last resort
                 fullText.contains("\$") -> "USD"
-                // P2-10: Last-resort fallback. A proper NotificationMoneySignalDetector with
-                // UserCurrencyProvider should replace this with home-currency-based resolution.
-                // Currently defaults to EUR when no currency is detected.
-                else -> "EUR"
+                // P2-10: Last-resort fallback uses defaultCurrency param for home-currency-based resolution.
+                else -> defaultCurrency
             }
 
             val merchantHint = extractMerchantHint(title ?: text ?: bigText)
@@ -849,7 +849,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         }
 
     internal fun detectTransactionSignalCandidate(
-        title: String?, text: String?, bigText: String?
+        title: String?, text: String?, bigText: String?,
+        defaultCurrency: String = "EUR"
     ): TransactionSignalCandidate? {
         val fullText = listOfNotNull(title, text, bigText)
             .joinToString(" ")
@@ -919,10 +920,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
                 // Ambiguous symbols: try home-currency context or default to EUR as last resort
                 fullText.contains("\$") -> "USD"
-                // P2-10: Last-resort fallback. A proper NotificationMoneySignalDetector with
-                // UserCurrencyProvider should replace this with home-currency-based resolution.
-                // Currently defaults to EUR when no currency is detected.
-                else -> "EUR"
+                // P2-10: Last-resort fallback uses defaultCurrency param for home-currency-based resolution.
+                else -> defaultCurrency
             }
 
             val merchantHint = extractMerchantHint(title ?: text ?: bigText)
@@ -984,7 +983,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         val deviceGps: Pair<Double, Double>?,
         // P2-11: pending review sanitization should use this field instead of reading
         // current privacy settings, to prevent settings-change-after-capture leaks.
-        val rawStorageMode: com.yourname.expensetracker.domain.privacy.RawStorageMode? = null
+        val rawStorageMode: com.yourname.expensetracker.domain.privacy.RawStorageMode? = null,
+        val persistenceContext: NotificationPersistenceContext? = null
     )
 
     private suspend fun hasCanonicalExpenseDuplicate(preDb: PreDbContext): Boolean {
@@ -1002,7 +1002,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
 
     private suspend fun buildPreDbContext(
         notification: RawNotification,
-        parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction
+        parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction,
+        persistenceContext: NotificationPersistenceContext? = null
     ): PreDbContext {
         val fullNotificationText = listOfNotNull(
             notification.title,
@@ -1095,7 +1096,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             categoryId = categoryId,
             direction = direction,
             accountName = accountName,
-            deviceGps = deviceGps
+            deviceGps = deviceGps,
+            persistenceContext = persistenceContext
         )
     }
 
@@ -1352,11 +1354,9 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             suggestedCategoryId = preDb.categoryId,
             confidence = preDb.routingResult.adjustedConfidence,
             packageName = notification.packageName,
-            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
-            notificationTitle = sanitizePendingReviewText(notification.title),
+            notificationTitle = sanitizePendingReviewText(notification.title, preDb.persistenceContext?.rawStorageMode),
             // P1-CURRENT-013 FIX: Preserve combined text for review context
-            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
-            notificationText = sanitizePendingReviewText(preDb.fullNotificationText),
+            notificationText = sanitizePendingReviewText(preDb.fullNotificationText, preDb.persistenceContext?.rawStorageMode),
             suggestedDate = preDb.eventDate,
             suggestedDirection = preDb.direction?.name,
             suggestedAccountName = preDb.accountName,

@@ -233,25 +233,35 @@ class AppParserRegistry @Inject constructor(
 		var aiStatus = AiFallbackStatus.NOT_NEEDED
 		var aiProvider: String? = null
 		var aiModel: String? = null
+		// P2-12: Track failure reason separately; may be overwritten by AI-specific reasons.
+		var failureReason: ParseFailureReason? = if (parsed == null) ParseFailureReason.NO_DETERMINISTIC_MATCH else null
 
-		if (parsed == null && shouldAttemptAiFallback(packageName, title, text, bigText)) {
-			aiAttempted = true
-			try {
-				val aiResult = aiFallbackParser.parse(title, text, bigText, packageName)
-				if (aiResult != null) {
-					parsed = aiResult
-					source = ParserSource.AI_FALLBACK
-					winningParserId = "NotificationFallbackParser"
-					aiStatus = AiFallbackStatus.SUCCEEDED
-					aiProvider = "ON_DEVICE_AI"
-					attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, true))
-				} else {
-					aiStatus = AiFallbackStatus.ATTEMPTED_NO_RESULT
-					attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_NO_RESULT))
+		if (parsed == null) {
+			if (shouldAttemptAiFallback(packageName, title, text, bigText)) {
+				aiAttempted = true
+				try {
+					val aiResult = aiFallbackParser.parse(title, text, bigText, packageName)
+					if (aiResult != null) {
+						parsed = aiResult
+						source = ParserSource.AI_FALLBACK
+						winningParserId = "NotificationFallbackParser"
+						aiStatus = AiFallbackStatus.SUCCEEDED
+						aiProvider = "ON_DEVICE_AI"
+						failureReason = null
+						attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, true))
+					} else {
+						aiStatus = AiFallbackStatus.ATTEMPTED_NO_RESULT
+						failureReason = ParseFailureReason.AI_NO_RESULT
+						attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_NO_RESULT))
+					}
+				} catch (e: Exception) {
+					aiStatus = AiFallbackStatus.FAILED_EXCEPTION
+					failureReason = ParseFailureReason.AI_EXCEPTION
+					attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_EXCEPTION))
 				}
-			} catch (e: Exception) {
-				aiStatus = AiFallbackStatus.FAILED_EXCEPTION
-				attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_EXCEPTION))
+			} else {
+				aiStatus = AiFallbackStatus.SKIPPED_POLICY
+				failureReason = ParseFailureReason.AI_NOT_ALLOWED_FOR_PACKAGE
 			}
 		}
 
@@ -265,7 +275,7 @@ class AppParserRegistry @Inject constructor(
 			aiProvider = aiProvider,
 			aiModel = aiModel,
 			confidence = parsed?.confidence,
-			failureReason = if (parsed == null) ParseFailureReason.NO_DETERMINISTIC_MATCH else null,
+			failureReason = failureReason,
 			attempts = attempts
 		)
 
@@ -279,6 +289,7 @@ class AppParserRegistry @Inject constructor(
 	 * 
 	 * Use this in NotificationProcessingPipeline for better multilingual support.
 	 */
+	@Deprecated("Use parseWithProvenance() for typed provenance metadata", ReplaceWith("parseWithProvenance(title, text, bigText, subText, packageName)"))
 	suspend fun parseWithAiFallback(
 		title: String?,
 		text: String?,
