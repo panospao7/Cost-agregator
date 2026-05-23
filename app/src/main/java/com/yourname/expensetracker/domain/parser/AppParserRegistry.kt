@@ -258,7 +258,7 @@ class AppParserRegistry @Inject constructor(
 		val provenance = ParseProvenance(
 			source = source,
 			winningParserId = winningParserId,
-			deterministicAttempted = specificParser != null || parsed != null || source == ParserSource.GENERIC_DETERMINISTIC,
+			deterministicAttempted = attempts.any { it.parserType != ParserSource.AI_FALLBACK },
 			deterministicSucceeded = source == ParserSource.SPECIFIC_DETERMINISTIC || source == ParserSource.GENERIC_DETERMINISTIC,
 			aiAttempted = aiAttempted,
 			aiStatus = aiStatus,
