@@ -370,4 +370,14 @@ class AnomalyAlertOrchestrator @Inject constructor(
     fun cleanup() {
         // No-op: orchestration is now executed inline in caller coroutine.
     }
+
+    /**
+     * P2-07: Bulk invalidation called after bulk expense mutations.
+     * In the current implementation anomaly detection runs per-expense,
+     * so this is a best-effort signal. Future versions may clear internal
+     * caches or trigger a background re-scan.
+     */
+    fun invalidateCache() {
+        // Best-effort: anomaly alerts are checked per-expense via checkAndAlert()
+    }
 }

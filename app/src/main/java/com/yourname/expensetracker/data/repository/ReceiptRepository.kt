@@ -442,113 +442,15 @@ class ReceiptRepository @Inject constructor(
         longitude: Double? = null,
         locationSource: String? = null
     ): com.yourname.expensetracker.domain.model.Result<Long> {
-        // ── RCP-14: Resolve effective amount for tax-inclusive receipts ──────
-        // If the receipt was parsed with tax-inclusive detection, use the
-        // receipt's own parsedTotal directly as the expense amount to avoid
-        // double-counting tax. This overrides the caller-supplied amount to
-        // guard against accidental tax double-counting.
-        val receiptRecord = scannedReceiptDao.getById(receiptId)
-        val effectiveAmount = if (receiptRecord != null) {
-            val isTaxInclusive = receiptRecord.taxInclusive || detectTaxInclusive(receiptRecord)
-            if (isTaxInclusive && receiptRecord.parsedTotal != null) {
-                if (kotlin.math.abs(receiptRecord.parsedTotal - amount) > 0.01) {
-                    Timber.w(
-                        "RCP-14: createExpenseFromReceipt override amount for tax-inclusive " +
-                            "receipt %d: caller passed %.2f, using parsedTotal %.2f",
-                        receiptId, amount, receiptRecord.parsedTotal
-                    )
-                }
-                receiptRecord.parsedTotal
-            } else {
-                amount
-            }
-        } else {
-            amount
-        }
-
-        // 1. Normalize merchant
-        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
-        val normalizedMerchant = lookupResult.canonical.normalizedName
-
-        // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: hybridClassifier.classify(
-            merchantName = normalizedMerchant,
-            amount = effectiveAmount
-        ).categoryId.takeIf { it > 0 }
-
-        // 3. Create expense via TransactionLifecycleCoordinator (validate → normalize → dedupe → insert → event)
-        val request = CreateExpenseRequest(
-            merchant = normalizedMerchant,
-            amount = effectiveAmount,
-            currency = currency,
-            date = date,
-            transactionType = TransactionType.PURCHASE,
-            source = ExpenseSource.RECEIPT_SCAN,
-            categoryId = finalCategoryId,
-            notes = notes ?: "Scanned from receipt",
-            paymentMethod = paymentMethod,
-            isManualEntry = true,
-            latitude = latitude,
-            longitude = longitude,
-            locationSource = locationSource
+        // P2-NEW-16: Legacy receipt create path removed.
+        // No production callers remain. Use ReceiptLifecycleCoordinator.processReceiptInput()
+        // or ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt() for atomic save+link.
+        // This method body is intentionally replaced with an error to prevent accidental use.
+        return com.yourname.expensetracker.domain.model.Result.Error(
+            message = "createExpenseFromReceipt is permanently disabled. " +
+                "Use ReceiptLifecycleCoordinator.processReceiptInput() or " +
+                "createExpenseAndLinkReceipt() for atomic receipt expense creation."
         )
-
-        @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
-        return when (val result = coordinator.createExpense(request)) {
-            is CreateExpenseResult.Created -> {
-                val expenseId = result.expenseId
-
-                // Link receipt to the newly created expense via ReceiptLinkService
-                receiptLinkService.linkReceiptToExpense(
-                    receiptId = receiptId,
-                    expenseId = expenseId,
-                    linkType = "DIRECT_SAVE",
-                    source = ExpenseSource.RECEIPT_SCAN.name
-                )
-
-                // RCP-2: Update receipt item categorizations with the expense ID
-                // so that each line item points to the created expense.
-                database.receiptItemCategorizationDao().linkToExpense(
-                    receiptId = receiptId,
-                    expenseId = expenseId,
-                    timestamp = timeProvider.now()
-                )
-
-                // ── Source-specific post-commit side effects ─────────────────
-                if (finalCategoryId != null) {
-                    runPostCommitSafely(
-                        action = "classifier correction learning after receipt expense insert (expenseId=$expenseId, merchant=$normalizedMerchant)"
-                    ) {
-                        hybridClassifier.learnFromCorrection(
-                            merchantName = normalizedMerchant,
-                            correctCategoryId = finalCategoryId,
-                            amount = effectiveAmount
-                        )
-                    }
-                }
-
-                com.yourname.expensetracker.domain.model.Result.Success(expenseId)
-            }
-            is CreateExpenseResult.DuplicateSkipped -> {
-                com.yourname.expensetracker.domain.model.Result.Duplicate
-            }
-            is CreateExpenseResult.ValidationFailed -> {
-                com.yourname.expensetracker.domain.model.Result.Error(
-                    message = "Validation failed: ${result.errors.joinToString(", ")}"
-                )
-            }
-            is CreateExpenseResult.InsertConflict -> {
-                com.yourname.expensetracker.domain.model.Result.Error(
-                    message = "Insert conflict: ${result.dedupeKey}"
-                )
-            }
-            is CreateExpenseResult.Error -> {
-                com.yourname.expensetracker.domain.model.Result.Error(
-                    exception = result.exception,
-                    message = result.exception.message ?: "Unknown error"
-                )
-            }
-        }
     }
 
     /** 

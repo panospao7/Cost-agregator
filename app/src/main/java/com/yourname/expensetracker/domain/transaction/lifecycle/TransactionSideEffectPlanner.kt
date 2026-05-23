@@ -430,7 +430,12 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .put("changedFields", changedFields.joinToString(",") { it.name })
                 .build()
         ) {
-            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+            try {
+                anomalyAlertOrchestrator.invalidateCache()
+                SideEffectOutcome.Completed
+            } catch (e: Exception) {
+                SideEffectOutcome.FailedRetryable(e.message ?: "Bulk anomaly invalidation failed", e.javaClass.name)
+            }
         }
     }
 

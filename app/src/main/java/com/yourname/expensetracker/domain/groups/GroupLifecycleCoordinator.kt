@@ -17,6 +17,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -323,7 +324,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         val result = groupCoordinator.archiveGroup(groupId)
         if (result) {
             database.withTransaction {
-                emitLifecycleEvent(groupId, "GROUP_ARCHIVED")
+                emitLifecycleEvent(groupId, LifecycleEventType.GROUP_ARCHIVED.name)
             }
         }
         result
@@ -360,7 +361,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         val result = groupCoordinator.permanentlyDeleteGroup(groupId)
         if (result) {
             database.withTransaction {
-                emitLifecycleEvent(groupId, "GROUP_DELETED")
+                emitLifecycleEvent(groupId, LifecycleEventType.GROUP_PERMANENTLY_DELETED.name)
             }
         }
         result
