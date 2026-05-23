@@ -135,11 +135,17 @@ class ReviewQueueRepository @Inject constructor(
         return Result.Error(message = "Cannot approve review with unknown merchant. Please edit the merchant first.")
     }
 
-    // TODO P2-CURRENT-006: normalizedMerchantForKeys double-normalizes when
-    // review.suggestedMerchant is already the correctedMerchant from the pipeline.
-    // This can produce a different merchantKey than the auto-accept path if
-    // normalization is not idempotent. Use the same single-normalization approach.
-    val normalizedMerchantForKeys: String = merchantNormalizer.normalize(merchant).canonical.normalizedName
+    // The coordinator owns merchantKey and dedupeKey generation.
+    // Review approval passes the resolved merchant display value directly
+    // and the resolved currency. No double-normalization before create.
+    val resolvedCurrency: String = run {
+        val resolved = finalCurrency?.takeIf { it.isNotBlank() }
+            ?: review.suggestedCurrency?.takeIf { it.isNotBlank() }
+        if (resolved.isNullOrBlank()) {
+            return Result.Error(message = "Currency is required. Please edit the review and select a currency.")
+        }
+        resolved
+    }
     val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
 
     if (amount > 1000000.0) {
@@ -173,17 +179,9 @@ class ReviewQueueRepository @Inject constructor(
 
         val expense = Expense(
             amount = amount,
-            currency = run {
-                // S6-007: Reject blank/null currency — never persist fake "EUR" placeholder
-                val resolved = finalCurrency?.takeIf { it.isNotBlank() }
-                    ?: review.suggestedCurrency?.takeIf { it.isNotBlank() }
-                if (resolved.isNullOrBlank()) {
-                    return Result.Error(message = "Currency is required. Please edit the review and select a currency.")
-                }
-                resolved
-            },
+            currency = resolvedCurrency,
             merchant = merchant,
-            merchantKey = MerchantKeyGenerator.generate(normalizedMerchantForKeys),
+            merchantKey = MerchantKeyGenerator.generate(merchant),
             transactionType = type,
             date = transactionDate,
             rawNotificationId = review.rawNotificationId,
@@ -192,12 +190,8 @@ class ReviewQueueRepository @Inject constructor(
             paymentMethod = PaymentMethod.CARD,
             isManualEntry = review.scannedReceiptId != null,
             notes = if (review.scannedReceiptId != null) "Scanned from receipt" else null,
-            // Use the type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows
-            // never collide on the persisted unique dedupeKey index (ISSUE-1 fix).
-            // The range-based isDuplicateCurrencyAware pre-check remains the
-            // canonical policy gate; insertAtomic is now purely a race guard.
             dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                amount, normalizedMerchantForKeys, transactionDate, review.suggestedCurrency, type
+                amount, merchant, transactionDate, resolvedCurrency, type
             ),
             transferDirection = transferDirection,
             transferAccountName = transferAccountName,

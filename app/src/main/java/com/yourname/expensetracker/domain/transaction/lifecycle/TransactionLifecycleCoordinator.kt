@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
@@ -71,6 +72,7 @@ import javax.inject.Singleton
  *
  * @constructor Inject dependencies needed for validation, persistence, and event logging.
  */
+@OptIn(RestrictedExpenseDaoMutation::class)
 @Singleton
 class TransactionLifecycleCoordinator @Inject constructor(
     private val database: AppDatabase,
@@ -274,37 +276,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Creates an expense with full lifecycle handling:
-     * validate → normalize → dedupe → insert atomic → event.
-     *
-     * All database writes (insert + event) happen inside a Room transaction.
-     * Side effects are dispatched POST-COMMIT (outside the transaction) when
-     * [sideEffectMode] is [SideEffectMode.IMMEDIATE] (the default).
-     *
-     * When called inside a caller-managed `database.withTransaction`, pass
-     * [SideEffectMode.DEFER] and call [dispatchPostCreationSideEffects] after
-     * the outer transaction commits to avoid running side effects for data
-     * that may later roll back.
-     *
-     * TODO (P2-10): [SideEffectMode.IMMEDIATE] inside an outer caller-managed
-     * `database.withTransaction` should be prevented by a static guard in
-     * a future release. Currently callers must remember to pass DEFER manually,
-     * which is error-prone.
-     *
-     * @param request The creation request containing all expense fields and policy controls.
-     * @param sideEffectMode Controls whether side effects run immediately or are deferred.
-     * @return A [CreateExpenseResult] indicating the outcome (created, duplicate, error, etc.).
+     * Internal DB-only create mutation. Validates, normalizes, dedupes, inserts
+     * atomically (expense + CREATED event + source links), and returns the planned
+     * side-effect batch. Side effects are NEVER executed here — callers must dispatch.
      */
-    @Deprecated(
-        "Prefer createExpenseStandalone() for immediate side effects or " +
-        "createExpenseDbOnly() for deferred side effects. The SideEffectMode " +
-        "parameter will be removed in a future release.",
-        level = DeprecationLevel.ERROR
-    )
-    suspend fun createExpense(
-        request: CreateExpenseRequest,
-        sideEffectMode: SideEffectMode = SideEffectMode.IMMEDIATE
-    ): CreateExpenseResult {
+    private suspend fun createExpenseMutation(
+        request: CreateExpenseRequest
+    ): Pair<CreateExpenseResult, PostCommitActionBatch> {
         val correlationId = request.correlationId
             ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
 
@@ -317,7 +295,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 correlationId = correlationId,
                 blocked = blocked
             )
-            return CreateExpenseResult.Error(blocked)
+            return Pair(CreateExpenseResult.Error(blocked), PostCommitActionBatch.empty(correlationId))
         } catch (blocked: RuntimeException) {
             if (blocked is CancellationException) throw blocked
             emitCreateBlockedDiagnosticBestEffort(
@@ -325,7 +303,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 correlationId = correlationId,
                 blocked = blocked
             )
-            return CreateExpenseResult.Error(blocked)
+            return Pair(CreateExpenseResult.Error(blocked), PostCommitActionBatch.empty(correlationId))
         }
 
         val now = timeProvider.now()
@@ -381,7 +359,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     )
                 )
             }
-            return CreateExpenseResult.ValidationFailed(errors)
+            return Pair(CreateExpenseResult.ValidationFailed(errors), PostCommitActionBatch.empty(correlationId))
         }
 
         // 3. Generate merchant key and dedupe key
@@ -518,9 +496,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                 )
                             )
                         }
-                        return CreateExpenseResult.ValidationFailed(
+                        return Pair(CreateExpenseResult.ValidationFailed(
                             listOf("STRICT_EXTERNAL_ID mode requires idempotencyKey or externalFingerprint")
-                        )
+                        ), PostCommitActionBatch.empty(correlationId))
                     }
                     // Use canonical strict key
                     expense = expense.copy(dedupeKey = strictKey)
@@ -540,7 +518,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     if (isDuplicate) {
                         val duplicateId = findDuplicateIdForExpense(expense)
                         val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate", correlationId)
-                        return CreateExpenseResult.DuplicateSkipped(
+                        return Pair(CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
                             reason = if (duplicateId != null) {
                                 "Bulk import duplicate: existingExpenseId=$duplicateId"
@@ -548,7 +526,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                 "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}"
                             },
                             eventLogged = eventLogged
-                        )
+                        ), PostCommitActionBatch.empty(correlationId))
                     }
                 }
 
@@ -571,7 +549,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         val duplicateId = findDuplicateIdForExpense(expense)
                         // Write duplicate resolution event with metadata
                         val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate", correlationId)
-                        return CreateExpenseResult.DuplicateSkipped(
+                        return Pair(CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
                             reason = if (duplicateId != null) {
                                 "Duplicate expense detected: existingExpenseId=$duplicateId"
@@ -579,7 +557,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                 "Duplicate expense detected but existing ID could not be resolved"
                             },
                             eventLogged = eventLogged
-                        )
+                        ), PostCommitActionBatch.empty(correlationId))
                     }
                 }
             }
@@ -685,11 +663,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     true
                 }.getOrDefault(false)
 
-                return CreateExpenseResult.DuplicateSkipped(
+                return Pair(CreateExpenseResult.DuplicateSkipped(
                     existingExpenseId = existingId,
                     reason = "Insert conflict resolved to existing expense $existingId",
                     eventLogged = eventLogged
-                )
+                ), PostCommitActionBatch.empty(correlationId))
             }
 
             // Unresolved — write INSERT_CONFLICT
@@ -715,25 +693,46 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     )
                 )
             }
-            return CreateExpenseResult.InsertConflict(expense.dedupeKey ?: "unknown")
+            return Pair(CreateExpenseResult.InsertConflict(expense.dedupeKey ?: "unknown"), PostCommitActionBatch.empty(correlationId))
         }
 
-        // 6. Plan side effects
+        // 6. Plan side effects — always deferred to caller
         val plannedBatch = if (insertedId > 0L) {
             planner.planCreated(insertedId, request.source, correlationId)
         } else {
             PostCommitActionBatch.empty(correlationId)
         }
 
-        // 7. Side effects — only if IMMEDIATE; DEFER shifts responsibility to caller
-        if (sideEffectMode == SideEffectMode.IMMEDIATE) {
-            runner.run(plannedBatch)
-        }
-
-        return CreateExpenseResult.Created(insertedId)
+        return Pair(CreateExpenseResult.Created(insertedId), plannedBatch)
     }
 
     // ── V2 create API ────────────────────────────────────────────────────────
+
+    /**
+     * @deprecated Use [createExpenseStandaloneV2] or [createExpenseDbOnlyV2].
+     */
+    @Deprecated(
+        "Prefer createExpenseStandaloneV2() or createExpenseDbOnlyV2().",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun createExpense(request: CreateExpenseRequest): CreateExpenseResult {
+        return createExpenseStandaloneV2(request)
+    }
+
+    /**
+     * Legacy overload with SideEffectMode for backward compatibility.
+     * @deprecated Use [createExpenseStandaloneV2] or [createExpenseDbOnlyV2].
+     */
+    @Deprecated(
+        "Prefer createExpenseStandaloneV2() or createExpenseDbOnlyV2(). SideEffectMode is obsolete.",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun createExpense(
+        request: CreateExpenseRequest,
+        @Suppress("UNUSED_PARAMETER") sideEffectMode: SideEffectMode
+    ): CreateExpenseResult {
+        return createExpenseStandaloneV2(request)
+    }
 
     /**
      * Creates an expense with full lifecycle handling but returns the planned
@@ -748,12 +747,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
     suspend fun createExpenseDbOnlyV2(
         request: CreateExpenseRequest
     ): MutationResult<CreateExpenseResult> {
-        @Suppress("DEPRECATION_ERROR")
-        val result = createExpense(request, SideEffectMode.DEFER)
-        val batch = when (result) {
-            is CreateExpenseResult.Created -> planner.planCreated(result.expenseId, request.source, request.correlationId)
-            else -> PostCommitActionBatch.empty(request.correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId())
-        }
+        val (result, batch) = createExpenseMutation(request)
         return MutationResult(result, batch)
     }
 
@@ -769,11 +763,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @return A [CreateExpenseResult] indicating the outcome.
      */
     suspend fun createExpenseStandaloneV2(request: CreateExpenseRequest): CreateExpenseResult {
-        val dbOnly = createExpenseDbOnlyV2(request)
-        if (dbOnly.value is CreateExpenseResult.Created) {
-            runner.run(dbOnly.postCommitActions)
+        val (result, batch) = createExpenseMutation(request)
+        if (result is CreateExpenseResult.Created) {
+            runner.run(batch)
         }
-        return dbOnly.value
+        return result
     }
 
     // ── Compatibility wrappers ───────────────────────────────────────────────
@@ -781,9 +775,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
     /**
      * Dispatch post-creation side effects for an already-committed expense.
      *
-     * Call this after your outer `database.withTransaction` has committed when
-     * you used [SideEffectMode.DEFER] in [createExpense]. Best-effort: failures
-     * are logged but do not propagate.
+     * Call this after your outer `database.withTransaction` has committed.
+     * Best-effort: failures are logged but do not propagate.
      *
      * @param expenseId The ID of the just-committed expense.
      * @param source    The [ExpenseSource] that created the expense.
