@@ -12,6 +12,10 @@ object AppConfig {
     const val MAX_TRANSACTION_AMOUNT = 1_000_000.0
     const val MAX_RECEIPT_AMOUNT = 50_000.0
 
+    object Transaction {
+        const val DEFAULT_FUTURE_DATE_TOLERANCE_DAYS = 1
+    }
+
     // Recurring detection thresholds
     const val RECURRING_AMOUNT_VARIANCE_THRESHOLD = 0.35
     const val RECURRING_CONFIDENCE_THRESHOLD = 0.50

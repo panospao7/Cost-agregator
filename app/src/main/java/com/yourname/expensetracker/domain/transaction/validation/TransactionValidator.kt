@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.transaction.validation
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -9,7 +10,8 @@ import javax.inject.Singleton
 
 @Singleton
 class TransactionValidator @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val transactionDatePolicy: TransactionDatePolicy
 ) {
     fun validateCreate(request: CreateExpenseRequest): List<TransactionValidationError> {
         return validateFields(
@@ -23,7 +25,8 @@ class TransactionValidator @Inject constructor(
             isNotMine = request.isNotMine,
             isSharedExpense = request.isSharedExpense,
             latitude = request.latitude,
-            longitude = request.longitude
+            longitude = request.longitude,
+            source = request.source
         )
     }
 
@@ -51,7 +54,8 @@ class TransactionValidator @Inject constructor(
             isNotMine = isNotMine,
             isSharedExpense = isSharedExpense,
             latitude = latitude,
-            longitude = longitude
+            longitude = longitude,
+            source = ExpenseSource.UNKNOWN
         )
     }
 
@@ -66,7 +70,8 @@ class TransactionValidator @Inject constructor(
         isNotMine: Boolean,
         isSharedExpense: Boolean,
         latitude: Double?,
-        longitude: Double?
+        longitude: Double?,
+        source: ExpenseSource = ExpenseSource.UNKNOWN
     ): List<TransactionValidationError> {
         val errors = mutableListOf<TransactionValidationError>()
         val now = timeProvider.now()
@@ -125,11 +130,11 @@ class TransactionValidator @Inject constructor(
             )
         }
 
-        if (date > TimePeriodUtils.addDays(now, 1)) {
+        if (date > transactionDatePolicy.latestAllowedTransactionDate(now, source, transactionType)) {
             errors += TransactionValidationError(
                 code = "DATE_IN_FUTURE",
                 field = "date",
-                message = "Date cannot be in the future"
+                message = transactionDatePolicy.describeFutureDatePolicy()
             )
         }
 
