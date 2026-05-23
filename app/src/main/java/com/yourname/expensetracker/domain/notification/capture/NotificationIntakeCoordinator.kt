@@ -41,7 +41,7 @@ class NotificationIntakeCoordinator @Inject constructor(
         rawStorageMode: RawStorageMode,
         correlationId: String,
         source: String // "listener" or "refresh"
-    ): Long? { // returns intakeId or null if duplicate
+    ): NotificationIntakeCaptureResult {
         val dedupeFingerprint = RawNotificationFingerprint.compute(
             packageName = packageName,
             title = title,
@@ -64,7 +64,7 @@ class NotificationIntakeCoordinator @Inject constructor(
                     .build(),
                 isTerminal = true
             ))
-            return null
+            return NotificationIntakeCaptureResult.Duplicate(correlationId)
         }
 
         // P2-11: DO_NOT_STORE cannot use durable intake — plaintext payload would violate
@@ -72,7 +72,7 @@ class NotificationIntakeCoordinator @Inject constructor(
         // by the service caller with sanitized storage only.
         if (rawStorageMode == RawStorageMode.DO_NOT_STORE) {
             Timber.d("Intake: DO_NOT_STORE — skipping durable intake for $packageName")
-            return null
+            return NotificationIntakeCaptureResult.RequiresSynchronousProcessing
         }
 
         // STORE_RAW → raw payload retained | STORE_REDACTED/METADATA_ONLY → transient payload purged after processing
@@ -109,7 +109,7 @@ class NotificationIntakeCoordinator @Inject constructor(
         val intakeId = intakeDao.insertOrIgnore(entity)
         if (intakeId == -1L) {
             Timber.d("Intake insert conflict: $packageName")
-            return null
+            return NotificationIntakeCaptureResult.Dropped(correlationId, "Insert conflict")
         }
 
         // Enqueue WorkManager job
@@ -130,6 +130,6 @@ class NotificationIntakeCoordinator @Inject constructor(
         )
 
         Timber.d("Intake enqueued: intakeId=$intakeId package=$packageName source=$source")
-        return intakeId
+        return NotificationIntakeCaptureResult.Enqueued(intakeId, correlationId)
     }
 }

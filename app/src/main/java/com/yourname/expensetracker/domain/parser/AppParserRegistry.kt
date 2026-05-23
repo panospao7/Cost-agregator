@@ -4,7 +4,11 @@ import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.parsers.SmsParser
+import com.yourname.expensetracker.domain.parser.provenance.AiFallbackStatus
+import com.yourname.expensetracker.domain.parser.provenance.ParseFailureReason
 import com.yourname.expensetracker.domain.parser.provenance.ParseProvenance
+import com.yourname.expensetracker.domain.parser.provenance.ParserAttempt
+import com.yourname.expensetracker.domain.parser.provenance.ParserSource
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NotificationFilter
 import timber.log.Timber
@@ -175,8 +179,8 @@ class AppParserRegistry @Inject constructor(
     }
     
 	/**
-	 * Parse with provenance tracking. Wraps [parseWithAiFallback] and builds a
-	 * [ParseProvenance] describing which parsers were attempted and their outcomes.
+	 * Parse with provenance tracking. Tracks which parser actually won and
+	 * records all parser attempts for telemetry.
 	 */
 	suspend fun parseWithProvenance(
 		title: String?,
@@ -185,21 +189,86 @@ class AppParserRegistry @Inject constructor(
 		subText: String?,
 		packageName: String
 	): ParseOutcome {
-		val parsed = parseWithAiFallback(title, text, bigText, subText, packageName)
+		val attempts = mutableListOf<ParserAttempt>()
+
+		// Step 1: Try specific parser (indexed by packageName)
+		val specificParser = packageToParserMap[packageName]
+		var parsed: ParsedTransaction? = null
+		var winningParserId: String? = null
+		var source = ParserSource.NONE
+
+		if (specificParser != null) {
+			attempts.add(ParserAttempt(specificParser.parserId, ParserSource.SPECIFIC_DETERMINISTIC, true, false))
+			parsed = try {
+				specificParser.parse(title, text, bigText, subText, packageName)
+			} catch (e: Exception) {
+				Timber.w(e, "Specific parser failed for package: $packageName")
+				null
+			}
+			if (parsed != null) {
+				attempts[attempts.lastIndex] = ParserAttempt(specificParser.parserId, ParserSource.SPECIFIC_DETERMINISTIC, true, true)
+				source = ParserSource.SPECIFIC_DETERMINISTIC
+				winningParserId = specificParser.parserId
+			}
+		}
+
+		// Step 2: Try generic parser if specific failed
+		if (parsed == null) {
+			attempts.add(ParserAttempt("GenericTransactionParser", ParserSource.GENERIC_DETERMINISTIC, true, false))
+			parsed = try {
+				genericParser.parse(title, text, bigText, subText, packageName)
+			} catch (e: Exception) {
+				Timber.w(e, "Generic parser failed for package: $packageName")
+				null
+			}
+			if (parsed != null) {
+				attempts[attempts.lastIndex] = ParserAttempt("GenericTransactionParser", ParserSource.GENERIC_DETERMINISTIC, true, true)
+				source = ParserSource.GENERIC_DETERMINISTIC
+				winningParserId = "GenericTransactionParser"
+			}
+		}
+
+		// Step 3: AI fallback if deterministic failed
+		var aiAttempted = false
+		var aiStatus = AiFallbackStatus.NOT_NEEDED
+		var aiProvider: String? = null
+		var aiModel: String? = null
+
+		if (parsed == null && shouldAttemptAiFallback(packageName, title, text, bigText)) {
+			aiAttempted = true
+			try {
+				val aiResult = aiFallbackParser.parse(title, text, bigText, packageName)
+				if (aiResult != null) {
+					parsed = aiResult
+					source = ParserSource.AI_FALLBACK
+					winningParserId = "NotificationFallbackParser"
+					aiStatus = AiFallbackStatus.SUCCEEDED
+					aiProvider = "ON_DEVICE_AI"
+					attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, true))
+				} else {
+					aiStatus = AiFallbackStatus.ATTEMPTED_NO_RESULT
+					attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_NO_RESULT))
+				}
+			} catch (e: Exception) {
+				aiStatus = AiFallbackStatus.FAILED_EXCEPTION
+				attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_EXCEPTION))
+			}
+		}
+
 		val provenance = ParseProvenance(
-			source = if (parsed != null) com.yourname.expensetracker.domain.parser.provenance.ParserSource.GENERIC_DETERMINISTIC
-			       else com.yourname.expensetracker.domain.parser.provenance.ParserSource.NONE,
-			winningParserId = null,
-			deterministicAttempted = true,
-			deterministicSucceeded = parsed != null,
-			aiAttempted = false,
-			aiStatus = com.yourname.expensetracker.domain.parser.provenance.AiFallbackStatus.NOT_NEEDED,
-			aiProvider = null,
-			aiModel = null,
+			source = source,
+			winningParserId = winningParserId,
+			deterministicAttempted = specificParser != null || parsed != null || source == ParserSource.GENERIC_DETERMINISTIC,
+			deterministicSucceeded = source == ParserSource.SPECIFIC_DETERMINISTIC || source == ParserSource.GENERIC_DETERMINISTIC,
+			aiAttempted = aiAttempted,
+			aiStatus = aiStatus,
+			aiProvider = aiProvider,
+			aiModel = aiModel,
 			confidence = parsed?.confidence,
-			failureReason = if (parsed == null) com.yourname.expensetracker.domain.parser.provenance.ParseFailureReason.NO_DETERMINISTIC_MATCH else null,
-			attempts = emptyList<com.yourname.expensetracker.domain.parser.provenance.ParserAttempt>()
+			failureReason = if (parsed == null) ParseFailureReason.NO_DETERMINISTIC_MATCH else null,
+			attempts = attempts
 		)
+
 		return if (parsed != null) ParseOutcome.Parsed(parsed, provenance)
 		       else ParseOutcome.NoParse(provenance)
 	}

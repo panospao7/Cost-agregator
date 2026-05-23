@@ -38,9 +38,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import javax.inject.Inject
 
-import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
+import com.yourname.expensetracker.domain.notification.capture.CaptureSource
+import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCaptureResult
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler
+import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
+import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 
 /**
  * Originally defined here; extracted to [NotificationTextParts] for reuse across
@@ -175,9 +178,6 @@ class NotificationCaptureService : NotificationListenerService() {
 
     @Volatile
     private var isShuttingDown = false
-
-    @Volatile
-    private var isRefreshCapture = false
 
     // PR3: Fast caches removed — unified NotificationCaptureGate handles pre-extraction checks
     
@@ -330,7 +330,10 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
+        captureNotification(sbn, CaptureSource.LISTENER)
+    }
 
+    private fun captureNotification(sbn: StatusBarNotification, source: CaptureSource) {
         val packageName = sbn.packageName
         val notificationKey = sbn.key
         val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
@@ -351,7 +354,6 @@ class NotificationCaptureService : NotificationListenerService() {
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
-            // DDL-512-14: RECEIVED emitted before BLOCKED in the same work-tracked coroutine
             emitOrderedNotificationEvents(receivedEvent, com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                 stage = "listener",
@@ -406,7 +408,6 @@ class NotificationCaptureService : NotificationListenerService() {
                 }
                 is com.yourname.expensetracker.domain.notification.capture.NotificationCaptureDecision.TemporarilyUnavailable -> {
                     Timber.d("Capture gate temporarily unavailable for $packageName: ${gateDecision.reason}")
-                    // BUG-FIX: Do not label GATE_NOT_READY as PRIVACY_DENIED
                     notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                         pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                         stage = "capture_gate",
@@ -511,30 +512,48 @@ class NotificationCaptureService : NotificationListenerService() {
                 }
 
                 val notificationKeyHash = notificationKey.hashCode().toString(36)
-                val intakeId = withContext(NonCancellable) {
+                val captureResult = withContext(NonCancellable) {
                     intakeCoordinator.capture(
-                    packageName = packageName,
-                    appName = appName,
-                    notificationKey = notificationKey,
-                    notificationKeyHash = notificationKeyHash,
-                    postTime = sbn.postTime,
-                    title = parts.title,
-                    text = parts.text,
-                    combinedBody = parts.combinedBody,
-                    subText = parts.subText,
-                    extrasJson = extrasJson,
-                    rawStorageMode = settings.rawNotificationStorageMode,
-                    correlationId = correlationId,
-                    source = if (isRefreshCapture) "refresh" else "listener"
+                        packageName = packageName,
+                        appName = appName,
+                        notificationKey = notificationKey,
+                        notificationKeyHash = notificationKeyHash,
+                        postTime = sbn.postTime,
+                        title = parts.title,
+                        text = parts.text,
+                        combinedBody = parts.combinedBody,
+                        subText = parts.subText,
+                        extrasJson = extrasJson,
+                        rawStorageMode = settings.rawNotificationStorageMode,
+                        correlationId = correlationId,
+                        source = source.name.lowercase()
                     )
                 }
 
-                if (intakeId != null) {
-                    Timber.d("Notification captured via coordinator: intakeId=$intakeId package=$packageName")
-                    // Keep dedupe key — the async worker handles processing
-                } else {
-                    // Duplicate detected by coordinator — remove dedupe key
-                    deduper.remove(dedupeKey)
+                var pipelineOutcome: NotificationPipelineOutcome? = null
+
+                when (captureResult) {
+                    is NotificationIntakeCaptureResult.Enqueued -> {
+                        Timber.d("Notification captured via coordinator: intakeId=${captureResult.intakeId}")
+                        // Keep dedupe key — the async worker handles processing
+                    }
+                    is NotificationIntakeCaptureResult.Duplicate -> {
+                        deduper.remove(dedupeKey)
+                        // Duplicate diagnostic already emitted by coordinator
+                    }
+                    is NotificationIntakeCaptureResult.RequiresSynchronousProcessing -> {
+                        // DO_NOT_STORE: process synchronously with ephemeral raw text,
+                        // persist only sanitized storage (handled by repository's sanitizeForStorage).
+                        Timber.d("DO_NOT_STORE: processing synchronously for $packageName")
+                        pipelineOutcome = processNotification(sbn, packageName, parts, extras, correlationId)
+                        // On success, keep dedupe key; on error, remove it
+                        if (pipelineOutcome == null || pipelineOutcome is NotificationPipelineOutcome.Error) {
+                            deduper.remove(dedupeKey)
+                        }
+                    }
+                    is NotificationIntakeCaptureResult.Dropped -> {
+                        deduper.remove(dedupeKey)
+                    }
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to capture notification via coordinator from $packageName")
@@ -708,23 +727,16 @@ class NotificationCaptureService : NotificationListenerService() {
 
     private fun refreshActiveNotifications() {
         Timber.d("Manual refresh triggered")
-        isRefreshCapture = true
         try {
             val activeNotifications = activeNotifications
             Timber.d("Found ${activeNotifications.size} active notifications")
-            // Repair PR B: Refresh uses the exact same path as listener — no bypass.
             activeNotifications.forEach { sbn ->
-                onNotificationPosted(sbn)
+                captureNotification(sbn, CaptureSource.REFRESH)
             }
         } catch (e: Exception) {
             Timber.e(e, "Error refreshing active notifications")
-        } finally {
-            isRefreshCapture = false
         }
     }
-
-    // processNotificationBypassDedupe deleted — refresh now uses onNotificationPosted directly.
-    // GAP-64-01: Future improvement: pass CaptureSource.REFRESH to distinguish refresh diagnostics.
 
     private fun buildExtrasJson(extras: android.os.Bundle): String {
         return try {
