@@ -36,7 +36,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
-import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
+
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
@@ -91,7 +91,6 @@ class NotificationProcessingPipelineReliabilityTest {
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val directionDetector = mockk<TransferDirectionDetector>(relaxed = true)
     private val analytics = mockk<TransferDirectionAnalytics>(relaxed = true)
-    private val locationProvider = mockk<ForegroundLocationProvider>(relaxed = true)
     private val aiSettingsRepository = mockk<AiSettingsRepository>(relaxed = true)
     private val generateTransactionInsightUseCase = mockk<GenerateTransactionInsightUseCase>(relaxed = true)
     private val dashboardFollowThroughEngine = mockk<DashboardFollowThroughEngine>(relaxed = true)
@@ -119,7 +118,6 @@ class NotificationProcessingPipelineReliabilityTest {
         timeProvider = timeProvider,
         directionDetector = directionDetector,
         analytics = analytics,
-        locationProvider = locationProvider,
         aiSettingsRepository = aiSettingsRepository,
         generateTransactionInsightUseCase = generateTransactionInsightUseCase,
         dashboardFollowThroughEngine = dashboardFollowThroughEngine,
@@ -146,7 +144,6 @@ class NotificationProcessingPipelineReliabilityTest {
         coEvery { classifier.initialize() } returns Unit
         every { timeProvider.now() } returns 1_700_000_000_000L
         coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers { merchantLookupResult(firstArg()) }
-        coEvery { locationProvider.getLastKnownLocation() } returns null
     }
 
     @Test

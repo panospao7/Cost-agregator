@@ -41,7 +41,8 @@ class NotificationRepository @Inject constructor(
     private val sourceStatsDao: SourceStatsDao,
     private val classifier: TransactionClassifier,
     private val pipeline: NotificationProcessingPipeline,
-    private val writeBarrier: DatabaseWriteBarrier
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 ) {
 
     data class DebugNotificationsSnapshot(
@@ -76,19 +77,32 @@ class NotificationRepository @Inject constructor(
     /**
      * Process a raw notification through the pipeline and return the outcome.
      *
-     * **Important:** This overload uses the same [RawNotification] for BOTH
-     * processing (parsing the text) AND persistent storage. If the notification
-     * contains sensitive content that should be sanitized before storage,
-     * callers MUST use [processAndSave] with separate
-     * `processingNotification` and `storageNotification` parameters.
-     *
-     * This single-argument version is primarily intended for debug, testing,
-     * and migration scenarios where privacy sanitization has already been
-     * applied upstream or is not required.
+     * Loads current privacy settings internally and sanitizes the storage
+     * notification according to [RawStorageMode]. The raw notification is
+     * used for parsing only; persisted data respects the user's privacy choice.
      */
-    // P2-11: Uses raw notification as storage. Callers should use the two-arg version with a pre-sanitized storageNotification.
     suspend fun processAndSave(notification: RawNotification): NotificationPipelineOutcome {
-        return processAndSave(notification, notification)
+        val settings = privacySettingsRepository.getSettings()
+        val storageNotification = sanitizeForStorage(notification, settings.rawNotificationStorageMode)
+        return processAndSave(notification, storageNotification)
+    }
+
+    /**
+     * Build a sanitized storage notification based on [rawStorageMode].
+     */
+    private fun sanitizeForStorage(
+        raw: RawNotification,
+        mode: com.yourname.expensetracker.domain.privacy.RawStorageMode
+    ): RawNotification = when (mode) {
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_RAW -> raw
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_REDACTED -> raw.copy(
+            title = "[REDACTED]", text = "[REDACTED]", bigText = "[REDACTED]",
+            subText = "[REDACTED]", extrasJson = """{"redacted":true}"""
+        )
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.STORE_METADATA_ONLY,
+        com.yourname.expensetracker.domain.privacy.RawStorageMode.DO_NOT_STORE -> raw.copy(
+            title = null, text = null, bigText = null, subText = null, extrasJson = null
+        )
     }
 
     /**

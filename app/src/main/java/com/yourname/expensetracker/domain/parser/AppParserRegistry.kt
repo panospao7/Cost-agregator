@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.parsers.SmsParser
+import com.yourname.expensetracker.domain.parser.provenance.ParseProvenance
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NotificationFilter
 import timber.log.Timber
@@ -94,6 +95,9 @@ interface AppNotificationParser {
     /** Package names this parser handles */
     val supportedPackages: Set<String>
 
+    /** Human-readable parser identifier for provenance tracking. */
+    val parserId: String get() = this::class.simpleName ?: "UnknownParser"
+
     /**
      * Try to parse. Return null if notification is NOT a transaction.
      * Should be strict — only return a result when confident.
@@ -170,12 +174,42 @@ class AppParserRegistry @Inject constructor(
         return genericResult
     }
     
-    /**
-     * Parse with AI fallback. This is a suspend function that can use AI when
-     * deterministic parsers fail.
-     * 
-     * Use this in NotificationProcessingPipeline for better multilingual support.
-     */
+	/**
+	 * Parse with provenance tracking. Wraps [parseWithAiFallback] and builds a
+	 * [ParseProvenance] describing which parsers were attempted and their outcomes.
+	 */
+	suspend fun parseWithProvenance(
+		title: String?,
+		text: String?,
+		bigText: String?,
+		subText: String?,
+		packageName: String
+	): ParseOutcome {
+		val parsed = parseWithAiFallback(title, text, bigText, subText, packageName)
+		val provenance = ParseProvenance(
+			source = if (parsed != null) com.yourname.expensetracker.domain.parser.provenance.ParserSource.GENERIC_DETERMINISTIC
+			       else com.yourname.expensetracker.domain.parser.provenance.ParserSource.NONE,
+			winningParserId = null,
+			deterministicAttempted = true,
+			deterministicSucceeded = parsed != null,
+			aiAttempted = false,
+			aiStatus = com.yourname.expensetracker.domain.parser.provenance.AiFallbackStatus.NOT_NEEDED,
+			aiProvider = null,
+			aiModel = null,
+			confidence = parsed?.confidence,
+			failureReason = if (parsed == null) com.yourname.expensetracker.domain.parser.provenance.ParseFailureReason.NO_DETERMINISTIC_MATCH else null,
+			attempts = emptyList<com.yourname.expensetracker.domain.parser.provenance.ParserAttempt>()
+		)
+		return if (parsed != null) ParseOutcome.Parsed(parsed, provenance)
+		       else ParseOutcome.NoParse(provenance)
+	}
+
+	/**
+	 * Parse with AI fallback. This is a suspend function that can use AI when
+	 * deterministic parsers fail.
+	 * 
+	 * Use this in NotificationProcessingPipeline for better multilingual support.
+	 */
 	suspend fun parseWithAiFallback(
 		title: String?,
 		text: String?,

@@ -39,7 +39,6 @@ import org.json.JSONObject
 import javax.inject.Inject
 
 import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
-import com.yourname.expensetracker.domain.notification.capture.computeNotificationContentHash
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler
 
@@ -176,6 +175,9 @@ class NotificationCaptureService : NotificationListenerService() {
 
     @Volatile
     private var isShuttingDown = false
+
+    @Volatile
+    private var isRefreshCapture = false
 
     // PR3: Fast caches removed — unified NotificationCaptureGate handles pre-extraction checks
     
@@ -519,11 +521,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     extrasJson = extrasJson,
                     rawStorageMode = settings.rawNotificationStorageMode,
                     correlationId = correlationId,
-                    // GAP-REFRESH-SOURCE: When called from refreshActiveNotifications(), this
-                    // should be "refresh" instead of "listener" to distinguish diagnostics.
-                    // However, both paths flow through onNotificationPosted(), so a common
-                    // parameter or context flag is needed to differentiate the source.
-                    source = "listener"
+                    source = if (isRefreshCapture) "refresh" else "listener"
                     )
                 }
 
@@ -706,6 +704,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
     private fun refreshActiveNotifications() {
         Timber.d("Manual refresh triggered")
+        isRefreshCapture = true
         try {
             val activeNotifications = activeNotifications
             Timber.d("Found ${activeNotifications.size} active notifications")
@@ -715,6 +714,8 @@ class NotificationCaptureService : NotificationListenerService() {
             }
         } catch (e: Exception) {
             Timber.e(e, "Error refreshing active notifications")
+        } finally {
+            isRefreshCapture = false
         }
     }
 
@@ -813,8 +814,9 @@ class NotificationCaptureService : NotificationListenerService() {
     }
 
     /**
-     * Hashed dedupe key combining package, notification key, postTime, and content fingerprint.
-     * Uses hashed values to avoid storing raw identifiers in the in-memory dedupe map.
+     * Hashed dedupe key combining package, notification key, and content fingerprint.
+     * Uses SHA-256 hashes to avoid storing raw identifiers in the in-memory dedupe map.
+     * PostTime is excluded to maintain strong duplicate suppression across rapid updates.
      */
     private fun computeDedupeKey(
         packageName: String,
@@ -822,8 +824,13 @@ class NotificationCaptureService : NotificationListenerService() {
         postTime: Long,
         contentFingerprint: String
     ): String {
-        val pkgHash = packageName.hashCode().toString(36)
-        val keyHash = notificationKey.hashCode().toString(36)
-        return "${pkgHash}|${keyHash}|${postTime}|${contentFingerprint.take(16)}"
+        val pkgHash = sha256(packageName).take(16)
+        val keyHash = sha256(notificationKey).take(16)
+        return "${pkgHash}|${keyHash}|${contentFingerprint}"
+    }
+
+    private fun sha256(input: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        return digest.digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 }

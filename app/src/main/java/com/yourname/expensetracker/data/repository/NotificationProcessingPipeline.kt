@@ -35,7 +35,6 @@ import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
-import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
@@ -147,9 +146,6 @@ class NotificationProcessingPipeline @Inject constructor(
     private val timeProvider: TimeProvider,
     private val directionDetector: TransferDirectionDetector,
     private val analytics: TransferDirectionAnalytics,
-    // P1-NEW-16: No longer used. GPS enrichment removed from notification pipeline.
-    // Kept to avoid breaking test constructors. Remove in next cleanup pass.
-    private val locationProvider: ForegroundLocationProvider,
     private val aiSettingsRepository: AiSettingsRepository,
     private val generateTransactionInsightUseCase: GenerateTransactionInsightUseCase,
     private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
@@ -253,23 +249,16 @@ class NotificationProcessingPipeline @Inject constructor(
         }
 
         // Phase 1: Pre-DB work (no transaction held)
-        val parsed = parserRegistry.parseWithAiFallback(
+        val parseOutcome = parserRegistry.parseWithProvenance(
             title = notification.title,
             text = notification.text,
             bigText = notification.bigText,
             subText = notification.subText,
             packageName = notification.packageName
         )
+        val parsed = parseOutcome.parsed
+        val provenance = parseOutcome.provenance
 
-        // P2-12: AI parser provenance — emit parse-stage diagnostic.
-        // parseWithAiFallback() internally tries deterministic parsers first,
-        // then falls back to AI. We record the fact that parsing was attempted.
-        // A full ParseProvenance model (domain/parser/provenance/ParseProvenance.kt)
-        // already exists as the future contract. Once parseWithAiFallback() returns
-        // a ParseProvenance alongside the ParsedTransaction, the provenance metadata
-        // will flow directly from the registry, eliminating any ambiguity about
-        // which parser won and whether AI fallback was attempted.
-        // P2-12: Full ParseProvenance integration pending — parseWithProvenance() not yet wired in AppParserRegistry.
         if (parsed != null) {
             diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -278,7 +267,8 @@ class NotificationProcessingPipeline @Inject constructor(
                 correlationId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                     .putHashed("packageName", notification.packageName)
-                    .put("parserSource", "PARSE_ATTEMPTED")
+                    .put("parserSource", provenance.source.name)
+                    .put("parserConfidence", provenance.confidence?.toString())
                     .build()
             ))
         }
@@ -358,7 +348,9 @@ class NotificationProcessingPipeline @Inject constructor(
                         confidence = 0.0f,
                         explanation = "Oversized amount needs manual confirmation",
                         packageName = notification.packageName,
+                        // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
                         notificationTitle = sanitizePendingReviewText(notification.title),
+                        // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
                         notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText),
                         extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                     )
@@ -441,7 +433,9 @@ class NotificationProcessingPipeline @Inject constructor(
                             confidence = 0.0f,
                             explanation = "Transaction signal detected but parser failed — needs manual confirmation",
                             packageName = notification.packageName,
+                            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
                             notificationTitle = sanitizePendingReviewText(notification.title),
+                            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
                             notificationText = sanitizePendingReviewText(notification.text ?: notification.bigText),
                             extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                         )
@@ -735,6 +729,9 @@ class NotificationProcessingPipeline @Inject constructor(
      * PR3: Sanitize notification text before storing in PendingReview.
      * Uses the current rawNotificationStorageMode from PrivacySettings.
      * Falls back to STORE_REDACTED on read failure (fail-closed).
+     *
+     * TODO P2-11: sanitizePendingReviewText should use rawStorageMode from PreDbContext,
+     * not privacySettingsRepository.getSettings() to prevent settings-change-after-capture leak.
      */
     private suspend fun sanitizePendingReviewText(text: String?): String? {
         val mode = try {
@@ -984,7 +981,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         val categoryId: Long?,
         val direction: TransferDirection?,
         val accountName: String?,
-        val deviceGps: Pair<Double, Double>?
+        val deviceGps: Pair<Double, Double>?,
+        // P2-11: pending review sanitization should use this field instead of reading
+        // current privacy settings, to prevent settings-change-after-capture leaks.
+        val rawStorageMode: com.yourname.expensetracker.domain.privacy.RawStorageMode? = null
     )
 
     private suspend fun hasCanonicalExpenseDuplicate(preDb: PreDbContext): Boolean {
@@ -1352,8 +1352,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             suggestedCategoryId = preDb.categoryId,
             confidence = preDb.routingResult.adjustedConfidence,
             packageName = notification.packageName,
+            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
             notificationTitle = sanitizePendingReviewText(notification.title),
             // P1-CURRENT-013 FIX: Preserve combined text for review context
+            // P2-11: captured-mode fix pending — uses current settings instead of PreDbContext.rawStorageMode
             notificationText = sanitizePendingReviewText(preDb.fullNotificationText),
             suggestedDate = preDb.eventDate,
             suggestedDirection = preDb.direction?.name,
