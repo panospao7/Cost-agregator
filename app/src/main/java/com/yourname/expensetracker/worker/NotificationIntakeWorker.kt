@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NotificationFilter
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.io.IOException
 
@@ -42,46 +43,37 @@ class NotificationIntakeWorker @AssistedInject constructor(
             return Result.failure()
         }
 
-        // Check write barrier
+        val now = timeProvider.now()
+
+        // PR 2: Do not mutate DB when writes are blocked — just retry.
         if (!writeBarrier.writesAllowed()) {
             Timber.d("IntakeWorker: writes blocked, retrying intakeId=$intakeId")
-            val now = timeProvider.now()
-            intakeDao.markRetryableFailure(
-                id = intakeId,
-                nextAttemptAt = now + 30_000,
-                failureCode = "WRITE_BARRIER_DENIED",
-                failureHash = null,
-                nowMs = now
-            )
             return Result.retry()
         }
 
+        // PR 2: Enforce maxAttempts
+        if (intake.attempts >= intake.maxAttempts) {
+            intakeDao.markFinalFailure(
+                id = intakeId,
+                failureCode = "MAX_ATTEMPTS_EXCEEDED",
+                failureHash = null,
+                nowMs = now
+            )
+            return Result.failure()
+        }
+
         // Claim the row
-        val now = timeProvider.now()
         val claimed = intakeDao.claimForProcessing(
             id = intakeId,
             nowMs = now,
             workerId = "intake-worker-${System.currentTimeMillis()}"
         )
         if (claimed == 0) {
-            // Already claimed by another worker
-            return Result.success()
+            return Result.success() // Already claimed
         }
 
         // Reload after claim
         val current = intakeDao.getById(intakeId) ?: return Result.failure()
-
-        // Check if payload is available
-        if (current.bigText == null && current.title == null && current.text == null) {
-            intakeDao.markTerminal(
-                id = intakeId,
-                status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
-                rawId = null, expenseId = null, reviewId = null,
-                finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
-                nowMs = now
-            )
-            return Result.success()
-        }
 
         // Run filter
         if (!NotificationFilter.shouldCapture(
@@ -114,7 +106,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
             dedupeFingerprint = current.dedupeFingerprint
         )
 
-        val storageNotification = processingNotification // Already sanitized by intake coordinator
+        val storageNotification = processingNotification
 
         // Process through pipeline
         return try {
@@ -132,11 +124,11 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 is NotificationPipelineOutcome.AutoRejected -> NotificationIntakeStatus.DROPPED_POLICY
                 is NotificationPipelineOutcome.Dropped -> NotificationIntakeStatus.DROPPED_POLICY
                 is NotificationPipelineOutcome.Error -> {
-                    if (outcome.throwable is IOException ||
-                        outcome.throwable.message?.contains("database is locked", ignoreCase = true) == true) {
+                    if (isRetryable(outcome.throwable) && current.attempts + 1 < current.maxAttempts) {
+                        val backoff = computeBackoff(current.attempts + 1)
                         intakeDao.markRetryableFailure(
                             id = intakeId,
-                            nextAttemptAt = now + 60_000,
+                            nextAttemptAt = now + backoff,
                             failureCode = "RETRYABLE_ERROR",
                             failureHash = null,
                             nowMs = now
@@ -171,26 +163,55 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 nowMs = now
             )
 
-            // Mark the raw notification as processed after a terminal pipeline outcome
+            // Mark raw notification as processed
             if (rawId != null) {
                 rawDao.markProcessed(rawId)
             }
 
-            // Purge raw payload for non-raw storage modes
-            if (current.rawStorageMode != "STORE_RAW") {
+            // Purge transient payload after terminal outcome
+            if (current.payloadMode == "TRANSIENT") {
                 intakeDao.purgeRawPayload(intakeId, now)
             }
 
             Result.success()
+        } catch (e: CancellationException) {
+            // PR 2: Do not mark cancellation as final failure.
+            // Stale PROCESSING rows will be released by the recovery scheduler.
+            Timber.d("IntakeWorker: cancelled intakeId=$intakeId")
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "IntakeWorker: processing failed for intakeId=$intakeId")
-            intakeDao.markFinalFailure(
-                id = intakeId,
-                failureCode = "WORKER_EXCEPTION",
-                failureHash = null,
-                nowMs = now
-            )
-            Result.failure()
+            if (isRetryable(e) && current.attempts + 1 < current.maxAttempts) {
+                val backoff = computeBackoff(current.attempts + 1)
+                intakeDao.markRetryableFailure(
+                    id = intakeId,
+                    nextAttemptAt = now + backoff,
+                    failureCode = "WORKER_EXCEPTION",
+                    failureHash = null,
+                    nowMs = now
+                )
+                Result.retry()
+            } else {
+                intakeDao.markFinalFailure(
+                    id = intakeId,
+                    failureCode = "WORKER_EXCEPTION",
+                    failureHash = null,
+                    nowMs = now
+                )
+                Result.failure()
+            }
         }
+    }
+
+    private fun isRetryable(e: Throwable): Boolean =
+        e is IOException ||
+        e.message?.contains("database is locked", ignoreCase = true) == true
+
+    private fun computeBackoff(attempt: Int): Long = when (attempt) {
+        1 -> 30_000
+        2 -> 120_000
+        3 -> 600_000
+        4 -> 1_800_000
+        else -> 3_600_000
     }
 }

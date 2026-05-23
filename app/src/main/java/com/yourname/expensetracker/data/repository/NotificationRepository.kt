@@ -75,7 +75,16 @@ class NotificationRepository @Inject constructor(
 
     /**
      * Process a raw notification through the pipeline and return the outcome.
-     * Uses the same notification for both processing and storage.
+     *
+     * **Important:** This overload uses the same [RawNotification] for BOTH
+     * processing (parsing the text) AND persistent storage. If the notification
+     * contains sensitive content that should be sanitized before storage,
+     * callers MUST use [processAndSave] with separate
+     * `processingNotification` and `storageNotification` parameters.
+     *
+     * This single-argument version is primarily intended for debug, testing,
+     * and migration scenarios where privacy sanitization has already been
+     * applied upstream or is not required.
      */
     suspend fun processAndSave(notification: RawNotification): NotificationPipelineOutcome {
         return processAndSave(notification, notification)

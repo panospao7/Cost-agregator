@@ -29,9 +29,11 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import javax.inject.Inject
@@ -499,7 +501,8 @@ class NotificationCaptureService : NotificationListenerService() {
                     }
                 }
 
-                // Step 6: Capture via durable intake coordinator
+                // Step 6: Capture via durable intake coordinator (NonCancellable — must not
+                // lose intake insert+enqueue even if service scope is being cancelled).
                 val settings = privacySettingsRepository.getSettings()
 
                 val extrasJson = when (settings.rawNotificationStorageMode) {
@@ -521,7 +524,8 @@ class NotificationCaptureService : NotificationListenerService() {
                 }
 
                 val notificationKeyHash = notificationKey.hashCode().toString(36)
-                val intakeId = intakeCoordinator.capture(
+                val intakeId = withContext(NonCancellable) {
+                    intakeCoordinator.capture(
                     packageName = packageName,
                     appName = appName,
                     notificationKey = notificationKey,
@@ -535,7 +539,8 @@ class NotificationCaptureService : NotificationListenerService() {
                     rawStorageMode = settings.rawNotificationStorageMode,
                     correlationId = correlationId,
                     source = "listener"
-                )
+                    )
+                }
 
                 if (intakeId != null) {
                     Timber.d("Notification captured via coordinator: intakeId=$intakeId package=$packageName")

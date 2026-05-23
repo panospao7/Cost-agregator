@@ -67,11 +67,12 @@ class NotificationIntakeCoordinator @Inject constructor(
             return null
         }
 
+        // PR 1 fix: Always store processing payload so the worker can parse.
+        // payloadMode indicates whether payload is raw (STORE_RAW) or transient
+        // (must be purged after terminal outcome for non-raw modes).
         val payloadMode = when (rawStorageMode) {
             RawStorageMode.STORE_RAW -> "RAW"
-            RawStorageMode.STORE_REDACTED -> "REDACTED"
-            RawStorageMode.STORE_METADATA_ONLY -> "METADATA_ONLY"
-            RawStorageMode.DO_NOT_STORE -> "NONE"
+            else -> "TRANSIENT"
         }
 
         val now = timeProvider.now()
@@ -84,12 +85,14 @@ class NotificationIntakeCoordinator @Inject constructor(
             source = source,
             correlationId = correlationId,
             dedupeFingerprint = dedupeFingerprint,
-            contentHash = combinedBody?.let { MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { "%02x".format(it) } },
-            title = if (rawStorageMode == RawStorageMode.STORE_RAW) title else null,
-            text = if (rawStorageMode == RawStorageMode.STORE_RAW) text else null,
-            bigText = if (rawStorageMode == RawStorageMode.STORE_RAW) combinedBody else null,
-            subText = if (rawStorageMode == RawStorageMode.STORE_RAW) subText else null,
-            extrasJson = if (rawStorageMode == RawStorageMode.STORE_RAW) extrasJson else null,
+            contentHash = combinedBody?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { "%02x".format(it) } },
+            // Always store payload for worker processing.
+            // Non-raw modes: worker purges after terminal outcome via purgeRawPayload().
+            title = title,
+            text = text,
+            bigText = combinedBody,
+            subText = subText,
+            extrasJson = extrasJson,
             rawStorageMode = rawStorageMode.name,
             payloadMode = payloadMode,
             status = NotificationIntakeStatus.RECEIVED.name,

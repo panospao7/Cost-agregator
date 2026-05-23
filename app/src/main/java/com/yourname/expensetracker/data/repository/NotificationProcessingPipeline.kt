@@ -261,8 +261,11 @@ class NotificationProcessingPipeline @Inject constructor(
         // P2-12: AI parser provenance — emit parse-stage diagnostic.
         // parseWithAiFallback() internally tries deterministic parsers first,
         // then falls back to AI. We record the fact that parsing was attempted.
-        // A full ParseOutcome contract would carry provenance metadata directly
-        // from the registry, eliminating any ambiguity about which parser won.
+        // A full ParseProvenance model (domain/parser/provenance/ParseProvenance.kt)
+        // already exists as the future contract. Once parseWithAiFallback() returns
+        // a ParseProvenance alongside the ParsedTransaction, the provenance metadata
+        // will flow directly from the registry, eliminating any ambiguity about
+        // which parser won and whether AI fallback was attempted.
         if (parsed != null) {
             diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -804,6 +807,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
 
             // PR 9: Currency detection expanded beyond EUR/USD/GBP.
             // Order: explicit ISO codes first, then unambiguous symbols, then common symbols.
+            // TODO(P2-10): Replace this heuristic currency detection with
+            // NotificationMoneySignalDetector + UserCurrencyProvider.
             val currency = when {
                 fullText.contains("USD", ignoreCase = true) || fullText.contains("\$") && !fullText.contains("CAD", ignoreCase = true) && !fullText.contains("AUD", ignoreCase = true) && !fullText.contains("C\$") && !fullText.contains("A\$") -> "USD"
                 fullText.contains("EUR", ignoreCase = true) || fullText.contains("€") -> "EUR"
@@ -822,6 +827,9 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
                 // Ambiguous symbols: try home-currency context or default to EUR as last resort
                 fullText.contains("\$") -> "USD"
+                // P2-10: Last-resort fallback. A proper NotificationMoneySignalDetector with
+                // UserCurrencyProvider should replace this with home-currency-based resolution.
+                // Currently defaults to EUR when no currency is detected.
                 else -> "EUR"
             }
 
@@ -880,10 +888,12 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             compareBy<ScoredAmount> { it.score }
                 .thenByDescending { it.amount }
         ) ?: return null
-        val amount = best.amount
+            val amount = best.amount
 
             // PR 9: Currency detection expanded beyond EUR/USD/GBP.
             // Order: explicit ISO codes first, then unambiguous symbols, then common symbols.
+            // TODO(P2-10): Replace this heuristic currency detection with
+            // NotificationMoneySignalDetector + UserCurrencyProvider.
             val currency = when {
                 fullText.contains("USD", ignoreCase = true) || fullText.contains("\$") && !fullText.contains("CAD", ignoreCase = true) && !fullText.contains("AUD", ignoreCase = true) && !fullText.contains("C\$") && !fullText.contains("A\$") -> "USD"
                 fullText.contains("EUR", ignoreCase = true) || fullText.contains("€") -> "EUR"
@@ -902,6 +912,9 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
                 // Ambiguous symbols: try home-currency context or default to EUR as last resort
                 fullText.contains("\$") -> "USD"
+                // P2-10: Last-resort fallback. A proper NotificationMoneySignalDetector with
+                // UserCurrencyProvider should replace this with home-currency-based resolution.
+                // Currently defaults to EUR when no currency is detected.
                 else -> "EUR"
             }
 
