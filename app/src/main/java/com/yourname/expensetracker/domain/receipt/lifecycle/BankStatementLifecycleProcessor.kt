@@ -535,29 +535,50 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 errorSummary = null
             )
 
-            // ── Step 8: Write PROCESSING_COMPLETE and return ──────────────────
-            val receiptToUpdate = scannedReceiptDao.getById(receiptId)
-            if (receiptToUpdate != null) {
-                scannedReceiptDao.update(receiptToUpdate.copy(
-                    processingStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
-                    updatedAt = timeProvider.now()
+            // ── Step 8: Conditionally write completion events ──────────────────
+            // P3-BLOCKER-05.3: Only write PROCESSING_COMPLETE / REVIEW_CREATED
+            // status when the run is not in a failed state.
+            val runSucceeded = finalStatus != BankStatementImportRun.STATUS_FAILED
+            if (runSucceeded) {
+                val receiptToUpdate = scannedReceiptDao.getById(receiptId)
+                if (receiptToUpdate != null) {
+                    scannedReceiptDao.update(receiptToUpdate.copy(
+                        processingStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                        updatedAt = timeProvider.now()
+                    ))
+                }
+                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                    receiptId = receiptId,
+                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                    eventType = "PROCESSING_COMPLETE",
+                    oldStatus = ReceiptProcessingStatus.PARSED.name,
+                    newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                    actor = "system:bank_statement_processor",
+                    message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("transactionsFound", transactionsFound)
+                        .put("reviewsCreated", reviewsCreated)
+                        .put("duplicatesSkipped", duplicatesSkipped)
+                        .build()
                 ))
+            } else {
+                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                    receiptId = receiptId,
+                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                    eventType = "PROCESSING_FAILED",
+                    oldStatus = ReceiptProcessingStatus.PARSED.name,
+                    newStatus = null,
+                    actor = "system:bank_statement_processor",
+                    message = "Bank statement processing had failures: $finalFailedItemCount failed items",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("transactionsFound", transactionsFound)
+                        .put("failedItemCount", finalFailedItemCount)
+                        .build()
+                ))
+                return Result.failure(Exception("Bank statement import had $finalFailedItemCount failed items"))
             }
-            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                receiptId = receiptId,
-                sourceType = ReceiptSourceType.BANK_STATEMENT.name,
-                documentType = ReceiptDocumentType.BANK_STATEMENT.name,
-                eventType = "PROCESSING_COMPLETE",
-                oldStatus = ReceiptProcessingStatus.PARSED.name,
-                newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
-                actor = "system:bank_statement_processor",
-                message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
-                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                    .put("transactionsFound", transactionsFound)
-                    .put("reviewsCreated", reviewsCreated)
-                    .put("duplicatesSkipped", duplicatesSkipped)
-                    .build()
-            ))
 
             val debugData = DebugData(
                 rawText = ocrResult.fullText,
@@ -593,14 +614,24 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 throw e
             }
             Timber.e(e, "BankStatementLifecycleProcessor failed for URI: %s", uri)
-            // P3-REG-006: Mark run FAILED on fatal unrecoverable error.
-            runId?.let {
+            // P3-BLOCKER-05.4: Count existing item rows before finalizing failure
+            runId?.let { rid ->
+                val existingItems = kotlin.runCatching {
+                    val ec = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                    val ed = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
+                    val ep = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
+                    val ef = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
+                    Triple(ec, ed + ep, ef)
+                }.getOrNull()
                 bankStatementImportRunDao.finalize(
-                    runId = it, status = BankStatementImportRun.STATUS_FAILED,
+                    runId = rid, status = BankStatementImportRun.STATUS_FAILED,
                     completedAt = timeProvider.now(),
-                    totalItems = 0, processedItems = 0,
-                    createdReviewCount = 0, duplicateExpenseCount = 0,
-                    duplicatePendingCount = 0, failedItemCount = 0,
+                    totalItems = existingItems?.let { it.first + it.second + it.third } ?: 0,
+                    processedItems = existingItems?.let { it.first + it.second } ?: 0,
+                    createdReviewCount = existingItems?.first ?: 0,
+                    duplicateExpenseCount = 0,
+                    duplicatePendingCount = existingItems?.second ?: 0,
+                    failedItemCount = existingItems?.third ?: 0,
                     errorSummary = e.message?.take(500)
                 )
             }

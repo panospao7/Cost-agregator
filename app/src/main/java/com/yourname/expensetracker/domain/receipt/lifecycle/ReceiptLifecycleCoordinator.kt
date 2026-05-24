@@ -192,14 +192,21 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         if (!validation.isValid) {
             val message = "Receipt input validation failed: ${validation.errors.joinToString("; ")}"
             Timber.w(message)
-            // P3-NEW-08: Write VALIDATION_FAILED diagnostic (no raw URI)
+            // P3-NEW-08 / P3-BLOCKER-04: Write VALIDATION_FAILED diagnostic
+            // Use reason codes extracted from validation errors — never raw URI
+            val reasonCode = when {
+                validation.errors.any { it.contains("not readable") } -> "URI_NOT_READABLE"
+                validation.errors.any { it.contains("MIME type") || it.contains("determine MIME") } -> "MIME_UNKNOWN"
+                validation.errors.any { it.contains("Unsupported MIME") } -> "MIME_UNSUPPORTED"
+                validation.errors.any { it.contains("too large") || it.contains("exceeds") } -> "FILE_TOO_LARGE"
+                validation.errors.any { it.contains("decode") } -> "IMAGE_DECODE_FAILED"
+                else -> "VALIDATION_FAILED"
+            }
             emitIntakeDiagnostic("validation", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                 correlationId, "VALIDATION_FAILED",
                 mimeType = validation.mimeType, fileSizeBytes = validation.fileSizeBytes,
-                message = "Validation failed", metadata = mapOf(
-                    "errors" to validation.errors.joinToString("; ").take(256),
-                    "reasonCode" to validation.errors.firstOrNull().orEmpty().take(128)
-                ))
+                message = "Validation failed",
+                metadata = mapOf("reasonCode" to reasonCode))
             return Result.failure(IllegalArgumentException(message))
         }
 
