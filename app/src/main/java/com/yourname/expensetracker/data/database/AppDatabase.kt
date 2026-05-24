@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 134
+const val APP_DATABASE_SCHEMA_VERSION = 135
 
 @Database(
     entities = [
@@ -107,7 +107,9 @@ const val APP_DATABASE_SCHEMA_VERSION = 134
         OperationRun::class,
         OperationRunEvent::class,
         EntitySourceLink::class,
-        NotificationIntakeEntity::class
+        NotificationIntakeEntity::class,
+        BankStatementImportRun::class,
+        BankStatementImportItem::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -179,6 +181,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun operationRunEventDao(): OperationRunEventDao
     abstract fun entitySourceLinkDao(): EntitySourceLinkDao
     abstract fun notificationIntakeDao(): NotificationIntakeDao
+    abstract fun bankStatementImportRunDao(): BankStatementImportRunDao
+    abstract fun bankStatementImportItemDao(): BankStatementImportItemDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -8000,6 +8004,58 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_134_135 = object : androidx.room.migration.Migration(134, 135) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // P3-P1-10 / P3-NEW-10: Bank statement import run/item ledger tables.
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS bank_statement_import_runs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        statementReceiptId INTEGER,
+                        sourceFingerprint TEXT,
+                        correlationId TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        startedAt INTEGER NOT NULL,
+                        completedAt INTEGER,
+                        totalItems INTEGER NOT NULL DEFAULT 0,
+                        processedItems INTEGER NOT NULL DEFAULT 0,
+                        createdReviewCount INTEGER NOT NULL DEFAULT 0,
+                        duplicateExpenseCount INTEGER NOT NULL DEFAULT 0,
+                        duplicatePendingCount INTEGER NOT NULL DEFAULT 0,
+                        failedItemCount INTEGER NOT NULL DEFAULT 0,
+                        pdfPartial INTEGER NOT NULL DEFAULT 0,
+                        pagesProcessed INTEGER DEFAULT NULL,
+                        totalPages INTEGER DEFAULT NULL,
+                        errorSummary TEXT DEFAULT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_statement_import_runs_status ON bank_statement_import_runs (status)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_statement_import_runs_startedAt ON bank_statement_import_runs (startedAt)")
+
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS bank_statement_import_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        runId INTEGER NOT NULL,
+                        itemIndex INTEGER NOT NULL,
+                        transactionFingerprint TEXT,
+                        status TEXT NOT NULL,
+                        duplicateReason TEXT DEFAULT NULL,
+                        expenseId INTEGER,
+                        pendingReviewId INTEGER,
+                        merchant TEXT DEFAULT NULL,
+                        amount REAL,
+                        currency TEXT DEFAULT NULL,
+                        transactionDate INTEGER,
+                        errorReason TEXT DEFAULT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_statement_import_items_runId ON bank_statement_import_items (runId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_statement_import_items_transactionFingerprint ON bank_statement_import_items (transactionFingerprint)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_bank_statement_import_items_runId_itemIndex ON bank_statement_import_items (runId, itemIndex)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -8169,7 +8225,8 @@ MIGRATION_91_92,
         MIGRATION_130_131,
         MIGRATION_131_132,
         MIGRATION_132_133,
-        MIGRATION_133_134
+        MIGRATION_133_134,
+        MIGRATION_134_135
     )
 }
 }

@@ -131,4 +131,18 @@ interface ScannedReceiptDao {
         id: Long,
         rawOcrTextPurgedAt: Long
     )
+
+    // ── Pipeline 3 diagnostics (PR P3-2) ────────────────────────────────────
+
+    /** Returns the count of receipts with invalid (<= 0) timestamps. */
+    @Query("SELECT COUNT(*) FROM scanned_receipts WHERE createdAt <= 0 OR updatedAt <= 0")
+    suspend fun countInvalidTimestamps(): Int
+
+    /** Repairs receipts whose createdAt is 0 by setting it to [now]. */
+    @Query("UPDATE scanned_receipts SET createdAt = :now WHERE createdAt <= 0")
+    suspend fun repairMissingCreatedAt(now: Long): Int
+
+    /** Repairs receipts whose updatedAt is 0 by setting it to createdAt. */
+    @Query("UPDATE scanned_receipts SET updatedAt = createdAt WHERE updatedAt <= 0")
+    suspend fun repairMissingUpdatedAt(): Int
 }

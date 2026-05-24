@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import androidx.room.withTransaction
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
@@ -88,7 +88,7 @@ class ReceiptLinkService @Inject constructor(
     private val returnWindowDao: ReturnWindowDao,
     private val expenseDao: ExpenseDao,
     private val timeProvider: TimeProvider,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val sourceLinkWriter: SourceLinkWriter
 ) {
 
@@ -127,8 +127,10 @@ class ReceiptLinkService @Inject constructor(
         writeSourceLink: Boolean = true
     ): Result<ReceiptExpenseLink> {
         // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            writeBarrier.checkWritesAllowed("ReceiptLinkService.linkReceiptToExpense")
+        } catch (e: Exception) {
+            return Result.failure(e)
         }
 
         // 1. Load receipt — fail fast if not found
@@ -308,8 +310,10 @@ class ReceiptLinkService @Inject constructor(
         expenseId: Long
     ): Result<Unit> {
         // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            writeBarrier.checkWritesAllowed("ReceiptLinkService.unlinkReceiptFromExpense")
+        } catch (e: Exception) {
+            return Result.failure(e)
         }
 
         return try {
@@ -320,19 +324,18 @@ class ReceiptLinkService @Inject constructor(
             val isBankStatement =
                 receipt?.documentType == ReceiptDocumentType.BANK_STATEMENT.name
 
+            var affectedRows = 0
             // All operations inside a single database transaction
             database.withTransaction {
-                // 1. Delete link row
-                receiptExpenseLinkDao.unlink(receiptId, expenseId)
+                // 1. Delete link row and capture affected row count
+                affectedRows = receiptExpenseLinkDao.unlink(receiptId, expenseId)
 
                 // 2. Determine correct ScannedReceipt.expenseId after unlinking
-                // RCP-8: Ensure updatedAt is set on every ScannedReceipt update.
                 if (!isBankStatement && receipt != null) {
                     val remainingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
                     val primaryLinks = remainingLinks.filter { it.isPrimary }
 
                     if (primaryLinks.isEmpty()) {
-                        // No remaining primary links — clear legacy field and match metadata
                         scannedReceiptDao.update(receipt.copy(
                             expenseId = null,
                             matchStatus = MatchStatus.UNMATCHED,
@@ -341,16 +344,13 @@ class ReceiptLinkService @Inject constructor(
                             updatedAt = now
                         ))
                     } else {
-                        // Another primary link exists — point to its expenseId
                         scannedReceiptDao.update(
                             receipt.copy(expenseId = primaryLinks.first().expenseId, updatedAt = now)
                         )
                     }
                 }
 
-                // WRN-N1: After unlinking the receipt from the expense, also clear
-                // the expenseId on any associated Warranty and ReturnWindow records
-                // so they don't retain stale references to the now-unlinked expense.
+                // Clear expenseId on warranties and return windows
                 warrantyDao.updateExpenseIdByReceiptId(
                     receiptId = receiptId,
                     expenseId = null,
@@ -362,23 +362,25 @@ class ReceiptLinkService @Inject constructor(
                     updatedAt = now
                 )
 
-                // P3-CURRENT-020: Clear expenseId on receipt item categorizations
                 receiptItemCategorizationDao.clearExpenseId(
                     receiptId = receiptId,
                     timestamp = now
                 )
 
-                // 3. Write lifecycle event
-                val sourceType = receipt?.sourceType ?: "UNKNOWN"
-                val documentType = receipt?.documentType ?: "UNKNOWN"
-                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                    receiptId = receiptId,
-                    sourceType = sourceType,
-                    documentType = documentType,
-                    eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
-                    actor = "system",
-                    message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
-                ))
+                // P3-NEW-09: Only write success event when a row was actually deleted.
+                // A no-op unlink should NOT produce a misleading success event.
+                if (affectedRows > 0) {
+                    val sourceType = receipt?.sourceType ?: "UNKNOWN"
+                    val documentType = receipt?.documentType ?: "UNKNOWN"
+                    receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                        receiptId = receiptId,
+                        sourceType = sourceType,
+                        documentType = documentType,
+                        eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
+                        actor = "system",
+                        message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
+                    ))
+                }
             }
 
             Result.success(Unit)

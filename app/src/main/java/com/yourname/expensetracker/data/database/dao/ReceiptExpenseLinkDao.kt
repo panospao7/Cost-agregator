@@ -19,7 +19,7 @@ interface ReceiptExpenseLinkDao {
     suspend fun getLinksForExpense(expenseId: Long): List<ReceiptExpenseLink>
 
     @Query("DELETE FROM receipt_expense_links WHERE receiptId = :receiptId AND expenseId = :expenseId")
-    suspend fun unlink(receiptId: Long, expenseId: Long)
+    suspend fun unlink(receiptId: Long, expenseId: Long): Int
 
     @Query("DELETE FROM receipt_expense_links WHERE receiptId = :receiptId")
     suspend fun deleteAllLinksForReceipt(receiptId: Long)

@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptTimestampPolicy
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -140,7 +141,8 @@ class ReceiptRepository @Inject constructor(
      */
     suspend fun processReceipt(
         imageUri: Uri,
-        autoCreateReview: Boolean = false
+        autoCreateReview: Boolean = false,
+        resolvedMimeType: String? = null
     ): ProcessReceiptResult {
         return withContext(ioDispatcher) {
             // 0. Pre-OCR exact-hash dedup: skip expensive OCR if this exact file was already processed
@@ -149,17 +151,23 @@ class ReceiptRepository @Inject constructor(
             // provider that transforms bytes (e.g. EXIF stripping), hashes may diverge.
             // Consider always computing hash from the persisted file path after persistReceiptAsset.
             val uriHashResult = assetStore.computeUriHash(imageUri)
-        if (uriHashResult.isSuccess) {
+            if (uriHashResult.isSuccess) {
             val existingMatch = scannedReceiptDao.getByImageHash(uriHashResult.getOrThrow())
             if (existingMatch != null) {
                 Timber.d("Duplicate receipt detected pre-OCR by exact hash: existingId=${existingMatch.id}")
-                return@withContext ProcessReceiptResult(existingMatch, ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
+                // P3-P1-07: Use the existing receipt's currency instead of hardcoded "EUR"
+                val existingCurrency = existingMatch.currency.takeIf { it.isNotBlank() } ?: homeCurrency()
+                return@withContext ProcessReceiptResult(existingMatch, ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), existingCurrency, emptyList(), 0f), ephemeralRawOcrText = null)
             }
         }
 
             // 1. Run OCR (Separate Try-Catch to distinguish OCR failure vs Parse failure)
             val ocrResult = try {
-                ocrService.processUri(imageUri)
+                if (resolvedMimeType != null) {
+                    ocrService.processUriWithMime(imageUri, resolvedMimeType)
+                } else {
+                    ocrService.processUri(imageUri)
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.e(e, "OCR Failed for $imageUri")
@@ -188,7 +196,9 @@ class ReceiptRepository @Inject constructor(
                 // Save it so user can manually edit without losing the text.
                 Timber.e(e, "Parsing Failed for $imageUri")
                 
-                val failedReceipt = ScannedReceipt(
+                val safeReason = safeFailureReason(e)
+                val now = timeProvider.now()
+                val failedReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                     imagePath = ocrResult.savedImagePath,
                     rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText), // PRESERVED!
                     parsedTotal = null,
@@ -198,47 +208,19 @@ class ReceiptRepository @Inject constructor(
                     parsedTaxAmount = null, // Explicitly null for failed parse
                     currency = homeCur,
                     confidence = 0f,
-                    createdAt = timeProvider.now(),
-                    processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name
-                )
+                    processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name,
+                    parseFailureReason = safeReason
+                ), now)
                 val receiptId = scannedReceiptDao.insert(failedReceipt)
                 require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${failedReceipt.imagePath}" }
-                
-                // ── Parse-failure placeholder review (never becomes real expense) ──
-                if (autoCreateReview) {
-                    val review = PendingReview(
-                        rawNotificationId = null,
-                        scannedReceiptId = receiptId,
-                        suggestedAmount = null,
-                        suggestedCurrency = homeCur,
-                        suggestedMerchant = "Parsing Failed",
-                        suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),
-                        suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                        suggestedCategoryId = null,
-                        confidence = 0f,
-                        packageName = "receipt.scan.error",
-                        notificationTitle = "Parsing Failed",
-                        notificationText = "OCR Text preserved. Manual entry required."
-                    )
-                    pendingReviewDao.insert(review)
 
-                    // PR4: Write review provenance source link for parse-failure branch
-                    pendingReviewSourceLinkService.linkSourcesForReview(
-                        review = review,
-                        reviewId = review.id,
-                        sourceType = ExpenseSource.REVIEW_APPROVAL,
-                        correlationId = null,
-                        context = PendingReviewSourceContext(
-                            stage = "receipt_parse_failed_review",
-                            reason = "OCR succeeded but parser failed",
-                            extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER.name
-                        )
-                    )
-                }
+                // P3-P1-09 / P3-NEW-01: PendingReview creation is moved to
+                // ReceiptLifecycleCoordinator after dedupe. The repository must
+                // NOT create reviews inside the scan flow.
 
                 return@withContext ProcessReceiptResult(
                     failedReceipt.copy(id = receiptId),
-                    ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f),
+                    ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f),
                     pagesProcessed = ocrResult.pagesProcessed,
                     totalPages = ocrResult.totalPages,
                     ephemeralRawOcrText = ocrResult.fullText
@@ -252,7 +234,8 @@ class ReceiptRepository @Inject constructor(
             val normalizedMerchant = lookupResult?.canonical?.normalizedName
 
             // 4. Save scanned receipt record
-            val receipt = ScannedReceipt(
+            val now = timeProvider.now()
+            val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
                 rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
                 parsedTotal = parsed.total,
@@ -262,58 +245,18 @@ class ReceiptRepository @Inject constructor(
                     receiptParser.lineItemsToJson(parsed.lineItems) else null,
                 parsedTaxAmount = parsed.tax,
                 currency = parsed.currency,
-                confidence = parsed.confidence,
-                createdAt = timeProvider.now()
-            )
+                confidence = parsed.confidence
+            ), now)
 
             val receiptId = database.withTransaction {
                 val insertedReceiptId = scannedReceiptDao.insert(receipt)
                 require(insertedReceiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
 
-                // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
-                //
-                //    "Unknown Merchant" is a UI-placeholder fallback when neither
-                //    the normalizer nor the parser could extract a merchant name.
-                //    It will be shown in the review queue and must be edited by
-                //    the user before approval — approveReview() blocks approval
-                //    without a user override.  This placeholder never becomes a
-                //    real expense merchant value.
-                if (autoCreateReview) {
-                    val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
-                    val suggestedAmount = parsed.total // null when parser didn't extract a total
-                    val review = PendingReview(
-                        rawNotificationId = null,
-                        scannedReceiptId = insertedReceiptId,
-                        suggestedAmount = suggestedAmount,
-                        suggestedCurrency = parsed.currency,
-                        suggestedMerchant = suggestedMerchant,
-                        suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
-                        suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                        suggestedDate = parsed.date, // Preserving the date found by parser
-                        confidence = parsed.confidence,
-                        packageName = "receipt.scan",
-                        notificationTitle = "Scanned Receipt",
-                        notificationText = RawContentSanitizer.sanitizedOcrReviewSnippet(ocrResult.fullText, privacySettingsRepository.getSettings().rawOcrStorageMode),
-                        suggestedCategoryId = normalizedMerchant?.let {
-                            hybridClassifier.classify(it, suggestedAmount ?: 0.0).categoryId.takeIf { id -> id > 0 }
-                        }
-                    )
-                    pendingReviewDao.insert(review)
-
-                    // PR4: Write review provenance source link for normal scan branch
-                    pendingReviewSourceLinkService.linkSourcesForReview(
-                        review = review,
-                        reviewId = review.id,
-                        sourceType = ExpenseSource.REVIEW_APPROVAL,
-                        correlationId = null,
-                        context = PendingReviewSourceContext(
-                            stage = "receipt_scan_review",
-                            reason = "Receipt scan needs review",
-                            confidence = review.confidence,
-                            extractionState = review.extractionState.name
-                        )
-                    )
-                }
+                // P3-P1-09 / P3-NEW-01: PendingReview creation is moved to
+                // ReceiptLifecycleCoordinator after dedupe. The repository must
+                // NOT create reviews inside the scan flow. The autoCreateReview
+                // parameter is retained on the method signature for backward
+                // compatibility but is no longer acted upon here.
 
                 insertedReceiptId
             }
@@ -337,18 +280,18 @@ class ReceiptRepository @Inject constructor(
         }
 
         val homeCur = homeCurrency()
-        val receipt = ScannedReceipt(
+        val now = timeProvider.now()
+        val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
             imagePath = path,
             rawOcrText = "[OCR Failed or Skipped]",
             parsedTotal = null,
             parsedMerchant = null,
-            parsedDate = timeProvider.now(),
+            parsedDate = now,
             parsedItems = null,
             parsedTaxAmount = null,
             currency = homeCur,
-            confidence = 0f,
-            createdAt = timeProvider.now()
-        )
+            confidence = 0f
+        ), now)
         val receiptId = scannedReceiptDao.insert(receipt)
         require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
         
@@ -359,7 +302,7 @@ class ReceiptRepository @Inject constructor(
                 total = null,
                 subtotal = null,
                 tax = null,
-                date = timeProvider.now(),
+                date = now,
                 currency = homeCur,
                 lineItems = emptyList(),
                 confidence = 0f
@@ -454,12 +397,29 @@ class ReceiptRepository @Inject constructor(
     }
 
     /** 
-     * Returns the user's home currency, falling back to "EUR" only as last resort.
-     * CURR-C62-10: This is acceptable for receipt parsing context where a default is needed.
+     * Returns the user's home currency, falling back to "XXX" (ISO 4217 unknown)
+     * only as last resort.  Never silently defaults to "EUR".
      */
     private suspend fun homeCurrency(): String {
         val homeResolution = currencySettingsRepository.resolveHomeCurrency()
-        return homeResolution.currencyOrNull?.code ?: "EUR" // last resort for receipt parsing
+        return homeResolution.currencyOrNull?.code ?: "XXX"
+    }
+
+    /**
+     * Creates a safe, truncated failure reason string from a [Throwable].
+     *
+     * - Includes the exception class simple name and message (if present).
+     * - Truncates to at most 500 characters.
+     * - Never includes the stack trace or raw OCR text.
+     */
+    private fun safeFailureReason(e: Throwable): String {
+        val sb = StringBuilder()
+        sb.append(e.javaClass.simpleName)
+        if (!e.message.isNullOrBlank()) {
+            sb.append(": ")
+            sb.append(e.message!!.take(400))
+        }
+        return sb.toString().take(500)
     }
 
     private suspend fun runPostCommitSafely(
@@ -646,7 +606,7 @@ class ReceiptRepository @Inject constructor(
                 parsedDate = timeProvider.now(),
                 parsedItems = null,
                 parsedTaxAmount = null,
-                currency = parsedTransactions.firstOrNull()?.currency ?: "EUR",
+                currency = parsedTransactions.firstOrNull()?.currency ?: homeCurrency(),
                 confidence = 0.8f,
                 createdAt = timeProvider.now()
             )

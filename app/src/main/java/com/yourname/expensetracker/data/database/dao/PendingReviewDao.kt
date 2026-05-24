@@ -642,4 +642,29 @@ AND LENGTH(:merchantKey) >= 8
     /** Recover reviews stuck in PROCESSING state (e.g. after process death mid-approval). */
     @Query("UPDATE pending_reviews SET status = 'PENDING' WHERE status = 'PROCESSING'")
     suspend fun recoverStuckProcessing(): Int
+
+    // ── Pipeline 3 duplicate cleanup support (PR P3-1) ───────────────────────
+
+    /**
+     * Deletes all [PendingReview] rows referencing a given scanned receipt ID.
+     * Used during exact-duplicate cleanup so that deleting the duplicate receipt
+     * row never leaves detached actionable reviews behind.
+     *
+     * Returns the number of rows deleted (0 when none exist).
+     */
+    @Query("DELETE FROM pending_reviews WHERE scannedReceiptId = :receiptId")
+    suspend fun deleteByScannedReceiptId(receiptId: Long): Int
+
+    /**
+     * Returns all [PendingReview] rows referencing a given scanned receipt ID.
+     * Useful for diagnostics and defensive checks.
+     */
+    @Query("SELECT * FROM pending_reviews WHERE scannedReceiptId = :receiptId")
+    suspend fun getByScannedReceiptId(receiptId: Long): List<PendingReview>
+
+    /**
+     * Counts [PendingReview] rows referencing a given scanned receipt ID.
+     */
+    @Query("SELECT COUNT(*) FROM pending_reviews WHERE scannedReceiptId = :receiptId")
+    suspend fun countByScannedReceiptId(receiptId: Long): Int
 }

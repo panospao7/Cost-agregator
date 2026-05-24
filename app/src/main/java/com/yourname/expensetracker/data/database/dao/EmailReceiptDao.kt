@@ -44,6 +44,14 @@ interface EmailReceiptDao {
     suspend fun getByMessageId(messageId: String): EmailReceiptSource?
 
     /**
+     * Look up an email receipt source by message ID hash for deduplication.
+     * The hash is always stored regardless of storage mode, making it the
+     * most reliable lookup key across all privacy configurations.
+     */
+    @Query("SELECT * FROM email_receipt_sources WHERE emailMessageIdHash = :hash LIMIT 1")
+    suspend fun getByMessageIdHash(hash: String): EmailReceiptSource?
+
+    /**
      * Get email receipt by fingerprint for deduplication.
      * Fingerprint format: "${merchant.lowercase()}_${amount}_${date}"
      */

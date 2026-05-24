@@ -6,11 +6,14 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
+import com.yourname.expensetracker.data.database.entity.ExtractionState
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -27,6 +30,8 @@ import kotlinx.coroutines.CancellationException
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.provenance.ReceiptSourceLinkPayloadFactory
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceContext
+import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
 import com.yourname.expensetracker.domain.provenance.TargetEntityType
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
@@ -39,6 +44,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -90,6 +96,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val receiptExpenseLinkDao: ReceiptExpenseLinkDao,
     private val receiptEventDao: ReceiptEventDao,
     private val emailReceiptDao: EmailReceiptDao,
+    private val pendingReviewDao: PendingReviewDao,
+    private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val timeProvider: TimeProvider,
     private val bankStatementLifecycleProcessor: BankStatementLifecycleProcessor,
     private val sideEffectDispatcher: ReceiptSideEffectDispatcher,
@@ -109,7 +117,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
     companion object {
         /** Last-resort fallback currency when no home currency can be resolved. */
-        private const val FALLBACK_CURRENCY = "EUR"
+        private const val FALLBACK_CURRENCY = "XXX"  // ISO 4217 unknown currency — no longer "EUR"
 
         /**
          * Resolves an email sender address to a known provider name for
@@ -168,8 +176,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         options: ReceiptProcessingOptions = ReceiptProcessingOptions()
     ): Result<ScannedReceipt> {
         // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processReceiptInput")
+        } catch (e: Exception) {
+            return Result.failure(e)
         }
 
         // 1. Validate input
@@ -186,7 +196,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         return try {
             val processResult = receiptRepository.processReceipt(
                 imageUri = uri,
-                autoCreateReview = options.createReview
+                autoCreateReview = options.createReview,
+                resolvedMimeType = validation.mimeType
             )
             val receipt = processResult.receipt
             val parsed = processResult.parsed
@@ -228,9 +239,33 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         it.taxInclusive = taxInclusive
                     }
                     if (existing != null) {
-                        // PR2: Clean up ghost row inserted by repository before duplicate detection was complete
-                        Timber.w("Ghost duplicate detected for receipt %d — cleaning up newly-inserted row (existingId=%d)", receipt.id, existing.id)
-                        scannedReceiptDao.delete(receipt)
+                        // P3-CUR-01 / P3-CUR-02: Proper exact-duplicate cleanup:
+                        // 1. Delete pending reviews referencing the duplicate receipt
+                        // 2. Write DUPLICATE_DETECTED event
+                        // 3. Delete the duplicate receipt row
+                        // 4. Delete the persisted asset file post-commit
+                        val now = timeProvider.now()
+                        database.withTransaction {
+                            pendingReviewDao.deleteByScannedReceiptId(receipt.id)
+                            receiptEventDao.insert(
+                                ReceiptEvent(
+                                    receiptId = receipt.id,
+                                    sourceType = receipt.sourceType,
+                                    documentType = receipt.documentType,
+                                    eventType = "DUPLICATE_DETECTED",
+                                    occurredAt = now,
+                                    oldStatus = receipt.processingStatus,
+                                    newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
+                                    actor = "system:coordinator",
+                                    message = "Exact-hash duplicate removed (existingId=${existing.id})",
+                                    metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"EXACT_HASH\"}",
+                                    errorDetails = null
+                                )
+                            )
+                            scannedReceiptDao.delete(receipt)
+                        }
+                        // Post-commit: delete the persisted asset for the duplicate
+                        receipt.imagePath?.let { assetStore.deleteAsset(it) }
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
                         return Result.success(existing)
                     }
@@ -279,38 +314,40 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             )
 
             if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
-                // Update current receipt with fingerprints and mark as duplicate
+                // Update current receipt with fingerprints and mark as duplicate.
+                // P3-CUR-02: Wrap update + event + pending-review cleanup in a single
+                // database transaction so a crash cannot leave them inconsistent.
                 val now = timeProvider.now()
-                val withFingerprints = receipt.copy(
+                val withFingerprints = ReceiptTimestampPolicy.forUpdate(receipt.copy(
                     imagePath = receipt.imagePath,
                     imageHash = fileHash ?: receipt.imageHash,
                     sourceType = ReceiptSourceType.CAMERA.name,
                     documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
                     processingStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
                     textFingerprint = textFingerprint,
-                    semanticFingerprint = semanticFingerprint,
-                    updatedAt = now
-                ).also { it.taxInclusive = taxInclusive }
-                scannedReceiptDao.update(withFingerprints)
+                    semanticFingerprint = semanticFingerprint
+                ), now).also { it.taxInclusive = taxInclusive }
 
-                // Write DUPLICATE_DETECTED event with existing receipt ID in metadata
                 val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
                 if (existing != null) {
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = withFingerprints.id,
-                            sourceType = withFingerprints.sourceType,
-                            documentType = withFingerprints.documentType,
-                            eventType = "DUPLICATE_DETECTED",
-                            occurredAt = now,
-                            oldStatus = receipt.processingStatus,
-                            newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
-                            actor = "system:coordinator",
-                            message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
-                            metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
-                            errorDetails = null
+                    database.withTransaction {
+                        scannedReceiptDao.update(withFingerprints)
+                        receiptEventDao.insert(
+                            ReceiptEvent(
+                                receiptId = withFingerprints.id,
+                                sourceType = withFingerprints.sourceType,
+                                documentType = withFingerprints.documentType,
+                                eventType = "DUPLICATE_DETECTED",
+                                occurredAt = now,
+                                oldStatus = receipt.processingStatus,
+                                newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
+                                actor = "system:coordinator",
+                                message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
+                                metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
+                                errorDetails = null
+                            )
                         )
-                    )
+                    }
                     existing.taxInclusive = taxInclusive
                     return Result.success(existing)
                 }
@@ -319,12 +356,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // 5. Update receipt with lifecycle metadata and fingerprints,
             //    and carry the taxInclusive flag for downstream consumers.
             val now = timeProvider.now()
-            // P3-P1-02: Repair createdAt=0L sentinel that arrives when the OCR
-            // pipeline creates a ScannedReceipt without setting a timestamp.
-            val repairedCreatedAt = if (receipt.createdAt == 0L) now else receipt.createdAt
             val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
             val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
-            val updated = receipt.copy(
+            val updated = ReceiptTimestampPolicy.forUpdate(receipt.copy(
                 imagePath = receipt.imagePath,
                 imageHash = fileHash ?: receipt.imageHash,
                 sourceType = ReceiptSourceType.CAMERA.name,
@@ -332,19 +366,18 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 processingStatus = processingStatus,
                 textFingerprint = textFingerprint,
                 semanticFingerprint = semanticFingerprint,
-                rawOcrText = sanitizedOcrText,
-                createdAt = repairedCreatedAt,
-                updatedAt = now
-            ).also { it.taxInclusive = taxInclusive }
+                rawOcrText = sanitizedOcrText
+            ), now).also { it.taxInclusive = taxInclusive }
 
-            // 5+6. Atomically persist the receipt update and all lifecycle events.
-            // P3-P1-01: wrap update+events in a single transaction so a partial
-            // write (event inserted but receipt row not yet updated, or vice versa)
-            // cannot leave the database in an inconsistent state.
+            // 5+6. Atomically persist the receipt update, all lifecycle events,
+            // and optionally the pending review. P3-P1-01: wrap update+events+review
+            // in a single transaction so a partial write cannot leave the database
+            // in an inconsistent state.
+            var createdReviewId: Long = 0
             database.withTransaction {
                 scannedReceiptDao.update(updated)
 
-                // 6. Write lifecycle event
+                // 6. Write receipt lifecycle event
                 receiptEventDao.insert(
                     ReceiptEvent(
                         receiptId = updated.id,
@@ -360,6 +393,25 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         errorDetails = null
                     )
                 )
+
+                // P3-P1-08: Write PARSE_FAILED event when parsing failed
+                if (processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name) {
+                    receiptEventDao.insert(
+                        ReceiptEvent(
+                            receiptId = updated.id,
+                            sourceType = updated.sourceType,
+                            documentType = updated.documentType,
+                            eventType = "PARSE_FAILED",
+                            occurredAt = now,
+                            oldStatus = null,
+                            newStatus = ReceiptProcessingStatus.PARSE_FAILED.name,
+                            actor = "system:coordinator",
+                            message = "OCR succeeded but receipt parsing failed",
+                            metadata = null,
+                            errorDetails = updated.parseFailureReason
+                        )
+                    )
+                }
 
                 if (isOcrFailure) {
                     receiptEventDao.insert(
@@ -399,6 +451,61 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         )
                     )
                 }
+
+                // P3-P1-09 / P3-NEW-01: Create PendingReview only AFTER dedupe
+                // passes and the receipt is confirmed non-duplicate. This prevents
+                // ghost/actionable reviews for duplicate receipt scans.
+                if (options.createReview) {
+                    val suggestedMerchant = receipt.parsedMerchant
+                        ?: parsed.merchantName
+                        ?: if (processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name) "Parsing Failed"
+                          else "Unknown Merchant"
+                    val safeReviewSnippet = RawContentSanitizer.sanitizedOcrReviewSnippet(
+                        processResult.ephemeralRawOcrText ?: sanitizedOcrText,
+                        ocrStorageMode
+                    )
+                    val review = PendingReview(
+                        rawNotificationId = null,
+                        scannedReceiptId = updated.id,
+                        suggestedAmount = parsed.total,
+                        suggestedCurrency = updated.currency,
+                        suggestedMerchant = suggestedMerchant,
+                        suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
+                        suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                        suggestedDate = parsed.date,
+                        confidence = parsed.confidence,
+                        packageName = when (processingStatus) {
+                            ReceiptProcessingStatus.PARSE_FAILED.name -> "receipt.scan.error"
+                            ReceiptProcessingStatus.OCR_FAILED.name -> "receipt.scan.ocr_failed"
+                            else -> "receipt.scan"
+                        },
+                        notificationTitle = "Scanned Receipt",
+                        notificationText = safeReviewSnippet,
+                        suggestedCategoryId = receipt.parsedMerchant?.let {
+                            hybridClassifier.classify(it, parsed.total ?: 0.0).categoryId.takeIf { id -> id > 0 }
+                        }
+                    )
+                    val reviewId = pendingReviewDao.insert(review)
+                    require(reviewId > 0) { "PendingReview insert failed for receiptId=${updated.id}" }
+
+                    val persistedReview = review.copy(id = reviewId)
+
+                    // P3-CUR-01: Use the generated reviewId, NOT review.id (which is 0 after insert)
+                    pendingReviewSourceLinkService.linkSourcesForReview(
+                        review = persistedReview,
+                        reviewId = reviewId,
+                        sourceType = ExpenseSource.REVIEW_APPROVAL,
+                        correlationId = null,
+                        context = PendingReviewSourceContext(
+                            stage = "receipt_scan_review",
+                            reason = "Receipt scan needs review (after dedupe)",
+                            confidence = review.confidence,
+                            extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER.name
+                        )
+                    )
+
+                    createdReviewId = reviewId
+                }
             }
 
             // 7. Plan and run post-save side effects (warranty, categorization, matching, etc.)
@@ -425,7 +532,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 currencySettingsRepository.homeCurrency().first()
             }.getOrDefault(FALLBACK_CURRENCY)
 
-            val manualReceipt = ScannedReceipt(
+            val now = timeProvider.now()
+            val manualReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                 imagePath = uri.toString(),
                 rawOcrText = "[OCR Failed or Skipped]",
                 parsedTotal = null,
@@ -438,28 +546,32 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
                 processingStatus = ReceiptProcessingStatus.OCR_FAILED.name,
-                imageHash = null,
-                createdAt = timeProvider.now(),
-                updatedAt = timeProvider.now()
-            )
-            val savedId = scannedReceiptDao.insert(manualReceipt)
-            require(savedId > 0) { "Manual receipt insert failed during fallback: uri=$uri" }
+                imageHash = null
+            ), now)
 
-            receiptEventDao.insert(
-                ReceiptEvent(
-                    receiptId = savedId,
-                    sourceType = manualReceipt.sourceType,
-                    documentType = manualReceipt.documentType,
-                    eventType = "OCR_FAILED",
-                    occurredAt = timeProvider.now(),
-                    oldStatus = null,
-                    newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
-                    actor = "system:coordinator",
-                    message = "OCR failed for receipt input",
-                    metadata = null,
-                    errorDetails = null
+            // P3-CUR-07: Wrap fallback insert + event in a single transaction
+            // so that a crash cannot leave a receipt without its lifecycle event.
+            val savedId = database.withTransaction {
+                val id = scannedReceiptDao.insert(manualReceipt)
+                require(id > 0) { "Manual receipt insert failed during fallback: uri=$uri" }
+
+                receiptEventDao.insert(
+                    ReceiptEvent(
+                        receiptId = id,
+                        sourceType = manualReceipt.sourceType,
+                        documentType = manualReceipt.documentType,
+                        eventType = "OCR_FAILED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
+                        actor = "system:coordinator",
+                        message = "OCR failed for receipt input",
+                        metadata = null,
+                        errorDetails = null
+                    )
                 )
-            )
+                id
+            }
 
             Result.success(manualReceipt.copy(id = savedId))
         }
@@ -585,9 +697,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         provider: String,
         correlationId: String? = null
     ): EmailReceiptProcessResult {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
+        try {
+            writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processEmailReceipt")
+        } catch (e: Exception) {
             emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null, correlationId)
-            return EmailReceiptProcessResult.Error("Database writes blocked during restore")
+            return EmailReceiptProcessResult.Error("Database writes blocked: ${e.message}")
         }
 
         // Check messageId dedup
@@ -648,7 +762,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         database.withTransaction {
             val homeResolution = currencySettingsRepository.resolveHomeCurrency()
-            val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR" // last resort for email receipt
+            val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
 
             val receipt = ScannedReceipt(
                 imagePath = null,
@@ -701,12 +815,27 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             )
             val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
             if (sourceId == -1L) {
-                val existing = emailReceiptDao.getByFingerprint(fingerprint)
+                // P3-CUR-03 / P3-NEW-03: Email source insert conflicted.
+                // Resolve by fingerprint, raw messageId, and messageIdHash
+                // in descending order of reliability. If nothing matches,
+                // throw to rollback the transaction — we must never continue
+                // with sourceId <= 0.
+                val existing = when {
+                    fingerprint.isNotBlank() -> emailReceiptDao.getByFingerprint(fingerprint)
+                    else -> null
+                } ?: emailReceiptDao.getByMessageId(messageId)
+                  ?: messageIdHash.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByMessageIdHash(it) }
+
                 if (existing != null) {
-                    scannedReceiptDao.deleteById(savedId) // Clean up orphan receipt
                     capturedDuplicate = EmailReceiptProcessResult.Duplicate(existing.receiptId)
-                    return@withTransaction
+                    return@withTransaction  // rolls back the scanned receipt insert
                 }
+
+                // Unresolved conflict — throw to rollback everything
+                throw IllegalStateException(
+                    "EmailReceiptSource insert conflict could not be resolved " +
+                    "(fingerprint=$fingerprint, messageIdHash=$messageIdHash)"
+                )
             }
 
             // PR4: Write source link for email receipt provenance
@@ -869,8 +998,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     }
 
     suspend fun deleteReceipt(receiptId: Long): Result<Unit> {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.deleteReceipt")
+        } catch (e: Exception) {
+            return Result.failure(e)
         }
 
         val receipt = scannedReceiptDao.getById(receiptId)
@@ -904,7 +1035,31 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             }
 
             // 5. POST-COMMIT: Delete the physical asset file (if one exists)
-            receipt.imagePath?.let { assetStore.deleteAsset(it) }
+            receipt.imagePath?.let { path ->
+                try {
+                    assetStore.deleteAsset(path)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // P3-CUR-08: Write durable event when asset deletion fails
+                    Timber.e(e, "Failed to delete asset for receipt %d: %s", receiptId, path)
+                    receiptEventDao.insert(
+                        ReceiptEvent(
+                            receiptId = receiptId,
+                            sourceType = receipt.sourceType,
+                            documentType = receipt.documentType,
+                            eventType = "ASSET_DELETE_FAILED",
+                            occurredAt = timeProvider.now(),
+                            oldStatus = "DELETED",
+                            newStatus = null,
+                            actor = "system:coordinator",
+                            message = "Failed to delete asset file: $path",
+                            metadata = null,
+                            errorDetails = e.message?.take(500)
+                        )
+                    )
+                }
+            }
 
             Timber.d("Receipt deleted: id=%d, assetPath=%s", receiptId, receipt.imagePath)
             Result.success(Unit)

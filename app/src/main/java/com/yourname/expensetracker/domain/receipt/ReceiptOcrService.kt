@@ -103,7 +103,18 @@ class ReceiptOcrService @Inject constructor(
      */
     suspend fun processUri(uri: Uri): OcrResult {
         val mimeType = context.contentResolver.getType(uri) ?: ""
-        
+        return processUriWithMime(uri, mimeType)
+    }
+
+    /**
+     * Dispatcher that uses a pre-resolved MIME type (from [ReceiptInputValidator])
+     * instead of independently calling contentResolver.getType(). This ensures
+     * validator and OCR agree on the input type — a null-MIME provider file that
+     * passes validation via extension fallback will also reach the correct OCR path.
+     *
+     * P3-NEW-04 / P2-12: Unified input resolution.
+     */
+    suspend fun processUriWithMime(uri: Uri, mimeType: String): OcrResult {
         // Validate file type
         if (mimeType == "application/pdf") {
             // Apply the same file-size guard used for images.
