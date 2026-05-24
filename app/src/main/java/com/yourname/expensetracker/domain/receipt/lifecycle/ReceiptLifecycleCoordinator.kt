@@ -621,14 +621,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
         val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
         val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
-        val updated = receipt.copy(
+        val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
             sourceType = ReceiptSourceType.EMAIL.name,
             documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
             processingStatus = ReceiptProcessingStatus.PARSED.name,
-            rawOcrText = sanitizedOcrText,
-            createdAt = if (receipt.createdAt == 0L) now else receipt.createdAt,
-            updatedAt = now
-        )
+            rawOcrText = sanitizedOcrText
+        ), now)
         var id = 0L
         database.withTransaction {
             id = scannedReceiptDao.insert(updated)
@@ -764,7 +762,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             val homeResolution = currencySettingsRepository.resolveHomeCurrency()
             val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
 
-            val receipt = ScannedReceipt(
+            val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                 imagePath = null,
                 rawOcrText = effectiveOcrText,
                 parsedTotal = emailData.amount,
@@ -786,10 +784,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 // PRIV-441-09: Use messageIdHash as sourceFingerprint — never empty when hash available
                 sourceFingerprint = messageIdHash.ifBlank { fingerprint },
                 textFingerprint = emailTextFingerprint,
-                semanticFingerprint = emailSemanticFingerprint,
-                createdAt = now,
-                updatedAt = now
-            )
+                semanticFingerprint = emailSemanticFingerprint
+            ), now)
             savedId = scannedReceiptDao.insert(receipt)
             require(savedId > 0) { "Email receipt insert failed (conflict): sender=$sender" }
 
@@ -1277,8 +1273,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     suspend fun createExpenseAndLinkReceipt(
         request: com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
     ): Result<Long> {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        try {
+            writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt")
+        } catch (e: Exception) {
+            return Result.failure(e)
         }
         val receiptId = request.scannedReceiptId
             ?: return Result.failure(IllegalArgumentException("scannedReceiptId is required for atomic create+link"))

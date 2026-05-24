@@ -454,7 +454,9 @@ class ReceiptRepository @Inject constructor(
      */
     suspend fun insertReceipt(receipt: ScannedReceipt): Long {
         writeBarrier.checkWritesAllowed("ReceiptRepository.insertReceipt")
-        val receiptId = scannedReceiptDao.insert(receipt)
+        val now = timeProvider.now()
+        val normalized = ReceiptTimestampPolicy.forInsert(receipt, now)
+        val receiptId = scannedReceiptDao.insert(normalized)
         require(receiptId > 0) { "Receipt insert failed (conflict): imageHash=${receipt.imageHash}" }
         return receiptId
     }
@@ -598,18 +600,18 @@ class ReceiptRepository @Inject constructor(
             }
 
             // 3. Save common scanned receipt record
-            val receiptRecord = ScannedReceipt(
+            val now = timeProvider.now()
+            val receiptRecord = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
                 rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
                 parsedTotal = null, // Varies per transaction
                 parsedMerchant = "Bank Statement",
-                parsedDate = timeProvider.now(),
+                parsedDate = now,
                 parsedItems = null,
                 parsedTaxAmount = null,
                 currency = parsedTransactions.firstOrNull()?.currency ?: homeCurrency(),
-                confidence = 0.8f,
-                createdAt = timeProvider.now()
-            )
+                confidence = 0.8f
+            ), now)
             val receiptId = scannedReceiptDao.insert(receiptRecord)
             require(receiptId > 0) { "Receipt insert failed (conflict): imageHash=${receiptRecord.imageHash}" }
 
