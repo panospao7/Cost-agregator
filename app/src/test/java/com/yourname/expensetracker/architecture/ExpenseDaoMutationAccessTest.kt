@@ -95,4 +95,5 @@ class ExpenseDaoMutationAccessTest {
     private fun kotlinFiles(): Sequence<Path> =
         Files.walk(sourceRoot)
             .filter { it.extension == "kt" }
+            .iterator().asSequence()
 }

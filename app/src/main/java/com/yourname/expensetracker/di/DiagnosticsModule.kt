@@ -17,6 +17,8 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectEventWriter
 import com.yourname.expensetracker.domain.sideeffect.DiagnosticSideEffectEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
+import com.yourname.expensetracker.domain.transaction.validation.DefaultTransactionDatePolicy
+import com.yourname.expensetracker.domain.transaction.validation.TransactionDatePolicy
 import com.yourname.expensetracker.domain.workers.WorkerRunLogger
 import com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
 import dagger.Binds
@@ -55,4 +57,7 @@ abstract class DiagnosticsModule {
 
     @Binds @Singleton
     abstract fun bindSideEffectEventWriter(impl: CompositeSideEffectEventWriter): SideEffectEventWriter
+
+    @Binds @Singleton
+    abstract fun bindTransactionDatePolicy(impl: DefaultTransactionDatePolicy): TransactionDatePolicy
 }
