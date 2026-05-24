@@ -125,6 +125,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
         }
         val startTime = timeProvider.now()
         val parsingLogs = mutableListOf<String>()
+        var runId: Long? = null
 
         return try {
             // ── Step 1: Pre-OCR duplicate detection via file hash ──────────────
@@ -171,12 +172,12 @@ class BankStatementLifecycleProcessor @Inject constructor(
             }
 
             // ── Step 3b: Create durable import run ledger row ─────────────────
-            // P3-P1-10 / P3-NEW-10: Every bank statement import must have a
-            // durable run row so outcomes survive app restarts.
+            // P3-REG-010: Re-check write barrier before DB write after long OCR/parse.
+            writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.createImportRun")
             val correlationId = java.util.UUID.randomUUID().toString()
             val statementSourceFingerprint = preOcrHash
             val now = timeProvider.now()
-            val runId = bankStatementImportRunDao.insert(
+            runId = bankStatementImportRunDao.insert(
                 BankStatementImportRun(
                     statementReceiptId = null,  // will update after receipt insert
                     sourceFingerprint = statementSourceFingerprint,
@@ -186,7 +187,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     totalItems = parsedTransactions.size
                 )
             )
-            require(runId > 0) { "Failed to create bank statement import run" }
+            require(runId != null && runId!! > 0) { "Failed to create bank statement import run" }
 
             // ── Step 3c: AI validation ─────────────────────────────────────────
             // Use ValidateBankStatementTransactionsUseCase to validate/correct
@@ -287,6 +288,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     IllegalStateException("Failed to save bank statement receipt record")
                 )
             }
+            // P3-REG-007: Link the run to the statement receipt
+            bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)
 
             // ── Step 5: Write RECEIPT_SAVED lifecycle event ────────────────────
             receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
@@ -302,8 +305,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // ── Step 6: Create a PendingReview for each transaction ────────────
             var reviewsCreated = 0
             var duplicatesSkipped = 0
+            var failedItemCount = 0
 
-            for (tx in mergedTransactions) {
+            for ((index, tx) in mergedTransactions.withIndex()) {
                 try {
                     // Normalize merchant
                     val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
@@ -369,7 +373,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         bankStatementImportItemDao.insert(
                             BankStatementImportItem(
                                 runId = runId,
-                                itemIndex = mergedTransactions.indexOf(tx),
+                                itemIndex = index,
                                 transactionFingerprint = merchantKey,
                                 status = BankStatementImportItem.STATUS_DUPLICATE_EXPENSE,
                                 merchant = tx.merchant,
@@ -401,7 +405,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         bankStatementImportItemDao.insert(
                             BankStatementImportItem(
                                 runId = runId,
-                                itemIndex = mergedTransactions.indexOf(tx),
+                                itemIndex = index,
                                 transactionFingerprint = merchantKey,
                                 status = BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW,
                                 pendingReviewId = duplicateReview.id,
@@ -443,7 +447,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     bankStatementImportItemDao.insert(
                         BankStatementImportItem(
                             runId = runId,
-                            itemIndex = mergedTransactions.indexOf(tx),
+                            itemIndex = index,
                             transactionFingerprint = merchantKey,
                             status = BankStatementImportItem.STATUS_CREATED_REVIEW,
                             pendingReviewId = reviewId,
@@ -461,7 +465,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     bankStatementImportItemDao.insert(
                         BankStatementImportItem(
                             runId = runId,
-                            itemIndex = mergedTransactions.indexOf(tx),
+                            itemIndex = index,
                             transactionFingerprint = null,
                             status = BankStatementImportItem.STATUS_FAILED,
                             merchant = tx.merchant,
@@ -478,12 +482,15 @@ class BankStatementLifecycleProcessor @Inject constructor(
             }
 
             // ── Step 7: Finalize the import run ledger ─────────────────────────
-            // P3-P1-10: Persist final counts and status so the import outcome is
-            // fully reconstructable from the ledger.
-            val failedItemCount = bankStatementImportItemDao.countByRunAndStatus(runId, BankStatementImportItem.STATUS_FAILED)
+            // P3-P1-10 / P3-REG-008: Use actual DAO counts for correct ledger.
+            val finalFailedItemCount = bankStatementImportItemDao.countByRunAndStatus(runId!!, BankStatementImportItem.STATUS_FAILED)
+            val expDupCount = bankStatementImportItemDao.countByRunAndStatus(runId, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
+            val pendDupCount = bankStatementImportItemDao.countByRunAndStatus(runId, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
+            val createdCount = bankStatementImportItemDao.countByRunAndStatus(runId, BankStatementImportItem.STATUS_CREATED_REVIEW)
+            val totalItems = finalFailedItemCount + expDupCount + pendDupCount + createdCount
             val finalStatus = when {
-                failedItemCount > 0 -> BankStatementImportRun.STATUS_FAILED
-                duplicatesSkipped > 0 -> BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS
+                finalFailedItemCount > 0 -> BankStatementImportRun.STATUS_FAILED
+                (expDupCount + pendDupCount) > 0 -> BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS
                 else -> BankStatementImportRun.STATUS_COMPLETED
             }
             val endTime = timeProvider.now()
@@ -492,15 +499,13 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 status = finalStatus,
                 completedAt = endTime,
                 totalItems = transactionsFound,
-                processedItems = reviewsCreated + duplicatesSkipped,
-                createdReviewCount = reviewsCreated,
-                duplicateExpenseCount = 0,  // counted within duplicatesSkipped
-                duplicatePendingCount = 0,   // counted within duplicatesSkipped
-                failedItemCount = failedItemCount,
+                processedItems = totalItems,
+                createdReviewCount = createdCount,
+                duplicateExpenseCount = expDupCount,
+                duplicatePendingCount = pendDupCount,
+                failedItemCount = finalFailedItemCount,
                 errorSummary = null
             )
-            // Update run with the statement receipt ID now that we have it
-            // (room doesn't support partial updates easily, so this is best-effort)
 
             // ── Step 8: Write PROCESSING_COMPLETE and return ──────────────────
             val receiptToUpdate = scannedReceiptDao.getById(receiptId)
@@ -547,8 +552,30 @@ class BankStatementLifecycleProcessor @Inject constructor(
             Result.success(result)
 
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is kotlinx.coroutines.CancellationException) {
+                runId?.let {
+                    bankStatementImportRunDao.finalize(
+                        runId = it, status = BankStatementImportRun.STATUS_CANCELLED,
+                        completedAt = timeProvider.now(), totalItems = 0, processedItems = 0,
+                        createdReviewCount = 0, duplicateExpenseCount = 0,
+                        duplicatePendingCount = 0, failedItemCount = 0,
+                        errorSummary = "Cancelled during processing"
+                    )
+                }
+                throw e
+            }
             Timber.e(e, "BankStatementLifecycleProcessor failed for URI: %s", uri)
+            // P3-REG-006: Mark run FAILED on fatal unrecoverable error.
+            runId?.let {
+                bankStatementImportRunDao.finalize(
+                    runId = it, status = BankStatementImportRun.STATUS_FAILED,
+                    completedAt = timeProvider.now(),
+                    totalItems = 0, processedItems = 0,
+                    createdReviewCount = 0, duplicateExpenseCount = 0,
+                    duplicatePendingCount = 0, failedItemCount = 0,
+                    errorSummary = e.message?.take(500)
+                )
+            }
             Result.failure(e)
         }
     }

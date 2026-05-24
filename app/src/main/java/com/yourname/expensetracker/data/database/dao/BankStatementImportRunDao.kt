@@ -51,4 +51,11 @@ interface BankStatementImportRunDao {
         WHERE id = :runId
     """)
     suspend fun markStaleFailed(runId: Long, now: Long, reason: String)
+
+    @Query("""
+        UPDATE bank_statement_import_runs
+        SET statementReceiptId = :receiptId
+        WHERE id = :runId
+    """)
+    suspend fun attachReceipt(runId: Long, receiptId: Long)
 }

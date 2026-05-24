@@ -309,4 +309,14 @@ object DaoModule {
     @Singleton
     fun provideEntitySourceLinkDao(database: AppDatabase): EntitySourceLinkDao =
         database.entitySourceLinkDao()
+
+    @Provides
+    @Singleton
+    fun provideBankStatementImportRunDao(database: AppDatabase): BankStatementImportRunDao =
+        database.bankStatementImportRunDao()
+
+    @Provides
+    @Singleton
+    fun provideBankStatementImportItemDao(database: AppDatabase): BankStatementImportItemDao =
+        database.bankStatementImportItemDao()
 }

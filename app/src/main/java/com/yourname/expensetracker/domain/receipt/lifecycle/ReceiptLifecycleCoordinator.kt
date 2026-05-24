@@ -184,22 +184,28 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         // P3-NEW-08: Write INPUT_RECEIVED diagnostic before validation
         val correlationId = java.util.UUID.randomUUID().toString()
-        emitIntakeDiagnostic("input", "INPUT_RECEIVED", correlationId, uri)
+        emitIntakeDiagnostic("input", com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
+            correlationId, "INPUT_RECEIVED", mimeType = null, fileSizeBytes = null)
 
         // 1. Validate input
         val validation = inputValidator.validate(uri)
         if (!validation.isValid) {
             val message = "Receipt input validation failed: ${validation.errors.joinToString("; ")}"
             Timber.w(message)
-            // P3-NEW-08: Write VALIDATION_FAILED diagnostic
-            emitIntakeDiagnostic("validation", "VALIDATION_FAILED", correlationId, uri,
-                message = message, mimeType = validation.mimeType,
-                fileSizeBytes = validation.fileSizeBytes)
+            // P3-NEW-08: Write VALIDATION_FAILED diagnostic (no raw URI)
+            emitIntakeDiagnostic("validation", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                correlationId, "VALIDATION_FAILED",
+                mimeType = validation.mimeType, fileSizeBytes = validation.fileSizeBytes,
+                message = "Validation failed", metadata = mapOf(
+                    "errors" to validation.errors.joinToString("; ").take(256),
+                    "reasonCode" to validation.errors.firstOrNull().orEmpty().take(128)
+                ))
             return Result.failure(IllegalArgumentException(message))
         }
 
         // P3-NEW-08: Write VALIDATION_PASSED diagnostic
-        emitIntakeDiagnostic("validation", "VALIDATION_PASSED", correlationId, uri,
+        emitIntakeDiagnostic("validation", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+            correlationId, "VALIDATION_PASSED",
             mimeType = validation.mimeType, fileSizeBytes = validation.fileSizeBytes)
 
         // 2. OCR + Parse via ReceiptRepository
@@ -1019,42 +1025,41 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
     /**
      * Writes a receipt intake diagnostic event (INPUT_RECEIVED, VALIDATION_PASSED,
-     * VALIDATION_FAILED). These use the existing diagnostic event infrastructure
-     * so that validation failures can be recorded without requiring a receipt row.
-     * P3-NEW-08: Front-door intake events.
+     * VALIDATION_FAILED). Uses the existing diagnostic event infrastructure
+     * so validation failures can be recorded without requiring a receipt row.
+     * P3-NEW-08 / P3-REG-002: Correct EventOutcome mapping, no raw URI.
      */
     private suspend fun emitIntakeDiagnostic(
         stage: String,
-        outcome: String,
+        outcome: com.yourname.expensetracker.domain.diagnostics.EventOutcome,
         correlationId: String,
-        uri: android.net.Uri,
+        eventType: String,
         message: String? = null,
         mimeType: String? = null,
-        fileSizeBytes: Long? = null
+        fileSizeBytes: Long? = null,
+        metadata: Map<String, String>? = null
     ) {
         try {
-            val metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+            val md = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                 .put("stage", stage.take(64))
-                .put("outcome", outcome.take(64))
-            mimeType?.let { metadata.put("mimeType", it.take(128)) }
-            fileSizeBytes?.let { metadata.put("fileSizeBytes", it.toString()) }
-            message?.let { metadata.put("message", it.take(256)) }
+                .put("eventType", eventType.take(64))
+            mimeType?.let { md.put("mimeType", it.take(128)) }
+            fileSizeBytes?.let { md.put("fileSizeBytes", it.toString()) }
+            message?.let { md.put("message", it.take(256)) }
+            metadata?.forEach { (k, v) -> md.put(k, v.take(256)) }
             diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECEIPT,
                 stage = stage,
-                outcome = try {
-                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.entries
-                        .firstOrNull { it.name == outcome } ?: com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL
-                } catch (_: Exception) { com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL },
+                outcome = outcome,
                 correlationId = correlationId,
                 entityType = null,
                 entityId = null,
-                metadata = metadata.build()
+                metadata = md.build()
             ))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.w(e, "Failed to write receipt intake diagnostic: %s", outcome)
+            Timber.w(e, "Failed to write receipt intake diagnostic: %s", eventType)
         }
     }
 
