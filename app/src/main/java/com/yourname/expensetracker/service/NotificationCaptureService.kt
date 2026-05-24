@@ -282,9 +282,10 @@ class NotificationCaptureService : NotificationListenerService() {
 
         // Recover any stale/pending intake rows
         serviceScope.launch {
-            intakeRecoveryScheduler.recoverPending()
-            // PR 3: Repair legacy plaintext transient rows
-            intakePayloadRepairer.repairLegacyPlaintextTransientRows()
+                // PR 2: Repair legacy plaintext transient rows BEFORE recovery
+                // so recovery doesn't process pre-encryption rows as failures.
+                intakePayloadRepairer.repairLegacyPlaintextTransientRows()
+                intakeRecoveryScheduler.recoverPending()
         }
     }
     
@@ -680,7 +681,14 @@ class NotificationCaptureService : NotificationListenerService() {
         }
 
         return try {
-            val outcome = repository.processAndSave(processingNotification, storageNotification, correlationId = correlationId)
+            val outcome = repository.processAndSave(
+                processingNotification, storageNotification, correlationId = correlationId,
+                persistenceContext = com.yourname.expensetracker.domain.notification.NotificationPersistenceContext(
+                    rawStorageMode = settings.rawNotificationStorageMode,
+                    payloadMode = "SERVICE_SYNC",
+                    source = "listener"
+                )
+            )
             // Log truthfully based on the real pipeline outcome
             when (outcome) {
                 is com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome.AutoAccepted ->

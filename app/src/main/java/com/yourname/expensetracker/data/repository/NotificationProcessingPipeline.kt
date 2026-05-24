@@ -828,31 +828,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 .firstOrNull { it > AppConfig.MAX_TRANSACTION_AMOUNT }
                 ?: return null
 
-            // PR 9: Currency detection expanded beyond EUR/USD/GBP.
-            // Order: explicit ISO codes first, then unambiguous symbols, then common symbols.
-            // TODO(P2-10): Replace this heuristic currency detection with
-            // NotificationMoneySignalDetector + UserCurrencyProvider.
-            val currency = when {
-                fullText.contains("USD", ignoreCase = true) || fullText.contains("\$") && !fullText.contains("CAD", ignoreCase = true) && !fullText.contains("AUD", ignoreCase = true) && !fullText.contains("C\$") && !fullText.contains("A\$") -> "USD"
-                fullText.contains("EUR", ignoreCase = true) || fullText.contains("€") -> "EUR"
-                fullText.contains("GBP", ignoreCase = true) || fullText.contains("£") -> "GBP"
-                fullText.contains("CHF", ignoreCase = true) -> "CHF"
-                fullText.contains("PLN", ignoreCase = true) || fullText.contains("zł", ignoreCase = true) || fullText.contains("zl") -> "PLN"
-                fullText.contains("RON", ignoreCase = true) || fullText.contains("lei") || fullText.contains("leu") -> "RON"
-                fullText.contains("TRY", ignoreCase = true) || fullText.contains("₺") || fullText.contains("TL") -> "TRY"
-                fullText.contains("CAD", ignoreCase = true) || fullText.contains("C\$") -> "CAD"
-                fullText.contains("AUD", ignoreCase = true) || fullText.contains("A\$") -> "AUD"
-                fullText.contains("JPY", ignoreCase = true) || fullText.contains("¥") -> "JPY"
-                fullText.contains("SEK", ignoreCase = true) -> "SEK"
-                fullText.contains("NOK", ignoreCase = true) -> "NOK"
-                fullText.contains("DKK", ignoreCase = true) -> "DKK"
-                fullText.contains("HUF", ignoreCase = true) || fullText.contains("Ft") -> "HUF"
-                fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
-                // Ambiguous symbols: try home-currency context or default to EUR as last resort
-                fullText.contains("\$") -> "USD"
-                // P2-10: Last-resort fallback uses defaultCurrency param for home-currency-based resolution.
-                else -> defaultCurrency
-            }
+            // P2-10 FIXED: Currency resolved by NotificationMoneySignalDetector via resolveCurrency().
+            // The defaultCurrency parameter is the detector-derived currency or home-currency fallback.
+            // No hardcoded $->USD or else->EUR remains.
+            val currency = defaultCurrency
 
             val merchantHint = extractMerchantHint(title ?: text ?: bigText)
             return OversizedAmountCandidate(
@@ -912,31 +891,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         ) ?: return null
             val amount = best.amount
 
-            // PR 9: Currency detection expanded beyond EUR/USD/GBP.
-            // Order: explicit ISO codes first, then unambiguous symbols, then common symbols.
-            // TODO(P2-10): Replace this heuristic currency detection with
-            // NotificationMoneySignalDetector + UserCurrencyProvider.
-            val currency = when {
-                fullText.contains("USD", ignoreCase = true) || fullText.contains("\$") && !fullText.contains("CAD", ignoreCase = true) && !fullText.contains("AUD", ignoreCase = true) && !fullText.contains("C\$") && !fullText.contains("A\$") -> "USD"
-                fullText.contains("EUR", ignoreCase = true) || fullText.contains("€") -> "EUR"
-                fullText.contains("GBP", ignoreCase = true) || fullText.contains("£") -> "GBP"
-                fullText.contains("CHF", ignoreCase = true) -> "CHF"
-                fullText.contains("PLN", ignoreCase = true) || fullText.contains("zł", ignoreCase = true) || fullText.contains("zl") -> "PLN"
-                fullText.contains("RON", ignoreCase = true) || fullText.contains("lei") || fullText.contains("leu") -> "RON"
-                fullText.contains("TRY", ignoreCase = true) || fullText.contains("₺") || fullText.contains("TL") -> "TRY"
-                fullText.contains("CAD", ignoreCase = true) || fullText.contains("C\$") -> "CAD"
-                fullText.contains("AUD", ignoreCase = true) || fullText.contains("A\$") -> "AUD"
-                fullText.contains("JPY", ignoreCase = true) || fullText.contains("¥") -> "JPY"
-                fullText.contains("SEK", ignoreCase = true) -> "SEK"
-                fullText.contains("NOK", ignoreCase = true) -> "NOK"
-                fullText.contains("DKK", ignoreCase = true) -> "DKK"
-                fullText.contains("HUF", ignoreCase = true) || fullText.contains("Ft") -> "HUF"
-                fullText.contains("CZK", ignoreCase = true) || fullText.contains("Kč", ignoreCase = true) || fullText.contains("Kc") -> "CZK"
-                // Ambiguous symbols: try home-currency context or default to EUR as last resort
-                fullText.contains("\$") -> "USD"
-                // P2-10: Last-resort fallback uses defaultCurrency param for home-currency-based resolution.
-                else -> defaultCurrency
-            }
+            // P2-10 FIXED: Currency resolved by NotificationMoneySignalDetector via resolveCurrency().
+            val currency = defaultCurrency
 
             val merchantHint = extractMerchantHint(title ?: text ?: bigText)
             return TransactionSignalCandidate(

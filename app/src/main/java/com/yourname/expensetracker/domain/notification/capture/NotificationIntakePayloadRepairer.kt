@@ -15,30 +15,37 @@ class NotificationIntakePayloadRepairer @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     suspend fun repairLegacyPlaintextTransientRows() {
+        var totalRepaired = 0
+        var batches = 0
+        val maxBatches = 100
         val now = timeProvider.now()
-        val rows = intakeDao.getLegacyPlaintextTransientRows(100)
-        if (rows.isEmpty()) return
 
-        Timber.d("Repairing ${rows.size} legacy plaintext transient rows")
-        for (row in rows) {
-            try {
-                val isTerminal = row.terminalAt != null
-                if (isTerminal) {
-                    // Terminal rows: just purge visible fields
-                    intakeDao.purgeVisiblePayload(row.id, now)
-                } else if (row.title != null || row.text != null || row.bigText != null) {
-                    // Non-terminal with visible payload: encrypt then null visible fields
-                    val payload = NotificationTransientPayload(
-                        title = row.title, text = row.text, bigText = row.bigText,
-                        subText = row.subText, extrasJson = row.extrasJson
-                    )
-                    val encrypted = crypto.encrypt(payload)
-                    intakeDao.encryptAndClearVisiblePayload(row.id, encrypted.ciphertext, encrypted.nonce, encrypted.version, now)
+        while (batches < maxBatches) {
+            val rows = intakeDao.getLegacyPlaintextTransientRows(100)
+            if (rows.isEmpty()) break
+            batches++
+
+            Timber.d("Repairing ${rows.size} legacy plaintext transient rows (batch $batches)")
+            for (row in rows) {
+                try {
+                    val isTerminal = row.terminalAt != null
+                    if (isTerminal) {
+                        intakeDao.purgeVisiblePayload(row.id, now)
+                        totalRepaired++
+                    } else if (row.title != null || row.text != null || row.bigText != null) {
+                        val payload = NotificationTransientPayload(
+                            title = row.title, text = row.text, bigText = row.bigText,
+                            subText = row.subText, extrasJson = row.extrasJson
+                        )
+                        val encrypted = crypto.encrypt(payload)
+                        intakeDao.encryptAndClearVisiblePayload(row.id, encrypted.ciphertext, encrypted.nonce, encrypted.version, now)
+                        totalRepaired++
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "Failed to repair legacy row ${row.id}")
                 }
-                // Non-terminal with no payload: nothing to repair
-            } catch (e: Exception) {
-                Timber.w(e, "Failed to repair legacy row ${row.id}")
             }
         }
+        if (totalRepaired > 0) Timber.d("Repaired $totalRepaired legacy rows in $batches batches")
     }
 }
