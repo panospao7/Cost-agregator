@@ -578,7 +578,31 @@ class GroupTransactionCoordinator @Inject constructor(
                         )
                     }
                     is OwnershipUpdateResult.Updated, is OwnershipUpdateResult.NoOp -> {
-                        // Success or already in correct state — proceed
+                        // P2-NEW-12 residual: Reload and verify final row fields
+                        val updatedRow = expenseDao.getById(systemExpenseId)
+                            ?: throw GroupExpenseAtomicRollback(
+                                GroupExpenseCreationResult.Error("Expense missing after ownership update")
+                            )
+                        if (!updatedRow.isSharedExpense) {
+                            throw GroupExpenseAtomicRollback(
+                                GroupExpenseCreationResult.Error("Ownership update did not set isSharedExpense")
+                            )
+                        }
+                        if (updatedRow.isNotMine) {
+                            throw GroupExpenseAtomicRollback(
+                                GroupExpenseCreationResult.Error("Ownership update left isNotMine=true")
+                            )
+                        }
+                        if (currentUserShare != null &&
+                            updatedRow.myShareAmount != null &&
+                            kotlin.math.abs(updatedRow.myShareAmount!! - currentUserShare) > 0.0001
+                        ) {
+                            throw GroupExpenseAtomicRollback(
+                                GroupExpenseCreationResult.Error(
+                                    "myShareAmount mismatch: expected $currentUserShare, got ${updatedRow.myShareAmount}"
+                                )
+                            )
+                        }
                     }
                 }
 

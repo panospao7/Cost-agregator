@@ -726,7 +726,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
      */
     @Deprecated(
         "Prefer createExpenseStandaloneV2() or createExpenseDbOnlyV2().",
-        level = DeprecationLevel.WARNING
+        level = DeprecationLevel.ERROR
     )
     suspend fun createExpense(request: CreateExpenseRequest): CreateExpenseResult {
         return createExpenseStandaloneV2(request)
@@ -738,7 +738,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
      */
     @Deprecated(
         "Prefer createExpenseStandaloneV2() or createExpenseDbOnlyV2(). SideEffectMode is obsolete.",
-        level = DeprecationLevel.WARNING
+        level = DeprecationLevel.ERROR
     )
     suspend fun createExpense(
         request: CreateExpenseRequest,

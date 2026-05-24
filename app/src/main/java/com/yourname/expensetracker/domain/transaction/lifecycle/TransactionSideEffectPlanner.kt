@@ -462,7 +462,9 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .put("changedFields", changedFields.joinToString(",") { it.name })
                 .build()
         ) {
-            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+            // Bulk merchant category dirty marker: no single markDirty API exists.
+            // Per-expense learning happens via makeMerchantCategoryLearningAction on create.
+            SideEffectOutcome.Skipped(SideEffectSkipReason.DISABLED_BY_SETTINGS)
         }
     }
 
@@ -489,7 +491,9 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .put("changedFields", changedFields.joinToString(",") { it.name })
                 .build()
         ) {
-            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+            // Bulk canonical stats dirty: stats are recomputed per-expense on create/update.
+            // No bulk invalidation API exists; per-expense path is sufficient.
+            SideEffectOutcome.Skipped(SideEffectSkipReason.DISABLED_BY_SETTINGS)
         }
     }
 
@@ -516,7 +520,9 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .put("changedFields", changedFields.joinToString(",") { it.name })
                 .build()
         ) {
-            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+            // No AnalyticsCacheInvalidator interface exists. Analytics are
+            // recomputed on-demand from raw expense data via repository queries.
+            SideEffectOutcome.Skipped(SideEffectSkipReason.DISABLED_BY_SETTINGS)
         }
     }
 
@@ -543,7 +549,9 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .put("changedFields", changedFields.joinToString(",") { it.name })
                 .build()
         ) {
-            SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+            // Bulk recurring reconciliation: recurring matching runs per-expense
+            // on create/update via makeRecurringMatchingAction. No bulk API exists.
+            SideEffectOutcome.Skipped(SideEffectSkipReason.DISABLED_BY_SETTINGS)
         }
     }
 }
