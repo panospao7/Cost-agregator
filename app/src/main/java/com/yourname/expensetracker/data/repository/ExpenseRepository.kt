@@ -137,7 +137,6 @@ enum class OwnershipFilter {
  * for the full inventory and migration plan.
  * See docs/expense-mutation-inventory.md for the complete classified callsite inventory.
  */
-@OptIn(RestrictedExpenseDaoMutation::class)
 @Singleton
 class ExpenseRepository @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
@@ -675,6 +674,11 @@ class ExpenseRepository @Inject constructor(
         return expenseDao.getRecentTransactionsForMerchant(merchantKey, limit)
     }
 
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: debug-only aggregate destructive operation.
+    // Guard: BuildConfig.DEBUG + DatabaseWriteBarrier.
+    // Audit: aggregate TransactionEvent written in same DB transaction.
+    @OptIn(RestrictedExpenseDaoMutation::class)
     suspend fun deleteAllExpenses() {
         requireDebugExpenseOperation("deleteAllExpenses")
         writeBarrier.checkWritesAllowed("ExpenseRepository.deleteAllExpenses")
@@ -700,6 +704,11 @@ class ExpenseRepository @Inject constructor(
         return snapshot
     }
 
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: debug-only aggregate destructive operation.
+    // Guard: BuildConfig.DEBUG + DatabaseWriteBarrier.
+    // Audit: aggregate RESTORED_FROM_DEBUG_SNAPSHOT event in same DB transaction.
+    @OptIn(RestrictedExpenseDaoMutation::class)
     suspend fun restoreDebugSnapshot(snapshot: DebugExpenseSnapshot) {
         requireDebugExpenseOperation("restoreDebugSnapshot")
         writeBarrier.checkWritesAllowed("ExpenseRepository.restoreDebugSnapshot")
@@ -869,6 +878,11 @@ class ExpenseRepository @Inject constructor(
     suspend fun getUnlocatedExpensesForBackfill(limit: Int = 500) =
         expenseDao.getUnlocatedExpensesForBackfill(limit)
 
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill low-risk column update.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design (low-value backfill counter).
+    @OptIn(RestrictedExpenseDaoMutation::class)
     suspend fun incrementBackfillAttempts(expenseId: Long) {
         writeBarrier.checkWritesAllowed("ExpenseRepository.incrementBackfillAttempts")
         expenseDao.incrementBackfillAttempts(expenseId)
@@ -906,6 +920,11 @@ class ExpenseRepository @Inject constructor(
      * Use this from [LocationBackfillWorker] to prevent overwriting user-set
      * locations (race condition guard).
      */
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill low-risk location column update.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design (backfill worker).
+    @OptIn(RestrictedExpenseDaoMutation::class)
     suspend fun conditionallySetLocation(
         expenseId: Long,
         latitude: Double,
@@ -927,6 +946,11 @@ class ExpenseRepository @Inject constructor(
     )
     }
 
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill location column clear.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design.
+    @OptIn(RestrictedExpenseDaoMutation::class)
     suspend fun clearExpenseLocation(expenseId: Long) {
         writeBarrier.checkWritesAllowed("ExpenseRepository.clearExpenseLocation")
         expenseDao.clearLocation(expenseId)
@@ -957,6 +981,11 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpensesWithNullMerchantKey(limit: Int = 500) =
         expenseDao.getExpensesWithNullMerchantKey(limit)
 
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill merchantKey column update.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design (MerchantKeyBackfillWorker).
+    @OptIn(RestrictedExpenseDaoMutation::class)
     suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) {
         writeBarrier.checkWritesAllowed("ExpenseRepository.updateMerchantKey")
         expenseDao.updateMerchantKey(expenseId, merchantKey)

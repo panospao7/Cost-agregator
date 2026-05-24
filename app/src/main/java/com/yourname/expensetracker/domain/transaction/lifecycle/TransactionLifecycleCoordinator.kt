@@ -338,8 +338,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // 2. Validate
-        val errors = validate(request)
-        if (errors.isNotEmpty()) {
+        val validationErrors = validate(request)
+        if (validationErrors.isNotEmpty()) {
             runCatching {
                 transactionEventDao.insert(
                     TransactionEvent(
@@ -353,25 +353,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         beforeSnapshot = null,
                         afterSnapshot = null,
                         metadata = SourceLinkEventMetadataBuilder.validationFailedMetadata(
-                            errors = errors,
+                            errors = validationErrors,
                             payloads = sourceLinkPayloads
                         ),
-                        reason = "Validation failed: ${errors.first()}",
+                        reason = "Validation failed: ${validationErrors.first()}",
                         correlationId = correlationId  // DDL-512-06
                     )
                 )
             }
-            return Pair(CreateExpenseResult.ValidationFailed(errors), PostCommitActionBatch.empty(correlationId))
+            return Pair(CreateExpenseResult.ValidationFailed(validationErrors), PostCommitActionBatch.empty(correlationId))
         }
 
-        // 2b. Provenance validation — warn if source-specific fields are missing
+        // 2b. Provenance validation — fail if source-specific fields are missing
         if (request.sourceLinkFallbackPolicy != SourceLinkFallbackPolicy.LEGACY_BACKFILL_ONLY) {
             val missingSourceFields = CreateExpenseSourceLinkRequirements.missingRequirements(request)
             if (missingSourceFields.isNotEmpty()) {
-                Timber.w(
-                    "Missing source provenance fields for %s: %s",
-                    request.source, missingSourceFields.joinToString(",")
-                )
+                val provenanceErrors = listOf("Missing source provenance fields for ${request.source}: ${missingSourceFields.joinToString(",")}")
+                return Pair(CreateExpenseResult.ValidationFailed(provenanceErrors), PostCommitActionBatch.empty(correlationId))
             }
         }
 
@@ -1825,7 +1823,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.
         if (affectedCount > 0) {
-            dispatchBulkPostCommitSideEffects(source, affectedCount)
+            dispatchBulkPostCommitSideEffects(source, affectedCount, setOf(BulkChangedField.CATEGORY))
         }
     }
 
@@ -1835,8 +1833,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * single budget recheck and cache invalidation. This prevents storms while
      * still ensuring holistic state freshness.
      */
-    private suspend fun dispatchBulkPostCommitSideEffects(source: String, affectedCount: Int) {
-        val batch = planner.planBulkUpdated(source, affectedCount, null)
+    private suspend fun dispatchBulkPostCommitSideEffects(
+        source: String,
+        affectedCount: Int,
+        changedFields: Set<BulkChangedField> = setOf(BulkChangedField.UNKNOWN)
+    ) {
+        val batch = planner.planBulkUpdated(source, affectedCount, null, changedFields)
         try {
             runner.run(batch)
         } catch (e: CancellationException) {
@@ -1901,7 +1903,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         if (affectedCount > 0) {
-            dispatchBulkPostCommitSideEffects(source, affectedCount)
+            dispatchBulkPostCommitSideEffects(source, affectedCount, setOf(BulkChangedField.CATEGORY))
         }
 
         Timber.d(
@@ -1966,7 +1968,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.
-        dispatchBulkPostCommitSideEffects(source, affectedCount)
+        dispatchBulkPostCommitSideEffects(source, affectedCount, setOf(BulkChangedField.MERCHANT, BulkChangedField.MERCHANT_KEY))
     }
 
     /**

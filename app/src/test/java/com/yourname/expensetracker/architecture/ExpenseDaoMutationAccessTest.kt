@@ -65,17 +65,44 @@ class ExpenseDaoMutationAccessTest {
         val file = sourceRoot.resolve(
             "com/yourname/expensetracker/data/database/dao/RestrictedExpenseDaoMutation.kt"
         )
-        assertFalse("Annotation file not found at $file", Files.notExists(file))
+        assertFalse("Annotation file not found", Files.notExists(file))
         val text = file.readText()
         val hasWarning = text.contains("RequiresOptIn.Level.WARNING")
         val hasError = text.contains("RequiresOptIn.Level.ERROR")
         if (!hasWarning && !hasError) {
             fail("RestrictedExpenseDaoMutation must use RequiresOptIn.Level.WARNING or ERROR")
         }
+        // WARNING is the practical level because Room-generated ExpenseDao_Impl
+        // overrides annotated interface methods and cannot carry @OptIn.
+        // Hard enforcement happens via this architecture test at CI time.
     }
 
     @Test
-    fun every_mutating_dao_method_is_annotated() {
+    fun no_class_level_opt_in_outside_coordinator() {
+        // Only TransactionLifecycleCoordinator may have class-level @OptIn
+        val offenders = kotlinFiles()
+            .filter { file ->
+                file.name != "TransactionLifecycleCoordinator.kt" &&
+                file.name != "RestrictedExpenseDaoMutation.kt" &&
+                file.name != "ExpenseDao.kt" &&
+                file.name !in allowedOptInFiles
+            }
+            .filter { file ->
+                val text = file.readText()
+                // Check for class-level @OptIn (before class/object declaration)
+                Regex("""@OptIn\(RestrictedExpenseDaoMutation::class\)\s*\n\s*(class|object|interface)""")
+                    .containsMatchIn(text)
+            }
+            .toList()
+
+        if (offenders.isNotEmpty()) {
+            fail(
+                "Class-level @OptIn(RestrictedExpenseDaoMutation) found outside TransactionLifecycleCoordinator. " +
+                "Use function-level opt-in with EXPENSE_DAO_MUTATION_ALLOWLIST comment:\n" +
+                offenders.joinToString("\n")
+            )
+        }
+    }
         // Verify the DAO file contains @RestrictedExpenseDaoMutation annotations
         val daoFile = sourceRoot.resolve(
             "com/yourname/expensetracker/data/database/dao/ExpenseDao.kt"

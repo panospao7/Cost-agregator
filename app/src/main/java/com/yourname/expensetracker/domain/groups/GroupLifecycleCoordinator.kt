@@ -139,8 +139,9 @@ class GroupLifecycleCoordinator @Inject constructor(
         if (result is GroupCreationResult.Success) {
             // G02: Deferred side-effects and lifecycle event for GROUP_CREATED
             database.withTransaction {
-                emitLifecycleEvent(result.groupId, "GROUP_CREATED")
+                writeGroupLifecycleEvent(result.groupId, "GROUP_CREATED")
             }
+            dispatchGroupLifecycleSideEffectsAfterCommit(result.groupId, "GROUP_CREATED")
         }
         result
     }
@@ -191,9 +192,10 @@ class GroupLifecycleCoordinator @Inject constructor(
 
         val result = groupCoordinator.addMemberToGroup(groupId, name, email, isCurrentUser)
         if (result is Result.Success) {
-            database.withTransaction {
-                emitLifecycleEvent(groupId, "GROUP_MEMBER_ADDED")
-            }
+                database.withTransaction {
+                    writeGroupLifecycleEvent(groupId, "GROUP_MEMBER_ADDED")
+                }
+                dispatchGroupLifecycleSideEffectsAfterCommit(groupId, "GROUP_MEMBER_ADDED")
         }
         result
     }
@@ -242,7 +244,8 @@ class GroupLifecycleCoordinator @Inject constructor(
             }
 
             memberDao.delete(member)
-            emitLifecycleEvent(groupId, "GROUP_MEMBER_REMOVED")
+            writeGroupLifecycleEvent(groupId, "GROUP_MEMBER_REMOVED")
+            dispatchGroupLifecycleSideEffectsAfterCommit(groupId, "GROUP_MEMBER_REMOVED")
             Result.Success(Unit)
         }
     }
@@ -304,8 +307,9 @@ class GroupLifecycleCoordinator @Inject constructor(
         if (result is GroupExpenseCreationResult.Success) {
             val expenseId = result.expenseId
             database.withTransaction {
-                emitLifecycleEvent(groupId, "GROUP_EXPENSE_ADDED", expenseId = expenseId)
+                writeGroupLifecycleEvent(groupId, "GROUP_EXPENSE_ADDED", expenseId = expenseId)
             }
+            dispatchGroupLifecycleSideEffectsAfterCommit(groupId, "GROUP_EXPENSE_ADDED", expenseId = expenseId)
         }
         result
     }
@@ -323,9 +327,10 @@ class GroupLifecycleCoordinator @Inject constructor(
         val group = groupDao.getGroupById(groupId) ?: return@withContext false
         val result = groupCoordinator.archiveGroup(groupId)
         if (result) {
-            database.withTransaction {
-                emitLifecycleEvent(groupId, LifecycleEventType.GROUP_ARCHIVED.name)
-            }
+                database.withTransaction {
+                    writeGroupLifecycleEvent(groupId, LifecycleEventType.GROUP_ARCHIVED.name)
+                }
+                dispatchGroupLifecycleSideEffectsAfterCommit(groupId, LifecycleEventType.GROUP_ARCHIVED.name)
         }
         result
     }
@@ -360,9 +365,10 @@ class GroupLifecycleCoordinator @Inject constructor(
         // All user-facing deletions must go through this method which enforces archive-then-delete.
         val result = groupCoordinator.permanentlyDeleteGroup(groupId)
         if (result) {
-            database.withTransaction {
-                emitLifecycleEvent(groupId, LifecycleEventType.GROUP_PERMANENTLY_DELETED.name)
-            }
+                database.withTransaction {
+                    writeGroupLifecycleEvent(groupId, LifecycleEventType.GROUP_PERMANENTLY_DELETED.name)
+                }
+                dispatchGroupLifecycleSideEffectsAfterCommit(groupId, LifecycleEventType.GROUP_PERMANENTLY_DELETED.name)
         }
         result
     }
@@ -433,21 +439,19 @@ class GroupLifecycleCoordinator @Inject constructor(
 
         val settlementId = database.withTransaction {
             val id = settlementDao.insert(settlement)
-            emitLifecycleEvent(groupId, "SETTLEMENT_RECORDED", settlementId = id)
+            writeGroupLifecycleEvent(groupId, "SETTLEMENT_RECORDED", settlementId = id)
             id
         }
+        dispatchGroupLifecycleSideEffectsAfterCommit(groupId, "SETTLEMENT_RECORDED", settlementId = settlementId)
 
         settlementId
     }
 
     /**
-     * Emits a group lifecycle event for audit trail.
-     *
-     * Persists the event to the `group_lifecycle_events` audit table and
-     * triggers best-effort post-commit side effects (budget check, expense
-     * side-effect dispatch).
+     * Writes a group lifecycle event to the audit table. DB-only — no side effects.
+     * Side effects must be dispatched separately after the transaction commits.
      */
-    private suspend fun emitLifecycleEvent(
+    private suspend fun writeGroupLifecycleEvent(
         groupId: Long,
         eventType: String,
         expenseId: Long = 0L,
@@ -462,13 +466,26 @@ class GroupLifecycleCoordinator @Inject constructor(
             createdAt = timeProvider.now()
         )
         lifecycleEventDao.insert(event)
-        // Budget check + side effects (best-effort)
+    }
+
+    /**
+     * Dispatches best-effort side effects after a group lifecycle event commits.
+     * Must be called OUTSIDE any database.withTransaction block.
+     */
+    private suspend fun dispatchGroupLifecycleSideEffectsAfterCommit(
+        groupId: Long,
+        eventType: String,
+        expenseId: Long = 0L,
+        settlementId: Long = 0L
+    ) {
+        // Budget check (best-effort)
         try {
             budgetMonitor.get().checkBudgets()
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "Budget check failed for group %d event %s", groupId, eventType)
         }
+        // Expense side effects (best-effort)
         if (expenseId > 0L) {
             try {
                 sideEffectDispatcher.dispatchOnCreated(expenseId, ExpenseSource.GROUP_EXPENSE)
@@ -477,5 +494,20 @@ class GroupLifecycleCoordinator @Inject constructor(
                 Timber.w(e, "Side effects failed for expense %d (group %d)", expenseId, groupId)
             }
         }
+    }
+
+    /**
+     * @deprecated Use writeGroupLifecycleEvent + dispatchGroupLifecycleSideEffectsAfterCommit.
+     * This combined method violates the post-commit side-effect invariant.
+     */
+    @Deprecated("Use writeGroupLifecycleEvent + dispatchGroupLifecycleSideEffectsAfterCommit")
+    private suspend fun emitLifecycleEvent(
+        groupId: Long,
+        eventType: String,
+        expenseId: Long = 0L,
+        settlementId: Long = 0L
+    ) {
+        writeGroupLifecycleEvent(groupId, eventType, expenseId, settlementId)
+        dispatchGroupLifecycleSideEffectsAfterCommit(groupId, eventType, expenseId, settlementId)
     }
 }
