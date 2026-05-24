@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
+import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
@@ -16,6 +17,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.ExtractionState
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.CategorizationStatus
+import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
@@ -29,6 +31,8 @@ import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
+import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
@@ -84,6 +88,7 @@ class ReceiptRepository @Inject constructor(
     private val receiptLifecycleCoordinator: Lazy<ReceiptLifecycleCoordinator>,
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
+    private val receiptEventDao: ReceiptEventDao,
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService
 ) {
     private companion object {
@@ -236,14 +241,20 @@ class ReceiptRepository @Inject constructor(
                     currency = homeCur,
                     confidence = 0f,
                     processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name,
-                    parseFailureReason = safeReason
+                    parseFailureReason = safeReason,
+                    sourceType = ReceiptSourceType.CAMERA.name,
+                    documentType = ReceiptDocumentType.RETAIL_RECEIPT.name
                 ), now)
                 val receiptId = scannedReceiptDao.insert(failedReceipt)
                 require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${failedReceipt.imagePath}" }
 
-                // P3-P1-09 / P3-NEW-01: PendingReview creation is moved to
-                // ReceiptLifecycleCoordinator after dedupe. The repository must
-                // NOT create reviews inside the scan flow.
+                // P3-BLOCKER-01: Write PARSE_FAILED event atomically with receipt
+                // insert to close the crash window. Previously only the coordinator
+                // wrote this event, leaving a gap if crash happened in between.
+                writeReceiptEvent(receiptId, "PARSE_FAILED", now,
+                    "OCR succeeded but receipt parsing failed",
+                    ReceiptProcessingStatus.PARSE_FAILED.name,
+                    errorDetails = safeReason)
 
                 return@withContext ProcessReceiptResult(
                     failedReceipt.copy(id = receiptId),
@@ -279,11 +290,11 @@ class ReceiptRepository @Inject constructor(
                 val insertedReceiptId = scannedReceiptDao.insert(receipt)
                 require(insertedReceiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
 
-                // P3-P1-09 / P3-NEW-01: PendingReview creation is moved to
-                // ReceiptLifecycleCoordinator after dedupe. The repository must
-                // NOT create reviews inside the scan flow. The autoCreateReview
-                // parameter is retained on the method signature for backward
-                // compatibility but is no longer acted upon here.
+                // P3-BLOCKER-01: Write RECEIPT_SAVED event atomically with receipt
+                // insert to close the crash window between repository and coordinator.
+                writeReceiptEvent(insertedReceiptId, "RECEIPT_SAVED", now,
+                    "Receipt saved (scan flow)", receipt.processingStatus,
+                    sourceType = "CAMERA", documentType = "RETAIL_RECEIPT")
 
                 insertedReceiptId
             }
@@ -467,6 +478,10 @@ class ReceiptRepository @Inject constructor(
 
     suspend fun getReceiptById(id: Long): ScannedReceipt? {
         return scannedReceiptDao.getById(id)
+    }
+
+    suspend fun getExpenseById(id: Long): Expense? {
+        return expenseDao.getById(id)
     }
 
     /**
@@ -846,8 +861,37 @@ class ReceiptRepository @Inject constructor(
         return scannedReceiptDao.getReceiptsWithSuggestions()
     }
 
-    suspend fun getExpenseById(id: Long): com.yourname.expensetracker.data.database.entity.Expense? {
-        return expenseDao.getById(id)
+    // ── Pipeline 3 event helpers ─────────────────────────────────────────────
+
+    private suspend fun writeReceiptEvent(
+        receiptId: Long,
+        eventType: String,
+        occurredAt: Long,
+        message: String,
+        newStatus: String,
+        sourceType: String = "CAMERA",
+        documentType: String = "RETAIL_RECEIPT",
+        errorDetails: String? = null
+    ) {
+        try {
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = receiptId,
+                sourceType = sourceType,
+                documentType = documentType,
+                eventType = eventType,
+                occurredAt = occurredAt,
+                oldStatus = null,
+                newStatus = newStatus,
+                actor = "system:repository",
+                message = message.take(500),
+                metadata = null,
+                errorDetails = errorDetails?.take(500)
+            ))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to write receipt event %s for receipt %d", eventType, receiptId)
+        }
     }
 
     suspend fun clearMatchForReceipt(receiptId: Long) {
@@ -878,7 +922,7 @@ class ReceiptRepository @Inject constructor(
             .asSequence()
             .filter { it.transactionType == TransactionType.PURCHASE }
             .sortedBy { expense ->
-                val amountPenalty = receiptAmount?.let { kotlin.math.abs(it - expense.effectiveAmount) } ?: 0.0
+                val amountPenalty = receiptAmount?.let { kotlin.math.abs(it - expense.amount) } ?: 0.0
                 val datePenalty = kotlin.math.abs(anchorDate - expense.date) / dayMs.toDouble()
                 amountPenalty + datePenalty
             }
