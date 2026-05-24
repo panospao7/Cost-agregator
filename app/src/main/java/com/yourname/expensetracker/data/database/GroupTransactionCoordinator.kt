@@ -31,6 +31,7 @@ import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.OwnershipUpdateResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.transaction.lifecycle.BulkChangedField
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
@@ -1012,7 +1013,11 @@ class GroupTransactionCoordinator @Inject constructor(
             val actions = transactionSideEffectPlanner.planBulkUpdated(
                 source = "GROUP_HARD_DELETE",
                 affectedCount = linkedExpenseIds.size,
-                correlationId = correlationId
+                correlationId = correlationId,
+                changedFields = setOf(
+                    BulkChangedField.OWNERSHIP,
+                    BulkChangedField.AMOUNT_EFFECTIVE
+                )
             )
             runGroupPostCommitActions(actions)
         }

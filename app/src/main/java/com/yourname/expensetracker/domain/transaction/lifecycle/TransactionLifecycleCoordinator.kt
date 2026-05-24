@@ -369,6 +369,30 @@ class TransactionLifecycleCoordinator @Inject constructor(
             val missingSourceFields = CreateExpenseSourceLinkRequirements.missingRequirements(request)
             if (missingSourceFields.isNotEmpty()) {
                 val provenanceErrors = listOf("Missing source provenance fields for ${request.source}: ${missingSourceFields.joinToString(",")}")
+                runCatching {
+                    transactionEventDao.insert(
+                        TransactionEvent(
+                            expenseId = null,
+                            eventType = LifecycleEventType.CREATE_VALIDATION_FAILED.name,
+                            source = request.source.name,
+                            actor = null,
+                            occurredAt = now,
+                            dedupeKey = attemptDedupeKey,
+                            duplicateExpenseId = null,
+                            beforeSnapshot = null,
+                            afterSnapshot = null,
+                            metadata = SourceLinkEventMetadataBuilder.validationFailedMetadata(
+                                errors = provenanceErrors,
+                                payloads = sourceLinkPayloads
+                            ),
+                            reason = "Provenance validation failed: ${provenanceErrors.first()}",
+                            correlationId = correlationId
+                        )
+                    )
+                }.onFailure {
+                    if (it is CancellationException) throw it
+                    Timber.w(it, "Failed to write CREATE_VALIDATION_FAILED for provenance failure")
+                }
                 return Pair(CreateExpenseResult.ValidationFailed(provenanceErrors), PostCommitActionBatch.empty(correlationId))
             }
         }
