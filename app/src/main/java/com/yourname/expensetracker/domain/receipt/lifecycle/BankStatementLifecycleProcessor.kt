@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
 import com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -87,6 +89,7 @@ data class BankStatementResult(
  */
 @Singleton
 class BankStatementLifecycleProcessor @Inject constructor(
+    private val database: AppDatabase,
     private val receiptRepository: ReceiptRepository,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptLifecycleEventWriter: ReceiptLifecycleEventWriter,
@@ -302,6 +305,25 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 message = "Bank statement processed with $transactionsFound transactions"
             ))
 
+            // P2-15 / P3-REG-009: Write PDF_PARTIAL if bank statement PDF was truncated
+            val pagesProcessed = ocrResult.pagesProcessed
+            val totalPages = ocrResult.totalPages
+            if (pagesProcessed != null && totalPages != null && pagesProcessed < totalPages) {
+                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                    receiptId = receiptId,
+                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                    eventType = "PDF_PARTIAL",
+                    newStatus = ReceiptProcessingStatus.PARSED.name,
+                    actor = "system:bank_statement_processor",
+                    message = "Bank statement PDF partially processed: $pagesProcessed of $totalPages pages",
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("pagesProcessed", pagesProcessed)
+                        .put("totalPages", totalPages)
+                        .build()
+                ))
+            }
+
             // ── Step 6: Create a PendingReview for each transaction ────────────
             var reviewsCreated = 0
             var duplicatesSkipped = 0
@@ -441,24 +463,30 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         createdAt = timeProvider.now()
                     )
 
-                    val reviewId = pendingReviewDao.insert(review)
-                    reviewsCreated++
-                    // P3-P1-10: Write durable item ledger row atomically with the review
-                    bankStatementImportItemDao.insert(
-                        BankStatementImportItem(
-                            runId = runId,
-                            itemIndex = index,
-                            transactionFingerprint = merchantKey,
-                            status = BankStatementImportItem.STATUS_CREATED_REVIEW,
-                            pendingReviewId = reviewId,
-                            merchant = tx.merchant,
-                            amount = tx.amount,
-                            currency = tx.currency,
-                            transactionDate = tx.date,
-                            createdAt = timeProvider.now(),
-                            updatedAt = timeProvider.now()
+                    // P3-REG-005: Wrap review creation and item row in a single
+                    // transaction so neither can exist without the other.
+                    val reviewId = database.withTransaction {
+                        writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processItem.tx")
+                        val revId = pendingReviewDao.insert(review)
+                        require(revId > 0) { "PendingReview insert failed for ${tx.merchant}" }
+                        bankStatementImportItemDao.insert(
+                            BankStatementImportItem(
+                                runId = runId,
+                                itemIndex = index,
+                                transactionFingerprint = merchantKey,
+                                status = BankStatementImportItem.STATUS_CREATED_REVIEW,
+                                pendingReviewId = revId,
+                                merchant = tx.merchant,
+                                amount = tx.amount,
+                                currency = tx.currency,
+                                transactionDate = tx.date,
+                                createdAt = timeProvider.now(),
+                                updatedAt = timeProvider.now()
+                            )
                         )
-                    )
+                        revId
+                    }
+                    reviewsCreated++
                     parsingLogs.add("INSERT: Pending review created for ${tx.merchant} €${tx.amount}")
 
                 } catch (e: Exception) {
