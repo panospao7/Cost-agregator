@@ -330,6 +330,13 @@ class ReceiptLinkService @Inject constructor(
                 // 1. Delete link row and capture affected row count
                 affectedRows = receiptExpenseLinkDao.unlink(receiptId, expenseId)
 
+                // P3-NEW-09 / follow-up: No-op guard. If no link existed, do NOT
+                // clear receipt/warranty/return/item state — those mutations would
+                // be misleading because no link was actually removed.
+                if (affectedRows == 0) {
+                    return@withTransaction
+                }
+
                 // 2. Determine correct ScannedReceipt.expenseId after unlinking
                 if (!isBankStatement && receipt != null) {
                     val remainingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)

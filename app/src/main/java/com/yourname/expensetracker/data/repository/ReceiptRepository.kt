@@ -118,6 +118,31 @@ class ReceiptRepository @Inject constructor(
     }
 
     /**
+     * Draft produced by the OCR/parse stage that carries all the information
+     * the coordinator needs to persist a [ScannedReceipt] row, but does NOT
+     * write to the database itself (P3-P1-01: draft-first lifecycle).
+     */
+    data class ReceiptProcessingDraft(
+        val imagePath: String?,
+        val rawOcrTextForPersistence: String,
+        val ephemeralRawOcrText: String?,
+        val parsedTotal: Double?,
+        val parsedMerchant: String?,
+        val normalizedMerchant: String?,
+        val parsedDate: Long?,
+        val parsedItems: String?,
+        val parsedTaxAmount: Double?,
+        val currency: String,
+        val confidence: Float,
+        val processingStatus: String,
+        val parseFailureReason: String?,
+        val ocrFailureReason: String?,
+        val pagesProcessed: Int? = null,
+        val totalPages: Int? = null,
+        val taxInclusive: Boolean = false
+    )
+
+    /**
      * Result of [processReceipt], carrying the receipt, parsed data, and
      * PDF truncation metadata (P2-15).
      *
@@ -130,7 +155,9 @@ class ReceiptRepository @Inject constructor(
         val parsed: ReceiptParser.ParsedReceipt,
         val pagesProcessed: Int? = null,
         val totalPages: Int? = null,
-        val ephemeralRawOcrText: String? = null
+        val ephemeralRawOcrText: String? = null,
+        val duplicateOfReceiptId: Long? = null,
+        val isPreExistingDuplicate: Boolean = false
     )
 
     /**
@@ -157,7 +184,7 @@ class ReceiptRepository @Inject constructor(
                 Timber.d("Duplicate receipt detected pre-OCR by exact hash: existingId=${existingMatch.id}")
                 // P3-P1-07: Use the existing receipt's currency instead of hardcoded "EUR"
                 val existingCurrency = existingMatch.currency.takeIf { it.isNotBlank() } ?: homeCurrency()
-                return@withContext ProcessReceiptResult(existingMatch, ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), existingCurrency, emptyList(), 0f), ephemeralRawOcrText = null)
+                return@withContext ProcessReceiptResult(existingMatch, ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), existingCurrency, emptyList(), 0f), ephemeralRawOcrText = null, duplicateOfReceiptId = existingMatch.id, isPreExistingDuplicate = true)
             }
         }
 

@@ -285,12 +285,16 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 // link attempt and replay of side effects.
                 val linkedExpenseId = freshReceipt.expenseId
                 if (linkedExpenseId != null) {
-                    Timber.d(
-                        "receipt_transaction_match: skipping — receipt %d is already linked to expense %d",
-                        receiptId, linkedExpenseId
-                    )
+                    // P3-P1-03: Write MATCH_SKIPPED_ALREADY_LINKED before returning
+                    writeMatchEvent(freshReceipt, "MATCH_SKIPPED_ALREADY_LINKED",
+                        "Receipt already linked to expense $linkedExpenseId",
+                        expenseId = linkedExpenseId)
                     return@PostCommitAction SideEffectOutcome.Skipped(SideEffectSkipReason.ALREADY_PROCESSED)
                 }
+
+                // P3-P1-03: Write MATCH_ATTEMPTED before running the matcher
+                writeMatchEvent(freshReceipt, "MATCH_ATTEMPTED",
+                    "Starting transaction match for receipt")
 
                 val matchResult = receiptTransactionMatcher.findBestMatch(freshReceipt)
                 processMatchResult(matchResult, freshReceipt)
@@ -298,6 +302,13 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 Timber.w(e, "Transaction matching failed for receipt %d", receiptId)
+                // P3-P1-03: Write MATCH_FAILED before returning retryable failure
+                val freshReceipt = scannedReceiptDao.getById(receiptId)
+                if (freshReceipt != null) {
+                    writeMatchEvent(freshReceipt, "MATCH_FAILED",
+                        "Transaction matching threw exception",
+                        errorDetails = e.message?.take(300))
+                }
                 SideEffectOutcome.FailedRetryable(
                     e.message ?: "Transaction matching failed",
                     e.javaClass.name
@@ -332,6 +343,9 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 if (linkResult.isFailure) {
                     Timber.w("Auto-match link failed for receipt %d: %s",
                         receipt.id, linkResult.exceptionOrNull()?.message)
+                    writeMatchEvent(receipt, "MATCH_FAILED",
+                        "Auto-match link failed: ${linkResult.exceptionOrNull()?.message}",
+                        expenseId = matchResult.transaction.id, score = matchResult.score.toFloat())
                     SideEffectOutcome.FailedRetryable(
                         linkResult.exceptionOrNull()?.message ?: "Auto-match link failed",
                         linkResult.exceptionOrNull()?.javaClass?.name
@@ -339,6 +353,10 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 } else {
                     Timber.d("Auto-matched receipt %d to expense %d (score=%.3f)",
                         receipt.id, matchResult.transaction.id, matchResult.score)
+                    writeMatchEvent(receipt, "AUTO_MATCHED",
+                        "Auto-matched receipt to expense ${matchResult.transaction.id} (score=${
+                            "%.3f".format(matchResult.score)})",
+                        expenseId = matchResult.transaction.id, score = matchResult.score.toFloat())
                     SideEffectOutcome.Completed
                 }
             }
@@ -436,6 +454,48 @@ class ReceiptSideEffectPlanner @Inject constructor(
                     e.javaClass.name
                 )
             }
+        }
+    }
+
+    /**
+     * Writes a receipt matching lifecycle event.
+     *
+     * Metadata never includes raw OCR text — only IDs, scores, and safe reasons.
+     * P3-P1-03: Matching event taxonomy.
+     */
+    private suspend fun writeMatchEvent(
+        receipt: ScannedReceipt,
+        eventType: String,
+        message: String,
+        expenseId: Long? = null,
+        score: Float? = null,
+        errorDetails: String? = null
+    ) {
+        try {
+            writeBarrier.checkWritesAllowed("ReceiptSideEffectPlanner.writeMatchEvent")
+            val now = timeProvider.now()
+            val metadataFields = mutableListOf<String>()
+            expenseId?.let { metadataFields.add("\"expenseId\":$it") }
+            score?.let { metadataFields.add("\"score\":${"%.3f".format(it)}") }
+            receiptEventDao.insert(
+                ReceiptEvent(
+                    receiptId = receipt.id,
+                    sourceType = receipt.sourceType,
+                    documentType = receipt.documentType,
+                    eventType = eventType,
+                    occurredAt = now,
+                    oldStatus = receipt.processingStatus,
+                    newStatus = null,
+                    actor = "system:receipt_matcher",
+                    message = message.take(500),
+                    metadata = if (metadataFields.isNotEmpty()) "{${metadataFields.joinToString(",")}}" else null,
+                    errorDetails = errorDetails?.take(500)
+                )
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to write match event %s for receipt %d", eventType, receipt.id)
         }
     }
 }

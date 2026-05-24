@@ -199,6 +199,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 autoCreateReview = options.createReview,
                 resolvedMimeType = validation.mimeType
             )
+
+            // P3-REG-01: Pre-OCR duplicate — repository returned an already-existing
+            // receipt. Do NOT run lifecycle update, review creation, or duplicate
+            // cleanup against a pre-existing receipt.
+            if (processResult.isPreExistingDuplicate) {
+                Timber.d("Pre-OCR duplicate detected: existingId=%d", processResult.receipt.id)
+                return Result.success(processResult.receipt)
+            }
+
             val receipt = processResult.receipt
             val parsed = processResult.parsed
 
@@ -756,8 +765,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val linkedExistingExpenseIds = mutableListOf<Long>()
         var receiptPlan: PostCommitActionBatch? = null
         val transactionActionBatches = mutableListOf<PostCommitActionBatch>()
-        var capturedDuplicate: EmailReceiptProcessResult.Duplicate? = null
 
+        try {
         database.withTransaction {
             val homeResolution = currencySettingsRepository.resolveHomeCurrency()
             val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
@@ -823,8 +832,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                   ?: messageIdHash.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByMessageIdHash(it) }
 
                 if (existing != null) {
-                    capturedDuplicate = EmailReceiptProcessResult.Duplicate(existing.receiptId)
-                    return@withTransaction  // rolls back the scanned receipt insert
+                    throw DuplicateEmailReceiptException(
+                        existingReceiptId = existing.receiptId,
+                        reason = "email_source_conflict"
+                    )
                 }
 
                 // Unresolved conflict — throw to rollback everything
@@ -933,10 +944,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             }
         }
 
-        // Handle duplicate captured inside the transaction
-        if (capturedDuplicate != null) {
-            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "in_transaction_duplicate", "EmailReceiptSource", capturedDuplicate!!.existingReceiptId, correlationId)
-            return capturedDuplicate!!
+        } catch (e: DuplicateEmailReceiptException) {
+            // P3-REG-02: Exception-based rollback — the scanned receipt insert
+            // was correctly rolled back by the transaction. Return Duplicate.
+            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "in_transaction_duplicate_${e.reason}", "EmailReceiptSource", e.existingReceiptId, correlationId)
+            return EmailReceiptProcessResult.Duplicate(e.existingReceiptId)
         }
 
         // Single post-commit dispatch: combine receipt actions + transaction actions for created expenses only
@@ -1086,178 +1098,26 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *   [ReceiptLinkService.linkReceiptToExpense] for the linking step.
      */
     @Deprecated(
-        message = "Migrate to explicit pipeline: 1) load receipt for tax-inclusive check, " +
-            "2) MerchantNormalizer.normalize(merchant, autoCreate=true) for canonical name, " +
-            "3) HybridExpenseClassifier.classify() when categoryId is null, " +
-            "4) TransactionLifecycleCoordinator.createExpense() with all resolved fields, " +
-            "5) ReceiptLinkService.linkReceiptToExpense() for receipt-expense linking, " +
-            "6) HybridExpenseClassifier.learnFromCorrection() as best-effort side effect. " +
-            "This method will be removed in a future release.",
+        message = "Permanently disabled. Use createExpenseAndLinkReceipt(request).",
         level = DeprecationLevel.ERROR,
         replaceWith = ReplaceWith(
-            expression = "transactionLifecycleCoordinator.createExpense(request) /* see migration steps above */",
-            imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
+            expression = "createExpenseAndLinkReceipt(request)",
+            imports = []
         )
     )
     suspend fun createExpenseFromReceipt(
         receiptId: Long,
         merchant: String,
         amount: Double,
-        currency: String = "EUR",
+        currency: String = "XXX",
         categoryId: Long?,
         date: Long,
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
         notes: String? = null
     ): DomainResult<Long> {
-        // ── Fix 1 (CRITICAL): Tax-inclusive amount override (RCP-14) ──────────
-        // Load the receipt entity. taxInclusive is @Ignore (transient), so it
-        // is always false when loaded from DB. Fall back to detecting
-        // tax-inclusive from the persisted fields.
-        val receiptRecord = scannedReceiptDao.getById(receiptId)
-        val effectiveAmount = if (receiptRecord != null) {
-            // RCP-14: taxInclusive is @Ignore (transient), recompute from persisted fields
-            val parsedItems = receiptRecord.parsedItems
-            val isTaxInclusive = receiptRecord.taxInclusive ||
-                (receiptRecord.parsedTotal != null && receiptRecord.parsedTaxAmount != null && parsedItems != null && run {
-                    try {
-                        val items = org.json.JSONArray(parsedItems)
-                        if (items.length() == 0) false
-                        else {
-                            var sum = 0.0
-                            for (i in 0 until items.length()) {
-                                sum += items.getJSONObject(i).getDouble("totalPrice")
-                            }
-                            kotlin.math.abs(sum - receiptRecord.parsedTotal) < receiptRecord.parsedTotal * 0.05
-                        }
-                    } catch (_: Exception) { false }
-                })
-            if (isTaxInclusive && receiptRecord.parsedTotal != null) {
-                Timber.d(
-                    "RCP-14: Overriding amount from %.2f to %.2f for tax-inclusive receipt %d",
-                    amount, receiptRecord.parsedTotal, receiptId
-                )
-                receiptRecord.parsedTotal
-            } else {
-                amount
-            }
-        } else {
-            amount
-        }
-
-        // ── Fix 2 (CRITICAL): Merchant normalization ──────────────────────────
-        val normalizedMerchant = merchantNormalizer.normalize(
-            rawName = merchant,
-            autoCreate = true
-        ).canonical.normalizedName
-
-        // ── Fix 3 (CRITICAL): Auto-categorization when no category provided ───
-        val finalCategoryId = categoryId ?: hybridClassifier.classify(
-            merchantName = normalizedMerchant,
-            amount = effectiveAmount
-        ).categoryId.takeIf { it > 0 }
-
-        // ── Fix 4 (MAJOR): Notes fallback ─────────────────────────────────────
-        val notesValue = notes ?: "Scanned from receipt"
-
-        val request = CreateExpenseRequest(
-            merchant = normalizedMerchant,
-            amount = effectiveAmount,
-            currency = currency,
-            date = date,
-            transactionType = TransactionType.PURCHASE,
-            source = ExpenseSource.RECEIPT_SCAN,
-            categoryId = finalCategoryId,
-            notes = notesValue,
-            paymentMethod = paymentMethod,
-            isManualEntry = true,
-            scannedReceiptId = receiptId
+        return DomainResult.Error(
+            message = "createExpenseFromReceipt is permanently disabled. Use createExpenseAndLinkReceipt()."
         )
-
-        // P3-P1-05: Wrap expense creation + receipt linking in a single
-        // database transaction to ensure atomicity — both succeed or both roll back.
-        val txResult = database.withTransaction {
-            @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
-            val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
-            when (val result = mutation.value) {
-                is CreateExpenseResult.Created -> {
-                    val expenseId = result.expenseId
-                    // Link receipt to the newly created expense
-                    val linkResult = receiptLinkService.linkReceiptToExpense(
-                        receiptId = receiptId,
-                        expenseId = expenseId,
-                        linkType = "DIRECT_SAVE",
-                        source = ExpenseSource.RECEIPT_SCAN.name,
-                        writeSourceLink = false
-                    )
-                    if (linkResult.isFailure) {
-                        throw IllegalStateException("Receipt-expense link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
-                    }
-
-                    // Side effects are deferred — dispatch after commit
-                    Pair(DomainResult.Success(expenseId), mutation.postCommitActions)
-                }
-                is CreateExpenseResult.DuplicateSkipped -> {
-                    Pair(DomainResult.Duplicate as DomainResult<Long>, PostCommitActionBatch.empty("receipt_scan_dup"))
-                }
-                is CreateExpenseResult.ValidationFailed -> {
-                    Pair(
-                        DomainResult.Error(
-                            message = "Validation failed: ${result.errors.joinToString(", ")}"
-                        ) as DomainResult<Long>,
-                        PostCommitActionBatch.empty("receipt_scan_vf")
-                    )
-                }
-                is CreateExpenseResult.InsertConflict -> {
-                    Pair(
-                        DomainResult.Error(
-                            message = "Insert conflict: ${result.dedupeKey}"
-                        ) as DomainResult<Long>,
-                        PostCommitActionBatch.empty("receipt_scan_ic")
-                    )
-                }
-                is CreateExpenseResult.Error -> {
-                    Pair(
-                        DomainResult.Error(
-                            exception = result.exception,
-                            message = result.exception.message ?: "Unknown error"
-                        ) as DomainResult<Long>,
-                        PostCommitActionBatch.empty("receipt_scan_err")
-                    )
-                }
-            }
-        }
-        val (outerResult, transactionActions) = txResult
-        // Classifier learning (best-effort side effect, post-commit)
-        if (outerResult is DomainResult.Success && finalCategoryId != null) {
-            try {
-                hybridClassifier.learnFromCorrection(
-                    merchantName = normalizedMerchant,
-                    correctCategoryId = finalCategoryId,
-                    amount = effectiveAmount
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w(e, "Classifier learning failed after expense creation from receipt %d", receiptId)
-            }
-        }
-        // Run combined side effects for the created expense and receipt link
-        if (outerResult is DomainResult.Success) {
-            val expenseId = outerResult.data
-            val receiptActions = receiptSideEffectPlanner.planAfterReceiptLinked(
-                receiptId = receiptId,
-                expenseId = expenseId,
-                linkType = "DIRECT_SAVE",
-                correlationId = null
-            )
-            val combined = transactionActions + receiptActions
-            postCommitActionRunner.runBestEffortAfterCommit(
-                batch = combined,
-                logMessage = "Post-creation side effects failed for receipt expense",
-                targetId = expenseId
-            )
-        }
-        return outerResult
     }
 
     /**
@@ -1337,4 +1197,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         return expenseIdResult
     }
+
+    /**
+     * P3-REG-02: Thrown inside [processEmailReceipt]'s transaction to force
+     * rollback when the email source insert conflicts with an existing row.
+     * Using an exception ensures the newly inserted [ScannedReceipt] is rolled
+     * back — unlike `return@withTransaction`, which would commit the orphan row.
+     */
+    private class DuplicateEmailReceiptException(
+        val existingReceiptId: Long,
+        val reason: String
+    ) : RuntimeException("Duplicate email receipt: $reason (existingId=$existingReceiptId)")
 }
