@@ -681,7 +681,53 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *                will be overridden).
      * @return The auto-generated receipt ID.
      */
-    suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
+    sealed interface SaveEmailReceiptResult {
+    data class Inserted(val receiptId: Long) : SaveEmailReceiptResult
+    data class Duplicate(val existingReceiptId: Long) : SaveEmailReceiptResult
+    data class Failed(val reason: String) : SaveEmailReceiptResult
+}
+
+/**
+ * Typed overload — preferred. Returns SaveEmailReceiptResult instead of
+ * sentinel Long. P3-718-05 / P3-718-09.
+ */
+suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResult {
+    writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.saveEmailReceipt")
+    val now = timeProvider.now()
+    val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
+    val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
+    val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
+        sourceType = ReceiptSourceType.EMAIL.name,
+        documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+        processingStatus = ReceiptProcessingStatus.PARSED.name,
+        rawOcrText = sanitizedOcrText
+    ), now)
+    return try {
+        database.withTransaction {
+            when (val result = receiptInsertResolver.insertOrResolve(updated)) {
+                is ReceiptInsertResult.Inserted -> {
+                    receiptEventDao.insert(ReceiptEvent(
+                        receiptId = result.receiptId,
+                        sourceType = ReceiptSourceType.EMAIL.name,
+                        documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+                        eventType = "RECEIPT_SAVED", occurredAt = now,
+                        oldStatus = null, newStatus = ReceiptProcessingStatus.PARSED.name,
+                        actor = "system:email_ingestion",
+                        message = "Email receipt saved via lifecycle coordinator",
+                        metadata = null, errorDetails = null
+                    ))
+                    SaveEmailReceiptResult.Inserted(result.receiptId)
+                }
+                is ReceiptInsertResult.Duplicate -> SaveEmailReceiptResult.Duplicate(result.existingReceipt.id)
+                is ReceiptInsertResult.ConflictUnresolved -> SaveEmailReceiptResult.Failed(result.reason)
+            }
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e
+    } catch (e: Exception) { SaveEmailReceiptResult.Failed(e.message ?: "Unknown error") }
+}
+
+@Deprecated("Use saveEmailReceiptTyped() for typed duplicate handling.", level = DeprecationLevel.WARNING)
+suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.saveEmailReceipt")
         val now = timeProvider.now()
         val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode

@@ -502,7 +502,7 @@ class ReceiptRepository @Inject constructor(
         scannedReceiptDao.deleteAll()
     }
 
-    @Deprecated("Use ReceiptLifecycleCoordinator.", level = DeprecationLevel.WARNING)
+    @Deprecated("P3-718-02: Migrate to ReceiptLifecycleCoordinator.", level = DeprecationLevel.WARNING)
     suspend fun clearMatchForReceipt(receiptId: Long) {
         val receipt = scannedReceiptDao.getById(receiptId) ?: return
         scannedReceiptDao.update(receipt.copy(
@@ -691,7 +691,7 @@ class ReceiptRepository @Inject constructor(
      *
      * Concatenates all raw OCR text from the database for debugging/parsing refinement.
      */
-    @Deprecated("P3-0D5-08: Use ReceiptDebugExporter.", level = DeprecationLevel.WARNING)
+    @Deprecated("P3-718-03: Use ReceiptDebugExporter.", level = DeprecationLevel.WARNING)
     suspend fun exportParserDebugData(): String {
         // P3-BLOCKER-07: Debug export gated behind DEBUG build + storage mode.
         if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
@@ -729,7 +729,7 @@ class ReceiptRepository @Inject constructor(
     /**
      * Debug function to get detailed info about a scanned receipt
      */
-    @Deprecated("P3-0D5-08: Use ReceiptDebugExporter.", level = DeprecationLevel.WARNING)
+    @Deprecated("P3-718-03: Use ReceiptDebugExporter.", level = DeprecationLevel.WARNING)
     suspend fun debugReceipt(receiptId: Long): String {
         // P3-BLOCKER-04: Gate + redact by default.
         if (!com.yourname.expensetracker.BuildConfig.DEBUG)
