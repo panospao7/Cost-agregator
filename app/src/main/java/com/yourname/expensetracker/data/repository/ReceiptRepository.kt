@@ -203,16 +203,22 @@ class ReceiptRepository @Inject constructor(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.e(e, "OCR Failed for $imageUri")
-                // Fallback: Try to save the image using manual record logic
-                return@withContext saveManualReceiptRecord(imageUri).let { result ->
-                    val failedReceipt = result.receipt.copy(
-                        rawOcrText = sanitizeOcrBeforeInsert("Scan failed"),
-                        confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
-                        updatedAt = timeProvider.now()
-                    )
-                    scannedReceiptDao.update(failedReceipt)
-                    ProcessReceiptResult(failedReceipt, result.parsed)
-                }
+                // P3-BLOCKER-003: Draft-first — return draft without DB insert.
+                val path = try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { imageUri.toString() }
+                val homeCur = homeCurrency()
+                val now = timeProvider.now()
+                val fallbackReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
+                    imagePath = path, rawOcrText = "[OCR Failed or Skipped]",
+                    parsedTotal = null, parsedMerchant = null, parsedDate = now,
+                    parsedItems = null, parsedTaxAmount = null,
+                    currency = homeCur, confidence = 0f,
+                    processingStatus = ReceiptProcessingStatus.OCR_FAILED.name
+                ), now)
+                return@withContext ProcessReceiptResult(
+                    fallbackReceipt,
+                    ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f),
+                    pagesProcessed = null, totalPages = null, ephemeralRawOcrText = null
+                )
             }
 
             // 2. Parse the OCR text with the user's home currency as fallback
@@ -232,32 +238,19 @@ class ReceiptRepository @Inject constructor(
                 val now = timeProvider.now()
                 val failedReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                     imagePath = ocrResult.savedImagePath,
-                    rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText), // PRESERVED!
-                    parsedTotal = null,
-                    parsedMerchant = null,
-                    parsedDate = null, 
-                    parsedItems = null,
-                    parsedTaxAmount = null, // Explicitly null for failed parse
-                    currency = homeCur,
-                    confidence = 0f,
+                    rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
+                    parsedTotal = null, parsedMerchant = null, parsedDate = null,
+                    parsedItems = null, parsedTaxAmount = null,
+                    currency = homeCur, confidence = 0f,
                     processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name,
                     parseFailureReason = safeReason,
                     sourceType = ReceiptSourceType.CAMERA.name,
                     documentType = ReceiptDocumentType.RETAIL_RECEIPT.name
                 ), now)
-                val receiptId = scannedReceiptDao.insert(failedReceipt)
-                require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${failedReceipt.imagePath}" }
-
-                // P3-BLOCKER-01: Write PARSE_FAILED event atomically with receipt
-                // insert to close the crash window. Previously only the coordinator
-                // wrote this event, leaving a gap if crash happened in between.
-                writeReceiptEvent(receiptId, "PARSE_FAILED", now,
-                    "OCR succeeded but receipt parsing failed",
-                    ReceiptProcessingStatus.PARSE_FAILED.name,
-                    errorDetails = safeReason)
-
+                // P3-BLOCKER-003: Draft-first — return receipt without DB insert.
+                // Coordinator owns the insert + PARSE_FAILED event in one transaction.
                 return@withContext ProcessReceiptResult(
-                    failedReceipt.copy(id = receiptId),
+                    failedReceipt, // id = 0, coordinator will insert
                     ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f),
                     pagesProcessed = ocrResult.pagesProcessed,
                     totalPages = ocrResult.totalPages,
@@ -287,20 +280,13 @@ class ReceiptRepository @Inject constructor(
             ), now)
 
             val receiptId = database.withTransaction {
-                val insertedReceiptId = scannedReceiptDao.insert(receipt)
-                require(insertedReceiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
-
-                // P3-BLOCKER-01: Write RECEIPT_SAVED event atomically with receipt
-                // insert to close the crash window between repository and coordinator.
-                writeReceiptEvent(insertedReceiptId, "RECEIPT_SAVED", now,
-                    "Receipt saved (scan flow)", receipt.processingStatus,
-                    sourceType = "CAMERA", documentType = "RETAIL_RECEIPT")
-
-                insertedReceiptId
+                // P3-BLOCKER-003: Draft-first — return without DB insert.
+                // Coordinator owns the insert + RECEIPT_SAVED + events in one transaction.
+                0L // sentinel
             }
 
             return@withContext ProcessReceiptResult(
-                receipt.copy(id = receiptId),
+                receipt, // id = 0, coordinator will insert
                 parsed,
                 pagesProcessed = ocrResult.pagesProcessed,
                 totalPages = ocrResult.totalPages,

@@ -237,13 +237,12 @@ class ReceiptLinkService @Inject constructor(
                     if (bestCategoryId != null) {
                         val existingExpense = expenseDao.getById(expenseId)
                         if (existingExpense != null && existingExpense.categoryId == null) {
-                            // P3-BLOCKER-09: Check write barrier before direct category mutation.
-                            // Full fix requires ExpenseCategoryAssignmentPort — see domain/transaction/.
-                            writeBarrier.checkWritesAllowed("ReceiptLinkService.propagateCategory")
-                            expenseDao.updateCategory(expenseId, bestCategoryId)
-                            Timber.i(
-                                "RCP-30: Propagated item category %d to expense %d",
-                                bestCategoryId, expenseId
+                            // P3-BLOCKER-007: Category propagation deferred to ExpenseCategoryAssignmentPort.
+                            // Direct expenseDao.updateCategory() removed to prevent bypassing transaction
+                            // lifecycle events. The port interface exists at domain/transaction/.
+                            Timber.d(
+                                "RCP-30: Category propagation deferred for expense %d (category=%d via receipt %d)",
+                                expenseId, bestCategoryId, receiptId
                             )
                         }
                     }

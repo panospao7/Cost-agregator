@@ -70,7 +70,7 @@ data class ScannedReceipt(
      */
     val parsedItems: String?,        // JSON array of line items
     val parsedTaxAmount: Double?,
-    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'XXX'") val currency: String = "XXX",
     val confidence: Float,
     @ColumnInfo(defaultValue = "NULL") val expenseId: Long? = null,
     @ColumnInfo(defaultValue = "'UNMATCHED'") val matchStatus: MatchStatus = MatchStatus.UNMATCHED,

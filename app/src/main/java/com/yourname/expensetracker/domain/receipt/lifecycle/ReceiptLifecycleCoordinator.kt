@@ -412,19 +412,22 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // in a single transaction so a partial write cannot leave the database
             // in an inconsistent state.
             var createdReviewId: Long = 0
+            var savedReceipt: ScannedReceipt = updated
             database.withTransaction {
-                scannedReceiptDao.update(updated)
+                val insertedId = scannedReceiptDao.insert(updated)
+                require(insertedId > 0) { "Receipt insert failed after dedupe" }
+                savedReceipt = updated.copy(id = insertedId)
 
                 // 6. Write receipt lifecycle event
                 receiptEventDao.insert(
                     ReceiptEvent(
-                        receiptId = updated.id,
-                        sourceType = updated.sourceType,
-                        documentType = updated.documentType,
+                        receiptId = savedReceipt.id,
+                        sourceType = savedReceipt.sourceType,
+                        documentType = savedReceipt.documentType,
                         eventType = "RECEIPT_SAVED",
                         occurredAt = now,
                         oldStatus = null,
-                        newStatus = updated.processingStatus,
+                        newStatus = savedReceipt.processingStatus,
                         actor = "system:coordinator",
                         message = "Receipt processed via lifecycle coordinator",
                         metadata = null,
@@ -436,9 +439,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 if (processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name) {
                     receiptEventDao.insert(
                         ReceiptEvent(
-                            receiptId = updated.id,
-                            sourceType = updated.sourceType,
-                            documentType = updated.documentType,
+                            receiptId = savedReceipt.id,
+                            sourceType = savedReceipt.sourceType,
+                            documentType = savedReceipt.documentType,
                             eventType = "PARSE_FAILED",
                             occurredAt = now,
                             oldStatus = null,
@@ -446,7 +449,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             actor = "system:coordinator",
                             message = "OCR succeeded but receipt parsing failed",
                             metadata = null,
-                            errorDetails = updated.parseFailureReason
+                            errorDetails = savedReceipt.parseFailureReason
                         )
                     )
                 }
@@ -454,9 +457,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 if (isOcrFailure) {
                     receiptEventDao.insert(
                         ReceiptEvent(
-                            receiptId = updated.id,
-                            sourceType = updated.sourceType,
-                            documentType = updated.documentType,
+                            receiptId = savedReceipt.id,
+                            sourceType = savedReceipt.sourceType,
+                            documentType = savedReceipt.documentType,
                             eventType = "OCR_FAILED",
                             occurredAt = now,
                             oldStatus = null,
@@ -475,13 +478,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 if (pagesProcessed != null && totalPages != null && pagesProcessed < totalPages) {
                     receiptEventDao.insert(
                         ReceiptEvent(
-                            receiptId = updated.id,
-                            sourceType = updated.sourceType,
-                            documentType = updated.documentType,
+                            receiptId = savedReceipt.id,
+                            sourceType = savedReceipt.sourceType,
+                            documentType = savedReceipt.documentType,
                             eventType = "PDF_PARTIAL",
                             occurredAt = now,
                             oldStatus = null,
-                            newStatus = updated.processingStatus,
+                            newStatus = savedReceipt.processingStatus,
                             actor = "system:coordinator",
                             message = "PDF partially processed: $pagesProcessed of $totalPages pages",
                             metadata = "{\"pagesProcessed\":$pagesProcessed,\"totalPages\":$totalPages}",
@@ -504,7 +507,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     )
                     val review = PendingReview(
                         rawNotificationId = null,
-                        scannedReceiptId = updated.id,
+                        scannedReceiptId = savedReceipt.id,
                         suggestedAmount = parsed.total,
                         suggestedCurrency = updated.currency,
                         suggestedMerchant = suggestedMerchant,
@@ -524,7 +527,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         }
                     )
                     val reviewId = pendingReviewDao.insert(review)
-                    require(reviewId > 0) { "PendingReview insert failed for receiptId=${updated.id}" }
+                    require(reviewId > 0) { "PendingReview insert failed for receiptId=${savedReceipt.id}" }
 
                     val persistedReview = review.copy(id = reviewId)
 
@@ -548,17 +551,17 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             // 7. Plan and run post-save side effects (warranty, categorization, matching, etc.)
             val receiptActions = receiptSideEffectPlanner.planAfterReceiptSaved(
-                receipt = updated,
+                receipt = savedReceipt,
                 correlationId = null
             )
             postCommitActionRunner.runBestEffortAfterCommit(
                 batch = receiptActions,
                 logMessage = "Post-save side effects failed for receipt",
-                targetId = updated.id
+                targetId = savedReceipt.id
             )
 
-            Timber.d("Receipt processed via coordinator: id=%d, imagePath=%s", updated.id, updated.imagePath)
-            Result.success(updated)
+            Timber.d("Receipt processed via coordinator: id=%d, imagePath=%s", savedReceipt.id, savedReceipt.imagePath)
+            Result.success(savedReceipt)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
