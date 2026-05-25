@@ -206,9 +206,9 @@ class ReceiptRepository @Inject constructor(
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                Timber.e(e, "OCR Failed for $imageUri")
-                // P3-BLOCKER-003: Draft-first — return draft without DB insert.
-                val path = try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { imageUri.toString() }
+                Timber.e(e, "OCR failed for receipt input")
+                // P3-0D5-02: Never persist uri.toString() as imagePath
+                val path = try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { null }
                 val homeCur = homeCurrency()
                 val now = timeProvider.now()
                 val fallbackReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
@@ -577,7 +577,7 @@ class ReceiptRepository @Inject constructor(
                             } catch (e: Exception) {
                                 BatchItemResult(
                                     success = false,
-                                    error = "Failed to process $uri: ${e.message}"
+                                    error = "Failed to process receipt input: ${safeFailureReason(e)}"
                                 )
                             }
                         }
