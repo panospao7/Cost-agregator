@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import timber.log.Timber
@@ -42,7 +43,11 @@ class ReceiptSideEffectDispatcher @Inject constructor(
         causationId: String? = null
     ) {
         try {
-            val batch = planner.planAfterReceiptSaved(receipt, correlationId, causationId)
+            val batch = planner.planAfterReceiptSaved(
+                input = ReceiptSideEffectInput(receipt = receipt, ephemeralRawOcrText = null,
+                    rawStorageMode = RawStorageMode.STORE_RAW, correlationId = correlationId),
+                causationId = causationId
+            )
             runner.run(batch)
         } catch (e: Exception) {
             Timber.e(e, "dispatchAfterSave failed for receipt %d", receipt.id)

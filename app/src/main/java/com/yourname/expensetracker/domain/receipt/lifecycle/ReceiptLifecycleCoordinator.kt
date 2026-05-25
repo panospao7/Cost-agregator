@@ -695,30 +695,31 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         var id = 0L
         database.withTransaction {
             when (val result = receiptInsertResolver.insertOrResolve(updated)) {
-                is ReceiptInsertResult.Inserted -> id = result.receiptId
+                is ReceiptInsertResult.Inserted -> {
+                    id = result.receiptId
+                    receiptEventDao.insert(
+                        ReceiptEvent(
+                            receiptId = id,
+                            sourceType = ReceiptSourceType.EMAIL.name,
+                            documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+                            eventType = "RECEIPT_SAVED",
+                            occurredAt = now,
+                            oldStatus = null,
+                            newStatus = ReceiptProcessingStatus.PARSED.name,
+                            actor = "system:email_ingestion",
+                            message = "Email receipt saved via lifecycle coordinator",
+                            metadata = null,
+                            errorDetails = null
+                        )
+                    )
+                }
                 is ReceiptInsertResult.Duplicate -> {
-                    // P3-03EA-04: Return -1 for duplicate instead of throwing
+                    // P3-994-02: Return -1 without writing any event
                     Timber.d("saveEmailReceipt: duplicate detected, existingId=%d", result.existingReceipt.id)
-                    id = -1L
+                    return@withTransaction
                 }
                 is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
             }
-
-            receiptEventDao.insert(
-                ReceiptEvent(
-                    receiptId = id,
-                    sourceType = ReceiptSourceType.EMAIL.name,
-                    documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
-                    eventType = "RECEIPT_SAVED",
-                    occurredAt = now,
-                    oldStatus = null,
-                    newStatus = ReceiptProcessingStatus.PARSED.name,
-                    actor = "system:email_ingestion",
-                    message = "Email receipt saved via lifecycle coordinator",
-                    metadata = null,
-                    errorDetails = null
-                )
-            )
         }
 
         Timber.d("Email receipt saved via coordinator: id=%d", id)

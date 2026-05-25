@@ -614,25 +614,22 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 }
                 throw e
             }
-            Timber.e(e, "BankStatementLifecycleProcessor failed for URI: %s", uri)
-            // P3-BLOCKER-05.4: Count existing item rows before finalizing failure
+            Timber.e(e, "BankStatementLifecycleProcessor failed")
             runId?.let { rid ->
-                val existingItems = kotlin.runCatching {
-                    val ec = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
-                    val ed = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
-                    val ep = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
-                    val ef = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
-                    Triple(ec, ed + ep, ef)
-                }.getOrNull()
+                val ec = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                val ed = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
+                val ep = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
+                val ef = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
+                // P3-994-05: Use separate counts, not collapsed duplicates
                 bankStatementImportRunDao.finalize(
                     runId = rid, status = BankStatementImportRun.STATUS_FAILED,
                     completedAt = timeProvider.now(),
-                    totalItems = existingItems?.let { it.first + it.second + it.third } ?: 0,
-                    processedItems = existingItems?.let { it.first + it.second } ?: 0,
-                    createdReviewCount = existingItems?.first ?: 0,
-                    duplicateExpenseCount = 0,
-                    duplicatePendingCount = existingItems?.second ?: 0,
-                    failedItemCount = existingItems?.third ?: 0,
+                    totalItems = ec + ed + ep + ef,
+                    processedItems = ec,
+                    createdReviewCount = ec,
+                    duplicateExpenseCount = ed,
+                    duplicatePendingCount = ep,
+                    failedItemCount = ef,
                     errorSummary = e.message?.take(500)
                 )
             }

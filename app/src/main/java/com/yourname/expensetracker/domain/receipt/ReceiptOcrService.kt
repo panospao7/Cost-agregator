@@ -195,7 +195,7 @@ class ReceiptOcrService @Inject constructor(
                     totalRead += bytesRead
                     if (totalRead > MAX_FILE_SIZE) {
                         throw IllegalArgumentException(
-                            "File too large (streaming check): exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit. URI: $uri"
+                            "File too large (streaming check): exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit"
                         )
                     }
                 }
@@ -278,7 +278,7 @@ class ReceiptOcrService @Inject constructor(
      */
     fun persistImageCopy(imageUri: Uri): String {
         val bitmap = loadAndCorrectBitmap(imageUri)
-            ?: throw IllegalStateException("Failed to load and correct image: $imageUri")
+            ?: throw IllegalStateException("Failed to load receipt image")
 
         return try {
             saveReceiptImage(bitmap)
@@ -352,7 +352,7 @@ class ReceiptOcrService @Inject constructor(
             throw e
         } catch (e: Exception) {
             // MED-01 FIX: Add logging instead of silent catch
-            Timber.e(e, "PDF text extraction failed for $pdfUri")
+            Timber.e(e, "PDF text extraction failed")
             return@withContext Pair("", 0)
         } finally {
             // MED-01 FIX: Add logging to catch blocks
@@ -438,7 +438,7 @@ class ReceiptOcrService @Inject constructor(
             throw e
         } catch (e: Exception) {
             // MED-01 FIX: Add logging to catch blocks  
-            Timber.e(e, "Thumbnail rendering failed for PDF: $pdfUri")
+            Timber.e(e, "Thumbnail rendering failed for PDF")
             return@withContext ""
         } finally {
             // MED-01 FIX: Add logging to catch blocks
@@ -466,7 +466,7 @@ class ReceiptOcrService @Inject constructor(
                 tempFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
-            } ?: throw IllegalStateException("Failed to open PDF stream: $pdfUri")
+            } ?: throw IllegalStateException("Failed to open PDF stream")
 
             pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
             renderer = PdfRenderer(pfd)
@@ -555,7 +555,7 @@ class ReceiptOcrService @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Timber.e(e, "PDF processing failed for $pdfUri")
+            Timber.e(e, "PDF processing failed")
             throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
         } finally {
             // MED-01 FIX: Add logging to catch blocks

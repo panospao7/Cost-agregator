@@ -69,41 +69,10 @@ class ReceiptSideEffectPlanner @Inject constructor(
         )
     }
 
-    // ─── Public API ──────────────────────────────────────────────────────────────
-
     /**
-     * Plans side effects that should run after a receipt is saved to the database.
-     *
-     * @param receipt          The newly-saved receipt.
-     * @param correlationId    Correlation ID for event tracing (auto-generated if null).
-     * @param causationId      Optional causation ID linking to a parent operation.
-     * @param linkedExpenseIds Expense IDs that this receipt was already linked to
-     *                         in the same flow. When non-empty, transaction matching
-     *                         is skipped to prevent double-dispatch.
-     * @return A [PostCommitActionBatch] with zero or more actions.
-     */
-    fun planAfterReceiptSaved(
-        receipt: ScannedReceipt,
-        correlationId: String?,
-        causationId: String? = null,
-        linkedExpenseIds: Set<Long> = emptySet()
-    ): PostCommitActionBatch {
-        return planAfterReceiptSaved(
-            input = ReceiptSideEffectInput(
-                receipt = receipt,
-                ephemeralRawOcrText = null,
-                rawStorageMode = RawStorageMode.STORE_RAW,
-                correlationId = correlationId
-            ),
-            causationId = causationId,
-            linkedExpenseIds = linkedExpenseIds
-        )
-    }
-
-    /**
-     * P3-BLOCKER-D: Privacy-aware overload that receives explicit ephemeral
-     * raw OCR input. Raw-dependent side effects use [ReceiptSideEffectInput.ephemeralRawOcrText]
-     * instead of silently falling back to persisted/sanitized [ScannedReceipt.rawOcrText].
+     * P3-994-09: Privacy-aware overload — the ONLY supported entry point.
+     * Raw-dependent side effects use [ReceiptSideEffectInput.ephemeralRawOcrText]
+     * instead of silently falling back to persisted/sanitized text.
      */
     fun planAfterReceiptSaved(
         input: ReceiptSideEffectInput,
