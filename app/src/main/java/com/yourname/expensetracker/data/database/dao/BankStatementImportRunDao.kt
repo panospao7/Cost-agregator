@@ -58,4 +58,11 @@ interface BankStatementImportRunDao {
         WHERE id = :runId
     """)
     suspend fun attachReceipt(runId: Long, receiptId: Long)
+
+    @Query("""
+        UPDATE bank_statement_import_runs
+        SET pdfPartial = :pdfPartial, pagesProcessed = :pagesProcessed, totalPages = :totalPages
+        WHERE id = :runId
+    """)
+    suspend fun updatePdfPartial(runId: Long, pdfPartial: Boolean, pagesProcessed: Int?, totalPages: Int?)
 }

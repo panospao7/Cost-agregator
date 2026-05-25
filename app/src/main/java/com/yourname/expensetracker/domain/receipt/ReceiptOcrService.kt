@@ -215,7 +215,7 @@ class ReceiptOcrService @Inject constructor(
      */
     suspend fun processImage(imageUri: Uri): OcrResult {
         // 1. Load and prepare the image (throws if fail)
-        val bitmap = loadAndCorrectBitmap(imageUri) ?: throw IllegalStateException("Failed to load and correct image: $imageUri")
+        val bitmap = loadAndCorrectBitmap(imageUri) ?: throw IllegalStateException("Failed to load receipt image")
 
         try {
             // 2. Save compressed copy
@@ -256,10 +256,7 @@ class ReceiptOcrService @Inject constructor(
                 blocks.mapNotNull { it.confidence }.average().toFloat()
             } else 0f
             if (overallConfidence < 0.5f && blocks.isNotEmpty()) {
-                Timber.w(
-                    "Low OCR confidence: overall=%.2f, blocks=%d, uri=%s",
-                    overallConfidence, blocks.size, imageUri
-                )
+                Timber.w("Low OCR confidence: overall=%.2f, blocks=%d", overallConfidence, blocks.size)
             }
 
             return OcrResult(

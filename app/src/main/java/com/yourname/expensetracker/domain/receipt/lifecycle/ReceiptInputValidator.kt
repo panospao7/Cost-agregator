@@ -167,7 +167,7 @@ class ReceiptInputValidator @Inject constructor(
             ?: return null
         val detected = EXTENSION_MIME_MAP[extension]
         if (detected != null) {
-            Timber.d("MIME fallback: extension .%s → %s for %s", extension, detected, uri)
+            Timber.d("MIME fallback: extension .%s → %s", extension, detected)
         }
         return detected
     }

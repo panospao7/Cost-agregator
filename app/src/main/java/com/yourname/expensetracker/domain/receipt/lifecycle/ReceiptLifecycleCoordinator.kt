@@ -696,7 +696,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         database.withTransaction {
             when (val result = receiptInsertResolver.insertOrResolve(updated)) {
                 is ReceiptInsertResult.Inserted -> id = result.receiptId
-                is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(result.existingReceipt, result.reason, attemptedAssetPath = null)
+                is ReceiptInsertResult.Duplicate -> {
+                    // P3-03EA-04: Return -1 for duplicate instead of throwing
+                    Timber.d("saveEmailReceipt: duplicate detected, existingId=%d", result.existingReceipt.id)
+                    id = -1L
+                }
                 is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
             }
 

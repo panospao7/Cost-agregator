@@ -322,6 +322,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         .put("totalPages", totalPages)
                         .build()
                 ))
+                // P3-03EA-05: Also update run fields for self-contained ledger
+                bankStatementImportRunDao.updatePdfPartial(
+                    runId = runId!!, pdfPartial = true,
+                    pagesProcessed = pagesProcessed, totalPages = totalPages
+                )
             }
 
             // ── Step 6: Create a PendingReview for each transaction ────────────
