@@ -8058,12 +8058,56 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
         val MIGRATION_135_136 = object : androidx.room.migration.Migration(135, 136) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                // P3-BLOCKER-10: Clean orphan receipt_expense_links before FK enforcement.
-                database.execSQL("""
-                    DELETE FROM receipt_expense_links
-                    WHERE receiptId NOT IN (SELECT id FROM scanned_receipts)
-                       OR expenseId NOT IN (SELECT id FROM expenses)
-                """)
+                // P3-BLOCKER-001: Rebuild receipt_expense_links with FK clauses.
+                // SQLite does not support ALTER TABLE ADD FOREIGN KEY, so we must
+                // recreate the table. First clean orphans, then rebuild.
+                database.beginTransaction()
+                try {
+                    // 1. Create new table with FKs
+                    database.execSQL("""
+                        CREATE TABLE receipt_expense_links_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            receiptId INTEGER NOT NULL,
+                            expenseId INTEGER NOT NULL,
+                            linkType TEXT NOT NULL,
+                            confidence REAL,
+                            source TEXT NOT NULL,
+                            createdAt INTEGER NOT NULL,
+                            createdBy TEXT,
+                            isPrimary INTEGER NOT NULL DEFAULT 1,
+                            metadata TEXT,
+                            FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                            FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE CASCADE
+                        )
+                    """)
+
+                    // 2. Copy valid rows (filter orphans)
+                    database.execSQL("""
+                        INSERT INTO receipt_expense_links_new
+                            (id, receiptId, expenseId, linkType, confidence, source,
+                             createdAt, createdBy, isPrimary, metadata)
+                        SELECT id, receiptId, expenseId, linkType, confidence, source,
+                               createdAt, createdBy, isPrimary, metadata
+                        FROM receipt_expense_links
+                        WHERE receiptId IN (SELECT id FROM scanned_receipts)
+                          AND expenseId IN (SELECT id FROM expenses)
+                    """)
+
+                    // 3. Drop old table and rename
+                    database.execSQL("DROP TABLE receipt_expense_links")
+                    database.execSQL("ALTER TABLE receipt_expense_links_new RENAME TO receipt_expense_links")
+
+                    // 4. Recreate indices
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_receiptId ON receipt_expense_links(receiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_expenseId ON receipt_expense_links(expenseId)")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_receipt_expense_links_receipt_expense_unique ON receipt_expense_links(receiptId, expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_linkType ON receipt_expense_links(linkType)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_createdAt ON receipt_expense_links(createdAt)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
             }
         }
 

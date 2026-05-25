@@ -18,6 +18,8 @@ import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.data.repository.ReceiptInsertResolver
+import com.yourname.expensetracker.data.repository.ReceiptInsertResult
 import com.yourname.expensetracker.domain.model.Result as DomainResult
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
@@ -112,7 +114,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val sourceLinkWriter: SourceLinkWriter,
-    private val receiptSideEffectPlanner: ReceiptSideEffectPlanner
+    private val receiptSideEffectPlanner: ReceiptSideEffectPlanner,
+    private val receiptInsertResolver: ReceiptInsertResolver
 ) {
 
     companion object {
@@ -190,8 +193,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         // 1. Validate input
         val validation = inputValidator.validate(uri)
         if (!validation.isValid) {
-            val message = "Receipt input validation failed: ${validation.errors.joinToString("; ")}"
-            Timber.w(message)
+            // P3-BLOCKER-006: Use sanitized message — never embed raw URI
+            val message = "Receipt input validation failed"
+            Timber.w("$message: %s", validation.errors.firstOrNull() ?: "unknown reason")
             // P3-NEW-08 / P3-BLOCKER-04: Write VALIDATION_FAILED diagnostic
             // Use reason codes extracted from validation errors — never raw URI
             val reasonCode = when {

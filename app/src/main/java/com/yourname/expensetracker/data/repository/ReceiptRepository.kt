@@ -740,6 +740,14 @@ class ReceiptRepository @Inject constructor(
      * Debug function to get detailed info about a scanned receipt
      */
     suspend fun debugReceipt(receiptId: Long): String {
+        // P3-BLOCKER-004: Same gate as exportParserDebugData.
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            return "[BLOCKED] Debug export is only available in debug builds."
+        }
+        val storageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
+        if (storageMode == RawStorageMode.STORE_REDACTED || storageMode == RawStorageMode.DO_NOT_STORE) {
+            return "[BLOCKED] Raw receipt debug is not available in ${storageMode.name} mode."
+        }
         val receipt = scannedReceiptDao.getById(receiptId) ?: return "Not found"
         return formatReceiptDebug(receipt)
     }

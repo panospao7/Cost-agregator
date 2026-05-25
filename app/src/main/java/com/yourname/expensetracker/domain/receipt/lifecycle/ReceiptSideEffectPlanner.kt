@@ -200,13 +200,6 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                // P3-BLOCKER-06: Write RAW_USED_EPHEMERALLY when side effect uses
-                // raw OCR text for processing. The persisted text may be sanitized
-                // under restricted storage modes.
-                if (!receiptText.isNullOrBlank()) {
-                    writeMatchEvent(receipt, "RAW_USED_EPHEMERALLY",
-                        "Warranty extraction used raw OCR text ephemerally")
-                }
                 autoCreateWarrantyUseCase.execute(receiptId, receiptText)
                 SideEffectOutcome.Completed
             } catch (e: kotlinx.coroutines.CancellationException) {
