@@ -694,8 +694,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         ), now)
         var id = 0L
         database.withTransaction {
-            id = scannedReceiptDao.insert(updated)
-            require(id > 0) { "Email receipt insert failed (conflict)" }
+            when (val result = receiptInsertResolver.insertOrResolve(updated)) {
+                is ReceiptInsertResult.Inserted -> id = result.receiptId
+                is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(result.existingReceipt, result.reason)
+                is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
+            }
 
             receiptEventDao.insert(
                 ReceiptEvent(
@@ -851,8 +854,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 textFingerprint = emailTextFingerprint,
                 semanticFingerprint = emailSemanticFingerprint
             ), now)
-            savedId = scannedReceiptDao.insert(receipt)
-            require(savedId > 0) { "Email receipt insert failed (conflict): sender=$sender" }
+            when (val result = receiptInsertResolver.insertOrResolve(receipt)) {
+                is ReceiptInsertResult.Inserted -> savedId = result.receiptId
+                is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(result.existingReceipt, result.reason)
+                is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
+            }
 
             val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, emailStorageMode)
             val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, emailStorageMode)

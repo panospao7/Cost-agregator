@@ -736,44 +736,40 @@ class ReceiptRepository @Inject constructor(
      * Debug function to get detailed info about a scanned receipt
      */
     suspend fun debugReceipt(receiptId: Long): String {
-        // P3-BLOCKER-004: Same gate as exportParserDebugData.
-        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
-            return "[BLOCKED] Debug export is only available in debug builds."
-        }
+        // P3-BLOCKER-04: Gate + redact by default.
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG)
+            return "[BLOCKED: debug build only]"
         val storageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-        if (storageMode == RawStorageMode.STORE_REDACTED || storageMode == RawStorageMode.DO_NOT_STORE) {
-            return "[BLOCKED] Raw receipt debug is not available in ${storageMode.name} mode."
-        }
+        if (storageMode == RawStorageMode.STORE_REDACTED || storageMode == RawStorageMode.DO_NOT_STORE)
+            return "[BLOCKED: raw text not available in ${storageMode.name}]"
         val receipt = scannedReceiptDao.getById(receiptId) ?: return "Not found"
-        return formatReceiptDebug(receipt)
+        return formatReceiptDebug(receipt, includeRaw = false) // redacted by default
     }
 
-    private fun formatReceiptDebug(receipt: ScannedReceipt): String {
-        return """
-            ═════════════════════════════════════════
-            RECEIPT DEBUG REPORT (ID: ${receipt.id})
-            ═════════════════════════════════════════
-            
-            IMAGE PATH: ${receipt.imagePath}
-            
-            RAW OCR TEXT:
-            ┌─────────────────────────────────────┐
-            ${receipt.rawOcrText}
-            └─────────────────────────────────────┘
-            
-            PARSED VALUES:
-            • Merchant:  ${receipt.parsedMerchant ?: "NULL"}
-            • Total:     ${receipt.parsedTotal ?: "NULL"}
-            • Date:      ${receipt.parsedDate?.let { Instant.ofEpochMilli(it).toString() } ?: "NULL"}
-            • Tax:       ${receipt.parsedTaxAmount ?: "NULL"}
-            • Currency:  ${receipt.currency}
-            • Confidence: ${receipt.confidence}
-            
-            LINE ITEMS:
-            ${receipt.parsedItems ?: "None"}
-            
-            ═════════════════════════════════════════
-        """.trimIndent()
+    private fun formatReceiptDebug(receipt: ScannedReceipt, includeRaw: Boolean = false): String {
+        return buildString {
+            appendLine("═════════════════════════════════════════")
+            appendLine("RECEIPT DEBUG REPORT (ID: ${receipt.id})")
+            appendLine("═════════════════════════════════════════")
+            appendLine()
+            if (includeRaw) {
+                appendLine("IMAGE PATH: ${receipt.imagePath}")
+                appendLine("RAW OCR TEXT:")
+                appendLine("┌─────────────────────────────────────┐")
+                appendLine("${receipt.rawOcrText}")
+                appendLine("└─────────────────────────────────────┘")
+            } else {
+                appendLine("IMAGE PATH: [REDACTED]")
+                appendLine("RAW OCR TEXT: [REDACTED — ${receipt.rawOcrText.length} chars]")
+            }
+            appendLine()
+            appendLine("PARSED VALUES:")
+            appendLine("  Merchant: ${receipt.parsedMerchant ?: "NULL"}")
+            appendLine("  Total:    ${receipt.parsedTotal ?: "NULL"}")
+            appendLine("  Currency: ${receipt.currency}")
+            appendLine("  Confidence: ${receipt.confidence}")
+            appendLine("═════════════════════════════════════════")
+        }
     }
 
     // Receipt Matching Methods

@@ -392,20 +392,18 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
                     if (hasExpenseDuplicate) {
                         duplicatesSkipped++
-                        bankStatementImportItemDao.insert(
-                            BankStatementImportItem(
-                                runId = runId,
-                                itemIndex = index,
-                                transactionFingerprint = merchantKey,
-                                status = BankStatementImportItem.STATUS_DUPLICATE_EXPENSE,
-                                merchant = tx.merchant,
-                                amount = tx.amount,
-                                currency = tx.currency,
-                                transactionDate = tx.date,
-                                createdAt = timeProvider.now(),
-                                updatedAt = timeProvider.now()
+                        // P3-BLOCKER-H2: Wrap duplicate decision + item insert in transaction.
+                        database.withTransaction {
+                            writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.duplicateExpense.tx")
+                            bankStatementImportItemDao.insert(
+                                BankStatementImportItem(
+                                    runId = runId, itemIndex = index, transactionFingerprint = merchantKey,
+                                    status = BankStatementImportItem.STATUS_DUPLICATE_EXPENSE,
+                                    merchant = tx.merchant, amount = tx.amount, currency = tx.currency,
+                                    transactionDate = tx.date, createdAt = timeProvider.now(), updatedAt = timeProvider.now()
+                                )
                             )
-                        )
+                        }
                         parsingLogs.add("SKIP: Existing expense duplicate for ${tx.merchant} ${"%.2f".format(tx.amount)} $tx.currency")
                         continue
                     }
@@ -424,21 +422,19 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
                     if (duplicateReview != null) {
                         duplicatesSkipped++
-                        bankStatementImportItemDao.insert(
-                            BankStatementImportItem(
-                                runId = runId,
-                                itemIndex = index,
-                                transactionFingerprint = merchantKey,
-                                status = BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW,
-                                pendingReviewId = duplicateReview.id,
-                                merchant = tx.merchant,
-                                amount = tx.amount,
-                                currency = tx.currency,
-                                transactionDate = tx.date,
-                                createdAt = timeProvider.now(),
-                                updatedAt = timeProvider.now()
+                        // P3-BLOCKER-H2: Wrap duplicate decision + item insert in transaction.
+                        database.withTransaction {
+                            writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.duplicatePending.tx")
+                            bankStatementImportItemDao.insert(
+                                BankStatementImportItem(
+                                    runId = runId, itemIndex = index, transactionFingerprint = merchantKey,
+                                    status = BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW,
+                                    pendingReviewId = duplicateReview.id,
+                                    merchant = tx.merchant, amount = tx.amount, currency = tx.currency,
+                                    transactionDate = tx.date, createdAt = timeProvider.now(), updatedAt = timeProvider.now()
+                                )
                             )
-                        )
+                        }
                         parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} ${"%.2f".format(tx.amount)} $tx.currency (reviewId=${duplicateReview.id})")
                         continue
                     }

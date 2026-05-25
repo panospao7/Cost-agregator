@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.transaction.ExpenseCategoryAssignmentPort
+import com.yourname.expensetracker.domain.transaction.CategoryAssignmentOutcome
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
@@ -89,7 +91,8 @@ class ReceiptLinkService @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val timeProvider: TimeProvider,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val sourceLinkWriter: SourceLinkWriter
+    private val sourceLinkWriter: SourceLinkWriter,
+    private val categoryAssignmentPort: ExpenseCategoryAssignmentPort
 ) {
 
     /**
@@ -237,13 +240,12 @@ class ReceiptLinkService @Inject constructor(
                     if (bestCategoryId != null) {
                         val existingExpense = expenseDao.getById(expenseId)
                         if (existingExpense != null && existingExpense.categoryId == null) {
-                            // P3-BLOCKER-007: Category propagation deferred to ExpenseCategoryAssignmentPort.
-                            // Direct expenseDao.updateCategory() removed to prevent bypassing transaction
-                            // lifecycle events. The port interface exists at domain/transaction/.
-                            Timber.d(
-                                "RCP-30: Category propagation deferred for expense %d (category=%d via receipt %d)",
-                                expenseId, bestCategoryId, receiptId
+                            categoryAssignmentPort.assignCategoryIfUnset(
+                                expenseId = expenseId,
+                                categoryId = bestCategoryId,
+                                source = "RECEIPT_ITEM_MAJORITY"
                             )
+                            Timber.d("RCP-30: Category %d propagated to expense %d via port", bestCategoryId, expenseId)
                         }
                     }
                     val categoryFrequencies = categorizations
