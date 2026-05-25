@@ -8135,11 +8135,23 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
         val MIGRATION_137_138 = object : androidx.room.migration.Migration(137, 138) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                // PR 8: Partial unique indexes on receipt fingerprints for concurrent dedup.
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_imageHash_u ON scanned_receipts(imageHash) WHERE imageHash IS NOT NULL AND imageHash != ''")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_sourceFp_u ON scanned_receipts(sourceFingerprint) WHERE sourceFingerprint IS NOT NULL AND sourceFingerprint != ''")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_textFp_u ON scanned_receipts(textFingerprint) WHERE textFingerprint IS NOT NULL AND textFingerprint != ''")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_semFp_u ON scanned_receipts(semanticFingerprint) WHERE semanticFingerprint IS NOT NULL AND semanticFingerprint != ''")
+                // P3-03EA-07: Clean duplicate fingerprints before creating unique indexes.
+                // Keep the row with the smallest ID for each duplicate group; null the rest.
+                val columns = listOf("imageHash" to "idx_scanned_receipts_imageHash_u",
+                    "sourceFingerprint" to "idx_scanned_receipts_sourceFp_u",
+                    "textFingerprint" to "idx_scanned_receipts_textFp_u",
+                    "semanticFingerprint" to "idx_scanned_receipts_semFp_u")
+                for ((col, _) in columns) {
+                    database.execSQL("""
+                        UPDATE scanned_receipts SET $col = NULL
+                        WHERE id NOT IN (SELECT MIN(id) FROM scanned_receipts WHERE $col IS NOT NULL AND $col != '' GROUP BY $col)
+                        AND $col IS NOT NULL AND $col != ''
+                    """)
+                }
+                // Create unique partial indexes after cleanup
+                for ((col, idxName) in columns) {
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS $idxName ON scanned_receipts($col) WHERE $col IS NOT NULL AND $col != ''")
+                }
             }
         }
 

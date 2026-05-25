@@ -1000,8 +1000,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             val freshReceipt = scannedReceiptDao.getById(savedId)
             if (freshReceipt != null) {
                 receiptPlan = receiptSideEffectPlanner.planAfterReceiptSaved(
-                    receipt = freshReceipt,
-                    correlationId = correlationId,
+                    input = ReceiptSideEffectInput(
+                        receipt = freshReceipt,
+                        ephemeralRawOcrText = null,
+                        ephemeralEmailBody = null,
+                        rawStorageMode = emailStorageMode,
+                        correlationId = correlationId
+                    ),
                     linkedExpenseIds = allLinkedExpenseIds
                 )
             }

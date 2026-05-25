@@ -298,42 +298,26 @@ class ReceiptRepository @Inject constructor(
         }
     }
 
+    /**
+     * P3-03EA-02: Returns a draft-only receipt — does NOT persist to DB.
+     * The coordinator owns the final insert via ReceiptInsertResolver.
+     * Never persists raw uri.toString() as imagePath.
+     */
     suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): ProcessReceiptResult {
-        // 1. Persist a display copy without re-running OCR recognition.
-        val path = try {
-            ocrService.persistImageCopy(imageUri)
-        } catch (e: Exception) {
-            imageUri.toString()
-        }
-
+        val path = try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { null }
         val homeCur = homeCurrency()
         val now = timeProvider.now()
         val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
-            imagePath = path,
+            imagePath = path, // null if copy failed — never raw URI
             rawOcrText = "[OCR Failed or Skipped]",
-            parsedTotal = null,
-            parsedMerchant = null,
-            parsedDate = now,
-            parsedItems = null,
-            parsedTaxAmount = null,
-            currency = homeCur,
-            confidence = 0f
+            parsedTotal = null, parsedMerchant = null, parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null,
+            currency = homeCur, confidence = 0f,
+            processingStatus = ReceiptProcessingStatus.OCR_FAILED.name
         ), now)
-        val receiptId = scannedReceiptDao.insert(receipt)
-        require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
-        
         return ProcessReceiptResult(
-            receipt.copy(id = receiptId),
-            ReceiptParser.ParsedReceipt(
-                merchantName = null,
-                total = null,
-                subtotal = null,
-                tax = null,
-                date = now,
-                currency = homeCur,
-                lineItems = emptyList(),
-                confidence = 0f
-            )
+            receipt, // id = 0, coordinator will insert
+            ReceiptParser.ParsedReceipt(null, null, null, null, now, homeCur, emptyList(), 0f)
         )
     }
 
