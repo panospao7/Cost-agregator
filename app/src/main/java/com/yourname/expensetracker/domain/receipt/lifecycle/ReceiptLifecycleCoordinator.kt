@@ -423,7 +423,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     is ReceiptInsertResult.Duplicate -> {
                         throw DuplicateReceiptInsertException(
                             existingReceipt = insert.existingReceipt,
-                            reason = insert.reason
+                            reason = insert.reason,
+                            attemptedAssetPath = updated.imagePath
                         )
                     }
                     is ReceiptInsertResult.ConflictUnresolved -> {
@@ -584,9 +585,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: DuplicateReceiptInsertException) {
-            // P3-BLOCKER-03: Resolver found a duplicate during insert.
-            // Return existing — do NOT fall through to OCR-failed fallback.
-            e.existingReceipt.imagePath?.takeIf { it.isNotBlank() }?.let { assetStore.deleteAsset(it) }
+            // P3-EB0-02: Delete only the attempted draft asset, NEVER the existing receipt asset.
+            e.attemptedAssetPath?.takeIf { it.isNotBlank() }?.let { assetStore.deleteAsset(it) }
             Timber.d("Duplicate receipt detected during insert: existingId=%d, reason=%s", e.existingReceipt.id, e.reason)
             return Result.success(e.existingReceipt)
         } catch (e: Exception) {
@@ -633,7 +633,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         ))
                         res.receiptId
                     }
-                    is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason)
+                    is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = null)
                     is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(res.reason)
                 }
             }
@@ -696,7 +696,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         database.withTransaction {
             when (val result = receiptInsertResolver.insertOrResolve(updated)) {
                 is ReceiptInsertResult.Inserted -> id = result.receiptId
-                is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(result.existingReceipt, result.reason)
+                is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(result.existingReceipt, result.reason, attemptedAssetPath = null)
                 is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
             }
 
@@ -856,7 +856,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             ), now)
             when (val result = receiptInsertResolver.insertOrResolve(receipt)) {
                 is ReceiptInsertResult.Inserted -> savedId = result.receiptId
-                is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(result.existingReceipt, result.reason)
+                is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(result.existingReceipt, result.reason, attemptedAssetPath = null)
                 is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
             }
 
@@ -1007,6 +1007,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             }
         }
 
+        } catch (e: DuplicateReceiptInsertException) {
+            // P3-EB0-04: Resolver duplicate during email insert — return Duplicate.
+            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "receipt_insert_duplicate_${e.reason}", "ScannedReceipt", e.existingReceipt.id, correlationId)
+            return EmailReceiptProcessResult.Duplicate(e.existingReceipt.id)
         } catch (e: DuplicateEmailReceiptException) {
             // P3-REG-02: Exception-based rollback — the scanned receipt insert
             // was correctly rolled back by the transaction. Return Duplicate.
@@ -1319,6 +1323,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      */
     private class DuplicateReceiptInsertException(
         val existingReceipt: ScannedReceipt,
-        val reason: String
+        val reason: String,
+        val attemptedAssetPath: String?
     ) : RuntimeException("Duplicate receipt insert: $reason (existingId=${existingReceipt.id})")
 }

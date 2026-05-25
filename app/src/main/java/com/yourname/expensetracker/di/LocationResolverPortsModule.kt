@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.repository.ExpenseMerchantClusterPortAda
 import com.yourname.expensetracker.data.repository.MerchantLocationCachePortAdapter
 import com.yourname.expensetracker.domain.location.LocationCachePort
 import com.yourname.expensetracker.domain.location.MerchantClusterPort
+import com.yourname.expensetracker.domain.transaction.ExpenseCategoryAssignmentPort
+import com.yourname.expensetracker.domain.transaction.DefaultExpenseCategoryAssignmentService
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -25,4 +27,10 @@ abstract class LocationResolverPortsModule {
     abstract fun bindMerchantClusterPort(
         adapter: ExpenseMerchantClusterPortAdapter
     ): MerchantClusterPort
+
+    @Binds
+    @Singleton
+    abstract fun bindExpenseCategoryAssignmentPort(
+        impl: DefaultExpenseCategoryAssignmentService
+    ): ExpenseCategoryAssignmentPort
 }
