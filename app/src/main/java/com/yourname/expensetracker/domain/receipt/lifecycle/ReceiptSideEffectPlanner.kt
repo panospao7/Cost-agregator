@@ -228,6 +228,11 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
+                // P3-BLOCKER-02: Write privacy event when ephemeral raw is used.
+                if (input.hasEphemeralRaw) {
+                    writeMatchEvent(receipt, "RAW_USED_EPHEMERALLY",
+                        "Warranty extraction used ephemeral raw OCR text")
+                }
                 autoCreateWarrantyUseCase.execute(receiptId, receiptText)
                 SideEffectOutcome.Completed
             } catch (e: kotlinx.coroutines.CancellationException) {

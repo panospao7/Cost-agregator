@@ -185,7 +185,7 @@ class ReceiptOcrService @Inject constructor(
         // Stream-copy up to MAX_FILE_SIZE + 1 bytes; if the stream has MORE data
         // than the limit, reject immediately. This prevents OOM from huge files
         // whose size cannot be determined upfront.
-        Timber.w("Content provider does not report file size for URI: $uri. Performing streaming size check (max ${MAX_FILE_SIZE / 1024 / 1024}MB).")
+        Timber.w("Content provider does not report file size. Performing streaming size check (max ${MAX_FILE_SIZE / 1024 / 1024}MB).")
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -199,13 +199,13 @@ class ReceiptOcrService @Inject constructor(
                         )
                     }
                 }
-            } ?: throw IllegalArgumentException("Cannot open InputStream for URI: $uri")
+            } ?: throw IllegalArgumentException("Cannot open InputStream for receipt input")
         } catch (e: IllegalArgumentException) {
             throw e // Rethrow our own size-limit exception
         } catch (e: Exception) {
             // If streaming size check itself fails for any other reason,
             // fall through with a warning rather than blocking the user.
-            Timber.w(e, "Streaming size check failed for URI: $uri — proceeding without size guarantee.")
+            Timber.w(e, "Streaming size check failed — proceeding without size guarantee.")
         }
     }
 
@@ -616,7 +616,7 @@ class ReceiptOcrService @Inject constructor(
         try {
             // Copy URI to temp file
             val inputStream = context.contentResolver.openInputStream(uri)
-                ?: throw IllegalStateException("Could not open input stream for $uri")
+                ?: throw IllegalStateException("Could not open receipt input stream")
             
             inputStream.use { input ->
                 tempFile.outputStream().use { output ->
@@ -625,7 +625,7 @@ class ReceiptOcrService @Inject constructor(
             }
 
             if (!tempFile.exists() || tempFile.length() == 0L) {
-                throw IllegalStateException("Temp file creation failed or empty for $uri")
+                throw IllegalStateException("Temp file creation failed or empty for receipt input")
             }
 
             // 1. Get dimensions
@@ -650,7 +650,7 @@ class ReceiptOcrService @Inject constructor(
                 inSampleSize = sampleSize
             }
             val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath, decodeOptions)
-                ?: throw IllegalStateException("Bitmap decode failed for $uri (Sample: $sampleSize)")
+                ?: throw IllegalStateException("Bitmap decode failed (Sample: $sampleSize)")
             decodedBitmap = bitmap
 
             // 3. Apply EXIF rotation
@@ -686,7 +686,7 @@ class ReceiptOcrService @Inject constructor(
                 return bitmap
             }
         } catch (e: Exception) {
-            Timber.e(e, "Error loading bitmap from $uri")
+            Timber.e(e, "Error loading bitmap from receipt input")
             if (decodedBitmap?.isRecycled == false) {
                 decodedBitmap?.recycle()
             }

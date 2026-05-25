@@ -421,8 +421,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 val saved = when (val insert = receiptInsertResolver.insertOrResolve(updated)) {
                     is ReceiptInsertResult.Inserted -> updated.copy(id = insert.receiptId)
                     is ReceiptInsertResult.Duplicate -> {
-                        throw IllegalStateException(
-                            "Duplicate receipt detected during coordinator insert: ${insert.reason}")
+                        throw DuplicateReceiptInsertException(
+                            existingReceipt = insert.existingReceipt,
+                            reason = insert.reason
+                        )
                     }
                     is ReceiptInsertResult.ConflictUnresolved -> {
                         throw IllegalStateException(
@@ -562,10 +564,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
             }
 
-            // 7. Plan and run post-save side effects (warranty, categorization, matching, etc.)
+            // 7. Plan and run post-save side effects with ephemeral raw input
             val receiptActions = receiptSideEffectPlanner.planAfterReceiptSaved(
-                receipt = savedReceipt,
-                correlationId = null
+                input = ReceiptSideEffectInput(
+                    receipt = savedReceipt,
+                    ephemeralRawOcrText = processResult.ephemeralRawOcrText,
+                    rawStorageMode = ocrStorageMode,
+                    correlationId = correlationId
+                )
             )
             postCommitActionRunner.runBestEffortAfterCommit(
                 batch = receiptActions,
@@ -577,6 +583,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             Result.success(savedReceipt)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: DuplicateReceiptInsertException) {
+            // P3-BLOCKER-03: Resolver found a duplicate during insert.
+            // Return existing — do NOT fall through to OCR-failed fallback.
+            e.existingReceipt.imagePath?.takeIf { it.isNotBlank() }?.let { assetStore.deleteAsset(it) }
+            Timber.d("Duplicate receipt detected during insert: existingId=%d, reason=%s", e.existingReceipt.id, e.reason)
+            return Result.success(e.existingReceipt)
         } catch (e: Exception) {
             Timber.e(e, "processReceipt failed for %s, falling back to manual record", uri)
 
@@ -603,28 +615,27 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 imageHash = null
             ), now)
 
-            // P3-CUR-07: Wrap fallback insert + event in a single transaction
-            // so that a crash cannot leave a receipt without its lifecycle event.
+            // P3-BLOCKER-04: Use resolver for fallback insert.
             val savedId = database.withTransaction {
-                val id = scannedReceiptDao.insert(manualReceipt)
-                require(id > 0) { "Manual receipt insert failed during fallback: uri=$uri" }
-
-                receiptEventDao.insert(
-                    ReceiptEvent(
-                        receiptId = id,
-                        sourceType = manualReceipt.sourceType,
-                        documentType = manualReceipt.documentType,
-                        eventType = "OCR_FAILED",
-                        occurredAt = now,
-                        oldStatus = null,
-                        newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
-                        actor = "system:coordinator",
-                        message = "OCR failed for receipt input",
-                        metadata = null,
-                        errorDetails = null
-                    )
-                )
-                id
+                when (val res = receiptInsertResolver.insertOrResolve(manualReceipt)) {
+                    is ReceiptInsertResult.Inserted -> {
+                        receiptEventDao.insert(ReceiptEvent(
+                            receiptId = res.receiptId,
+                            sourceType = manualReceipt.sourceType,
+                            documentType = manualReceipt.documentType,
+                            eventType = "OCR_FAILED",
+                            occurredAt = now,
+                            oldStatus = null,
+                            newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
+                            actor = "system:coordinator",
+                            message = "OCR failed for receipt input",
+                            metadata = null, errorDetails = null
+                        ))
+                        res.receiptId
+                    }
+                    is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason)
+                    is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(res.reason)
+                }
             }
 
             Result.success(manualReceipt.copy(id = savedId))
@@ -1294,4 +1305,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val existingReceiptId: Long,
         val reason: String
     ) : RuntimeException("Duplicate email receipt: $reason (existingId=$existingReceiptId)")
+
+    /**
+     * P3-BLOCKER-03: Thrown inside the coordinator's insert transaction when
+     * [ReceiptInsertResolver] detects a pre-existing duplicate. Catched before
+     * the generic fallback to avoid creating a bogus OCR_FAILED receipt.
+     */
+    private class DuplicateReceiptInsertException(
+        val existingReceipt: ScannedReceipt,
+        val reason: String
+    ) : RuntimeException("Duplicate receipt insert: $reason (existingId=${existingReceipt.id})")
 }
