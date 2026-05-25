@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
@@ -87,13 +88,35 @@ class ReceiptSideEffectPlanner @Inject constructor(
         causationId: String? = null,
         linkedExpenseIds: Set<Long> = emptySet()
     ): PostCommitActionBatch {
-        val corrId = correlationId ?: CorrelationIds.newId()
-        val docType = parseDocType(receipt.documentType)
-        val status = parseStatus(receipt.processingStatus)
+        return planAfterReceiptSaved(
+            input = ReceiptSideEffectInput(
+                receipt = receipt,
+                ephemeralRawOcrText = null,
+                rawStorageMode = RawStorageMode.STORE_RAW,
+                correlationId = correlationId
+            ),
+            causationId = causationId,
+            linkedExpenseIds = linkedExpenseIds
+        )
+    }
+
+    /**
+     * P3-BLOCKER-D: Privacy-aware overload that receives explicit ephemeral
+     * raw OCR input. Raw-dependent side effects use [ReceiptSideEffectInput.ephemeralRawOcrText]
+     * instead of silently falling back to persisted/sanitized [ScannedReceipt.rawOcrText].
+     */
+    fun planAfterReceiptSaved(
+        input: ReceiptSideEffectInput,
+        causationId: String? = null,
+        linkedExpenseIds: Set<Long> = emptySet()
+    ): PostCommitActionBatch {
+        val corrId = input.correlationId ?: CorrelationIds.newId()
+        val docType = parseDocType(input.receipt.documentType)
+        val status = parseStatus(input.receipt.processingStatus)
 
         // Skip for failed / duplicate statuses
         if (status in SKIPPED_STATUSES) {
-            Timber.d("planAfterReceiptSaved: skipping side effects for receipt %d (status=%s)", receipt.id, status)
+            Timber.d("planAfterReceiptSaved: skipping side effects for receipt %d (status=%s)", input.receipt.id, status)
             return PostCommitActionBatch.empty(corrId)
         }
 
@@ -103,15 +126,14 @@ class ReceiptSideEffectPlanner @Inject constructor(
 
         val actions = when (docType) {
             ReceiptDocumentType.RETAIL_RECEIPT -> listOfNotNull(
-                makeWarrantyExtractionAction(receipt, corrId, causationId),
-                makeItemCategorizationAction(receipt, corrId, causationId),
-                // Skip transaction matching if already linked in the same flow
-                if (alreadyLinked) null else makeTransactionMatchAction(receipt, corrId, causationId),
-                makePriceProtectionAction(receipt, corrId, causationId)
+                makeWarrantyExtractionAction(input, corrId, causationId),
+                makeItemCategorizationAction(input.receipt, corrId, causationId),
+                if (alreadyLinked) null else makeTransactionMatchAction(input.receipt, corrId, causationId),
+                makePriceProtectionAction(input.receipt, corrId, causationId)
             )
 
             ReceiptDocumentType.EMAIL_RECEIPT -> listOfNotNull(
-                makeItemCategorizationAction(receipt, corrId, causationId)
+                makeItemCategorizationAction(input.receipt, corrId, causationId)
             )
 
             // BANK_STATEMENT, MANUAL_PLACEHOLDER, PDF_RECEIPT, UNKNOWN → no automatic side effects
@@ -177,12 +199,18 @@ class ReceiptSideEffectPlanner @Inject constructor(
     // ─── Action factories ────────────────────────────────────────────────────────
 
     private fun makeWarrantyExtractionAction(
-        receipt: ScannedReceipt,
+        input: ReceiptSideEffectInput,
         correlationId: String,
         causationId: String?
     ): PostCommitAction {
+        val receipt = input.receipt
         val receiptId = receipt.id
-        val receiptText = receipt.rawOcrText
+        // P3-BLOCKER-D: Use ephemeral raw when available; write privacy event.
+        val receiptText = if (input.hasEphemeralRaw) {
+            input.ephemeralRawOcrText!!
+        } else {
+            receipt.rawOcrText
+        }
         return PostCommitAction(
             pipeline = AppPipeline.RECEIPT,
             name = "warranty_extraction",

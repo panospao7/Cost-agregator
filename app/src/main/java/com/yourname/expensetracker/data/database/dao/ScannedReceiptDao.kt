@@ -145,4 +145,18 @@ interface ScannedReceiptDao {
     /** Repairs receipts whose updatedAt is 0 by setting it to createdAt. */
     @Query("UPDATE scanned_receipts SET updatedAt = createdAt WHERE updatedAt <= 0")
     suspend fun repairMissingUpdatedAt(): Int
+
+    // ── Pipeline 3 fingerprint duplicate diagnostics (P3-BLOCKER-J) ─────────
+
+    @Query("SELECT COUNT(*) FROM (SELECT imageHash FROM scanned_receipts WHERE imageHash IS NOT NULL AND imageHash != '' GROUP BY imageHash HAVING COUNT(*) > 1)")
+    suspend fun countDuplicateImageHashGroups(): Int
+
+    @Query("SELECT COUNT(*) FROM (SELECT sourceFingerprint FROM scanned_receipts WHERE sourceFingerprint IS NOT NULL AND sourceFingerprint != '' GROUP BY sourceFingerprint HAVING COUNT(*) > 1)")
+    suspend fun countDuplicateSourceFingerprints(): Int
+
+    @Query("SELECT COUNT(*) FROM (SELECT textFingerprint FROM scanned_receipts WHERE textFingerprint IS NOT NULL AND textFingerprint != '' GROUP BY textFingerprint HAVING COUNT(*) > 1)")
+    suspend fun countDuplicateTextFingerprints(): Int
+
+    @Query("SELECT COUNT(*) FROM (SELECT semanticFingerprint FROM scanned_receipts WHERE semanticFingerprint IS NOT NULL AND semanticFingerprint != '' GROUP BY semanticFingerprint HAVING COUNT(*) > 1)")
+    suspend fun countDuplicateSemanticFingerprints(): Int
 }
