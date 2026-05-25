@@ -13,6 +13,8 @@ import com.yourname.expensetracker.data.database.entity.BankStatementImportItem
 import com.yourname.expensetracker.data.database.entity.BankStatementImportRun
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.data.repository.ReceiptRecordWriter
+import com.yourname.expensetracker.data.repository.ReceiptRecordWriteResult
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
@@ -112,7 +114,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val bankStatementImportRunDao: BankStatementImportRunDao,
-    private val bankStatementImportItemDao: BankStatementImportItemDao
+    private val bankStatementImportItemDao: BankStatementImportItemDao,
+    private val receiptRecordWriter: ReceiptRecordWriter
 ) {
 
     /**
@@ -287,21 +290,29 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // writes its own lifecycle events (RECEIPT_SAVED, PROCESSING_COMPLETE) and
             // bank statements don't need OCR/dedup/warranty side effects that the
             // coordinator provides.
-            // Re-check barrier here — OCR/AI/parsing may have taken time and restore
-            // could have started while we were processing.
+            // P3-D4B-03: Use typed ReceiptRecordWriter.
             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.writeResults")
-            val receiptId = receiptRepository.insertReceipt(statementReceipt)
-            if (receiptId <= 0) {
-                // P3-718-06: Duplicate is COMPLETED_WITH_SKIPS, result must match
-                bankStatementImportRunDao.finalize(
-                    runId = runId!!, status = BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS,
-                    completedAt = timeProvider.now(), totalItems = 0,
-                    processedItems = 0, createdReviewCount = 0,
-                    duplicateExpenseCount = 0, duplicatePendingCount = 0,
-                    failedItemCount = 0,
-                    errorSummary = "Duplicate statement receipt"
-                )
-                return Result.success(BankStatementResult(0, 0, 0, 0))
+            val receiptId: Long
+            when (val write = receiptRecordWriter.insertOrResolve(statementReceipt)) {
+                is ReceiptRecordWriteResult.Inserted -> {
+                    receiptId = write.receipt.id
+                    bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)
+                }
+                is ReceiptRecordWriteResult.Duplicate -> {
+                    bankStatementImportRunDao.finalize(
+                        runId = runId!!, status = BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS,
+                        completedAt = timeProvider.now(), totalItems = 0, processedItems = 0,
+                        createdReviewCount = 0, duplicateExpenseCount = 0,
+                        duplicatePendingCount = 0, failedItemCount = 0,
+                        errorSummary = "Duplicate statement receipt"
+                    )
+                    return Result.success(BankStatementResult(
+                        receiptId = write.existingReceipt.id,
+                        transactionsFound = 0, reviewsCreated = 0, duplicatesSkipped = 0,
+                        duplicateOfReceiptId = write.existingReceipt.id
+                    ))
+                }
+                is ReceiptRecordWriteResult.Failed -> return Result.failure(IllegalStateException(write.reason))
             }
             // P3-REG-007: Link the run to the statement receipt
             bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)

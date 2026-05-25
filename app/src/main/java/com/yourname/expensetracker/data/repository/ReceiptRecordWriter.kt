@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptTimestampPolicy
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -18,17 +19,12 @@ import javax.inject.Singleton
 @Singleton
 class ReceiptRecordWriter @Inject constructor(
     private val receiptInsertResolver: ReceiptInsertResolver,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
 
-    /**
-     * Inserts [receipt] with normalized timestamps and returns a typed outcome.
-     *
-     * - [ReceiptRecordWriteResult.Inserted] — receipt was persisted with a positive ID.
-     * - [ReceiptRecordWriteResult.Duplicate] — an existing receipt matched by fingerprint.
-     * - [ReceiptRecordWriteResult.Failed] — conflict could not be resolved.
-     */
     suspend fun insertOrResolve(receipt: ScannedReceipt): ReceiptRecordWriteResult {
+        writeBarrier.checkWritesAllowed("ReceiptRecordWriter.insertOrResolve")
         val normalized = ReceiptTimestampPolicy.forInsert(receipt, timeProvider.now())
         return when (val result = receiptInsertResolver.insertOrResolve(normalized)) {
             is ReceiptInsertResult.Inserted ->

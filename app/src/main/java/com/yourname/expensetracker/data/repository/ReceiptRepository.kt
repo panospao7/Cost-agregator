@@ -483,7 +483,7 @@ class ReceiptRepository @Inject constructor(
         }
     }
 
-    @Deprecated("Use insertReceiptTyped() for typed duplicate handling.", level = DeprecationLevel.WARNING)
+    @Deprecated("Use ReceiptRecordWriter.insertOrResolve().", level = DeprecationLevel.WARNING)
     suspend fun insertReceipt(receipt: ScannedReceipt): Long {
         writeBarrier.checkWritesAllowed("ReceiptRepository.insertReceipt")
         val now = timeProvider.now()
