@@ -291,16 +291,16 @@ class BankStatementLifecycleProcessor @Inject constructor(
             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.writeResults")
             val receiptId = receiptRepository.insertReceipt(statementReceipt)
             if (receiptId <= 0) {
-                // P3-0D5-04: Finalize run before returning — never leave RUNNING
+                // P3-718-06: Duplicate is COMPLETED_WITH_SKIPS, result must match
                 bankStatementImportRunDao.finalize(
                     runId = runId!!, status = BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS,
                     completedAt = timeProvider.now(), totalItems = 0,
                     processedItems = 0, createdReviewCount = 0,
                     duplicateExpenseCount = 0, duplicatePendingCount = 0,
                     failedItemCount = 0,
-                    errorSummary = "Duplicate statement receipt insert"
+                    errorSummary = "Duplicate statement receipt"
                 )
-                return Result.failure(IllegalStateException("Failed to save bank statement receipt record"))
+                return Result.success(BankStatementResult(0, 0, 0, 0))
             }
             // P3-REG-007: Link the run to the statement receipt
             bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)
@@ -368,9 +368,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     }.getOrNull()
                     if (existingRecurring != null) {
                         if (existingRecurring.isActive) {
-                            parsingLogs.add("RECURRING: Active recurring rule exists for '${tx.merchant}' (id=${existingRecurring.id})")
+                            parsingLogs.add("RECURRING: Active recurring rule exists [REDACTED]")
                         } else {
-                            parsingLogs.add("RECURRING: Inactive recurring rule found for '${tx.merchant}' (id=${existingRecurring.id}) — subscription may be paused or cancelled")
+                            parsingLogs.add("RECURRING: Inactive recurring rule found [REDACTED]")
                         }
                     }
 
@@ -517,7 +517,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         )
                     )
                     parsingLogs.add("ERROR: Failed to process transaction [REDACTED]: ${e.message}")
-                    Timber.e(e, "Failed to create PendingReview for bank statement transaction: %s", tx.merchant)
+                    Timber.e(e, "Failed to create PendingReview for bank statement transaction")
                 }
             }
 

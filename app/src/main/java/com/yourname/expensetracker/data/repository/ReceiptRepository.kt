@@ -236,7 +236,7 @@ class ReceiptRepository @Inject constructor(
                 if (e is CancellationException) throw e
                 // Parsing Logic Failed, but we HAVE the OCR text!
                 // Save it so user can manually edit without losing the text.
-                Timber.e(e, "Parsing Failed for $imageUri")
+                Timber.e(e, "Receipt parsing failed")
                 
                 val safeReason = safeFailureReason(e)
                 val now = timeProvider.now()

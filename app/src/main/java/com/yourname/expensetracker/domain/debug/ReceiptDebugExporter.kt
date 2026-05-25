@@ -86,6 +86,13 @@ class ReceiptDebugExporter @Inject constructor(
         if (exportConsent.isBlank()) {
             return DebugExportResult.Denied("Export consent reason is required")
         }
+        // P3-718-04: Apply same storage-mode gate as bulk export
+        if (includeRawOcrText) {
+            val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
+            if (mode == RawStorageMode.STORE_REDACTED || mode == RawStorageMode.DO_NOT_STORE) {
+                return DebugExportResult.Denied("Raw OCR export blocked: storage mode is $mode")
+            }
+        }
         val receipt = scannedReceiptDao.getById(receiptId)
             ?: return DebugExportResult.Denied("Receipt not found: $receiptId")
         return DebugExportResult.Allowed(formatReceiptDebug(receipt, includeRawOcrText))
@@ -97,7 +104,11 @@ class ReceiptDebugExporter @Inject constructor(
             appendLine("RECEIPT DEBUG REPORT (ID: ${receipt.id})")
             appendLine("═════════════════════════════════════════")
             appendLine()
-            appendLine("IMAGE PATH: ${receipt.imagePath}")
+            if (includeRaw) {
+                appendLine("IMAGE PATH: ${receipt.imagePath}")
+            } else {
+                appendLine("IMAGE PATH: [REDACTED]")
+            }
             appendLine()
 
             if (includeRaw) {
