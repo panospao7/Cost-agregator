@@ -50,7 +50,8 @@ data class BankStatementResult(
     val transactionsFound: Int,
     val reviewsCreated: Int,
     val duplicatesSkipped: Int,
-    val debugData: DebugData? = null
+    val debugData: DebugData? = null,
+    val duplicateOfReceiptId: Long? = null
 )
 
 /**
@@ -480,7 +481,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     val reviewId = database.withTransaction {
                         writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processItem.tx")
                         val revId = pendingReviewDao.insert(review)
-                        require(revId > 0) { "PendingReview insert failed for ${tx.merchant}" }
+                        require(revId > 0) { "PendingReview insert failed" }
                         bankStatementImportItemDao.insert(
                             BankStatementImportItem(
                                 runId = runId,

@@ -42,12 +42,12 @@ class ReceiptDebugExporter @Inject constructor(
             return DebugExportResult.Denied("Export consent reason is required")
         }
 
-        // Gate: raw text requires permissive storage mode
+        // Gate: raw text requires permissive storage mode (STORE_RAW only)
         if (includeRawOcrText) {
             val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
-            if (mode == RawStorageMode.STORE_REDACTED || mode == RawStorageMode.DO_NOT_STORE) {
+            if (mode != RawStorageMode.STORE_RAW) {
                 return DebugExportResult.Denied(
-                    "Raw OCR export blocked: storage mode is $mode"
+                    "Raw OCR export blocked: storage mode is $mode (requires STORE_RAW)"
                 )
             }
         }
@@ -89,8 +89,8 @@ class ReceiptDebugExporter @Inject constructor(
         // P3-718-04: Apply same storage-mode gate as bulk export
         if (includeRawOcrText) {
             val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
-            if (mode == RawStorageMode.STORE_REDACTED || mode == RawStorageMode.DO_NOT_STORE) {
-                return DebugExportResult.Denied("Raw OCR export blocked: storage mode is $mode")
+            if (mode != RawStorageMode.STORE_RAW) {
+                return DebugExportResult.Denied("Raw OCR export blocked: storage mode is $mode (requires STORE_RAW)")
             }
         }
         val receipt = scannedReceiptDao.getById(receiptId)
