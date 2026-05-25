@@ -855,6 +855,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     else -> null
                 } ?: emailReceiptDao.getByMessageId(messageId)
                   ?: messageIdHash.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByMessageIdHash(it) }
+                  ?: fingerprint.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByContentFingerprintHash(it) }
 
                 if (existing != null) {
                     throw DuplicateEmailReceiptException(

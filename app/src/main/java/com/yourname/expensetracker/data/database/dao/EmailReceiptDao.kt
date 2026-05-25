@@ -52,6 +52,14 @@ interface EmailReceiptDao {
     suspend fun getByMessageIdHash(hash: String): EmailReceiptSource?
 
     /**
+     * Look up an email receipt source by content fingerprint hash.
+     * Used as a secondary deduplication key when fingerprint and messageIdHash
+     * both miss. P3-BLOCKER-12.
+     */
+    @Query("SELECT * FROM email_receipt_sources WHERE contentFingerprintHash = :hash LIMIT 1")
+    suspend fun getByContentFingerprintHash(hash: String): EmailReceiptSource?
+
+    /**
      * Get email receipt by fingerprint for deduplication.
      * Fingerprint format: "${merchant.lowercase()}_${amount}_${date}"
      */

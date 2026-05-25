@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -32,6 +33,20 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "receipt_expense_links",
+    foreignKeys = [
+        ForeignKey(
+            entity = ScannedReceipt::class,
+            parentColumns = ["id"],
+            childColumns = ["receiptId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = Expense::class,
+            parentColumns = ["id"],
+            childColumns = ["expenseId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
     indices = [
         Index(value = ["receiptId"]),
         Index(value = ["expenseId"]),

@@ -404,7 +404,7 @@ class ReceiptRepository @Inject constructor(
     @Deprecated(
         message = "Use ReceiptLifecycleCoordinator.processEmailReceipt for atomic save+link. " +
             "This convenience path will be removed.",
-        level = DeprecationLevel.ERROR,
+        level = DeprecationLevel.WARNING,
         replaceWith = ReplaceWith(
             expression = "coordinator.createExpense(request)",
             imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
@@ -414,7 +414,7 @@ class ReceiptRepository @Inject constructor(
         receiptId: Long,
         merchant: String,
         amount: Double,
-        currency: String = "EUR",
+        currency: String = "XXX",
         categoryId: Long?,
         date: Long = timeProvider.now(),
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
@@ -776,122 +776,68 @@ class ReceiptRepository @Inject constructor(
     }
 
     @Deprecated(
-        "Use ReceiptLinkService.linkReceiptToExpense() instead. " +
-        "This method only updates ScannedReceipt — it does NOT create " +
-        "ReceiptExpenseLink records, warranty/return-window links, item-categorization links, " +
-        "or audit events.",
-        level = DeprecationLevel.ERROR,
-        replaceWith = ReplaceWith(
-            "receiptLinkService.linkReceiptToExpense(receiptId, expenseId, linkType = \"AUTO_MATCH\", source = \"SYSTEM\", confidence = confidence.toFloat(), matchStatus = MatchStatus.AUTO_MATCHED)"
-        )
+        "Permanently disabled. Use ReceiptLinkService.linkReceiptToExpense().",
+        level = DeprecationLevel.WARNING
     )
     suspend fun linkReceiptToExpense(
         receiptId: Long,
         expenseId: Long,
         confidence: Double
     ) {
-        val receipt = scannedReceiptDao.getById(receiptId) ?: return
-        // RCP-22: Clear suggestedExpenseId when auto-linking to prevent stale
-        // references from being reused if the receipt is later unlinked.
-        val updated = receipt.copy(
-            expenseId = expenseId,
-            suggestedExpenseId = null,
-            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.AUTO_MATCHED,
-            matchConfidence = confidence.toFloat(),
-            updatedAt = timeProvider.now()
-        )
-        scannedReceiptDao.update(updated)
-        timber.log.Timber.d("Linked receipt $receiptId to expense $expenseId with confidence $confidence")
+        error("Disabled: use ReceiptLinkService.linkReceiptToExpense()")
     }
 
+    @Deprecated(
+        "Permanently disabled. Use ReceiptLifecycleCoordinator for match lifecycle.",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun saveMatchSuggestion(
         receiptId: Long,
         suggestedExpenseId: Long,
         confidence: Double
     ) {
-        val receipt = scannedReceiptDao.getById(receiptId) ?: return
-        val updated = receipt.copy(
-            suggestedExpenseId = suggestedExpenseId,
-            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.SUGGESTED,
-            matchConfidence = confidence.toFloat(),
-            updatedAt = timeProvider.now()
-        )
-        scannedReceiptDao.update(updated)
-        timber.log.Timber.d("Saved match suggestion for receipt $receiptId: expense $suggestedExpenseId with confidence $confidence")
-    }
-
-    @Deprecated(
-        "Use ReceiptLinkService.linkReceiptToExpense() instead. " +
-            "Migrate to explicit pipeline: 1) ReceiptLinkService for receipt-expense linking, " +
-            "2) ReceiptLifecycleCoordinator for full lifecycle coverage.",
-        level = DeprecationLevel.ERROR,
-        replaceWith = ReplaceWith(
-            "receiptLinkService.linkReceiptToExpense(receiptId, suggestedId, linkType = \"MANUAL_MATCH\")"
-        )
-    )
-    suspend fun approveMatchSuggestion(receiptId: Long) {
-        val receipt = scannedReceiptDao.getById(receiptId) ?: return
-        val suggestedId = receipt.suggestedExpenseId ?: return
-        
-        // RCP-22: Clear suggestedExpenseId and matchConfidence after approval to
-        // prevent stale references from being reused if the receipt is later unlinked.
-        val updated = receipt.copy(
-            expenseId = suggestedId,
-            suggestedExpenseId = null,
-            matchConfidence = null,
-            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.MANUALLY_MATCHED,
-            updatedAt = timeProvider.now()
-        )
-        scannedReceiptDao.update(updated)
-        timber.log.Timber.d("Manually approved match for receipt $receiptId to expense $suggestedId")
-    }
-
-    suspend fun rejectAllSuggestions(receiptId: Long) {
-        val receipt = scannedReceiptDao.getById(receiptId) ?: return
-        val updated = receipt.copy(
-            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.REJECTED,
-            suggestedExpenseId = null,
-            updatedAt = timeProvider.now()
-        )
-        scannedReceiptDao.update(updated)
-        timber.log.Timber.d("Rejected all match suggestions for receipt $receiptId")
+        // No-op: match mutations are lifecycle-owned
     }
 
     suspend fun getReceiptsWithSuggestions(): List<com.yourname.expensetracker.data.database.entity.ScannedReceipt> {
         return scannedReceiptDao.getReceiptsWithSuggestions()
     }
 
-    // ── Pipeline 3 event helpers ─────────────────────────────────────────────
+    @Deprecated(
+        "Permanently disabled. Use ReceiptLinkService.linkReceiptToExpense().",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun approveMatchSuggestion(receiptId: Long) {
+        error("Disabled: use ReceiptLinkService.linkReceiptToExpense()")
+    }
+
+    @Deprecated(
+        "Permanently disabled. Use ReceiptLifecycleCoordinator for match lifecycle.",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun rejectAllSuggestions(receiptId: Long) {
+        error("Disabled: use ReceiptLifecycleCoordinator for match operations")
+    }
+
+    // ── Pipeline 3 event helper ──────────────────────────────────────────────
 
     private suspend fun writeReceiptEvent(
-        receiptId: Long,
-        eventType: String,
-        occurredAt: Long,
-        message: String,
-        newStatus: String,
-        sourceType: String = "CAMERA",
-        documentType: String = "RETAIL_RECEIPT",
+        receiptId: Long, eventType: String, occurredAt: Long,
+        message: String, newStatus: String,
+        sourceType: String = "CAMERA", documentType: String = "RETAIL_RECEIPT",
         errorDetails: String? = null
     ) {
         try {
             receiptEventDao.insert(ReceiptEvent(
-                receiptId = receiptId,
-                sourceType = sourceType,
-                documentType = documentType,
-                eventType = eventType,
-                occurredAt = occurredAt,
-                oldStatus = null,
-                newStatus = newStatus,
-                actor = "system:repository",
-                message = message.take(500),
-                metadata = null,
+                receiptId = receiptId, sourceType = sourceType,
+                documentType = documentType, eventType = eventType,
+                occurredAt = occurredAt, oldStatus = null,
+                newStatus = newStatus, actor = "system:repository",
+                message = message.take(500), metadata = null,
                 errorDetails = errorDetails?.take(500)
             ))
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Timber.w(e, "Failed to write receipt event %s for receipt %d", eventType, receiptId)
-        }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Timber.w(e, "Failed to write receipt event %s", eventType) }
     }
 
     suspend fun clearMatchForReceipt(receiptId: Long) {

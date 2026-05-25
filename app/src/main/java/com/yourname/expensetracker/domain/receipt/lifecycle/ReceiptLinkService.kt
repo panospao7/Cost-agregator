@@ -237,14 +237,9 @@ class ReceiptLinkService @Inject constructor(
                     if (bestCategoryId != null) {
                         val existingExpense = expenseDao.getById(expenseId)
                         if (existingExpense != null && existingExpense.categoryId == null) {
-                            // C1 LIFECYCLE NOTE: This direct DAO call intentionally bypasses
-                            // TransactionLifecycleCoordinator.updateCategory().
-                            // ⏭ DEFERRED_DESIGN: Proper fix requires ExpenseCategoryAssignmentPort.
-                            // Cannot inject the coordinator due to circular dependency:
-                            //   TransactionLifecycleCoordinator → ReceiptLinkService (via side effects)
-                            //   ReceiptLinkService → TransactionLifecycleCoordinator (would create cycle)
-                            // This is best-effort, inside runCatching, and only runs when
-                            // categoryId is null (first-time category assignment from receipt items).
+                            // P3-BLOCKER-09: Check write barrier before direct category mutation.
+                            // Full fix requires ExpenseCategoryAssignmentPort — see domain/transaction/.
+                            writeBarrier.checkWritesAllowed("ReceiptLinkService.propagateCategory")
                             expenseDao.updateCategory(expenseId, bestCategoryId)
                             Timber.i(
                                 "RCP-30: Propagated item category %d to expense %d",
