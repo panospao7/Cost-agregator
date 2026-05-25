@@ -590,7 +590,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             Timber.d("Duplicate receipt detected during insert: existingId=%d, reason=%s", e.existingReceipt.id, e.reason)
             return Result.success(e.existingReceipt)
         } catch (e: Exception) {
-            Timber.e(e, "processReceipt failed for %s, falling back to manual record", uri)
+            Timber.e(e, "processReceipt failed, falling back to manual record")
 
             // OCR/parse failed catastrophically — save manual record
             // Use the original URI string as a fallback image reference
@@ -600,7 +600,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             val now = timeProvider.now()
             val manualReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
-                imagePath = uri.toString(),
+                imagePath = null, // P3-EB0-07: don't persist raw URI
                 rawOcrText = "[OCR Failed or Skipped]",
                 parsedTotal = null,
                 parsedMerchant = null,

@@ -37,6 +37,8 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptTimestampPolicy
+import com.yourname.expensetracker.data.repository.ReceiptInsertResolver
+import com.yourname.expensetracker.data.repository.ReceiptInsertResult
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -89,6 +91,7 @@ class ReceiptRepository @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val receiptEventDao: ReceiptEventDao,
+    private val receiptInsertResolver: ReceiptInsertResolver,
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService
 ) {
     private companion object {
@@ -484,9 +487,11 @@ class ReceiptRepository @Inject constructor(
         writeBarrier.checkWritesAllowed("ReceiptRepository.insertReceipt")
         val now = timeProvider.now()
         val normalized = ReceiptTimestampPolicy.forInsert(receipt, now)
-        val receiptId = scannedReceiptDao.insert(normalized)
-        require(receiptId > 0) { "Receipt insert failed (conflict): imageHash=${receipt.imageHash}" }
-        return receiptId
+        return when (val result = receiptInsertResolver.insertOrResolve(normalized)) {
+            is ReceiptInsertResult.Inserted -> result.receiptId
+            is ReceiptInsertResult.Duplicate -> throw IllegalStateException("Duplicate receipt on insert: ${result.reason}")
+            is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException("Insert conflict unresolved: ${result.reason}")
+        }
     }
 
     suspend fun updateCategorizationStatus(receiptId: Long, status: CategorizationStatus) {

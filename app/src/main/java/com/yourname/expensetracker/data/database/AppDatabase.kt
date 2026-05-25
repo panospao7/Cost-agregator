@@ -7779,14 +7779,15 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_eventType ON operation_run_events(eventType)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_occurredAt ON operation_run_events(occurredAt)")
 
+                // P3-EB0-09: Fresh-install partial unique indexes on receipt fingerprints
+                // (mirrors MIGRATION_137_138 for upgraded DBs).
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_fresh_imageHash_u ON scanned_receipts(imageHash) WHERE imageHash IS NOT NULL AND imageHash != ''")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_fresh_sourceFp_u ON scanned_receipts(sourceFingerprint) WHERE sourceFingerprint IS NOT NULL AND sourceFingerprint != ''")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_fresh_textFp_u ON scanned_receipts(textFingerprint) WHERE textFingerprint IS NOT NULL AND textFingerprint != ''")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_fresh_semFp_u ON scanned_receipts(semanticFingerprint) WHERE semanticFingerprint IS NOT NULL AND semanticFingerprint != ''")
+
                 // P3-BLOCKER-C: Fresh-install unique partial index on emailMessageIdHash.
-                // Migration 136→137 adds this for upgraded DBs; this ensures fresh installs
-                // also get the unique constraint.
-                database.execSQL("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageIdHash_unique
-                    ON email_receipt_sources(emailMessageIdHash)
-                    WHERE emailMessageIdHash IS NOT NULL AND emailMessageIdHash != ''
-                """)
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_fresh_emailMsgIdHash_u ON email_receipt_sources(emailMessageIdHash) WHERE emailMessageIdHash IS NOT NULL AND emailMessageIdHash != ''")
             }
         }
 

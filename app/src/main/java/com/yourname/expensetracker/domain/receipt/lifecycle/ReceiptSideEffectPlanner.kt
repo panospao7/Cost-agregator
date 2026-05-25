@@ -205,11 +205,11 @@ class ReceiptSideEffectPlanner @Inject constructor(
     ): PostCommitAction {
         val receipt = input.receipt
         val receiptId = receipt.id
-        // P3-BLOCKER-D: Use ephemeral raw when available; write privacy event.
+        // P3-EB0-06: Policy A — only use ephemeral raw; skip when unavailable.
         val receiptText = if (input.hasEphemeralRaw) {
             input.ephemeralRawOcrText!!
         } else {
-            receipt.rawOcrText
+            null // no silent fallback to persisted/sanitized text
         }
         return PostCommitAction(
             pipeline = AppPipeline.RECEIPT,
@@ -228,11 +228,14 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                // P3-BLOCKER-02: Write privacy event when ephemeral raw is used.
-                if (input.hasEphemeralRaw) {
-                    writeMatchEvent(receipt, "RAW_USED_EPHEMERALLY",
-                        "Warranty extraction used ephemeral raw OCR text")
+                if (receiptText == null) {
+                    writeMatchEvent(receipt, "SIDE_EFFECT_SKIPPED_PRIVACY",
+                        "Warranty extraction skipped: ephemeral raw unavailable")
+                    return@PostCommitAction SideEffectOutcome.Skipped(
+                        com.yourname.expensetracker.domain.sideeffect.SideEffectSkipReason.MISSING_ENTITY)
                 }
+                writeMatchEvent(receipt, "RAW_USED_EPHEMERALLY",
+                    "Warranty extraction used ephemeral raw OCR text")
                 autoCreateWarrantyUseCase.execute(receiptId, receiptText)
                 SideEffectOutcome.Completed
             } catch (e: kotlinx.coroutines.CancellationException) {

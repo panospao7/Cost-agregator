@@ -577,7 +577,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             }
 
             val debugData = DebugData(
-                rawText = ocrResult.fullText,
+                rawText = "", // P3-EB0-08: redacted by default
                 parsedTransactions = parsedTransactions,
                 parsingLogs = parsingLogs,
                 processingTimeMs = timeProvider.now() - startTime,
