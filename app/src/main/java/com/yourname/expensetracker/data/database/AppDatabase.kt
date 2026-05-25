@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 137
+const val APP_DATABASE_SCHEMA_VERSION = 138
 
 @Database(
     entities = [
@@ -8132,6 +8132,16 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_137_138 = object : androidx.room.migration.Migration(137, 138) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // PR 8: Partial unique indexes on receipt fingerprints for concurrent dedup.
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_imageHash_u ON scanned_receipts(imageHash) WHERE imageHash IS NOT NULL AND imageHash != ''")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_sourceFp_u ON scanned_receipts(sourceFingerprint) WHERE sourceFingerprint IS NOT NULL AND sourceFingerprint != ''")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_textFp_u ON scanned_receipts(textFingerprint) WHERE textFingerprint IS NOT NULL AND textFingerprint != ''")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_scanned_receipts_semFp_u ON scanned_receipts(semanticFingerprint) WHERE semanticFingerprint IS NOT NULL AND semanticFingerprint != ''")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -8304,7 +8314,8 @@ MIGRATION_91_92,
         MIGRATION_133_134,
         MIGRATION_134_135,
         MIGRATION_135_136,
-        MIGRATION_136_137
+        MIGRATION_136_137,
+        MIGRATION_137_138
     )
 }
 }

@@ -501,6 +501,24 @@ class ReceiptRepository @Inject constructor(
         scannedReceiptDao.delete(receipt)
     }
 
+    @Deprecated("Use ReceiptLifecycleCoordinator.", level = DeprecationLevel.WARNING)
+    suspend fun clearAllScannedReceipts() {
+        writeBarrier.checkWritesAllowed("ReceiptRepository.clearAllScannedReceipts")
+        val receipts = scannedReceiptDao.getAll()
+        receipts.forEach { receipt -> receipt.imagePath?.let { ocrService.deleteImage(it) } }
+        scannedReceiptDao.deleteAll()
+    }
+
+    @Deprecated("Use ReceiptLifecycleCoordinator.", level = DeprecationLevel.WARNING)
+    suspend fun clearMatchForReceipt(receiptId: Long) {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return
+        scannedReceiptDao.update(receipt.copy(
+            expenseId = null,
+            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.UNMATCHED,
+            suggestedExpenseId = null, matchConfidence = null, updatedAt = timeProvider.now()
+        ))
+    }
+
     suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt> {
         return scannedReceiptDao.getRecentReceipts(since, limit)
     }
@@ -669,16 +687,6 @@ class ReceiptRepository @Inject constructor(
         )
     }
 
-    @Deprecated("Use ReceiptLifecycleCoordinator.", level = DeprecationLevel.WARNING)
-    suspend fun clearAllScannedReceipts() {
-        writeBarrier.checkWritesAllowed("ReceiptRepository.clearAllScannedReceipts")
-        val receipts = scannedReceiptDao.getAll()
-        receipts.forEach { receipt ->
-            receipt.imagePath?.let { path -> ocrService.deleteImage(path) }
-        }
-        scannedReceiptDao.deleteAll()
-    }
-
     /**
      * Raw OCR text retention is handled by [DataRetentionWorker], which purges
      * [ScannedReceipt.rawOcrText] after the configured retention period
@@ -844,18 +852,6 @@ class ReceiptRepository @Inject constructor(
             ))
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) { Timber.w(e, "Failed to write receipt event %s", eventType) }
-    }
-
-    @Deprecated("Use ReceiptLifecycleCoordinator.", level = DeprecationLevel.WARNING)
-    suspend fun clearMatchForReceipt(receiptId: Long) {
-        val receipt = scannedReceiptDao.getById(receiptId) ?: return
-        val updated = receipt.copy(
-            expenseId = null,
-            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.UNMATCHED,
-            suggestedExpenseId = null, matchConfidence = null,
-            updatedAt = timeProvider.now()
-        )
-        scannedReceiptDao.update(updated)
     }
 
     suspend fun getCandidateExpensesForReceipt(
