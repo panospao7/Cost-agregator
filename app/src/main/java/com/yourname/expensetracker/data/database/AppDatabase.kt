@@ -7778,6 +7778,15 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_correlationId ON operation_run_events(correlationId)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_eventType ON operation_run_events(eventType)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_operation_run_events_occurredAt ON operation_run_events(occurredAt)")
+
+                // P3-BLOCKER-C: Fresh-install unique partial index on emailMessageIdHash.
+                // Migration 136→137 adds this for upgraded DBs; this ensures fresh installs
+                // also get the unique constraint.
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageIdHash_unique
+                    ON email_receipt_sources(emailMessageIdHash)
+                    WHERE emailMessageIdHash IS NOT NULL AND emailMessageIdHash != ''
+                """)
             }
         }
 

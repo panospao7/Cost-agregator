@@ -69,7 +69,7 @@ class ReceiptInputValidator @Inject constructor(
         val contentResolverMimeType = try {
             context.contentResolver.getType(uri)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to resolve MIME type for %s", uri)
+            Timber.e(e, "Failed to resolve MIME type") // P3-BLOCKER-E: no raw URI in logs
             null
         }
 
@@ -81,16 +81,16 @@ class ReceiptInputValidator @Inject constructor(
             context.contentResolver.openInputStream(uri)?.use { /* just open & close */ }
             true
         } catch (e: Exception) {
-            Timber.e(e, "URI not readable: %s", uri)
+            Timber.e(e, "Receipt input URI not readable") // P3-BLOCKER-E: no raw URI
             false
         }
         if (!readable) {
-            errors.add("URI is not readable: $uri")
+            errors.add("Receipt input is not readable")
         }
 
         // 3. Validate MIME type
         if (mimeType == null) {
-            errors.add("Could not determine MIME type for URI: $uri")
+            errors.add("Could not determine MIME type for receipt input")
         } else if (mimeType !in SUPPORTED_MIME_TYPES) {
             errors.add("Unsupported MIME type: $mimeType. Supported: ${SUPPORTED_MIME_TYPES.joinToString()}")
         }
@@ -101,7 +101,7 @@ class ReceiptInputValidator @Inject constructor(
                 pfd.statSize.takeIf { it >= 0 }
             }
         } catch (e: Exception) {
-            Timber.e(e, "Failed to query file size for %s", uri)
+            Timber.e(e, "Failed to query file size") // P3-BLOCKER-E: no raw URI
             null
         }
 
@@ -126,7 +126,7 @@ class ReceiptInputValidator @Inject constructor(
                     false
                 } ?: false
             } catch (e: Exception) {
-                Timber.e(e, "Failed to stream-check file size for %s", uri)
+                Timber.e(e, "Failed to stream-check file size") // P3-BLOCKER-E
                 false
             }
             if (exceeded) {
@@ -145,11 +145,11 @@ class ReceiptInputValidator @Inject constructor(
                     opts.outWidth > 0 && opts.outHeight > 0
                 } ?: false
             } catch (e: Exception) {
-                Timber.e(e, "Bitmap decode failed for %s", uri)
+                Timber.e(e, "Bitmap decode failed") // P3-BLOCKER-E: no raw URI
                 false
             }
             if (!decodeResult) {
-                errors.add("Failed to decode image (invalid or corrupted file): $uri")
+                errors.add("Failed to decode image (invalid or corrupted file)")
             }
         }
 

@@ -277,33 +277,31 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         it.taxInclusive = taxInclusive
                     }
                     if (existing != null) {
-                        // P3-CUR-01 / P3-CUR-02: Proper exact-duplicate cleanup:
-                        // 1. Delete pending reviews referencing the duplicate receipt
-                        // 2. Write DUPLICATE_DETECTED event
-                        // 3. Delete the duplicate receipt row
-                        // 4. Delete the persisted asset file post-commit
-                        val now = timeProvider.now()
-                        database.withTransaction {
-                            pendingReviewDao.deleteByScannedReceiptId(receipt.id)
-                            receiptEventDao.insert(
-                                ReceiptEvent(
-                                    receiptId = receipt.id,
-                                    sourceType = receipt.sourceType,
+                        // P3-BLOCKER-A: Draft-first — receipt may not be persisted yet.
+                        // If id <= 0, this is a draft; only delete the temp asset.
+                        // Legacy persisted duplicates still get full DB cleanup.
+                        if (receipt.id <= 0L) {
+                            receipt.imagePath?.let { assetStore.deleteAsset(it) }
+                            Timber.i("Duplicate draft detected by exact hash: existingId=%d", existing.id)
+                        } else {
+                            database.withTransaction {
+                                pendingReviewDao.deleteByScannedReceiptId(receipt.id)
+                                receiptEventDao.insert(ReceiptEvent(
+                                    receiptId = receipt.id, sourceType = receipt.sourceType,
                                     documentType = receipt.documentType,
                                     eventType = "DUPLICATE_DETECTED",
-                                    occurredAt = now,
+                                    occurredAt = timeProvider.now(),
                                     oldStatus = receipt.processingStatus,
                                     newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
                                     actor = "system:coordinator",
                                     message = "Exact-hash duplicate removed (existingId=${existing.id})",
                                     metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"EXACT_HASH\"}",
                                     errorDetails = null
-                                )
-                            )
-                            scannedReceiptDao.delete(receipt)
+                                ))
+                                scannedReceiptDao.delete(receipt)
+                            }
+                            receipt.imagePath?.let { assetStore.deleteAsset(it) }
                         }
-                        // Post-commit: delete the persisted asset for the duplicate
-                        receipt.imagePath?.let { assetStore.deleteAsset(it) }
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
                         return Result.success(existing)
                     }
@@ -352,39 +350,44 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             )
 
             if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
-                // Update current receipt with fingerprints and mark as duplicate.
-                // P3-CUR-02: Wrap update + event + pending-review cleanup in a single
-                // database transaction so a crash cannot leave them inconsistent.
-                val now = timeProvider.now()
-                val withFingerprints = ReceiptTimestampPolicy.forUpdate(receipt.copy(
-                    imagePath = receipt.imagePath,
-                    imageHash = fileHash ?: receipt.imageHash,
-                    sourceType = ReceiptSourceType.CAMERA.name,
-                    documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
-                    processingStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
-                    textFingerprint = textFingerprint,
-                    semanticFingerprint = semanticFingerprint
-                ), now).also { it.taxInclusive = taxInclusive }
-
                 val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
                 if (existing != null) {
+                    // P3-BLOCKER-A: Draft-first — if receipt is not yet persisted
+                    // (id <= 0), don't update/event with id=0. Just delete draft asset.
+                    if (receipt.id <= 0L) {
+                        receipt.imagePath?.takeIf { it.isNotBlank() }
+                            ?.let { assetStore.deleteAsset(it) }
+                        existing.taxInclusive = taxInclusive
+                        Timber.d("Post-OCR duplicate draft detected (match=%s, existingId=%d)",
+                            postOcrDup.matchType, existing.id)
+                        return Result.success(existing)
+                    }
+                    // Legacy persisted path: update + DUPLICATE_DETECTED event
+                    val now = timeProvider.now()
+                    val withFingerprints = ReceiptTimestampPolicy.forUpdate(receipt.copy(
+                        imagePath = receipt.imagePath,
+                        imageHash = fileHash ?: receipt.imageHash,
+                        sourceType = ReceiptSourceType.CAMERA.name,
+                        documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
+                        processingStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
+                        textFingerprint = textFingerprint,
+                        semanticFingerprint = semanticFingerprint
+                    ), now).also { it.taxInclusive = taxInclusive }
                     database.withTransaction {
                         scannedReceiptDao.update(withFingerprints)
-                        receiptEventDao.insert(
-                            ReceiptEvent(
-                                receiptId = withFingerprints.id,
-                                sourceType = withFingerprints.sourceType,
-                                documentType = withFingerprints.documentType,
-                                eventType = "DUPLICATE_DETECTED",
-                                occurredAt = now,
-                                oldStatus = receipt.processingStatus,
-                                newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
-                                actor = "system:coordinator",
-                                message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
-                                metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
-                                errorDetails = null
-                            )
-                        )
+                        receiptEventDao.insert(ReceiptEvent(
+                            receiptId = withFingerprints.id,
+                            sourceType = withFingerprints.sourceType,
+                            documentType = withFingerprints.documentType,
+                            eventType = "DUPLICATE_DETECTED",
+                            occurredAt = now,
+                            oldStatus = receipt.processingStatus,
+                            newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
+                            actor = "system:coordinator",
+                            message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
+                            metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
+                            errorDetails = null
+                        ))
                     }
                     existing.taxInclusive = taxInclusive
                     return Result.success(existing)
@@ -414,9 +417,19 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             var createdReviewId: Long = 0
             var savedReceipt: ScannedReceipt = updated
             database.withTransaction {
-                val insertedId = scannedReceiptDao.insert(updated)
-                require(insertedId > 0) { "Receipt insert failed after dedupe" }
-                savedReceipt = updated.copy(id = insertedId)
+                // P3-BLOCKER-B: Use ReceiptInsertResolver for centralized conflict handling.
+                val saved = when (val insert = receiptInsertResolver.insertOrResolve(updated)) {
+                    is ReceiptInsertResult.Inserted -> updated.copy(id = insert.receiptId)
+                    is ReceiptInsertResult.Duplicate -> {
+                        throw IllegalStateException(
+                            "Duplicate receipt detected during coordinator insert: ${insert.reason}")
+                    }
+                    is ReceiptInsertResult.ConflictUnresolved -> {
+                        throw IllegalStateException(
+                            "Receipt insert conflict unresolved: ${insert.reason}")
+                    }
+                }
+                savedReceipt = saved
 
                 // 6. Write receipt lifecycle event
                 receiptEventDao.insert(
