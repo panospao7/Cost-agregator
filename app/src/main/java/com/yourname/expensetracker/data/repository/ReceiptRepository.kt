@@ -468,6 +468,22 @@ class ReceiptRepository @Inject constructor(
      * events and side effects (e.g., [BankStatementLifecycleProcessor],
      * [WarrantyTrackerRepository.createManualPlaceholderReceipt]).
      */
+    /**
+     * P3-4052-05: Typed insert result — preferred over sentinel Long return.
+     * Use this in all new Pipeline 3 production paths.
+     */
+    suspend fun insertReceiptTyped(receipt: ScannedReceipt): ReceiptRecordWriteResult {
+        writeBarrier.checkWritesAllowed("ReceiptRepository.insertReceiptTyped")
+        val now = timeProvider.now()
+        val normalized = ReceiptTimestampPolicy.forInsert(receipt, now)
+        return when (val result = receiptInsertResolver.insertOrResolve(normalized)) {
+            is ReceiptInsertResult.Inserted -> ReceiptRecordWriteResult.Inserted(normalized.copy(id = result.receiptId))
+            is ReceiptInsertResult.Duplicate -> ReceiptRecordWriteResult.Duplicate(result.existingReceipt, result.reason)
+            is ReceiptInsertResult.ConflictUnresolved -> ReceiptRecordWriteResult.Failed(result.reason)
+        }
+    }
+
+    @Deprecated("Use insertReceiptTyped() for typed duplicate handling.", level = DeprecationLevel.WARNING)
     suspend fun insertReceipt(receipt: ScannedReceipt): Long {
         writeBarrier.checkWritesAllowed("ReceiptRepository.insertReceipt")
         val now = timeProvider.now()
