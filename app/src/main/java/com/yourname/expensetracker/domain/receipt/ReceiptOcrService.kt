@@ -96,13 +96,30 @@ class ReceiptOcrService @Inject constructor(
         // P2-13: Use exported constant from ReceiptInputValidator for consistency
         private val MAX_FILE_SIZE = com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptInputValidator.DEFAULT_MAX_SIZE_BYTES
         private const val DEFAULT_BUFFER_SIZE = 8192
+
+        // P3-BLOCKER-03: Extension-based MIME fallback for null-provider URIs
+        private val EXTENSION_MIME_MAP = mapOf(
+            "jpg" to "image/jpeg", "jpeg" to "image/jpeg",
+            "png" to "image/png", "webp" to "image/webp",
+            "heic" to "image/heic", "pdf" to "application/pdf",
+            "tiff" to "image/tiff", "tif" to "image/tiff", "bmp" to "image/bmp"
+        )
     }
 
     /**
      * Dispatcher that automatically routes URIs to the correct processor based on MIME type.
+     *
+     * P3-BLOCKER-03: When ContentResolver returns null/blank MIME, falls back
+     * to extension-based detection so that files with a valid extension but no
+     * provider MIME (e.g. some content:// URIs) still route correctly.
      */
     suspend fun processUri(uri: Uri): OcrResult {
-        val mimeType = context.contentResolver.getType(uri) ?: ""
+        val providerMime = context.contentResolver.getType(uri)
+        val mimeType = if (!providerMime.isNullOrBlank()) {
+            providerMime
+        } else {
+            detectMimeFromExtension(uri) ?: ""
+        }
         return processUriWithMime(uri, mimeType)
     }
 
@@ -136,8 +153,19 @@ class ReceiptOcrService @Inject constructor(
      */
     suspend fun processUri(uriRef: String): OcrResult = processUri(Uri.parse(uriRef))
 
+    /**
+     * P3-BLOCKER-03: Extension-based MIME detection for files whose content
+     * provider returns null. Mirrors [ReceiptInputValidator.EXTENSION_MIME_MAP]
+     * so that null-MIME files are handled consistently.
+     */
+    private fun detectMimeFromExtension(uri: Uri): String? {
+        val path = uri.lastPathSegment ?: uri.path ?: return null
+        val ext = path.substringAfterLast('.').lowercase().takeIf { it.isNotBlank() && it != path }
+            ?: return null
+        return EXTENSION_MIME_MAP[ext]
+    }
+
     private fun validateFileSize(uri: Uri) {
-        // --- RCP-2: Two-phase size validation ---
         // Phase 1: Try the cheap content-provider statSize (works for most file:// URIs).
         val fileSize = context.contentResolver.openFileDescriptor(uri, "r")?.use {
             it.statSize

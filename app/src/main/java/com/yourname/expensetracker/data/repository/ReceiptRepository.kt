@@ -703,6 +703,16 @@ class ReceiptRepository @Inject constructor(
      * Concatenates all raw OCR text from the database for debugging/parsing refinement.
      */
     suspend fun exportParserDebugData(): String {
+        // P3-BLOCKER-07: Debug export gated behind DEBUG build + storage mode.
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            return "[EXPORT BLOCKED] Debug export is only available in debug builds."
+        }
+        val storageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
+        if (storageMode == RawStorageMode.STORE_REDACTED || storageMode == RawStorageMode.DO_NOT_STORE) {
+            return "[EXPORT BLOCKED] Raw OCR export is not available in ${storageMode.name} mode. " +
+                "Switch to STORE_RAW to enable full debug export."
+        }
+
         val totalCount = scannedReceiptDao.getCount()
         val sb = StringBuilder()
         sb.append("=== EXPORTED PARSER DEBUG DATA ($totalCount RECEIPTS) ===\n\n")
