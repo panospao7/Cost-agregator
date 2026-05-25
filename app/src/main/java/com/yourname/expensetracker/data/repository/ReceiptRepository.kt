@@ -39,6 +39,7 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptTimestampPolicy
 import com.yourname.expensetracker.data.repository.ReceiptInsertResolver
 import com.yourname.expensetracker.data.repository.ReceiptInsertResult
+import com.yourname.expensetracker.data.repository.ReceiptRecordWriteResult
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -473,8 +474,11 @@ class ReceiptRepository @Inject constructor(
         val normalized = ReceiptTimestampPolicy.forInsert(receipt, now)
         return when (val result = receiptInsertResolver.insertOrResolve(normalized)) {
             is ReceiptInsertResult.Inserted -> result.receiptId
-            is ReceiptInsertResult.Duplicate -> throw IllegalStateException("Duplicate receipt on insert: ${result.reason}")
-            is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException("Insert conflict unresolved: ${result.reason}")
+            is ReceiptInsertResult.Duplicate -> {
+                Timber.w("Duplicate receipt on insert via resolver: %s", result.reason)
+                -1L
+            }
+            is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
         }
     }
 

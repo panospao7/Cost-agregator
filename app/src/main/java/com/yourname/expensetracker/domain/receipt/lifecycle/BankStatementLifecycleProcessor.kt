@@ -56,6 +56,10 @@ data class BankStatementResult(
 /**
  * Lifecycle-aware processor for bank statement images / PDFs.
  *
+ * P3-994-06: Run scope — [BankStatementImportRun] covers only the post-parse
+ * transaction import phase. OCR failure, parse failure, no-transactions-found,
+ * and pre-OCR duplicate are covered by intake diagnostics, not the run ledger.
+ *
  * Handles the complete lifecycle:
  *   1. Pre-OCR duplicate detection via SHA-256 file hash (skip OCR if known).
  *   2. Run OCR on the bank statement image/PDF.
@@ -287,9 +291,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.writeResults")
             val receiptId = receiptRepository.insertReceipt(statementReceipt)
             if (receiptId <= 0) {
-                return Result.failure(
-                    IllegalStateException("Failed to save bank statement receipt record")
-                )
+                return Result.failure(IllegalStateException("Failed to save bank statement receipt record"))
             }
             // P3-REG-007: Link the run to the statement receipt
             bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)

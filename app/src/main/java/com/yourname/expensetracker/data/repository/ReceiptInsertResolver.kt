@@ -59,6 +59,12 @@ class ReceiptInsertResolver @Inject constructor(
     }
 }
 
+sealed interface ReceiptRecordWriteResult {
+    data class Inserted(val receipt: ScannedReceipt) : ReceiptRecordWriteResult
+    data class Duplicate(val existingReceipt: ScannedReceipt, val reason: String) : ReceiptRecordWriteResult
+    data class Failed(val reason: String) : ReceiptRecordWriteResult
+}
+
 sealed interface ReceiptInsertResult {
     data class Inserted(val receiptId: Long) : ReceiptInsertResult
     data class Duplicate(val existingReceipt: ScannedReceipt, val reason: String) : ReceiptInsertResult
