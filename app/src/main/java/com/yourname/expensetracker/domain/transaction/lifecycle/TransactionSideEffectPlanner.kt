@@ -305,8 +305,13 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                recurringLifecycleCoordinator.get().linkExpenseToOccurrence(expenseId)
-                SideEffectOutcome.Completed
+                val result = recurringLifecycleCoordinator.get()
+                    .linkExpenseToOccurrenceDetailed(expenseId, "transaction_created:$source")
+                when (result) {
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Linked ->
+                        SideEffectOutcome.Completed
+                    else -> SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+                }
             } catch (e: Exception) {
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring matching failed", e.javaClass.name)
             }
@@ -373,8 +378,15 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                recurringLifecycleCoordinator.get().unlinkExpenseFromOccurrence(expenseId)
-                SideEffectOutcome.Completed
+                val result = recurringLifecycleCoordinator.get()
+                    .unlinkExpenseFromOccurrenceDetailed(expenseId, "transaction_deleted:$source")
+                when (result) {
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Unlinked ->
+                        SideEffectOutcome.Completed
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Skipped ->
+                        SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+                    else -> SideEffectOutcome.Completed
+                }
             } catch (e: Exception) {
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring unlink failed", e.javaClass.name)
             }

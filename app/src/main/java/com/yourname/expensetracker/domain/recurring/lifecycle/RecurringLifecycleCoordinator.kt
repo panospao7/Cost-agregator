@@ -254,6 +254,29 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Detailed version of [linkExpenseToOccurrence] returning structured result with real ids.
+     */
+    suspend fun linkExpenseToOccurrenceDetailed(
+        expenseId: Long,
+        reason: String = "expense_created_or_reconciled"
+    ): RecurringExpenseReconcileResult {
+        val result = linkExpenseToOccurrence(expenseId)
+        if (!result) {
+            val expense = expenseDao.getById(expenseId)
+            if (expense == null) return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_missing")
+            if (expense.isNotMine || expense.transactionType == TransactionType.TRANSFER ||
+                expense.transactionType == TransactionType.DEPOSIT)
+                return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible")
+            return RecurringExpenseReconcileResult.NoMatch(expenseId, "no_matching_planned_occurrence")
+        }
+        // Find the linked occurrence to get real ids
+        val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
+        val occurrenceId = linked?.id ?: 0L
+        val planned = linked?.occurrenceKey?.let { plannedExpenseDao.getBySourceOccurrenceKey(it) }
+        return RecurringExpenseReconcileResult.Linked(expenseId, occurrenceId, planned?.id)
+    }
+
+    /**
      * Reconciles an expense's recurring link after an update.
      *
      * Instead of blindly unlinking and re-linking (which can reopen fulfilled
@@ -309,9 +332,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
             // Try to re-link if still eligible
             if (isExpenseEligibleForRecurring(expense)) {
-                val relinked = linkExpenseToOccurrence(expenseId)
-                if (relinked) {
-                    return RecurringExpenseReconcileResult.Relinked(expenseId, oldOccurrenceId, 0L)
+                val relinkResult = linkExpenseToOccurrenceDetailed(expenseId, "expense_update_relink")
+                if (relinkResult is RecurringExpenseReconcileResult.Linked) {
+                    return RecurringExpenseReconcileResult.Relinked(expenseId, oldOccurrenceId, relinkResult.occurrenceId)
                 }
             }
             return RecurringExpenseReconcileResult.Unlinked(expenseId, oldOccurrenceId, "no_new_match_after_update")
@@ -322,12 +345,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
             return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible")
         }
 
-        val relinked = linkExpenseToOccurrence(expenseId)
-        return if (relinked) {
-            RecurringExpenseReconcileResult.Linked(expenseId, 0L, null)
-        } else {
-            RecurringExpenseReconcileResult.NoMatch(expenseId, "no_matching_planned_occurrence")
-        }
+        return linkExpenseToOccurrenceDetailed(expenseId, "expense_update_unlinked_try_match")
     }
 
     private fun isExpenseEligibleForRecurring(expense: com.yourname.expensetracker.data.database.entity.Expense): Boolean {
@@ -487,13 +505,23 @@ class RecurringLifecycleCoordinator @Inject constructor(
      *               Defaults to "expense_deleted".
      */
     suspend fun unlinkExpenseFromOccurrence(expenseId: Long, reason: String = "expense_deleted") {
+        unlinkExpenseFromOccurrenceDetailed(expenseId, reason)
+    }
+
+    /**
+     * Detailed version of [unlinkExpenseFromOccurrence] returning structured result.
+     */
+    suspend fun unlinkExpenseFromOccurrenceDetailed(
+        expenseId: Long,
+        reason: String = "expense_deleted"
+    ): RecurringExpenseReconcileResult {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence")
 
         val now = timeProvider.now()
 
         // Direct lookup by linkedExpenseId — handles any date range (historical, backdated, restored)
         val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
-            ?: return // No linked occurrence, nothing to do
+            ?: return RecurringExpenseReconcileResult.Skipped(expenseId, "no_linked_occurrence")
 
         database.withTransaction {
             // Reset to PLANNED — the recurring bill is not yet paid
@@ -541,6 +569,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 )
             )
         }
+
+        return RecurringExpenseReconcileResult.Unlinked(expenseId, linked.id, reason)
     }
 
     /**
@@ -558,25 +588,32 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Marks an occurrence as SKIPPED, MISSED, or CANCELLED.
+     * Marks an occurrence as SKIPPED, MISSED, or CANCELLED using the typed status API.
      *
      * @param occurrenceId The ID of the occurrence to update.
-     * @param newStatus The new status value.
+     * @param newStatus The typed new status.
+     * @param reason The transition reason for policy validation.
      */
-    suspend fun updateOccurrenceStatus(occurrenceId: Long, newStatus: String) {
+    suspend fun updateOccurrenceStatus(
+        occurrenceId: Long,
+        newStatus: RecurringOccurrenceStatus,
+        reason: RecurringOccurrenceTransitionReason
+    ) {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.updateOccurrenceStatus")
 
         val now = timeProvider.now()
-        // Load the current occurrence to get the old status
-        val occurrence = occurrenceDao.getById(occurrenceId)
-        val oldStatus = occurrence?.status
-        occurrenceDao.updateStatus(listOf(occurrenceId), newStatus, now)
+        val occurrence = occurrenceDao.getById(occurrenceId) ?: return
 
-        // Write lifecycle event for skip/cancel transitions
+        val oldStatus = RecurringOccurrenceStatus.fromDb(occurrence.status)
+        RecurringOccurrenceTransitionPolicy.requireAllowed(oldStatus, newStatus, reason)
+
+        occurrenceDao.updateStatus(listOf(occurrenceId), newStatus.dbValue, now)
+
+        // Write lifecycle event
         val eventType = when (newStatus) {
-            "SKIPPED" -> "OCCURRENCE_SKIPPED"
-            "CANCELLED" -> "OCCURRENCE_CANCELLED"
-            "MISSED" -> "OCCURRENCE_SKIPPED"
+            RecurringOccurrenceStatus.SKIPPED -> "OCCURRENCE_SKIPPED"
+            RecurringOccurrenceStatus.CANCELLED -> "OCCURRENCE_CANCELLED"
+            RecurringOccurrenceStatus.MISSED -> "OCCURRENCE_MISSED"
             else -> null
         }
         if (eventType != null) {
@@ -585,13 +622,25 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     occurrenceId = occurrenceId,
                     eventType = eventType,
                     occurredAt = now,
-                    oldStatus = oldStatus,
-                    newStatus = newStatus,
-                    metadata = null
+                    oldStatus = oldStatus.dbValue,
+                    newStatus = newStatus.dbValue,
+                    metadata = """{"reason":"${reason.name}"}"""
                 )
             )
         }
     }
+
+    /** Convenience: skip an occurrence. */
+    suspend fun skipOccurrence(occurrenceId: Long) =
+        updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.SKIPPED, RecurringOccurrenceTransitionReason.USER_SKIPPED)
+
+    /** Convenience: cancel an occurrence. */
+    suspend fun cancelOccurrence(occurrenceId: Long) =
+        updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.CANCELLED, RecurringOccurrenceTransitionReason.USER_CANCELLED)
+
+    /** Convenience: mark an occurrence missed. */
+    suspend fun markOccurrenceMissed(occurrenceId: Long) =
+        updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.MISSED, RecurringOccurrenceTransitionReason.SYSTEM_MARKED_MISSED)
 
     /**
      * Returns all reminder deliveries whose scheduled time has passed and

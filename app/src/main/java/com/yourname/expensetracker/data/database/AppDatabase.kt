@@ -8172,58 +8172,118 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
         val MIGRATION_139_140 = object : androidx.room.migration.Migration(139, 140) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                // PR 7 (P4-P1-05): Backfill occurrence keys to include sourceType prefix.
-                // Old format: sourceId|dayStart|frequency
-                // New format: sourceType|sourceId|dayStart|frequency (already used by the expander)
-                //
-                // Use a temp mapping table to update sourceOccurrenceKey and openSourceOccurrenceKey
-                // atomically for planned_expenses, avoiding CHECK constraint violations and
-                // unique-index violations on openSourceOccurrenceKey.
+                // P4-P1-05: Backfill occurrence keys to canonical sourceType-prefixed format.
+                // Strategy: build canonical-id map BEFORE updating unique keys, remap dependents,
+                // resolve duplicate planned open keys, then safely update keys last.
+
+                // Step 1: Create canonical occurrence map
                 database.execSQL("""
-                    CREATE TEMP TABLE IF NOT EXISTS occ_key_map_139_140 (
+                    CREATE TEMP TABLE occ_canonical_map_139_140 (
+                        occurrenceId INTEGER NOT NULL,
                         oldKey TEXT NOT NULL,
-                        newKey TEXT NOT NULL
+                        newKey TEXT NOT NULL,
+                        canonicalId INTEGER NOT NULL
                     )
                 """.trimIndent())
 
-                // Populate map: canonical keys from recurring_occurrences
                 database.execSQL("""
-                    INSERT INTO occ_key_map_139_140 (oldKey, newKey)
-                    SELECT ro.occurrenceKey,
-                           ro.sourceType || '|' || ro.sourceId || '|' || ro.dueDate || '|' || ro.frequency
+                    INSERT INTO occ_canonical_map_139_140 (occurrenceId, oldKey, newKey, canonicalId)
+                    SELECT ro.id,
+                           ro.occurrenceKey,
+                           ro.sourceType || '|' || ro.sourceId || '|' || ro.dueDate || '|' || ro.frequency,
+                           (SELECT c.id FROM recurring_occurrences c
+                            WHERE c.sourceType = ro.sourceType
+                              AND c.sourceId = ro.sourceId
+                              AND c.dueDate = ro.dueDate
+                              AND c.frequency = ro.frequency
+                            ORDER BY CASE
+                                WHEN c.status = 'PAID' AND c.linkedExpenseId IS NOT NULL THEN 0
+                                WHEN c.status = 'PAID' THEN 1
+                                WHEN c.status IN ('CANCELLED','SKIPPED','MISSED','IGNORED') THEN 2
+                                WHEN c.status = 'PLANNED' THEN 3
+                                ELSE 4 END,
+                                c.id
+                            LIMIT 1)
                     FROM recurring_occurrences ro
                     WHERE ro.occurrenceKey != ro.sourceType || '|' || ro.sourceId || '|' || ro.dueDate || '|' || ro.frequency
+                       OR ro.occurrenceKey LIKE '{%'
                 """.trimIndent())
 
-                // Update planned_expenses: set both keys atomically from the map
-                // For PLANNED rows: both sourceOccurrenceKey and openSourceOccurrenceKey get the new key
-                // For non-PLANNED rows: only sourceOccurrenceKey is updated, openSourceOccurrenceKey set to NULL
+                // Step 2: Remap reminder deliveries to canonical occurrence (no conflict)
+                database.execSQL("""
+                    UPDATE recurring_reminder_deliveries
+                    SET occurrenceId = (SELECT m.canonicalId FROM occ_canonical_map_139_140 m
+                                        WHERE m.occurrenceId = recurring_reminder_deliveries.occurrenceId)
+                    WHERE occurrenceId IN (SELECT occurrenceId FROM occ_canonical_map_139_140
+                                           WHERE occurrenceId != canonicalId)
+                      AND NOT EXISTS (SELECT 1 FROM recurring_reminder_deliveries existing
+                                      JOIN occ_canonical_map_139_140 m2
+                                      ON m2.occurrenceId = recurring_reminder_deliveries.occurrenceId
+                                      WHERE existing.occurrenceId = m2.canonicalId
+                                        AND existing.reminderWindow = recurring_reminder_deliveries.reminderWindow)
+                """.trimIndent())
+
+                // Step 3: Delete conflicting losing reminder rows
+                database.execSQL("""
+                    DELETE FROM recurring_reminder_deliveries
+                    WHERE occurrenceId IN (SELECT occurrenceId FROM occ_canonical_map_139_140
+                                           WHERE occurrenceId != canonicalId)
+                """.trimIndent())
+
+                // Step 4: Remap lifecycle events to canonical occurrence
+                database.execSQL("""
+                    UPDATE recurring_lifecycle_events
+                    SET occurrenceId = (SELECT m.canonicalId FROM occ_canonical_map_139_140 m
+                                        WHERE m.occurrenceId = recurring_lifecycle_events.occurrenceId)
+                    WHERE occurrenceId IN (SELECT occurrenceId FROM occ_canonical_map_139_140
+                                           WHERE occurrenceId != canonicalId)
+                """.trimIndent())
+
+                // Step 5: Create planned key map
+                database.execSQL("""
+                    CREATE TEMP TABLE planned_key_map_139_140 AS
+                    SELECT DISTINCT oldKey, newKey
+                    FROM occ_canonical_map_139_140
+                """.trimIndent())
+
+                // Step 6: Resolve duplicate planned open keys before update
+                database.execSQL("""
+                    CREATE TEMP TABLE planned_keep_139_140 AS
+                    SELECT MIN(p.id) AS keepId, m.newKey
+                    FROM planned_expenses p
+                    JOIN planned_key_map_139_140 m ON p.sourceOccurrenceKey = m.oldKey
+                    WHERE p.status = 'PLANNED'
+                    GROUP BY m.newKey
+                """.trimIndent())
+
+                // Cancel duplicate PLANNED rows (cannot have two open rows with same key)
                 database.execSQL("""
                     UPDATE planned_expenses
-                    SET sourceOccurrenceKey = (
-                            SELECT m.newKey FROM occ_key_map_139_140 m
-                            WHERE m.oldKey = planned_expenses.sourceOccurrenceKey
-                            LIMIT 1
-                        ),
+                    SET status = 'CANCELLED',
+                        openSourceOccurrenceKey = NULL
+                    WHERE status = 'PLANNED'
+                      AND id IN (SELECT p.id FROM planned_expenses p
+                                 JOIN planned_key_map_139_140 m ON p.sourceOccurrenceKey = m.oldKey
+                                 JOIN planned_keep_139_140 k ON k.newKey = m.newKey
+                                 WHERE p.id != k.keepId)
+                """.trimIndent())
+
+                // Step 7: Update planned source/open keys atomically
+                database.execSQL("""
+                    UPDATE planned_expenses
+                    SET sourceOccurrenceKey = (SELECT m.newKey FROM planned_key_map_139_140 m
+                                               WHERE m.oldKey = planned_expenses.sourceOccurrenceKey
+                                               LIMIT 1),
                         openSourceOccurrenceKey = CASE
-                            WHEN status = 'PLANNED' THEN (
-                                SELECT m.newKey FROM occ_key_map_139_140 m
-                                WHERE m.oldKey = planned_expenses.sourceOccurrenceKey
-                                LIMIT 1
-                            )
-                            ELSE NULL
-                        END
-                    WHERE sourceOccurrenceKey IN (SELECT oldKey FROM occ_key_map_139_140)
+                            WHEN status = 'PLANNED' THEN (SELECT m.newKey FROM planned_key_map_139_140 m
+                                                          WHERE m.oldKey = planned_expenses.sourceOccurrenceKey
+                                                          LIMIT 1)
+                            ELSE NULL END
+                    WHERE sourceOccurrenceKey IN (SELECT oldKey FROM planned_key_map_139_140)
                 """.trimIndent())
 
-                // Final invariant enforcement for all planned rows
-                database.execSQL("""
-                    UPDATE planned_expenses
-                    SET openSourceOccurrenceKey = NULL
-                    WHERE status != 'PLANNED'
-                      AND openSourceOccurrenceKey IS NOT NULL
-                """.trimIndent())
-
+                // Step 8: Enforce openSourceOccurrenceKey invariant
+                database.execSQL("UPDATE planned_expenses SET openSourceOccurrenceKey = NULL WHERE status != 'PLANNED'")
                 database.execSQL("""
                     UPDATE planned_expenses
                     SET openSourceOccurrenceKey = sourceOccurrenceKey
@@ -8232,36 +8292,24 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                       AND openSourceOccurrenceKey IS NULL
                 """.trimIndent())
 
-                // Update recurring_occurrences.occurrenceKey to canonical format
+                // Step 9: Delete losing duplicate occurrences (after all dependents remapped)
+                database.execSQL("""
+                    DELETE FROM recurring_occurrences
+                    WHERE id IN (SELECT occurrenceId FROM occ_canonical_map_139_140
+                                 WHERE occurrenceId != canonicalId)
+                """.trimIndent())
+
+                // Step 10: Now safe — update canonical occurrence keys
                 database.execSQL("""
                     UPDATE recurring_occurrences
                     SET occurrenceKey = sourceType || '|' || sourceId || '|' || dueDate || '|' || frequency
                     WHERE occurrenceKey != sourceType || '|' || sourceId || '|' || dueDate || '|' || frequency
                 """.trimIndent())
 
-                // Handle duplicate occurrences with same canonical key:
-                // If two rows now have the same occurrenceKey, keep the one with highest priority
-                // and delete the losing duplicate. Reminder/planned remap is best-effort here.
-                database.execSQL("""
-                    DELETE FROM recurring_reminder_deliveries
-                    WHERE occurrenceId IN (
-                        SELECT ro.id FROM recurring_occurrences ro
-                        INNER JOIN recurring_occurrences ro2
-                            ON ro.occurrenceKey = ro2.occurrenceKey AND ro.id > ro2.id
-                    )
-                """.trimIndent())
-
-                database.execSQL("""
-                    DELETE FROM recurring_occurrences
-                    WHERE id IN (
-                        SELECT ro.id FROM recurring_occurrences ro
-                        INNER JOIN recurring_occurrences ro2
-                            ON ro.occurrenceKey = ro2.occurrenceKey AND ro.id > ro2.id
-                    )
-                """.trimIndent())
-
-                // Drop temp table
-                database.execSQL("DROP TABLE IF EXISTS occ_key_map_139_140")
+                // Cleanup temp tables
+                database.execSQL("DROP TABLE IF EXISTS occ_canonical_map_139_140")
+                database.execSQL("DROP TABLE IF EXISTS planned_key_map_139_140")
+                database.execSQL("DROP TABLE IF EXISTS planned_keep_139_140")
             }
         }
 
@@ -8310,23 +8358,23 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                     database.execSQL("ALTER TABLE recurring_reminder_deliveries_new RENAME TO recurring_reminder_deliveries")
 
                     database.execSQL("""
-                        CREATE UNIQUE INDEX IF NOT EXISTS index_reminder_deliveries_occ_window
+                        CREATE UNIQUE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_occurrenceId_reminderWindow
                         ON recurring_reminder_deliveries(occurrenceId, reminderWindow)
                     """.trimIndent())
                     database.execSQL("""
-                        CREATE INDEX IF NOT EXISTS index_reminder_deliveries_status
+                        CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_status
                         ON recurring_reminder_deliveries(status)
                     """.trimIndent())
                     database.execSQL("""
-                        CREATE INDEX IF NOT EXISTS index_reminder_deliveries_scheduledAt
+                        CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_scheduledAt
                         ON recurring_reminder_deliveries(scheduledAt)
                     """.trimIndent())
                     database.execSQL("""
-                        CREATE INDEX IF NOT EXISTS index_reminder_deliveries_claimedAt
+                        CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_claimedAt
                         ON recurring_reminder_deliveries(claimedAt)
                     """.trimIndent())
                     database.execSQL("""
-                        CREATE INDEX IF NOT EXISTS index_reminder_deliveries_occurrenceId
+                        CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_occurrenceId
                         ON recurring_reminder_deliveries(occurrenceId)
                     """.trimIndent())
                 } finally {
