@@ -429,9 +429,13 @@ class ReceiptRepository @Inject constructor(
         sb.append(e.javaClass.simpleName)
         if (!e.message.isNullOrBlank()) {
             sb.append(": ")
-            // 33D-07: Redact URI/path from exception messages
-            val safeMsg = e.message!!.replace(Regex("content://[^\\s]+"), "[REDACTED_URI]")
+            val safeMsg = e.message!!
+                .replace(Regex("content://[^\\s]+"), "[REDACTED_URI]")
                 .replace(Regex("file://[^\\s]+"), "[REDACTED_PATH]")
+                .replace(Regex("https?://[^\\s]+"), "[REDACTED_URL]")
+                .replace(Regex("(?<!\\w)/(?:storage|data|sdcard|mnt)/[^\\s]*"), "[REDACTED_PATH]")
+                .replace(Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"), "[REDACTED_EMAIL]")
+                .replace(Regex("\\b\\d{12,19}\\b"), "[REDACTED_NUMBER]")
                 .take(400)
             sb.append(safeMsg)
         }

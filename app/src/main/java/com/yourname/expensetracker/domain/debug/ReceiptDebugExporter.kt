@@ -1,6 +1,11 @@
 package com.yourname.expensetracker.domain.debug
 
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import timber.log.Timber
@@ -20,7 +25,8 @@ import javax.inject.Singleton
 @Singleton
 class ReceiptDebugExporter @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
-    private val privacySettingsRepository: PrivacySettingsRepository
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val diagnosticEventWriter: DiagnosticEventWriter
 ) {
 
     /**
@@ -40,7 +46,7 @@ class ReceiptDebugExporter @Inject constructor(
     ): DebugExportResult {
         // Gate: require explicit consent reason
         if (exportConsent.isBlank()) {
-            Timber.w("DEBUG_EXPORT_DENIED: consent blank, requestedBy=%s", requestedBy)
+            writeDebugExportAudit("DENIED", requestedBy, includeRawOcrText, "consent_blank")
             return DebugExportResult.Denied("Export consent reason is required")
         }
 
@@ -48,7 +54,7 @@ class ReceiptDebugExporter @Inject constructor(
         if (includeRawOcrText) {
             val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
             if (mode != RawStorageMode.STORE_RAW) {
-                Timber.w("DEBUG_EXPORT_DENIED: rawStorageMode=%s, requestedBy=%s", mode, requestedBy)
+                writeDebugExportAudit("DENIED", requestedBy, includeRawOcrText, "storage_mode_${mode.name}")
                 return DebugExportResult.Denied(
                     "Raw OCR export blocked: storage mode is $mode (requires STORE_RAW)"
                 )
@@ -74,7 +80,7 @@ class ReceiptDebugExporter @Inject constructor(
             }
             offset += pageSize
         }
-        Timber.d("DEBUG_EXPORT_ALLOWED: raw=%b, requestedBy=%s, count=%d", includeRawOcrText, requestedBy, totalCount)
+        writeDebugExportAudit("ALLOWED", requestedBy, includeRawOcrText, null)
         return DebugExportResult.Allowed(sb.toString())
     }
 
@@ -99,7 +105,7 @@ class ReceiptDebugExporter @Inject constructor(
         }
         val receipt = scannedReceiptDao.getById(receiptId)
             ?: return DebugExportResult.Denied("Receipt not found: $receiptId")
-        Timber.d("DEBUG_EXPORT_ALLOWED single: receiptId=%d, raw=%b, requestedBy=%s", receiptId, includeRawOcrText, requestedBy)
+        writeDebugExportAudit("ALLOWED", requestedBy, includeRawOcrText, null)
         return DebugExportResult.Allowed(formatReceiptDebug(receipt, includeRawOcrText))
     }
 
@@ -141,6 +147,26 @@ class ReceiptDebugExporter @Inject constructor(
             appendLine()
             appendLine("═════════════════════════════════════════")
         }
+    }
+
+    private suspend fun writeDebugExportAudit(decision: String, requestedBy: String, includeRaw: Boolean, denyReason: String?) {
+        try {
+            val md = SafeEventMetadata.builder()
+                .put("decision", decision)
+                .put("includeRaw", includeRaw.toString())
+                .put("requestedBy", requestedBy.take(64))
+            if (denyReason != null) md.put("denyReason", denyReason.take(128))
+            diagnosticEventWriter.emit(DiagnosticEvent(
+                pipeline = AppPipeline.RECEIPT,
+                stage = "debug_export",
+                outcome = if (decision == "ALLOWED") EventOutcome.COMPLETED else EventOutcome.FAILED_FINAL,
+                correlationId = "",
+                entityType = "DEBUG_EXPORT",
+                entityId = null,
+                metadata = md.build()
+            ))
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Timber.w(e, "Failed to write debug export audit") }
     }
 }
 
