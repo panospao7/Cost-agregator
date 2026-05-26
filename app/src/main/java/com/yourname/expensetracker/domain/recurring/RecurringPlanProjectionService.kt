@@ -62,7 +62,15 @@ class RecurringPlanProjectionService @Inject constructor(
         val endDate = TimePeriodUtils.addMonths(now, monthsAhead)
 
         // 1. Expand, resolve, and materialise occurrences for the rule in range
-        coordinator.generateOccurrences(ruleId, now, endDate)
+        coordinator.generateOccurrences(
+            ruleId = ruleId,
+            startDate = now,
+            endDate = endDate,
+            options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
+                createReminderDeliveries = true,
+                generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.REMINDER_PROJECTION
+            )
+        )
 
         // 2. Fetch all occurrences for this rule
         // Use start-of-day for `now` so occurrences due today at 00:00 are included

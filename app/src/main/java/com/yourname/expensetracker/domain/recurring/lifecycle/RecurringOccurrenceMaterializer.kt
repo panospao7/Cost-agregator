@@ -42,15 +42,25 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     )
 
     /**
+     * Options controlling reminder-delivery creation during materialization.
+     */
+    data class MaterializationOptions(
+        val createReminderDeliveries: Boolean,
+        val reminderWindows: List<String>,
+        val generationSource: String,
+        val allowPastDueReminderDeliveries: Boolean = false
+    )
+
+    /**
      * Persists resolved occurrences and creates reminder deliveries.
      *
      * @param resolved The resolved occurrence candidates from [OccurrenceConflictResolver].
-     * @param reminderWindows The reminder windows for which to create deliveries (e.g. "DUE_DAY").
+     * @param options Controls whether and how reminder deliveries are created.
      * @return Counts of created, updated, skipped occurrences and created reminders.
      */
     suspend fun materialize(
         resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>,
-        reminderWindows: List<String> = emptyList()
+        options: MaterializationOptions
     ): MaterializationResult = database.withTransaction {
         var created = 0
         var updated = 0
@@ -91,7 +101,31 @@ class RecurringOccurrenceMaterializer @Inject constructor(
 
                         // P4-CURRENT-003: If materializer auto-transitions to PAID, fulfill planned and suppress reminders
                         if (entity.status == "PAID") {
-                            plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, now)
+                            val expenseId = r.linkedExpenseId
+                            if (expenseId != null) {
+                                val fulfilled = plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, expenseId, now)
+                                lifecycleEventDao.insert(
+                                    RecurringLifecycleEvent(
+                                        occurrenceId = existing.id,
+                                        eventType = if (fulfilled > 0) "PLANNED_FULFILLED" else "PLANNED_FULFILLMENT_SKIPPED",
+                                        occurredAt = now,
+                                        oldStatus = if (fulfilled > 0) "PLANNED" else null,
+                                        newStatus = if (fulfilled > 0) "FULFILLED" else null,
+                                        metadata = """{"occurrenceKey":"${entity.occurrenceKey}","expenseId":$expenseId,"rows":$fulfilled,"source":"materializer_auto_paid"}"""
+                                    )
+                                )
+                            } else {
+                                lifecycleEventDao.insert(
+                                    RecurringLifecycleEvent(
+                                        occurrenceId = existing.id,
+                                        eventType = "PLANNED_FULFILLMENT_SKIPPED",
+                                        occurredAt = now,
+                                        oldStatus = null,
+                                        newStatus = null,
+                                        metadata = """{"occurrenceKey":"${entity.occurrenceKey}","reason":"missing_linkedExpenseId","source":"materializer_auto_paid"}"""
+                                    )
+                                )
+                            }
                             reminderDeliveryDao.suppressByOccurrenceId(existing.id)
                         }
 
@@ -106,7 +140,31 @@ class RecurringOccurrenceMaterializer @Inject constructor(
 
                 // P4-CURRENT-003: If newly created as PAID, fulfill planned and suppress reminders
                 if (entity.status == "PAID") {
-                    plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, now)
+                    val expenseId = r.linkedExpenseId
+                    if (expenseId != null) {
+                        val fulfilled = plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, expenseId, now)
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = insertResult,
+                                eventType = if (fulfilled > 0) "PLANNED_FULFILLED" else "PLANNED_FULFILLMENT_SKIPPED",
+                                occurredAt = now,
+                                oldStatus = if (fulfilled > 0) "PLANNED" else null,
+                                newStatus = if (fulfilled > 0) "FULFILLED" else null,
+                                metadata = """{"occurrenceKey":"${entity.occurrenceKey}","expenseId":$expenseId,"rows":$fulfilled,"source":"materializer_auto_paid"}"""
+                            )
+                        )
+                    } else {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = insertResult,
+                                eventType = "PLANNED_FULFILLMENT_SKIPPED",
+                                occurredAt = now,
+                                oldStatus = null,
+                                newStatus = null,
+                                metadata = """{"occurrenceKey":"${entity.occurrenceKey}","reason":"missing_linkedExpenseId","source":"materializer_auto_paid"}"""
+                            )
+                        )
+                    }
                     reminderDeliveryDao.suppressByOccurrenceId(insertResult)
                 }
 
@@ -124,14 +182,31 @@ class RecurringOccurrenceMaterializer @Inject constructor(
             }
 
             // P4-CURRENT-004: Only create reminder deliveries when finalStatus is PLANNED
-            if (finalStatus == "PLANNED") {
+            // and the caller explicitly opted in via MaterializationOptions.
+            if (finalStatus == "PLANNED" && options.createReminderDeliveries) {
                 val occurrenceId = if (insertResult != -1L) {
                     insertResult
                 } else {
                     occurrenceDao.getByKey(entity.occurrenceKey)?.id ?: continue
                 }
 
-                for (window in reminderWindows) {
+                for (window in options.reminderWindows) {
+                    val scheduledAt = computeScheduledAt(r.candidate.dueDate, window)
+
+                    // Skip past-due reminders unless explicitly allowed
+                    if (!options.allowPastDueReminderDeliveries && scheduledAt < now) {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = occurrenceId,
+                                eventType = "REMINDER_SCHEDULE_SKIPPED",
+                                occurredAt = now,
+                                oldStatus = null,
+                                newStatus = null,
+                                metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due_generation_disallowed","source":"${options.generationSource}"}"""
+                            )
+                        )
+                        continue
+                    }
                     val existingDelivery =
                         reminderDeliveryDao.getByOccurrenceAndWindow(occurrenceId, window)
                     if (existingDelivery == null) {
@@ -143,7 +218,8 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                 reminderWindow = window,
                                 scheduledAt = scheduledAt,
                                 status = "SCHEDULED",
-                                createdAt = now
+                                createdAt = now,
+                                updatedAt = now
                             )
                         )
                         if (deliveryId > 0) {

@@ -62,30 +62,53 @@ class BillReminderWorker @AssistedInject constructor(
                         continue
                     }
 
-                    val title = "Bill due"
-                    val body = buildNotificationBody(reminder)
-                    val delivered = sendNotification(reminder, title, body)
+                    // P4-NEW-03 / P4-P0-02: Revalidate occurrence after claim.
+                    // If the occurrence is no longer PLANNED (e.g. user paid between
+                    // claim and notification), cancel the claimed delivery and skip.
+                    val snapshot = coordinator.getDispatchableClaimedReminder(reminder.id)
+                    if (snapshot == null) {
+                        coordinator.cancelClaimedReminderDelivery(
+                            deliveryId = reminder.id,
+                            reason = "not_dispatchable_after_claim"
+                        )
+                        ctx.addRowsSkipped()
+                        continue
+                    }
 
-                    if (delivered) {
-                        coordinator.markReminderSent(reminder.id)
-                        ctx.addNotificationsSent()
-                        try {
-                            diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECURRING,
-                                stage = "dispatch",
-                                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
-                                entityType = "RecurringReminderDelivery",
-                                entityId = reminder.id,
-                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .put("delivered", true)
-                                    .build()
-                            ))
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to write reminder diagnostic event", e)
+                    val title = "Bill due"
+                    val body = buildNotificationBody(snapshot)
+                    val result = sendNotification(reminder, title, body)
+
+                    when (result) {
+                        is NotificationSendResult.Sent -> {
+                            val marked = coordinator.markReminderSent(reminder.id, result.notificationId)
+                            if (marked) {
+                                ctx.addNotificationsSent()
+                                try {
+                                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECURRING,
+                                        stage = "dispatch",
+                                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                                        entityType = "RecurringReminderDelivery",
+                                        entityId = reminder.id,
+                                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                            .put("delivered", true)
+                                            .put("notificationId", result.notificationId)
+                                            .build()
+                                    ))
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed to write reminder diagnostic event", e)
+                                }
+                            } else {
+                                Log.w(TAG, "Reminder ${reminder.id} was sent but could not be marked SENT (no longer CLAIMED)")
+                                ctx.addRowsSkipped()
+                            }
                         }
-                    } else {
-                        Log.w(TAG, "Notification delivery failed for reminder ${reminder.id}")
-                        coordinator.markReminderFailed(reminder.id, "permission_denied")
+                        is NotificationSendResult.Failed -> {
+                            Log.w(TAG, "Notification delivery failed for reminder ${reminder.id}: ${result.reason}")
+                            coordinator.markReminderFailed(reminder.id, result.reason)
+                            ctx.addRowsSkipped()
+                        }
                     }
                 }
 
@@ -100,21 +123,24 @@ class BillReminderWorker @AssistedInject constructor(
     }
 
     /**
-     * Builds a notification body using actual occurrence details (merchant/amount/currency).
-     * Falls back to a generic message if the occurrence cannot be loaded.
+     * Builds a notification body using the dispatch snapshot's occurrence details.
      */
-    private suspend fun buildNotificationBody(
-        reminder: com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
+    private fun buildNotificationBody(
+        snapshot: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator.ReminderDispatchSnapshot
     ): String {
-        val occurrence = coordinator.getOccurrenceById(reminder.occurrenceId)
-        return if (occurrence != null) {
-            val amount = "%.2f".format(occurrence.expectedAmount)
-            val currency = occurrence.expectedCurrency
-            val merchant = occurrence.merchant ?: "Bill"
-            "$merchant due: $amount $currency"
-        } else {
-            "Bill reminder (details unavailable)"
-        }
+        val occurrence = snapshot.occurrence
+        val amount = "%.2f".format(occurrence.expectedAmount)
+        val currency = occurrence.expectedCurrency
+        val merchant = occurrence.merchant ?: "Bill"
+        return "$merchant due: $amount $currency"
+    }
+
+    /**
+     * Result of attempting to send a notification.
+     */
+    private sealed interface NotificationSendResult {
+        data class Sent(val notificationId: Int) : NotificationSendResult
+        data class Failed(val reason: String) : NotificationSendResult
     }
 
     /**
@@ -122,12 +148,15 @@ class BillReminderWorker @AssistedInject constructor(
      * Creates the notification channel on first invocation if needed.
      * Adds Snooze (24h) and Dismiss action buttons via [SnoozeReminderReceiver]
      * and [DismissReminderReceiver] broadcast receivers.
+     *
+     * @return [NotificationSendResult.Sent] with the notificationId on success,
+     *         or [NotificationSendResult.Failed] with a reason on failure.
      */
     private fun sendNotification(
         delivery: com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery,
         title: String,
         body: String
-    ): Boolean {
+    ): NotificationSendResult {
         ensureChannelExists()
 
         // Snooze action — marks delivery SNOOZED for 24h
@@ -165,10 +194,10 @@ class BillReminderWorker @AssistedInject constructor(
         val notificationId = (delivery.id % Int.MAX_VALUE).toInt()
         return try {
             NotificationManagerCompat.from(applicationContext).notify(notificationId, notification)
-            true
+            NotificationSendResult.Sent(notificationId)
         } catch (e: SecurityException) {
             Log.w(TAG, "Missing notification permission — cannot send notification", e)
-            false
+            NotificationSendResult.Failed("permission_denied")
         }
     }
 

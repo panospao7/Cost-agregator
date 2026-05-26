@@ -138,19 +138,23 @@ class RecurringLifecycleCoordinatorTest {
             skipped = 0,
             remindersCreated = 1
         )
-        coEvery { materializer.materialize(any(), any()) } returns materializationResult
+        coEvery { materializer.materialize(any(), any<RecurringOccurrenceMaterializer.MaterializationOptions>()) } returns materializationResult
 
         val result = coordinator.generateOccurrences(
             ruleId = 1L,
             startDate = startDate,
             endDate = endDate,
-            reminderWindows = listOf("DUE_DAY")
+            options = OccurrenceGenerationOptions(
+                createReminderDeliveries = true,
+                reminderWindows = listOf("DUE_DAY"),
+                generationSource = OccurrenceGenerationSource.TEST
+            )
         )
 
         assertEquals(1, result.created)
         coVerify(exactly = 1) { expander.expand(any()) }
         coVerify(exactly = 1) { resolver.resolve(any(), any()) }
-        coVerify(exactly = 1) { materializer.materialize(any(), any()) }
+        coVerify(exactly = 1) { materializer.materialize(any(), any<RecurringOccurrenceMaterializer.MaterializationOptions>()) }
     }
 
     @Test
@@ -159,7 +163,15 @@ class RecurringLifecycleCoordinatorTest {
 
         var thrown: Throwable? = null
         try {
-            coordinator.generateOccurrences(404L, startDate, endDate)
+            coordinator.generateOccurrences(
+                ruleId = 404L,
+                startDate = startDate,
+                endDate = endDate,
+                options = OccurrenceGenerationOptions(
+                    createReminderDeliveries = false,
+                    generationSource = OccurrenceGenerationSource.TEST
+                )
+            )
         } catch (t: Throwable) {
             thrown = t
         }

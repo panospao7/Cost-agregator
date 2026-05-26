@@ -108,7 +108,11 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             ruleId = ruleId,
             startDate = fixedNow,
             endDate = fixedNow + 86400000L * 90, // 3 months
-            reminderWindows = listOf("DUE_DAY")
+            options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
+                createReminderDeliveries = true,
+                reminderWindows = listOf("DUE_DAY"),
+                generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.TEST
+            )
         )
 
         // ── Verify occurrences created ──

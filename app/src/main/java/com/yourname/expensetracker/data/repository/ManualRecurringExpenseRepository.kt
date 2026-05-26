@@ -25,12 +25,7 @@ class ManualRecurringExpenseRepository @Inject constructor(
     suspend fun getAllIncludingInactive(): List<ManualRecurringExpense> = dao.getAll()
 
     suspend fun insert(expense: ManualRecurringExpense): Long {
-        writeBarrier.checkWritesAllowed("ManualRecurringExpenseRepository.insert")
-        val now = timeProvider.now()
-        val entity = if (expense.createdAt == 0L) expense.copy(createdAt = now) else expense
-        val id = dao.insert(entity)
-        writeLifecycleEvent(id, "RULE_CREATED", now, """{"merchant":"${entity.merchant}","amount":${entity.amount},"frequency":"${entity.frequency}"}""")
-        return id
+        return ruleLifecycleCoordinator.get().createRule(expense)
     }
 
     suspend fun setActiveStatus(id: Long, isActive: Boolean) {
@@ -38,24 +33,15 @@ class ManualRecurringExpenseRepository @Inject constructor(
             ruleLifecycleCoordinator.get().deactivateRule(id)
             return
         }
-        writeBarrier.checkWritesAllowed("ManualRecurringExpenseRepository.setActiveStatus")
-        val now = timeProvider.now()
-        val existing = dao.getById(id)
-        writeLifecycleEvent(id, "RULE_ACTIVATED", now,
-            """{"merchant":"${existing?.merchant.orEmpty()}","isActive":true}""")
-        dao.setActiveStatus(id, true)
+        ruleLifecycleCoordinator.get().activateRule(id)
+    }
+
+    suspend fun updateNextDate(id: Long, nextDate: Long) {
+        ruleLifecycleCoordinator.get().advanceNextDate(id, nextDate)
     }
 
     suspend fun deleteById(id: Long) {
         ruleLifecycleCoordinator.get().deleteRule(id)
-    }
-
-    suspend fun updateNextDate(id: Long, nextDate: Long) {
-        writeBarrier.checkWritesAllowed("ManualRecurringExpenseRepository.updateNextDate")
-        val now = timeProvider.now()
-        writeLifecycleEvent(id, "NEXT_DATE_ADVANCED", now,
-            """{"nextDate":$nextDate}""")
-        dao.updateNextDate(id, nextDate)
     }
 
     private suspend fun writeLifecycleEvent(

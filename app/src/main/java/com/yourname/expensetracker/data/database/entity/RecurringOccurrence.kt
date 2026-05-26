@@ -23,7 +23,7 @@ data class RecurringOccurrence(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val sourceType: String,         // "RECURRING_RULE", "DETECTED_PATTERN", "SUBSCRIPTION", "PLANNED"
     val sourceId: Long,             // ruleId or patternSignature hash
-    val occurrenceKey: String,      // unique key: ruleId|normalizedDueDate|frequency
+    val occurrenceKey: String,      // unique key: sourceType|sourceId|dueDate|frequency
     val dueDate: Long,              // epoch millis of due date start of day
     val status: String,             // "PLANNED", "PAID", "SKIPPED", "MISSED", "CANCELLED", "IGNORED"
     val linkedExpenseId: Long? = null,

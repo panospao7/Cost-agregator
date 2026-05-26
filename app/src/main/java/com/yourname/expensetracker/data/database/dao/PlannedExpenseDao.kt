@@ -90,17 +90,23 @@ interface PlannedExpenseDao {
     """)
     suspend fun cancelPlannedByRecurringRuleId(ruleId: Long, updatedAt: Long): Int
 
+    /** Deletes open PLANNED rows for a rule (used during rule update regeneration). */
+    @Query("DELETE FROM planned_expenses WHERE sourceRecurringRuleId = :ruleId AND status = 'PLANNED'")
+    suspend fun deleteOpenPlannedByRecurringRuleId(ruleId: Long): Int
+
     /**
      * P4-CURRENT-003: Fulfill a planned expense by its occurrence key.
      * Marks it as FULFILLED when the occurrence transitions to PAID.
+     * Now accepts an expenseId to preserve provenance of which actual expense fulfilled it.
      */
     @Query("""
         UPDATE planned_expenses
         SET status = 'FULFILLED',
+            linkedActualExpenseId = :expenseId,
             openSourceOccurrenceKey = NULL,
             updatedAt = :updatedAt
         WHERE sourceOccurrenceKey = :occurrenceKey
           AND status = 'PLANNED'
     """)
-    suspend fun fulfillByOccurrenceKey(occurrenceKey: String, updatedAt: Long): Int
+    suspend fun fulfillByOccurrenceKey(occurrenceKey: String, expenseId: Long, updatedAt: Long): Int
 }

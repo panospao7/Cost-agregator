@@ -334,8 +334,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                recurringLifecycleCoordinator.get().unlinkExpenseFromOccurrence(expenseId)
-                recurringLifecycleCoordinator.get().linkExpenseToOccurrence(expenseId)
+                recurringLifecycleCoordinator.get().reconcileExpenseLinkAfterUpdate(expenseId, "transaction_update:$source")
                 SideEffectOutcome.Completed
             } catch (e: Exception) {
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring reconcile failed", e.javaClass.name)

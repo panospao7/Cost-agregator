@@ -61,4 +61,8 @@ interface RecurringOccurrenceDao {
           AND linkedExpenseId IS NULL
     """)
     suspend fun claimForExpense(occurrenceId: Long, expenseId: Long, amount: Double, currency: String, paidAt: Long): Int
+
+    /** Deletes open PLANNED occurrences for a source (used during rule update regeneration). */
+    @Query("DELETE FROM recurring_occurrences WHERE sourceType = :sourceType AND sourceId = :sourceId AND status = 'PLANNED'")
+    suspend fun deleteOpenPlannedBySource(sourceType: String, sourceId: Long): Int
 }

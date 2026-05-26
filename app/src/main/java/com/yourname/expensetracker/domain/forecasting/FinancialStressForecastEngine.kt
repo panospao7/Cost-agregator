@@ -286,7 +286,15 @@ class FinancialStressForecastEngine @Inject constructor(
             val failedRuleIds = mutableListOf<Long>()
             for (ruleId in ruleIds) {
                 try {
-                    recurringLifecycleCoordinator.generateOccurrences(ruleId, startDate, endDate)
+                    recurringLifecycleCoordinator.generateOccurrences(
+                        ruleId = ruleId,
+                        startDate = startDate,
+                        endDate = endDate,
+                        options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
+                            createReminderDeliveries = false,
+                            generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
+                        )
+                    )
                 } catch (e: Exception) {
                     Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d", ruleId)
                     failedRuleIds.add(ruleId)

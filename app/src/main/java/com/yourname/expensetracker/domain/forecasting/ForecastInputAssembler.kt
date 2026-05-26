@@ -403,7 +403,11 @@ class ForecastInputAssembler @Inject constructor(
                 recurringLifecycleCoordinator.generateOccurrences(
                     ruleId = rule.id,
                     startDate = forecastStart,
-                    endDate = forecastEnd
+                    endDate = forecastEnd,
+                    options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
+                        createReminderDeliveries = false,
+                        generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
+                    )
                 )
             } catch (e: Exception) {
                 // Non-fatal: if one rule fails to generate, continue with the rest

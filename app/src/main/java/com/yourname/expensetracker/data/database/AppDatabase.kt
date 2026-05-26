@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 138
+const val APP_DATABASE_SCHEMA_VERSION = 140
 
 @Database(
     entities = [
@@ -8155,6 +8155,58 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_138_139 = object : androidx.room.migration.Migration(138, 139) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // PR 1 (P4-P1-01 / P4-NEW-02 / P4-NEW-08): Add reminder claim/recovery metadata columns.
+                database.execSQL("ALTER TABLE recurring_reminder_deliveries ADD COLUMN claimedAt INTEGER")
+                database.execSQL("ALTER TABLE recurring_reminder_deliveries ADD COLUMN lastAttemptAt INTEGER")
+                database.execSQL("ALTER TABLE recurring_reminder_deliveries ADD COLUMN attemptCount INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE recurring_reminder_deliveries ADD COLUMN failureReason TEXT")
+                database.execSQL("ALTER TABLE recurring_reminder_deliveries ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_claimedAt
+                    ON recurring_reminder_deliveries(claimedAt)
+                """.trimIndent())
+            }
+        }
+
+        val MIGRATION_139_140 = object : androidx.room.migration.Migration(139, 140) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // PR 7 (P4-P1-05): Backfill occurrence keys to include sourceType prefix.
+                // Old format: sourceId|dayStart|frequency
+                // New format: sourceType|sourceId|dayStart|frequency (already used by the expander)
+                database.execSQL("""
+                    UPDATE recurring_occurrences
+                    SET occurrenceKey = sourceType || '|' || sourceId || '|' || dueDate || '|' || frequency
+                    WHERE occurrenceKey NOT LIKE sourceType || '|%'
+                       OR occurrenceKey LIKE '{%'
+                """.trimIndent())
+
+                // Backfill planned_expenses.sourceOccurrenceKey to match updated occurrence keys
+                database.execSQL("""
+                    UPDATE planned_expenses
+                    SET sourceOccurrenceKey = (
+                        SELECT o.occurrenceKey FROM recurring_occurrences o
+                        WHERE o.occurrenceKey LIKE '%|' || planned_expenses.sourceOccurrenceKey
+                        LIMIT 1
+                    )
+                    WHERE sourceOccurrenceKey IS NOT NULL
+                      AND sourceOccurrenceKey NOT LIKE '%|%|%|%'
+                """.trimIndent())
+
+                // Ensure openSourceOccurrenceKey invariant: PLANNED rows get sourceOccurrenceKey, others get NULL
+                database.execSQL("""
+                    UPDATE planned_expenses
+                    SET openSourceOccurrenceKey = CASE
+                        WHEN status = 'PLANNED' THEN sourceOccurrenceKey
+                        ELSE NULL
+                    END
+                    WHERE (status = 'PLANNED' AND openSourceOccurrenceKey IS NULL AND sourceOccurrenceKey IS NOT NULL)
+                       OR (status != 'PLANNED' AND openSourceOccurrenceKey IS NOT NULL)
+                """.trimIndent())
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -8328,7 +8380,9 @@ MIGRATION_91_92,
         MIGRATION_134_135,
         MIGRATION_135_136,
         MIGRATION_136_137,
-        MIGRATION_137_138
+            MIGRATION_137_138,
+            MIGRATION_138_139,
+            MIGRATION_139_140
     )
 }
 }

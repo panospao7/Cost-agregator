@@ -26,7 +26,8 @@ class RecurringExpenseRepository @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val dao: ManualRecurringExpenseDao,
     private val lifecycleEventDao: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+    private val ruleLifecycleCoordinator: dagger.Lazy<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator>
 ) {
     companion object {
         fun createRecurringExpenseEntity(
@@ -104,58 +105,28 @@ class RecurringExpenseRepository @Inject constructor(
         currency: String = "EUR",
         note: String? = null
     ): Long {
-        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.addRecurringExpense")
         val now = timeProvider.now()
         val expense = createRecurringExpenseEntity(
-            merchant = merchant,
-            amount = amount,
-            frequency = frequency,
-            lastDate = lastDate,
-            currency = currency,
-            note = note,
-            now = now
+            merchant = merchant, amount = amount, frequency = frequency,
+            lastDate = lastDate, currency = currency, note = note, now = now
         )
-        val id = dao.insert(expense)
-        writeLifecycleEvent(expense.id.let { if (id > 0) id else 0L }, "RULE_CREATED", now, null, null,
-            """{"merchant":"${expense.merchant}","amount":${expense.amount},"frequency":"${expense.frequency}"}""")
-        return id
+        return ruleLifecycleCoordinator.get().createRule(expense)
     }
 
     suspend fun insert(expense: ManualRecurringExpense): Long {
-        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.insert")
-        val now = timeProvider.now()
-        val entity = if (expense.createdAt == 0L) expense.copy(createdAt = now) else expense
-        val id = dao.insert(entity)
-        writeLifecycleEvent(id, "RULE_CREATED", now, null, null,
-            """{"merchant":"${entity.merchant}","amount":${entity.amount},"frequency":"${entity.frequency}"}""")
-        return id
+        return ruleLifecycleCoordinator.get().createRule(expense)
     }
 
     suspend fun delete(expense: ManualRecurringExpense) {
-        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.delete")
-        val now = timeProvider.now()
-        writeLifecycleEvent(expense.id, "RULE_DELETED", now, null, null,
-            """{"merchant":"${expense.merchant}","amount":${expense.amount},"frequency":"${expense.frequency}"}""")
-        dao.delete(expense)
+        ruleLifecycleCoordinator.get().deleteRule(expense.id)
     }
     
     suspend fun deleteById(id: Long) {
-        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.deleteById")
-        val now = timeProvider.now()
-        val existing = dao.getById(id)
-        if (existing != null) {
-            writeLifecycleEvent(id, "RULE_DELETED", now, null, null,
-                """{"merchant":"${existing.merchant}","amount":${existing.amount},"frequency":"${existing.frequency}"}""")
-        }
-        dao.deleteById(id)
+        ruleLifecycleCoordinator.get().deleteRule(id)
     }
 
     suspend fun update(expense: ManualRecurringExpense) {
-        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.update")
-        val now = timeProvider.now()
-        writeLifecycleEvent(expense.id, "RULE_UPDATED", now, null, null,
-            """{"merchant":"${expense.merchant}","amount":${expense.amount},"frequency":"${expense.frequency}"}""")
-        dao.update(expense.copy(createdAt = if (expense.createdAt == 0L) now else expense.createdAt))
+        ruleLifecycleCoordinator.get().updateRule(expense)
     }
 
     private suspend fun writeLifecycleEvent(

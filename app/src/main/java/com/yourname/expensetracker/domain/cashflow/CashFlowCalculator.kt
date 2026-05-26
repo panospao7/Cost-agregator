@@ -106,7 +106,15 @@ class CashFlowCalculator @Inject constructor(
         if (ruleIds.isNotEmpty()) {
             for (ruleId in ruleIds) {
                 try {
-                    recurringLifecycleCoordinator.generateOccurrences(ruleId, startTime, endTime)
+                    recurringLifecycleCoordinator.generateOccurrences(
+                        ruleId = ruleId,
+                        startDate = startTime,
+                        endDate = endTime,
+                        options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
+                            createReminderDeliveries = false,
+                            generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
+                        )
+                    )
                 } catch (e: Exception) {
                     Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d", ruleId)
                 }
@@ -330,7 +338,15 @@ class CashFlowCalculator @Inject constructor(
             // Generate (materialise) occurrences for each rule
             for (ruleId in ruleIds) {
                 try {
-                    recurringLifecycleCoordinator.generateOccurrences(ruleId, startOfToday, endDate)
+                    recurringLifecycleCoordinator.generateOccurrences(
+                        ruleId = ruleId,
+                        startDate = startOfToday,
+                        endDate = endDate,
+                        options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
+                            createReminderDeliveries = false,
+                            generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
+                        )
+                    )
                 } catch (e: Exception) {
                     Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d, skipping rule", ruleId)
                 }
