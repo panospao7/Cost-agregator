@@ -299,6 +299,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)
                 }
                 is ReceiptRecordWriteResult.Duplicate -> {
+                    bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = write.existingReceipt.id)
                     bankStatementImportRunDao.finalize(
                         runId = runId!!, status = BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS,
                         completedAt = timeProvider.now(), totalItems = 0, processedItems = 0,
@@ -523,12 +524,12 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             merchant = tx.merchant,
                             amount = tx.amount,
                             currency = tx.currency,
-                            errorReason = e.message?.take(500),
+                            errorReason = "Bank transaction processing failed",
                             createdAt = timeProvider.now(),
                             updatedAt = timeProvider.now()
                         )
                     )
-                    parsingLogs.add("ERROR: Failed to process transaction [REDACTED]: ${e.message}")
+                    parsingLogs.add("ERROR: Failed to process transaction [REDACTED]")
                     Timber.e(e, "Failed to create PendingReview for bank statement transaction")
                 }
             }
@@ -660,7 +661,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     duplicateExpenseCount = ed,
                     duplicatePendingCount = ep,
                     failedItemCount = ef,
-                    errorSummary = e.message?.take(500)
+                    errorSummary = "Bank statement processing failed"
                 )
             }
             Result.failure(e)

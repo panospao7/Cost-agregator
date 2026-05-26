@@ -98,13 +98,13 @@ class ReceiptDebugExporter @Inject constructor(
         return DebugExportResult.Allowed(formatReceiptDebug(receipt, includeRawOcrText))
     }
 
-    private fun formatReceiptDebug(receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt, includeRaw: Boolean): String {
+    private fun formatReceiptDebug(receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt, includeRaw: Boolean, includeImagePath: Boolean = false): String {
         return buildString {
             appendLine("═════════════════════════════════════════")
             appendLine("RECEIPT DEBUG REPORT (ID: ${receipt.id})")
             appendLine("═════════════════════════════════════════")
             appendLine()
-            if (includeRaw) {
+            if (includeImagePath) {
                 appendLine("IMAGE PATH: ${receipt.imagePath}")
             } else {
                 appendLine("IMAGE PATH: [REDACTED]")
