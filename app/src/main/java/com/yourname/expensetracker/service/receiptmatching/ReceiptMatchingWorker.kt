@@ -21,13 +21,13 @@ import dagger.assisted.AssistedInject
 import timber.log.Timber
 
 @HiltWorker
-@Suppress("DEPRECATION")
 class ReceiptMatchingWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val receiptRepository: ReceiptRepository,
     private val matcher: ReceiptTransactionMatcher,
     private val receiptLinkService: ReceiptLinkService,
+    private val matchService: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService,
     private val notificationService: com.yourname.expensetracker.domain.service.NotificationService,
     private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(context, params) {
@@ -82,7 +82,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                         }
                         is MatchResult.Suggested -> {
                             // Save as suggestion for manual review (no link service call for suggestions)
-                            receiptRepository.saveMatchSuggestion(
+                            matchService.saveMatchSuggestion(
                                 receiptId = receipt.id,
                                 suggestedExpenseId = matchResult.transaction.id,
                                 confidence = matchResult.score

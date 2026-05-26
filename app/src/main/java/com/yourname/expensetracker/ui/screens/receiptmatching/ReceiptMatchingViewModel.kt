@@ -84,11 +84,11 @@ data class MatchSuggestion(
  * [ReceiptLinkService]).
  */
 @HiltViewModel
-@Suppress("DEPRECATION")
 class ReceiptMatchingViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
     private val matcher: ReceiptTransactionMatcher,
-    private val receiptLinkService: ReceiptLinkService
+    private val receiptLinkService: ReceiptLinkService,
+    private val matchService: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptMatchingState())
@@ -168,7 +168,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                             )
                         }
                         is MatchResult.Suggested -> {
-                            receiptRepository.saveMatchSuggestion(
+                            matchService.saveMatchSuggestion(
                                 receipt.id,
                                 result.transaction.id,
                                 result.score
@@ -232,7 +232,7 @@ class ReceiptMatchingViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receiptId, error = null) }
             try {
-                receiptRepository.rejectAllSuggestions(receiptId)
+                matchService.rejectAllSuggestions(receiptId)
                 loadReceipts()
             } catch (e: Exception) {
                 Timber.e(e, "Failed to reject suggestion for receipt $receiptId")
@@ -302,7 +302,7 @@ class ReceiptMatchingViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(mutatingReceiptIds = it.mutatingReceiptIds + receiptId, error = null) }
             try {
-                receiptRepository.rejectAllSuggestions(receiptId)
+                matchService.rejectAllSuggestions(receiptId)
                 loadReceipts()
             } catch (e: Exception) {
                 Timber.e(e, "Failed to skip receipt $receiptId")
@@ -327,7 +327,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                     )
                 } else {
                     // No existing link — just clear suggestion fields via repository
-                    receiptRepository.clearMatchForReceipt(receipt.id)
+                    matchService.clearMatchForReceipt(receipt.id)
                 }
                 when (val result = matcher.findBestMatch(receipt)) {
                     is MatchResult.AutoMatch -> {
@@ -345,7 +345,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                         }
                     }
                     is MatchResult.Suggested -> {
-                        receiptRepository.saveMatchSuggestion(receipt.id, result.transaction.id, result.score)
+                        matchService.saveMatchSuggestion(receipt.id, result.transaction.id, result.score)
                     }
                     else -> {}
                 }

@@ -526,7 +526,7 @@ class ReceiptRepository @Inject constructor(
         scannedReceiptDao.deleteAll()
     }
 
-    @Deprecated("P3-718-02: Migrate to ReceiptLifecycleCoordinator.", level = DeprecationLevel.WARNING)
+    @Deprecated("Use ReceiptMatchLifecycleService.clearMatchForReceipt().", level = DeprecationLevel.ERROR)
     suspend fun clearMatchForReceipt(receiptId: Long) {
         val receipt = scannedReceiptDao.getById(receiptId) ?: return
         scannedReceiptDao.update(receipt.copy(
@@ -817,8 +817,8 @@ class ReceiptRepository @Inject constructor(
     }
 
     @Deprecated(
-        "P3-0D5-09: Use ReceiptLifecycleCoordinator.",
-        level = DeprecationLevel.WARNING
+        "Use ReceiptMatchLifecycleService.",
+        level = DeprecationLevel.ERROR
     )
     suspend fun saveMatchSuggestion(
         receiptId: Long,
@@ -841,8 +841,8 @@ class ReceiptRepository @Inject constructor(
     }
 
     @Deprecated(
-        "P3-0D5-09: Use ReceiptLifecycleCoordinator.",
-        level = DeprecationLevel.WARNING
+        "Use ReceiptMatchLifecycleService.",
+        level = DeprecationLevel.ERROR
     )
     suspend fun rejectAllSuggestions(receiptId: Long) {
         error("Disabled: use ReceiptLifecycleCoordinator for match operations")

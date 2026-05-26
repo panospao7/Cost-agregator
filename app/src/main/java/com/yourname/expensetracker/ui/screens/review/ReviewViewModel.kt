@@ -113,7 +113,6 @@ sealed interface ReviewEvent {
 }
 
 @HiltViewModel
-@Suppress("DEPRECATION")
 class ReviewViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val reviewQueueRepository: ReviewQueueRepository,
