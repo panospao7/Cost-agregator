@@ -221,7 +221,7 @@ class ReceiptLifecycleCoordinatorTest {
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
         )
-        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any(), any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) } returns nonEmptyBatch()
         coEvery { postCommitActionRunner.run(any()) } throws CancellationException("Cancelled")
 
         assertFailsWith<CancellationException> {
@@ -244,7 +244,7 @@ class ReceiptLifecycleCoordinatorTest {
             parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
             parsedItems = null, parsedTaxAmount = null, confidence = 0.7f
         )
-        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any(), any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) } returns nonEmptyBatch()
         coEvery { postCommitActionRunner.run(any()) } throws CancellationException("Cancelled")
 
         assertFailsWith<CancellationException> {
@@ -283,7 +283,7 @@ class ReceiptLifecycleCoordinatorTest {
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
         )
-        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any(), any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) } returns nonEmptyBatch()
         coEvery { postCommitActionRunner.run(any()) } throws RuntimeException("Best-effort failure")
 
         val result = coordinator.processReceiptInput(uri)
@@ -307,7 +307,7 @@ class ReceiptLifecycleCoordinatorTest {
             parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
             parsedItems = null, parsedTaxAmount = null, confidence = 0.7f
         )
-        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any(), any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) } returns nonEmptyBatch()
         coEvery { postCommitActionRunner.run(any()) } throws RuntimeException("Best-effort failure")
 
         val result = coordinator.processEmailReceipt(

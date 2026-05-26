@@ -103,6 +103,9 @@ class ExpenseDaoMutationAccessTest {
             )
         }
     }
+
+    @Test
+    fun `dao contains RestrictedExpenseDaoMutation annotations on mutating methods`() {
         // Verify the DAO file contains @RestrictedExpenseDaoMutation annotations
         val daoFile = sourceRoot.resolve(
             "com/yourname/expensetracker/data/database/dao/ExpenseDao.kt"

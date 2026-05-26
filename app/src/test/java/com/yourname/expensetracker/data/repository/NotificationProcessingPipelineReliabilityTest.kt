@@ -131,6 +131,8 @@ class NotificationProcessingPipelineReliabilityTest {
             diagnosticEmitter = mockk(relaxed = true),
         writeBarrier = writeBarrier,
         privacySettingsRepository = mockk(relaxed = true),
+        userCurrencyProvider = mockk(relaxed = true),
+        moneySignalDetector = mockk(relaxed = true),
         applicationScope = applicationScope
     )
 
