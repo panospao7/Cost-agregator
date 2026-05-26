@@ -111,6 +111,8 @@ class ReceiptRepositoryStressTest {
             receiptLifecycleCoordinator = mockk(relaxed = true),
             writeBarrier = mockk(relaxed = true),
             privacySettingsRepository = mockk(relaxed = true),
+            receiptEventDao = mockk(relaxed = true),
+            receiptInsertResolver = mockk(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
         )
     }

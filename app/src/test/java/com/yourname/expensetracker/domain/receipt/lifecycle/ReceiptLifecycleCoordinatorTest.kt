@@ -110,7 +110,10 @@ class ReceiptLifecycleCoordinatorTest {
             privacySettingsRepository = mockk(relaxed = true),
             diagnosticEventWriter = mockk(relaxed = true),
             sourceLinkWriter = mockk(relaxed = true),
-            receiptSideEffectPlanner = receiptSideEffectPlanner
+            receiptSideEffectPlanner = receiptSideEffectPlanner,
+            pendingReviewDao = mockk(relaxed = true),
+            pendingReviewSourceLinkService = mockk(relaxed = true),
+            receiptInsertResolver = mockk(relaxed = true)
         )
     }
 
