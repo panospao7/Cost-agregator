@@ -76,7 +76,7 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
 
         // Fulfill the planned expense
         val occKey = "RECURRING_RULE|$ruleId|$fixedNow|MONTHLY"
-        database.plannedExpenseDao().fulfillByOccurrenceKey(occKey, fixedNow)
+        database.plannedExpenseDao().fulfillByOccurrenceKey(occKey, 999L, fixedNow)
 
         // ── ACT: Query dashboard spending total for the month ──
         val periodStart = fixedNow - 86400000L * 15  // 15 days before

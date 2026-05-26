@@ -71,7 +71,8 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             dao = recurringExpenseDao,
             lifecycleEventDao = mockk<RecurringLifecycleEventDao>(relaxed = true),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            ruleLifecycleCoordinator = mockk(relaxed = true)
         )
         val recurringExpenseEngine = RecurringExpenseEngine(
             expenseRepository = expenseRepository,

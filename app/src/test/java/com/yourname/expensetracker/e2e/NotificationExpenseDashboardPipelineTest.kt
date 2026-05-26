@@ -238,7 +238,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                 writeBarrier = mockk(relaxed = true),
                 dao = recurringExpenseDao,
                 lifecycleEventDao = mockk(relaxed = true),
-                timeProvider = timeProvider
+                timeProvider = timeProvider,
+                ruleLifecycleCoordinator = mockk(relaxed = true)
             ),
             timeProvider = timeProvider
         )

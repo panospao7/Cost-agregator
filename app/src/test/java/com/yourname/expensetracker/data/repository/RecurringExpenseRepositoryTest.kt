@@ -29,7 +29,8 @@ class RecurringExpenseRepositoryTest {
             mockk<DatabaseWriteBarrier>(relaxed = true),
             dao,
             lifecycleEventDao,
-            mockk<TimeProvider>(relaxed = true)
+            mockk<TimeProvider>(relaxed = true),
+            ruleLifecycleCoordinator = mockk(relaxed = true)
         )
     }
 

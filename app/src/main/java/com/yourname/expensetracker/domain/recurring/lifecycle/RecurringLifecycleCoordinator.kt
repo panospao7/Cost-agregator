@@ -258,31 +258,75 @@ class RecurringLifecycleCoordinator @Inject constructor(
      *
      * Instead of blindly unlinking and re-linking (which can reopen fulfilled
      * planned rows and lose provenance), this method:
-     * 1. If expense was linked AND still matches the same occurrence → skip (no-op)
+     * 1. If expense was linked AND still matches → update payment snapshot
      * 2. If expense was linked but no longer matches → unlink old, try to link new
      * 3. If expense was not linked → try to link
      *
-     * @param expenseId The ID of the updated expense.
-     * @param reason Context for the reconcile (e.g. "transaction_update").
+     * @return Structured result indicating what happened.
      */
-    suspend fun reconcileExpenseLinkAfterUpdate(expenseId: Long, reason: String = "expense_updated") {
+    suspend fun reconcileExpenseLinkAfterUpdate(
+        expenseId: Long,
+        reason: String = "expense_updated"
+    ): RecurringExpenseReconcileResult {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.reconcileExpenseLinkAfterUpdate")
 
-        val expense = expenseDao.getById(expenseId) ?: return
+        val expense = expenseDao.getById(expenseId)
+            ?: return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_missing")
+
         val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
 
-        // If still matches the same occurrence, nothing to do
+        // If still matches the same occurrence, update payment snapshot
         if (linked != null) {
             if (isExpenseEligibleForRecurring(expense) && expenseMatchesOccurrence(expense, linked)) {
-                return // Still matches — no change needed
+                val now = timeProvider.now()
+                val rows = occurrenceDao.updateLinkedPaymentSnapshot(
+                    occurrenceId = linked.id,
+                    expenseId = expenseId,
+                    amount = expense.amount,
+                    currency = expense.currency,
+                    paidAt = expense.date,
+                    updatedAt = now
+                )
+                if (rows > 0) {
+                    try {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = linked.id,
+                                eventType = "OCCURRENCE_PAID_SNAPSHOT_UPDATED",
+                                occurredAt = now,
+                                oldStatus = "PAID",
+                                newStatus = "PAID",
+                                metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
+                            )
+                        )
+                    } catch (_: Exception) { /* best-effort */ }
+                }
+                return RecurringExpenseReconcileResult.UpdatedLinkedSnapshot(expenseId, linked.id)
             }
             // No longer matches — unlink from the old occurrence
             unlinkExpenseFromOccurrence(expenseId, "no_longer_matches_after_update")
+            val oldOccurrenceId = linked.id
+
+            // Try to re-link if still eligible
+            if (isExpenseEligibleForRecurring(expense)) {
+                val relinked = linkExpenseToOccurrence(expenseId)
+                if (relinked) {
+                    return RecurringExpenseReconcileResult.Relinked(expenseId, oldOccurrenceId, 0L)
+                }
+            }
+            return RecurringExpenseReconcileResult.Unlinked(expenseId, oldOccurrenceId, "no_new_match_after_update")
         }
 
-        // Try to link to a matching occurrence (or re-link after unlink)
-        if (isExpenseEligibleForRecurring(expense)) {
-            linkExpenseToOccurrence(expenseId)
+        // Not linked — try to link if eligible
+        if (!isExpenseEligibleForRecurring(expense)) {
+            return RecurringExpenseReconcileResult.Skipped(expenseId, "expense_not_eligible")
+        }
+
+        val relinked = linkExpenseToOccurrence(expenseId)
+        return if (relinked) {
+            RecurringExpenseReconcileResult.Linked(expenseId, 0L, null)
+        } else {
+            RecurringExpenseReconcileResult.NoMatch(expenseId, "no_matching_planned_occurrence")
         }
     }
 
@@ -588,74 +632,6 @@ class RecurringLifecycleCoordinator @Inject constructor(
     suspend fun claimReminderDelivery(deliveryId: Long): Boolean {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.claimReminderDelivery")
         return reminderDeliveryDao.claimDelivery(deliveryId, timeProvider.now()) > 0
-    }
-
-    /**
-     * Marks the current PLANNED occurrence for a recurring rule as PAID and advances nextDate.
-     * Used as a manual "mark paid" action when no actual expense exists to link.
-     *
-     * 1. Finds the PLANNED occurrence for the rule with the nearest due date
-     * 2. Updates it to PAID, suppresses reminders, fulfills planned expense
-     * 3. Advances the rule's nextDate
-     * 4. Writes lifecycle events
-     */
-    suspend fun markRuleBillAsPaid(ruleId: Long) {
-        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markRuleBillAsPaid")
-        val now = timeProvider.now()
-        val rule = manualRecurringExpenseDao.getById(ruleId) ?: return
-
-        database.withTransaction {
-            // Find the nearest PLANNED occurrence for this rule
-            val occurrences = occurrenceDao.getBySource(SOURCE_TYPE_RECURRING_RULE, ruleId)
-            val plannedOcc = occurrences
-                .filter { it.status == "PLANNED" && it.linkedExpenseId == null }
-                .minByOrNull { it.dueDate }
-                ?: return@withTransaction
-
-            // Mark the occurrence as PAID
-            occurrenceDao.update(
-                plannedOcc.copy(
-                    status = "PAID",
-                    paidAt = now,
-                    paidAmount = plannedOcc.expectedAmount,
-                    paidCurrency = plannedOcc.expectedCurrency,
-                    updatedAt = now
-                )
-            )
-
-            // Fulfill planned expense and suppress reminders
-            val planned = plannedExpenseDao.getBySourceOccurrenceKey(plannedOcc.occurrenceKey)
-            if (planned != null) {
-                plannedExpenseDao.updateStatus(planned.id, "FULFILLED", now)
-            }
-            reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(plannedOcc.id, now, "manual_mark_paid:$ruleId")
-
-            lifecycleEventDao.insert(
-                RecurringLifecycleEvent(
-                    occurrenceId = plannedOcc.id,
-                    eventType = "OCCURRENCE_PAID",
-                    occurredAt = now,
-                    oldStatus = "PLANNED",
-                    newStatus = "PAID",
-                    metadata = """{"ruleId":$ruleId,"source":"manual_mark_paid","amount":${plannedOcc.expectedAmount}}"""
-                )
-            )
-        }
-
-        // Advance nextDate (outside transaction to keep it simple)
-        val updatedRule = manualRecurringExpenseDao.getById(ruleId) ?: return
-        var newNextDate = com.yourname.expensetracker.domain.logic.RecurrenceCalculator.calculateNextDate(
-            updatedRule.nextDate, updatedRule.frequency
-        )
-        val todayStart = TimePeriodUtils.getStartOfDay(now)
-        var advanceCount = 0
-        while (newNextDate < todayStart && updatedRule.frequency != RecurrenceFrequency.IRREGULAR) {
-            newNextDate = com.yourname.expensetracker.domain.logic.RecurrenceCalculator.calculateNextDate(
-                newNextDate, updatedRule.frequency
-            )
-            if (++advanceCount > 1000) break
-        }
-        manualRecurringExpenseDao.updateNextDate(ruleId, newNextDate)
     }
 
     /**

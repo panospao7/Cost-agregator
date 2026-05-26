@@ -334,8 +334,18 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                recurringLifecycleCoordinator.get().reconcileExpenseLinkAfterUpdate(expenseId, "transaction_update:$source")
-                SideEffectOutcome.Completed
+                val result = recurringLifecycleCoordinator.get()
+                    .reconcileExpenseLinkAfterUpdate(expenseId, "transaction_update:$source")
+                when (result) {
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Linked,
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Unlinked,
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Relinked,
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.UpdatedLinkedSnapshot ->
+                        SideEffectOutcome.Completed
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.NoMatch,
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Skipped ->
+                        SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
+                }
             } catch (e: Exception) {
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring reconcile failed", e.javaClass.name)
             }

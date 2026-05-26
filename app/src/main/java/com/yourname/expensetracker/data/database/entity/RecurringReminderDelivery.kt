@@ -1,16 +1,26 @@
 package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "recurring_reminder_deliveries",
+    foreignKeys = [
+        ForeignKey(
+            entity = RecurringOccurrence::class,
+            parentColumns = ["id"],
+            childColumns = ["occurrenceId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
     indices = [
         Index(value = ["occurrenceId", "reminderWindow"], unique = true),
         Index(value = ["status"]),
         Index(value = ["scheduledAt"]),
-        Index(value = ["claimedAt"])
+        Index(value = ["claimedAt"]),
+        Index(value = ["occurrenceId"])
     ]
 )
 data class RecurringReminderDelivery(

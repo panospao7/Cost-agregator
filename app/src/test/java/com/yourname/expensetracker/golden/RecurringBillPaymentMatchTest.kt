@@ -69,7 +69,8 @@ class RecurringBillPaymentMatchTest : GoldenTestBase() {
         seedPlannedExpenseForOccurrence(ruleId, occKey)
 
         // When: Fulfill planned expense by occurrence key
-        val fulfilled = database.plannedExpenseDao().fulfillByOccurrenceKey(occKey, fixedNow)
+        val expenseId = 999L
+        val fulfilled = database.plannedExpenseDao().fulfillByOccurrenceKey(occKey, expenseId, fixedNow)
 
         // Then
         assertTrue(fulfilled > 0)

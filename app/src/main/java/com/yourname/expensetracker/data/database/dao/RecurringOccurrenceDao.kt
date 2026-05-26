@@ -65,4 +65,24 @@ interface RecurringOccurrenceDao {
     /** Deletes open PLANNED occurrences for a source (used during rule update regeneration). */
     @Query("DELETE FROM recurring_occurrences WHERE sourceType = :sourceType AND sourceId = :sourceId AND status = 'PLANNED'")
     suspend fun deleteOpenPlannedBySource(sourceType: String, sourceId: Long): Int
+
+    /** Updates payment snapshot when a linked expense is edited but still matches. */
+    @Query("""
+        UPDATE recurring_occurrences
+        SET paidAmount = :amount,
+            paidCurrency = :currency,
+            paidAt = :paidAt,
+            updatedAt = :updatedAt
+        WHERE id = :occurrenceId
+          AND status = 'PAID'
+          AND linkedExpenseId = :expenseId
+    """)
+    suspend fun updateLinkedPaymentSnapshot(
+        occurrenceId: Long,
+        expenseId: Long,
+        amount: Double,
+        currency: String,
+        paidAt: Long,
+        updatedAt: Long
+    ): Int
 }

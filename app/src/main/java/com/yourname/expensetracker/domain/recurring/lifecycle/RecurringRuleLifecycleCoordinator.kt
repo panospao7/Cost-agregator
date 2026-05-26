@@ -30,7 +30,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     private val occurrenceDao: RecurringOccurrenceDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val plannedExpenseDao: PlannedExpenseDao,
-    private val lifecycleEventDao: RecurringLifecycleEventDao
+    private val lifecycleEventDao: RecurringLifecycleEventDao,
+    private val lifecycleCoordinator: dagger.Lazy<RecurringLifecycleCoordinator>
 ) {
     companion object {
         private const val SOURCE_TYPE = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE
@@ -128,7 +129,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Activates a previously deactivated rule and writes RULE_ACTIVATED event.
+     * Activates a previously deactivated rule, writes RULE_ACTIVATED event,
+     * and generates future occurrences/reminders.
      */
     suspend fun activateRule(ruleId: Long) {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.activateRule")
@@ -146,6 +148,25 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     metadata = """{"ruleId":$ruleId,"merchant":"${existing?.merchant.orEmpty()}","isActive":true}"""
                 )
             )
+        }
+
+        // Generate future occurrences for the reactivated rule
+        val rule = existing ?: return
+        val regenerateStart = maxOf(rule.nextDate, com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now))
+        val regenerateEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(regenerateStart, 12)
+        try {
+            lifecycleCoordinator.get().generateOccurrences(
+                ruleId = ruleId,
+                startDate = regenerateStart,
+                endDate = regenerateEnd,
+                options = OccurrenceGenerationOptions(
+                    createReminderDeliveries = true,
+                    generationSource = OccurrenceGenerationSource.RULE_CREATE,
+                    allowPastDueReminderDeliveries = false
+                )
+            )
+        } catch (e: Exception) {
+            Timber.e(e, "Rule %d activated but occurrence generation failed", ruleId)
         }
     }
 
@@ -174,15 +195,14 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
      * Updates a recurring rule and regenerates open occurrences/planned rows/reminders.
      *
      * Algorithm:
-     * 1. Delete open PLANNED occurrences
-     * 2. Delete reminder deliveries for those occurrences
-     * 3. Delete/cancel open planned expenses
-     * 4. Update the rule itself
-     * 5. Write RULE_UPDATED event
+     * 1. Delete open PLANNED occurrences and their reminders
+     * 2. Delete open planned expenses for this rule
+     * 3. Update the rule itself
+     * 4. Write RULE_UPDATED_OPEN_ROWS_CLEARED event
+     * 5. Immediately regenerate future occurrences/reminders with updated rule fields
+     * 6. Write RULE_UPDATED_REGENERATED or RULE_REGENERATION_FAILED
      *
      * Terminal occurrences (PAID/SKIPPED/CANCELLED/MISSED) are preserved.
-     * Regeneration of future occurrences is deferred to the next generateOccurrences call
-     * (which will pick up the updated rule fields).
      */
     suspend fun updateRule(updated: ManualRecurringExpense) {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.updateRule")
@@ -210,7 +230,7 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
             lifecycleEventDao.insert(
                 RecurringLifecycleEvent(
                     occurrenceId = null,
-                    eventType = "RULE_UPDATED",
+                    eventType = "RULE_UPDATED_OPEN_ROWS_CLEARED",
                     occurredAt = now,
                     oldStatus = null,
                     newStatus = null,
@@ -219,6 +239,48 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
             )
         }
 
-        Timber.d("Rule %d updated — open occurrences/reminders/planned rows cleared", updated.id)
+        // Regenerate future occurrences with updated rule fields
+        // Use a 12-month horizon from the updated nextDate or today
+        val regenerateStart = maxOf(updated.nextDate, com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now))
+        val regenerateEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(regenerateStart, 12)
+        try {
+            lifecycleCoordinator.get().generateOccurrences(
+                ruleId = updated.id,
+                startDate = regenerateStart,
+                endDate = regenerateEnd,
+                options = OccurrenceGenerationOptions(
+                    createReminderDeliveries = true,
+                    generationSource = OccurrenceGenerationSource.RULE_UPDATE_REGENERATION,
+                    allowPastDueReminderDeliveries = false
+                )
+            )
+            // Write success event (best-effort, outside transaction)
+            try {
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = null,
+                        eventType = "RULE_UPDATED_REGENERATED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = null,
+                        metadata = """{"ruleId":${updated.id}}"""
+                    )
+                )
+            } catch (_: Exception) { /* best-effort */ }
+        } catch (e: Exception) {
+            Timber.e(e, "Rule %d updated but regeneration failed", updated.id)
+            try {
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = null,
+                        eventType = "RULE_REGENERATION_FAILED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = null,
+                        metadata = """{"ruleId":${updated.id},"error":"${e.message}"}"""
+                    )
+                )
+            } catch (_: Exception) { /* best-effort */ }
+        }
     }
 }
