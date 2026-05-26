@@ -32,11 +32,24 @@ class BillReminderWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val coordinator: RecurringLifecycleCoordinator,
     private val executionGuard: WorkerExecutionGuard,
-    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+    private val reminderSettingsRepository: com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "BillReminderWorker started — checking for due reminders")
+
+        // Check runtime settings before querying or claiming any rows
+        val settings = reminderSettingsRepository.getSnapshot()
+        if (!settings.billRemindersEnabled) {
+            Log.d(TAG, "Bill reminders disabled by runtime settings — skipping")
+            return Result.success()
+        }
+        val now = System.currentTimeMillis()
+        if (settings.isWithinQuietHours(now)) {
+            Log.d(TAG, "Bill reminders in quiet hours — skipping")
+            return Result.success()
+        }
 
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(

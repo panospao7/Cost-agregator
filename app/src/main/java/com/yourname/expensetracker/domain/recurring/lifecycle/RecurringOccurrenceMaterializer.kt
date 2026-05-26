@@ -52,16 +52,29 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     )
 
     /**
-     * Persists resolved occurrences and creates reminder deliveries.
-     *
-     * @param resolved The resolved occurrence candidates from [OccurrenceConflictResolver].
-     * @param options Controls whether and how reminder deliveries are created.
-     * @return Counts of created, updated, skipped occurrences and created reminders.
+     * Persists resolved occurrences and creates reminder deliveries in a new transaction.
+     * Delegates to [materializeInCurrentTransaction] inside `database.withTransaction`.
      */
     suspend fun materialize(
         resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>,
         options: MaterializationOptions
     ): MaterializationResult = database.withTransaction {
+        materializeInCurrentTransaction(resolved, options)
+    }
+
+    /**
+     * Transaction-safe internal materialization. Call this from inside an existing
+     * `database.withTransaction` block when materialization must be atomic with
+     * other mutations (e.g., rule update regeneration).
+     *
+     * @param resolved The resolved occurrence candidates.
+     * @param options Controls whether and how reminder deliveries are created.
+     * @return Counts of created, updated, skipped occurrences and created reminders.
+     */
+    suspend fun materializeInCurrentTransaction(
+        resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>,
+        options: MaterializationOptions
+    ): MaterializationResult {
         var created = 0
         var updated = 0
         var skipped = 0
@@ -242,7 +255,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
             }
         }
 
-        MaterializationResult(
+        return MaterializationResult(
             created = created,
             updated = updated,
             skipped = skipped,

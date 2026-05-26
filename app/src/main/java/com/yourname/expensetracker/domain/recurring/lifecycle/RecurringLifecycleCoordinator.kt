@@ -51,6 +51,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val manualRecurringExpenseDao: ManualRecurringExpenseDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val lifecycleEventDao: RecurringLifecycleEventDao,
+    private val eventWriter: RecurringLifecycleEventWriter,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
     private val plannedExpenseDao: PlannedExpenseDao

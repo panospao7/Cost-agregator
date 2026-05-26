@@ -31,7 +31,11 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val plannedExpenseDao: PlannedExpenseDao,
     private val lifecycleEventDao: RecurringLifecycleEventDao,
-    private val lifecycleCoordinator: dagger.Lazy<RecurringLifecycleCoordinator>
+    private val lifecycleCoordinator: dagger.Lazy<RecurringLifecycleCoordinator>,
+    private val expander: com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander,
+    private val resolver: com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver,
+    private val materializer: RecurringOccurrenceMaterializer,
+    private val expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao
 ) {
     companion object {
         private const val SOURCE_TYPE = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE
@@ -192,15 +196,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Updates a recurring rule and regenerates open occurrences/planned rows/reminders.
-     *
-     * Algorithm:
-     * 1. Delete open PLANNED occurrences and their reminders
-     * 2. Delete open planned expenses for this rule
-     * 3. Update the rule itself
-     * 4. Write RULE_UPDATED_OPEN_ROWS_CLEARED event
-     * 5. Immediately regenerate future occurrences/reminders with updated rule fields
-     * 6. Write RULE_UPDATED_REGENERATED or RULE_REGENERATION_FAILED
+     * Updates a recurring rule and atomically regenerates all open rows in a single transaction.
+     * If regeneration fails, the entire update rolls back.
      *
      * Terminal occurrences (PAID/SKIPPED/CANCELLED/MISSED) are preserved.
      */
@@ -226,61 +223,52 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
             // Update the rule itself
             manualRecurringExpenseDao.update(normalized)
 
-            // Write lifecycle event
+            // Regenerate future occurrences atomically
+            val regenerateStart = maxOf(
+                normalized.nextDate,
+                com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+            )
+            val regenerateEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(regenerateStart, 12)
+
+            // Expand future candidates from the updated rule
+            val request = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.ExpandRequest(
+                merchant = normalized.merchant,
+                amount = normalized.amount,
+                currency = normalized.currency,
+                frequency = normalized.frequency,
+                categoryId = normalized.categoryId,
+                startDate = regenerateStart,
+                endDate = regenerateEnd,
+                anchorDate = normalized.nextDate,
+                sourceType = SOURCE_TYPE,
+                sourceId = normalized.id
+            )
+            val candidates = expander.expand(request)
+            val actualExpenses = expenseDao.getExpensesBetween(regenerateStart, regenerateEnd)
+            val resolved = resolver.resolve(candidates, actualExpenses)
+
+            // Materialize in the current transaction (atomic!)
+            materializer.materializeInCurrentTransaction(
+                resolved = resolved,
+                options = RecurringOccurrenceMaterializer.MaterializationOptions(
+                    createReminderDeliveries = true,
+                    reminderWindows = RecurringLifecycleCoordinator.DEFAULT_REMINDER_WINDOWS,
+                    generationSource = OccurrenceGenerationSource.RULE_UPDATE_REGENERATION.name,
+                    allowPastDueReminderDeliveries = false
+                )
+            )
+
+            // Write success event
             lifecycleEventDao.insert(
                 RecurringLifecycleEvent(
                     occurrenceId = null,
-                    eventType = "RULE_UPDATED_OPEN_ROWS_CLEARED",
+                    eventType = "RULE_UPDATED_REGENERATED",
                     occurredAt = now,
                     oldStatus = null,
                     newStatus = null,
                     metadata = """{"ruleId":${updated.id},"oldAmount":${old.amount},"newAmount":${updated.amount},"oldFrequency":"${old.frequency}","newFrequency":"${updated.frequency}"}"""
                 )
             )
-        }
-
-        // Regenerate future occurrences with updated rule fields
-        // Use a 12-month horizon from the updated nextDate or today
-        val regenerateStart = maxOf(updated.nextDate, com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now))
-        val regenerateEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(regenerateStart, 12)
-        try {
-            lifecycleCoordinator.get().generateOccurrences(
-                ruleId = updated.id,
-                startDate = regenerateStart,
-                endDate = regenerateEnd,
-                options = OccurrenceGenerationOptions(
-                    createReminderDeliveries = true,
-                    generationSource = OccurrenceGenerationSource.RULE_UPDATE_REGENERATION,
-                    allowPastDueReminderDeliveries = false
-                )
-            )
-            // Write success event (best-effort, outside transaction)
-            try {
-                lifecycleEventDao.insert(
-                    RecurringLifecycleEvent(
-                        occurrenceId = null,
-                        eventType = "RULE_UPDATED_REGENERATED",
-                        occurredAt = now,
-                        oldStatus = null,
-                        newStatus = null,
-                        metadata = """{"ruleId":${updated.id}}"""
-                    )
-                )
-            } catch (_: Exception) { /* best-effort */ }
-        } catch (e: Exception) {
-            Timber.e(e, "Rule %d updated but regeneration failed", updated.id)
-            try {
-                lifecycleEventDao.insert(
-                    RecurringLifecycleEvent(
-                        occurrenceId = null,
-                        eventType = "RULE_REGENERATION_FAILED",
-                        occurredAt = now,
-                        oldStatus = null,
-                        newStatus = null,
-                        metadata = """{"ruleId":${updated.id},"error":"${e.message}"}"""
-                    )
-                )
-            } catch (_: Exception) { /* best-effort */ }
         }
     }
 }

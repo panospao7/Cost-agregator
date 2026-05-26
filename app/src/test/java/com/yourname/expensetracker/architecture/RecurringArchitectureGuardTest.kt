@@ -106,20 +106,66 @@ class RecurringArchitectureGuardTest {
     fun `no live legacy markBillPaid path in production`() {
         val errors = mutableListOf<String>()
         walkSourceFiles(sourceRoot) { file, text ->
-            // Skip test files
             if (file.absolutePath.contains("test")) return@walkSourceFiles
-            // The BillReminderManager itself is allowed to have the deprecated method
             if (file.name == "BillReminderManager.kt") return@walkSourceFiles
-
             if (text.contains(".markBillPaid(") || text.contains(".markRuleBillAsPaid(")) {
                 errors.add("${file.name}: contains call to legacy markBillPaid/markRuleBillAsPaid")
             }
         }
+        assertTrue("Live legacy markBillPaid callers found:\n${errors.joinToString("\n")}", errors.isEmpty())
+    }
 
-        assertTrue(
-            "Live legacy markBillPaid callers found:\n${errors.joinToString("\n")}",
-            errors.isEmpty()
-        )
+    @Test
+    fun `no raw status updateOccurrenceStatus api in production`() {
+        val errors = mutableListOf<String>()
+        walkSourceFiles(sourceRoot) { file, text ->
+            if (file.name == "RecurringLifecycleCoordinator.kt") return@walkSourceFiles
+            if (text.contains("updateOccurrenceStatus(") && !text.contains("RecurringOccurrenceStatus") &&
+                !text.contains("RecurringOccurrenceTransitionReason")) {
+                errors.add("${file.name}: raw updateOccurrenceStatus call detected")
+            }
+        }
+        assertTrue("Raw status update calls outside allowed files:\n${errors.joinToString("\n")}", errors.isEmpty())
+    }
+
+    @Test
+    fun `no 0L placeholder occurrence ids in reconcile results`() {
+        val errors = mutableListOf<String>()
+        walkSourceFiles(sourceRoot) { file, text ->
+            if (text.contains("Linked(expenseId, 0L") ||
+                text.contains("Relinked(expenseId, oldOccurrenceId, 0L") ||
+                text.contains("newOccurrenceId = 0L")) {
+                errors.add("${file.name}: contains 0L placeholder in reconcile result")
+            }
+        }
+        assertTrue("0L placeholder ids found in reconcile results:\n${errors.joinToString("\n")}", errors.isEmpty())
+    }
+
+    @Test
+    fun `migration index names match Room defaults`() {
+        val appDbFile = File(sourceRoot, "com/yourname/expensetracker/data/database/AppDatabase.kt")
+        if (!appDbFile.exists()) return
+        val text = appDbFile.readText()
+        // Room default names should be present, not custom short names
+        assertFalse("Migration uses wrong index name 'index_reminder_deliveries_occ_window'",
+            text.contains("index_reminder_deliveries_occ_window"))
+        assertTrue("Migration should use Room default index name",
+            text.contains("index_recurring_reminder_deliveries_occurrenceId_reminderWindow"))
+    }
+
+    @Test
+    fun `create and delete planner actions use detailed results`() {
+        val plannerFile = File(sourceRoot, "com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectPlanner.kt")
+        if (!plannerFile.exists()) return
+        val text = plannerFile.readText()
+        // Create action should use linkExpenseToOccurrenceDetailed, not plain linkExpenseToOccurrence
+        val createBlock = text.substringAfter("makeRecurringMatchingAction").substringBefore("makeRecurringReconcileAction")
+        assertTrue("Create action should use linkExpenseToOccurrenceDetailed",
+            createBlock.contains("linkExpenseToOccurrenceDetailed"))
+        // Delete action should use unlinkExpenseFromOccurrenceDetailed
+        val deleteBlock = text.substringAfter("makeRecurringUnlinkAction")
+        assertTrue("Delete action should use unlinkExpenseFromOccurrenceDetailed",
+            deleteBlock.contains("unlinkExpenseFromOccurrenceDetailed"))
     }
 
     private fun walkSourceFiles(root: File, block: (File, String) -> Unit) {
