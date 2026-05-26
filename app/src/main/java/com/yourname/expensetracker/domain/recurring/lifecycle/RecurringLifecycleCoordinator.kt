@@ -591,6 +591,74 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Marks the current PLANNED occurrence for a recurring rule as PAID and advances nextDate.
+     * Used as a manual "mark paid" action when no actual expense exists to link.
+     *
+     * 1. Finds the PLANNED occurrence for the rule with the nearest due date
+     * 2. Updates it to PAID, suppresses reminders, fulfills planned expense
+     * 3. Advances the rule's nextDate
+     * 4. Writes lifecycle events
+     */
+    suspend fun markRuleBillAsPaid(ruleId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markRuleBillAsPaid")
+        val now = timeProvider.now()
+        val rule = manualRecurringExpenseDao.getById(ruleId) ?: return
+
+        database.withTransaction {
+            // Find the nearest PLANNED occurrence for this rule
+            val occurrences = occurrenceDao.getBySource(SOURCE_TYPE_RECURRING_RULE, ruleId)
+            val plannedOcc = occurrences
+                .filter { it.status == "PLANNED" && it.linkedExpenseId == null }
+                .minByOrNull { it.dueDate }
+                ?: return@withTransaction
+
+            // Mark the occurrence as PAID
+            occurrenceDao.update(
+                plannedOcc.copy(
+                    status = "PAID",
+                    paidAt = now,
+                    paidAmount = plannedOcc.expectedAmount,
+                    paidCurrency = plannedOcc.expectedCurrency,
+                    updatedAt = now
+                )
+            )
+
+            // Fulfill planned expense and suppress reminders
+            val planned = plannedExpenseDao.getBySourceOccurrenceKey(plannedOcc.occurrenceKey)
+            if (planned != null) {
+                plannedExpenseDao.updateStatus(planned.id, "FULFILLED", now)
+            }
+            reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(plannedOcc.id, now, "manual_mark_paid:$ruleId")
+
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = plannedOcc.id,
+                    eventType = "OCCURRENCE_PAID",
+                    occurredAt = now,
+                    oldStatus = "PLANNED",
+                    newStatus = "PAID",
+                    metadata = """{"ruleId":$ruleId,"source":"manual_mark_paid","amount":${plannedOcc.expectedAmount}}"""
+                )
+            )
+        }
+
+        // Advance nextDate (outside transaction to keep it simple)
+        val updatedRule = manualRecurringExpenseDao.getById(ruleId) ?: return
+        var newNextDate = com.yourname.expensetracker.domain.logic.RecurrenceCalculator.calculateNextDate(
+            updatedRule.nextDate, updatedRule.frequency
+        )
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+        var advanceCount = 0
+        while (newNextDate < todayStart && updatedRule.frequency != RecurrenceFrequency.IRREGULAR) {
+            newNextDate = com.yourname.expensetracker.domain.logic.RecurrenceCalculator.calculateNextDate(
+                newNextDate, updatedRule.frequency
+            )
+            if (++advanceCount > 1000) break
+        }
+        manualRecurringExpenseDao.updateNextDate(ruleId, newNextDate)
+    }
+
+    /**
      * Snapshot returned after a successful claim, used to validate the delivery
      * is still dispatchable before sending a notification.
      */

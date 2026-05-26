@@ -126,7 +126,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                     )
                                 )
                             }
-                            reminderDeliveryDao.suppressByOccurrenceId(existing.id)
+                            reminderDeliveryDao.suppressByOccurrenceId(existing.id, now)
                         }
 
                         updated++
@@ -165,7 +165,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                             )
                         )
                     }
-                    reminderDeliveryDao.suppressByOccurrenceId(insertResult)
+                    reminderDeliveryDao.suppressByOccurrenceId(insertResult, now)
                 }
 
                 // Write lifecycle event for newly created occurrence

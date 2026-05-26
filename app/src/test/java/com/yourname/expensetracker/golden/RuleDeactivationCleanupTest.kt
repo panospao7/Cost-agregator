@@ -69,7 +69,7 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
         // When: suppress reminders for these occurrences
         var totalSuppressed = 0
         occurrenceIds.forEach {
-            totalSuppressed += database.recurringReminderDeliveryDao().suppressByOccurrenceId(it)
+            totalSuppressed += database.recurringReminderDeliveryDao().suppressByOccurrenceId(it, System.currentTimeMillis())
         }
 
         // Then

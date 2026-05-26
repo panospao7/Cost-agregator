@@ -166,6 +166,7 @@ interface RecurringReminderDeliveryDao {
             scheduledAt = :scheduledAt,
             snoozedUntil = NULL,
             dismissedAt = NULL,
+            claimedAt = NULL,
             failureReason = NULL,
             updatedAt = :now
         WHERE occurrenceId = :occurrenceId
@@ -182,12 +183,15 @@ interface RecurringReminderDeliveryDao {
     /**
      * P4-CURRENT-003: Suppress open deliveries for an occurrence by ID.
      * Used when materializer auto-PAIDs an occurrence.
+     * Now includes FAILED_TRANSIENT for consistency with suppressOpenDeliveriesForOccurrence.
      */
     @Query("""
         UPDATE recurring_reminder_deliveries
-        SET status = 'CANCELLED'
+        SET status = 'CANCELLED',
+            failureReason = 'occurrence_paid',
+            updatedAt = :now
         WHERE occurrenceId = :occurrenceId
-          AND status IN ('SCHEDULED', 'SNOOZED', 'CLAIMED')
+          AND status IN ('SCHEDULED', 'SNOOZED', 'CLAIMED', 'FAILED_TRANSIENT')
     """)
-    suspend fun suppressByOccurrenceId(occurrenceId: Long): Int
+    suspend fun suppressByOccurrenceId(occurrenceId: Long, now: Long): Int
 }

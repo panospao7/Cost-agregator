@@ -89,7 +89,7 @@ class RecurringBillPaymentMatchTest : GoldenTestBase() {
         assertEquals("SCHEDULED", before!!.status)
 
         // When: Suppress reminders for this occurrence
-        val suppressed = database.recurringReminderDeliveryDao().suppressByOccurrenceId(occId)
+        val suppressed = database.recurringReminderDeliveryDao().suppressByOccurrenceId(occId, System.currentTimeMillis())
 
         // Then
         assertTrue(suppressed > 0)

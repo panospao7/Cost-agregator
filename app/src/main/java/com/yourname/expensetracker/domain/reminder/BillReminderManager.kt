@@ -49,7 +49,8 @@ enum class ReminderUrgency {
 @Singleton
 class BillReminderManager @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val lifecycleCoordinator: dagger.Lazy<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator>
 ) {
     companion object {
         const val DEFAULT_REMINDER_DAYS = 3 // Days before due date
@@ -144,39 +145,26 @@ class BillReminderManager @Inject constructor(
      * `rollNextExpectedDateForward()` pattern in [RecurringExpenseEngine].
      * IRREGULAR frequency is skipped because it has no predictable interval.
      *
-     * @deprecated Use [RecurringLifecycleCoordinator.linkExpenseToOccurrence] for full lifecycle:
-     *   marks the occurrence as PAID, fulfills the planned expense, suppresses reminders,
-     *   and writes lifecycle events. This legacy method only advances nextDate and does
-     *   NOT update occurrence/planned-expense/reminder state.
+     * @deprecated Use [markRuleBillAsPaid] which delegates to the lifecycle coordinator
+     *   for proper occurrence/reminder/planned-expense management.
      */
     @Deprecated(
-        message = "Use RecurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId) for full lifecycle tracking",
-        replaceWith = ReplaceWith(
-            "RecurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)",
-            "com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator"
-        ),
-        level = DeprecationLevel.ERROR
+        message = "Use markRuleBillAsPaid(recurringExpenseId) for full lifecycle tracking",
+        level = DeprecationLevel.WARNING
     )
-    suspend fun markBillPaid(recurringExpenseId: Long) = withContext(Dispatchers.IO) {
-        val expense = recurringExpenseRepository.getById(recurringExpenseId) ?: return@withContext
+    suspend fun markBillPaid(recurringExpenseId: Long) {
+        lifecycleCoordinator.get().markRuleBillAsPaid(recurringExpenseId)
+    }
 
-        var newNextDate = RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency)
-
-        // REC-3: Advance overdue dates until they reach today
-        val todayStart = TimePeriodUtils.getStartOfDay(timeProvider.now())
-        var advanceCount = 0
-        while (newNextDate < todayStart && expense.frequency != RecurrenceFrequency.IRREGULAR) {
-            newNextDate = RecurrenceCalculator.calculateNextDate(newNextDate, expense.frequency)
-            advanceCount++
-        }
-        if (advanceCount > 0) {
-            Timber.d("REC-3: Advanced next due date for %s by %d interval(s) to catch up to today", expense.merchant, advanceCount)
-        }
-
-        val updated = expense.copy(nextDate = newNextDate)
-        recurringExpenseRepository.update(updated)
-
-        Timber.d("Marked bill paid for ${expense.merchant}, next due: $newNextDate")
+    /**
+     * Marks a recurring bill as paid via the lifecycle coordinator.
+     * Finds the current PLANNED occurrence, marks it PAID, suppresses reminders,
+     * fulfills the planned expense, and advances the next due date.
+     *
+     * This is the replacement for the legacy [markBillPaid] path.
+     */
+    suspend fun markRuleBillAsPaid(recurringExpenseId: Long) {
+        lifecycleCoordinator.get().markRuleBillAsPaid(recurringExpenseId)
     }
     
     /**
