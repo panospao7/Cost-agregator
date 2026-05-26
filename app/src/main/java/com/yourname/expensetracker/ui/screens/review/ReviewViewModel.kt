@@ -129,7 +129,8 @@ class ReviewViewModel @Inject constructor(
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
-    private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator
+    private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
+    private val receiptDebugExporter: com.yourname.expensetracker.domain.debug.ReceiptDebugExporter
 ) : ViewModel() {
     
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -1028,13 +1029,31 @@ class ReviewViewModel @Inject constructor(
     }
 
     suspend fun getDebugExportData(): String {
-        return receiptRepository.exportParserDebugData()
+        val result = receiptDebugExporter.exportParserDebugData(
+            includeRawOcrText = false,
+            exportConsent = "ReviewViewModel_debug",
+            requestedBy = "ReviewViewModel"
+        )
+        return when (result) {
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Allowed -> result.content
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Denied -> "[BLOCKED] ${result.reason}"
+        }
     }
 
     suspend fun getReceiptDebugInfo(receiptId: Long): String {
-        return receiptRepository.debugReceipt(receiptId)
+        val result = receiptDebugExporter.debugReceipt(
+            receiptId = receiptId,
+            includeRawOcrText = false,
+            exportConsent = "ReviewViewModel_debug",
+            requestedBy = "ReviewViewModel"
+        )
+        return when (result) {
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Allowed -> result.content
+            is com.yourname.expensetracker.domain.debug.DebugExportResult.Denied -> "[BLOCKED] ${result.reason}"
+        }
     }
 
+    @Suppress("DEPRECATION")
     fun clearScannedData() {
         viewModelScope.launch {
             receiptRepository.clearAllScannedReceipts()

@@ -715,7 +715,7 @@ class ReceiptRepository @Inject constructor(
      *
      * Concatenates all raw OCR text from the database for debugging/parsing refinement.
      */
-    @Deprecated("P3-718-03: Use ReceiptDebugExporter.", level = DeprecationLevel.WARNING)
+    @Deprecated("Use ReceiptDebugExporter.exportParserDebugData().", level = DeprecationLevel.ERROR)
     suspend fun exportParserDebugData(): String {
         // P3-BLOCKER-07: Debug export gated behind DEBUG build + storage mode.
         if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
@@ -753,7 +753,7 @@ class ReceiptRepository @Inject constructor(
     /**
      * Debug function to get detailed info about a scanned receipt
      */
-    @Deprecated("P3-718-03: Use ReceiptDebugExporter.", level = DeprecationLevel.WARNING)
+    @Deprecated("Use ReceiptDebugExporter.debugReceipt().", level = DeprecationLevel.ERROR)
     suspend fun debugReceipt(receiptId: Long): String {
         // P3-BLOCKER-04: Gate + redact by default.
         if (!com.yourname.expensetracker.BuildConfig.DEBUG)
