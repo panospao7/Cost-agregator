@@ -605,14 +605,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 return Result.failure(Exception("Bank statement import had $finalFailedItemCount failed items"))
             }
 
-            val debugData = DebugData(
-                rawText = "", // P3-EB0-08: redacted by default
-                parsedTransactions = parsedTransactions,
-                parsingLogs = parsingLogs,
-                processingTimeMs = timeProvider.now() - startTime,
-                parserUsed = "BankStatementParser",
-                validationSources = validationSources
-            )
+            val debugData = null // P3-33D-05: DebugData redacted by default
 
             val result = BankStatementResult(
                 receiptId = receiptId,
@@ -622,7 +615,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 debugData = debugData
             )
 
-            Timber.d("BankStatementLifecycleProcessor: result=%s", result)
+            Timber.d("BankStatementLifecycleProcessor: receiptId=%d, txs=%d, reviews=%d, dups=%d",
+                result.receiptId, result.transactionsFound, result.reviewsCreated, result.duplicatesSkipped)
             Result.success(result)
 
         } catch (e: Exception) {

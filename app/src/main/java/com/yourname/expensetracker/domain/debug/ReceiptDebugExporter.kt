@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.debug
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -39,6 +40,7 @@ class ReceiptDebugExporter @Inject constructor(
     ): DebugExportResult {
         // Gate: require explicit consent reason
         if (exportConsent.isBlank()) {
+            Timber.w("DEBUG_EXPORT_DENIED: consent blank, requestedBy=%s", requestedBy)
             return DebugExportResult.Denied("Export consent reason is required")
         }
 
@@ -46,6 +48,7 @@ class ReceiptDebugExporter @Inject constructor(
         if (includeRawOcrText) {
             val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
             if (mode != RawStorageMode.STORE_RAW) {
+                Timber.w("DEBUG_EXPORT_DENIED: rawStorageMode=%s, requestedBy=%s", mode, requestedBy)
                 return DebugExportResult.Denied(
                     "Raw OCR export blocked: storage mode is $mode (requires STORE_RAW)"
                 )
@@ -71,6 +74,7 @@ class ReceiptDebugExporter @Inject constructor(
             }
             offset += pageSize
         }
+        Timber.d("DEBUG_EXPORT_ALLOWED: raw=%b, requestedBy=%s, count=%d", includeRawOcrText, requestedBy, totalCount)
         return DebugExportResult.Allowed(sb.toString())
     }
 
@@ -95,6 +99,7 @@ class ReceiptDebugExporter @Inject constructor(
         }
         val receipt = scannedReceiptDao.getById(receiptId)
             ?: return DebugExportResult.Denied("Receipt not found: $receiptId")
+        Timber.d("DEBUG_EXPORT_ALLOWED single: receiptId=%d, raw=%b, requestedBy=%s", receiptId, includeRawOcrText, requestedBy)
         return DebugExportResult.Allowed(formatReceiptDebug(receipt, includeRawOcrText))
     }
 
