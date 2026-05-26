@@ -21,6 +21,7 @@ import dagger.assisted.AssistedInject
 import timber.log.Timber
 
 @HiltWorker
+@Suppress("DEPRECATION")
 class ReceiptMatchingWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,

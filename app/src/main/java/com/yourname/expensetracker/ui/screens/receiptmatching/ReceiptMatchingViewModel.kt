@@ -84,6 +84,7 @@ data class MatchSuggestion(
  * [ReceiptLinkService]).
  */
 @HiltViewModel
+@Suppress("DEPRECATION")
 class ReceiptMatchingViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
     private val matcher: ReceiptTransactionMatcher,
