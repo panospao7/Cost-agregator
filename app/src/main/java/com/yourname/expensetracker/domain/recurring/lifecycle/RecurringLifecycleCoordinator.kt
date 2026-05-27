@@ -341,22 +341,39 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Reconciles all expenses linked to occurrences after a bulk update that
-     * may have changed recurring-relevant fields (amount/date/currency/merchant).
+     * Reconciles all expenses linked to occurrences after a bulk update.
+     * Returns structured counts so the planner can surface accurate outcomes.
      */
-    suspend fun reconcileAllLinkedExpensesAfterBulkUpdate(source: String): Int {
+    suspend fun reconcileAllLinkedExpensesAfterBulkUpdate(source: String): BulkRecurringReconcileResult {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.reconcileAllLinkedExpensesAfterBulkUpdate")
         val occurrences = occurrenceDao.getByStatus("PAID")
         val expenseIds = occurrences.mapNotNull { it.linkedExpenseId }.distinct()
-        var reconciled = 0
+        var linked = 0; var unlinked = 0; var relinked = 0
+        var updatedSnapshots = 0; var noMatch = 0; var skipped = 0; var failed = 0
         for (expenseId in expenseIds) {
             try {
-                reconcileExpenseLinkAfterUpdate(expenseId, "bulk_update:$source")
-                reconciled++
-            } catch (_: Exception) { /* individual failure doesn't stop batch */ }
+                when (val result = reconcileExpenseLinkAfterUpdate(expenseId, "bulk_update:$source")) {
+                    is RecurringExpenseReconcileResult.Linked -> linked++
+                    is RecurringExpenseReconcileResult.Unlinked -> unlinked++
+                    is RecurringExpenseReconcileResult.Relinked -> relinked++
+                    is RecurringExpenseReconcileResult.UpdatedLinkedSnapshot -> updatedSnapshots++
+                    is RecurringExpenseReconcileResult.NoMatch -> noMatch++
+                    is RecurringExpenseReconcileResult.Skipped -> skipped++
+                }
+            } catch (_: Exception) { failed++ }
         }
-        Timber.d("Bulk recurring reconcile: %d of %d linked expenses reconciled", reconciled, expenseIds.size)
-        return reconciled
+        Timber.d("Bulk recurring reconcile: l=%d u=%d r=%d s=%d n=%d k=%d f=%d",
+            linked, unlinked, relinked, updatedSnapshots, noMatch, skipped, failed)
+        return BulkRecurringReconcileResult(expenseIds.size, linked, unlinked, relinked, updatedSnapshots, noMatch, skipped, failed)
+    }
+
+    /** Structured result for bulk recurring reconciliation. */
+    data class BulkRecurringReconcileResult(
+        val total: Int, val linked: Int, val unlinked: Int, val relinked: Int,
+        val updatedSnapshots: Int, val noMatch: Int, val skipped: Int, val failed: Int
+    ) {
+        val meaningfulMutations: Int get() = linked + unlinked + relinked + updatedSnapshots
+        val hasFailures: Boolean get() = failed > 0
     }
 
     private fun isExpenseEligibleForRecurring(expense: com.yourname.expensetracker.data.database.entity.Expense): Boolean {

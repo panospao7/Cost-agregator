@@ -573,9 +573,12 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                val reconciled = recurringLifecycleCoordinator.get()
+                val result = recurringLifecycleCoordinator.get()
                     .reconcileAllLinkedExpensesAfterBulkUpdate(source)
-                if (reconciled > 0) SideEffectOutcome.Completed
+                if (result.hasFailures) SideEffectOutcome.FailedRetryable(
+                    "Bulk reconcile: ${result.failed} of ${result.total} failed", "RecurringLifecycle"
+                )
+                else if (result.meaningfulMutations > 0) SideEffectOutcome.Completed
                 else SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK)
             } catch (e: Exception) {
                 SideEffectOutcome.FailedRetryable(e.message ?: "Bulk recurring reconcile failed", e.javaClass.name)
