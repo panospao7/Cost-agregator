@@ -61,12 +61,14 @@ class TransactionSideEffectPlanner @Inject constructor(
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
             }
-            TransactionUpdateKind.FULL, TransactionUpdateKind.MERCHANT, TransactionUpdateKind.TYPE, TransactionUpdateKind.TRANSFER_DETAILS -> {
+            TransactionUpdateKind.FULL, TransactionUpdateKind.MERCHANT, TransactionUpdateKind.TYPE, TransactionUpdateKind.TRANSFER_DETAILS,
+            TransactionUpdateKind.AMOUNT, TransactionUpdateKind.DATE, TransactionUpdateKind.CURRENCY,
+            TransactionUpdateKind.OWNERSHIP, TransactionUpdateKind.PAYMENT_CORE -> {
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeMerchantCategoryLearningAction(expenseId, source, corrId))
                 actions.add(makeMerchantCanonicalStatsAction(expenseId, source, corrId))
-                if (kind == TransactionUpdateKind.MERCHANT || kind == TransactionUpdateKind.TYPE || kind == TransactionUpdateKind.FULL) {
+                if (kind.affectsRecurringMatch()) {
                     actions.add(makeRecurringReconcileAction(expenseId, source, corrId))
                 }
             }

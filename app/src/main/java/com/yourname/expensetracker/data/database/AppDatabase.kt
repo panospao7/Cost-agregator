@@ -8173,10 +8173,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         val MIGRATION_139_140 = object : androidx.room.migration.Migration(139, 140) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // P4-P1-05: Backfill occurrence keys to canonical sourceType-prefixed format.
-                // Strategy: build canonical-id map BEFORE updating unique keys, remap dependents,
-                // resolve duplicate planned open keys, then safely update keys last.
+                // Build canonical map for ALL rows (not just non-canonical) so that
+                // already-canonical loser rows are also processed and deleted.
 
-                // Step 1: Create canonical occurrence map
+                // Step 1: Create canonical occurrence map for ALL rows
                 database.execSQL("""
                     CREATE TEMP TABLE occ_canonical_map_139_140 (
                         occurrenceId INTEGER NOT NULL,
@@ -8205,8 +8205,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 c.id
                             LIMIT 1)
                     FROM recurring_occurrences ro
-                    WHERE ro.occurrenceKey != ro.sourceType || '|' || ro.sourceId || '|' || ro.dueDate || '|' || ro.frequency
-                       OR ro.occurrenceKey LIKE '{%'
                 """.trimIndent())
 
                 // Step 2: Remap reminder deliveries to canonical occurrence (no conflict)
@@ -8239,47 +8237,61 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                            WHERE occurrenceId != canonicalId)
                 """.trimIndent())
 
-                // Step 5: Create planned key map
+                // Step 5: Build planned target-key map including old AND already-new keys
                 database.execSQL("""
-                    CREATE TEMP TABLE planned_key_map_139_140 AS
-                    SELECT DISTINCT oldKey, newKey
-                    FROM occ_canonical_map_139_140
+                    CREATE TEMP TABLE planned_target_key_139_140 (
+                        plannedId INTEGER NOT NULL,
+                        oldSourceKey TEXT,
+                        targetSourceKey TEXT NOT NULL
+                    )
+                """.trimIndent())
+
+                database.execSQL("""
+                    INSERT INTO planned_target_key_139_140 (plannedId, oldSourceKey, targetSourceKey)
+                    SELECT p.id,
+                           p.sourceOccurrenceKey,
+                           COALESCE(
+                               (SELECT m.newKey FROM occ_canonical_map_139_140 m
+                                WHERE m.oldKey = p.sourceOccurrenceKey LIMIT 1),
+                               p.sourceOccurrenceKey
+                           )
+                    FROM planned_expenses p
+                    WHERE p.sourceOccurrenceKey IS NOT NULL
                 """.trimIndent())
 
                 // Step 6: Resolve duplicate planned open keys before update
                 database.execSQL("""
                     CREATE TEMP TABLE planned_keep_139_140 AS
-                    SELECT MIN(p.id) AS keepId, m.newKey
-                    FROM planned_expenses p
-                    JOIN planned_key_map_139_140 m ON p.sourceOccurrenceKey = m.oldKey
+                    SELECT MIN(t.plannedId) AS keepId, t.targetSourceKey
+                    FROM planned_target_key_139_140 t
+                    JOIN planned_expenses p ON p.id = t.plannedId
                     WHERE p.status = 'PLANNED'
-                    GROUP BY m.newKey
+                    GROUP BY t.targetSourceKey
                 """.trimIndent())
 
-                // Cancel duplicate PLANNED rows (cannot have two open rows with same key)
+                // Cancel duplicate PLANNED rows
                 database.execSQL("""
                     UPDATE planned_expenses
                     SET status = 'CANCELLED',
                         openSourceOccurrenceKey = NULL
                     WHERE status = 'PLANNED'
-                      AND id IN (SELECT p.id FROM planned_expenses p
-                                 JOIN planned_key_map_139_140 m ON p.sourceOccurrenceKey = m.oldKey
-                                 JOIN planned_keep_139_140 k ON k.newKey = m.newKey
-                                 WHERE p.id != k.keepId)
+                      AND id IN (SELECT t.plannedId FROM planned_target_key_139_140 t
+                                 JOIN planned_expenses p ON p.id = t.plannedId
+                                 JOIN planned_keep_139_140 k ON k.targetSourceKey = t.targetSourceKey
+                                 WHERE p.status = 'PLANNED'
+                                   AND t.plannedId != k.keepId)
                 """.trimIndent())
 
                 // Step 7: Update planned source/open keys atomically
                 database.execSQL("""
                     UPDATE planned_expenses
-                    SET sourceOccurrenceKey = (SELECT m.newKey FROM planned_key_map_139_140 m
-                                               WHERE m.oldKey = planned_expenses.sourceOccurrenceKey
-                                               LIMIT 1),
+                    SET sourceOccurrenceKey = (SELECT t.targetSourceKey FROM planned_target_key_139_140 t
+                                               WHERE t.plannedId = planned_expenses.id LIMIT 1),
                         openSourceOccurrenceKey = CASE
-                            WHEN status = 'PLANNED' THEN (SELECT m.newKey FROM planned_key_map_139_140 m
-                                                          WHERE m.oldKey = planned_expenses.sourceOccurrenceKey
-                                                          LIMIT 1)
+                            WHEN status = 'PLANNED' THEN (SELECT t.targetSourceKey FROM planned_target_key_139_140 t
+                                                          WHERE t.plannedId = planned_expenses.id LIMIT 1)
                             ELSE NULL END
-                    WHERE sourceOccurrenceKey IN (SELECT oldKey FROM planned_key_map_139_140)
+                    WHERE id IN (SELECT plannedId FROM planned_target_key_139_140)
                 """.trimIndent())
 
                 // Step 8: Enforce openSourceOccurrenceKey invariant
@@ -8308,7 +8320,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                 // Cleanup temp tables
                 database.execSQL("DROP TABLE IF EXISTS occ_canonical_map_139_140")
-                database.execSQL("DROP TABLE IF EXISTS planned_key_map_139_140")
+                database.execSQL("DROP TABLE IF EXISTS planned_target_key_139_140")
                 database.execSQL("DROP TABLE IF EXISTS planned_keep_139_140")
             }
         }

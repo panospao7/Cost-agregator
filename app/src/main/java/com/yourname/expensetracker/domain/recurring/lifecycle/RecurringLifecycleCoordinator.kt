@@ -272,8 +272,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
         }
         // Find the linked occurrence to get real ids
         val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
-        val occurrenceId = linked?.id ?: 0L
-        val planned = linked?.occurrenceKey?.let { plannedExpenseDao.getBySourceOccurrenceKey(it) }
+            ?: return RecurringExpenseReconcileResult.Skipped(expenseId, "linked_occurrence_missing_after_successful_claim")
+        val occurrenceId = linked.id
+        val planned = linked.occurrenceKey.let { plannedExpenseDao.getBySourceOccurrenceKey(it) }
         return RecurringExpenseReconcileResult.Linked(expenseId, occurrenceId, planned?.id)
     }
 

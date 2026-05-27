@@ -35,7 +35,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     private val expander: com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander,
     private val resolver: com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver,
     private val materializer: RecurringOccurrenceMaterializer,
-    private val expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao
+    private val expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao,
+    private val planProjectionService: dagger.Lazy<com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService>
 ) {
     companion object {
         private const val SOURCE_TYPE = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE

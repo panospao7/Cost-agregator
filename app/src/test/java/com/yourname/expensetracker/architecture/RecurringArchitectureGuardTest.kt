@@ -13,7 +13,27 @@ import java.io.File
  */
 class RecurringArchitectureGuardTest {
 
-    private val sourceRoot = File("app/src/main/java")
+    private val sourceRoot: File by lazy { resolveSourceRoot() }
+
+    private fun resolveSourceRoot(): File {
+        val candidates = listOf(
+            File("src/main/java"),
+            File("app/src/main/java"),
+            File(System.getProperty("user.dir") ?: ".", "src/main/java"),
+            File(System.getProperty("user.dir") ?: ".", "app/src/main/java")
+        )
+        return candidates.firstOrNull { it.exists() && it.isDirectory }
+            ?: error("Could not locate production source root. user.dir=${System.getProperty("user.dir")}, candidates=$candidates")
+    }
+
+    @Test
+    fun `source root exists and contains Kotlin files`() {
+        assertTrue("sourceRoot must exist: ${sourceRoot.absolutePath}", sourceRoot.exists())
+        val kotlinFiles = sourceRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .toList()
+        assertTrue("Architecture guard scanned zero Kotlin files in ${sourceRoot.absolutePath}", kotlinFiles.isNotEmpty())
+    }
 
     /** Files allowed to directly mutate recurring DAOs. */
     private val allowedMutationFiles = setOf(
@@ -169,14 +189,11 @@ class RecurringArchitectureGuardTest {
     }
 
     private fun walkSourceFiles(root: File, block: (File, String) -> Unit) {
-        root.walkTopDown().forEach { file ->
-            if (file.isFile && file.extension == "kt") {
-                try {
-                    block(file, file.readText())
-                } catch (_: Exception) {
-                    // skip unreadable files
-                }
-            }
+        val files = root.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .toList()
+        for (file in files) {
+            try { block(file, file.readText()) } catch (_: Exception) { /* skip */ }
         }
     }
 }
