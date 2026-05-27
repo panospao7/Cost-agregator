@@ -111,7 +111,8 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Creates a new recurring rule and writes RULE_CREATED event atomically.
+     * Creates a new recurring rule, generates future occurrences/reminders/planned rows
+     * in one atomic transaction, and writes RULE_CREATED_GENERATED event.
      */
     suspend fun createRule(expense: ManualRecurringExpense): Long {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.createRule")
@@ -119,14 +120,47 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
         val entity = if (expense.createdAt == 0L) expense.copy(createdAt = now) else expense
         return database.withTransaction {
             val id = manualRecurringExpenseDao.insert(entity)
+            val saved = entity.copy(id = id)
+
+            // Generate future occurrences for the new rule
+            val regenerateStart = maxOf(
+                saved.nextDate,
+                com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+            )
+            val regenerateEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(regenerateStart, 12)
+
+            val request = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.ExpandRequest(
+                merchant = saved.merchant, amount = saved.amount, currency = saved.currency,
+                frequency = saved.frequency, categoryId = saved.categoryId,
+                startDate = regenerateStart, endDate = regenerateEnd,
+                anchorDate = saved.nextDate, sourceType = SOURCE_TYPE, sourceId = id
+            )
+            val candidates = expander.expand(request)
+            val actualExpenses = expenseDao.getExpensesBetween(regenerateStart, regenerateEnd)
+            val resolved = resolver.resolve(candidates, actualExpenses)
+
+            materializer.materializeInCurrentTransaction(
+                resolved = resolved,
+                options = RecurringOccurrenceMaterializer.MaterializationOptions(
+                    createReminderDeliveries = true,
+                    reminderWindows = RecurringLifecycleCoordinator.DEFAULT_REMINDER_WINDOWS,
+                    generationSource = OccurrenceGenerationSource.RULE_CREATE.name,
+                    allowPastDueReminderDeliveries = false
+                )
+            )
+
+            // Project planned rows
+            planProjectionService.get().projectFromOccurrencesInCurrentTransaction(
+                ruleId = id, startDate = regenerateStart, endDate = regenerateEnd, now = now
+            )
+
             lifecycleEventDao.insert(
                 RecurringLifecycleEvent(
                     occurrenceId = null,
-                    eventType = "RULE_CREATED",
+                    eventType = "RULE_CREATED_GENERATED",
                     occurredAt = now,
-                    oldStatus = null,
-                    newStatus = null,
-                    metadata = """{"ruleId":$id,"merchant":"${entity.merchant}","amount":${entity.amount},"frequency":"${entity.frequency}"}"""
+                    oldStatus = null, newStatus = null,
+                    metadata = """{"ruleId":$id,"merchant":"${saved.merchant}","amount":${saved.amount},"frequency":"${saved.frequency}"}"""
                 )
             )
             id
@@ -134,44 +168,55 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Activates a previously deactivated rule, writes RULE_ACTIVATED event,
-     * and generates future occurrences/reminders.
+     * Activates a previously deactivated rule and atomically generates future state.
+     * If generation fails, activation rolls back.
      */
     suspend fun activateRule(ruleId: Long) {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.activateRule")
         val now = timeProvider.now()
-        val existing = manualRecurringExpenseDao.getById(ruleId)
+        val existing = manualRecurringExpenseDao.getById(ruleId) ?: return
         database.withTransaction {
             manualRecurringExpenseDao.setActiveStatus(ruleId, true)
-            lifecycleEventDao.insert(
-                RecurringLifecycleEvent(
-                    occurrenceId = null,
-                    eventType = "RULE_ACTIVATED",
-                    occurredAt = now,
-                    oldStatus = "INACTIVE",
-                    newStatus = "ACTIVE",
-                    metadata = """{"ruleId":$ruleId,"merchant":"${existing?.merchant.orEmpty()}","isActive":true}"""
-                )
-            )
-        }
 
-        // Generate future occurrences for the reactivated rule
-        val rule = existing ?: return
-        val regenerateStart = maxOf(rule.nextDate, com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now))
-        val regenerateEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(regenerateStart, 12)
-        try {
-            lifecycleCoordinator.get().generateOccurrences(
-                ruleId = ruleId,
-                startDate = regenerateStart,
-                endDate = regenerateEnd,
-                options = OccurrenceGenerationOptions(
+            val regenerateStart = maxOf(
+                existing.nextDate,
+                com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+            )
+            val regenerateEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(regenerateStart, 12)
+
+            val request = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.ExpandRequest(
+                merchant = existing.merchant, amount = existing.amount, currency = existing.currency,
+                frequency = existing.frequency, categoryId = existing.categoryId,
+                startDate = regenerateStart, endDate = regenerateEnd,
+                anchorDate = existing.nextDate, sourceType = SOURCE_TYPE, sourceId = ruleId
+            )
+            val candidates = expander.expand(request)
+            val actualExpenses = expenseDao.getExpensesBetween(regenerateStart, regenerateEnd)
+            val resolved = resolver.resolve(candidates, actualExpenses)
+
+            materializer.materializeInCurrentTransaction(
+                resolved = resolved,
+                options = RecurringOccurrenceMaterializer.MaterializationOptions(
                     createReminderDeliveries = true,
-                    generationSource = OccurrenceGenerationSource.RULE_CREATE,
+                    reminderWindows = RecurringLifecycleCoordinator.DEFAULT_REMINDER_WINDOWS,
+                    generationSource = OccurrenceGenerationSource.RULE_CREATE.name,
                     allowPastDueReminderDeliveries = false
                 )
             )
-        } catch (e: Exception) {
-            Timber.e(e, "Rule %d activated but occurrence generation failed", ruleId)
+
+            planProjectionService.get().projectFromOccurrencesInCurrentTransaction(
+                ruleId = ruleId, startDate = regenerateStart, endDate = regenerateEnd, now = now
+            )
+
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = null,
+                    eventType = "RULE_ACTIVATED_REGENERATED",
+                    occurredAt = now,
+                    oldStatus = "INACTIVE", newStatus = "ACTIVE",
+                    metadata = """{"ruleId":$ruleId,"merchant":"${existing.merchant}","isActive":true}"""
+                )
+            )
         }
     }
 
@@ -257,6 +302,14 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     generationSource = OccurrenceGenerationSource.RULE_UPDATE_REGENERATION.name,
                     allowPastDueReminderDeliveries = false
                 )
+            )
+
+            // Project planned expense rows for the regenerated occurrences
+            planProjectionService.get().projectFromOccurrencesInCurrentTransaction(
+                ruleId = updated.id,
+                startDate = regenerateStart,
+                endDate = regenerateEnd,
+                now = now
             )
 
             // Write success event

@@ -39,7 +39,8 @@ class RecurringPlanProjectionService @Inject constructor(
     private val coordinator: RecurringLifecycleCoordinator,
     private val plannedExpenseDao: PlannedExpenseDao,
     private val timeProvider: TimeProvider,
-    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
+    private val occurrenceDao: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 ) {
 
     /**
@@ -105,6 +106,51 @@ class RecurringPlanProjectionService @Inject constructor(
             }
         }
 
+        return created
+    }
+
+    /**
+     * Transaction-safe planned projection. Does NOT start its own transaction.
+     * Call this from inside an existing `database.withTransaction` block.
+     *
+     * Creates planned_expenses rows for PLANNED occurrences that don't yet have one.
+     */
+    suspend fun projectFromOccurrencesInCurrentTransaction(
+        ruleId: Long,
+        startDate: Long,
+        endDate: Long,
+        now: Long
+    ): Int {
+        val occurrences = occurrenceDao.getByDateRange(startDate, endDate)
+            .filter { it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE
+                      && it.sourceId == ruleId
+                      && it.status == "PLANNED" }
+
+        var created = 0
+        for (occ in occurrences) {
+            val existing = plannedExpenseDao.getBySourceOccurrenceKey(occ.occurrenceKey)
+            if (existing == null) {
+                val merchantName = occ.merchant ?: "Recurring Expense"
+                val id = plannedExpenseDao.insertPlannedExpense(
+                    com.yourname.expensetracker.data.database.entity.PlannedExpense(
+                        description = merchantName,
+                        amount = occ.expectedAmount,
+                        currency = occ.expectedCurrency,
+                        date = occ.dueDate,
+                        categoryId = occ.categoryId,
+                        isRecurring = true,
+                        priority = PlannedExpensePriority.MUST,
+                        createdAt = now,
+                        sourceOccurrenceKey = occ.occurrenceKey,
+                        openSourceOccurrenceKey = occ.occurrenceKey,
+                        sourceRecurringRuleId = ruleId,
+                        merchantKey = MerchantKeyGenerator.generate(merchantName),
+                        updatedAt = now
+                    )
+                )
+                if (id > 0) created++
+            }
+        }
         return created
     }
 }

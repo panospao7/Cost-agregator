@@ -8207,7 +8207,40 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                     FROM recurring_occurrences ro
                 """.trimIndent())
 
-                // Step 2: Remap reminder deliveries to canonical occurrence (no conflict)
+                // Step 2: Dedupe losing reminder deliveries before remap
+                database.execSQL("""
+                    CREATE TEMP TABLE reminder_keep_139_140 AS
+                    SELECT MIN(d.id) AS keepDeliveryId,
+                           m.canonicalId AS targetOccurrenceId,
+                           d.reminderWindow
+                    FROM recurring_reminder_deliveries d
+                    JOIN occ_canonical_map_139_140 m ON m.occurrenceId = d.occurrenceId
+                    WHERE m.occurrenceId != m.canonicalId
+                    GROUP BY m.canonicalId, d.reminderWindow
+                """.trimIndent())
+
+                database.execSQL("""
+                    DELETE FROM recurring_reminder_deliveries
+                    WHERE id IN (SELECT d.id FROM recurring_reminder_deliveries d
+                                 JOIN occ_canonical_map_139_140 m ON m.occurrenceId = d.occurrenceId
+                                 JOIN reminder_keep_139_140 k ON k.targetOccurrenceId = m.canonicalId
+                                 AND k.reminderWindow = d.reminderWindow
+                                 WHERE m.occurrenceId != m.canonicalId
+                                   AND d.id != k.keepDeliveryId)
+                """.trimIndent())
+
+                // Delete losing reminder rows whose canonical occurrence already has same window
+                database.execSQL("""
+                    DELETE FROM recurring_reminder_deliveries
+                    WHERE id IN (SELECT d.id FROM recurring_reminder_deliveries d
+                                 JOIN occ_canonical_map_139_140 m ON m.occurrenceId = d.occurrenceId
+                                 WHERE m.occurrenceId != m.canonicalId
+                                   AND EXISTS (SELECT 1 FROM recurring_reminder_deliveries existing
+                                               WHERE existing.occurrenceId = m.canonicalId
+                                                 AND existing.reminderWindow = d.reminderWindow))
+                """.trimIndent())
+
+                // Step 3: Remap reminder deliveries to canonical occurrence (now safe)
                 database.execSQL("""
                     UPDATE recurring_reminder_deliveries
                     SET occurrenceId = (SELECT m.canonicalId FROM occ_canonical_map_139_140 m
@@ -8322,6 +8355,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 database.execSQL("DROP TABLE IF EXISTS occ_canonical_map_139_140")
                 database.execSQL("DROP TABLE IF EXISTS planned_target_key_139_140")
                 database.execSQL("DROP TABLE IF EXISTS planned_keep_139_140")
+                database.execSQL("DROP TABLE IF EXISTS reminder_keep_139_140")
             }
         }
 

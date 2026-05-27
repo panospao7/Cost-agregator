@@ -188,6 +188,53 @@ class RecurringArchitectureGuardTest {
             deleteBlock.contains("unlinkExpenseFromOccurrenceDetailed"))
     }
 
+    @Test
+    fun `updateRule regenerates planned rows after deleting open planned`() {
+        val ruleFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt")
+        if (!ruleFile.exists()) return
+        val text = ruleFile.readText()
+        val updateRuleBody = text.substringAfter("suspend fun updateRule")
+        assertTrue("updateRule must call projectFromOccurrencesInCurrentTransaction",
+            updateRuleBody.contains("projectFromOccurrencesInCurrentTransaction"))
+        assertTrue("updateRule must call deleteOpenPlannedByRecurringRuleId before projection",
+            updateRuleBody.substringBefore("projectFromOccurrencesInCurrentTransaction")
+                .contains("deleteOpenPlannedByRecurringRuleId"))
+    }
+
+    @Test
+    fun `createRule generates future state`() {
+        val ruleFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt")
+        if (!ruleFile.exists()) return
+        val text = ruleFile.readText()
+        val createBody = text.substringAfter("suspend fun createRule")
+        assertTrue("createRule must call materializeInCurrentTransaction",
+            createBody.contains("materializeInCurrentTransaction"))
+        assertTrue("createRule must write RULE_CREATED_GENERATED",
+            createBody.contains("RULE_CREATED_GENERATED"))
+    }
+
+    @Test
+    fun `activateRule generation is atomic`() {
+        val ruleFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt")
+        if (!ruleFile.exists()) return
+        val text = ruleFile.readText()
+        val activateBody = text.substringAfter("suspend fun activateRule")
+        assertTrue("activateRule must call projectFromOccurrencesInCurrentTransaction",
+            activateBody.contains("projectFromOccurrencesInCurrentTransaction"))
+        assertFalse("activateRule must not catch generation failure",
+            activateBody.contains("catch (e: Exception)"))
+    }
+
+    @Test
+    fun `bulk recurring reconciliation not permanently disabled`() {
+        val plannerFile = File(sourceRoot, "com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectPlanner.kt")
+        if (!plannerFile.exists()) return
+        val text = plannerFile.readText()
+        val bulkBody = text.substringAfter("makeBulkRecurringReconciliationAction")
+        assertFalse("Bulk recurring reconciliation must not return DISABLED_BY_SETTINGS",
+            bulkBody.contains("DISABLED_BY_SETTINGS"))
+    }
+
     private fun walkSourceFiles(root: File, block: (File, String) -> Unit) {
         val files = root.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }

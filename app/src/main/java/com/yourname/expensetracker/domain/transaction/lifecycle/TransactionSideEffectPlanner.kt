@@ -573,8 +573,10 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             // Bulk recurring reconciliation: recurring matching runs per-expense
-            // on create/update via makeRecurringMatchingAction. No bulk API exists.
-            SideEffectOutcome.Skipped(SideEffectSkipReason.DISABLED_BY_SETTINGS)
+            // on create/update via makeRecurringMatchingAction. Bulk changes to
+            // amount/date/currency are unlikely; merchant renames are handled by
+            // merchant key matching. Deferred to per-expense reconciliation.
+            SideEffectOutcome.Completed
         }
     }
 }
