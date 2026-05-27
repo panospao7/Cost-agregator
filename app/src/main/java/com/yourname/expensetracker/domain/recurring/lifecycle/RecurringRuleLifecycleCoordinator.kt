@@ -43,8 +43,12 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Deactivates a rule: sets isActive=false, cancels future PLANNED occurrences,
-     * suppresses their reminders, and cancels their planned expenses.
+     * Deactivates a rule: sets isActive=false, deletes future PLANNED occurrences
+     * and their reminders, and cancels planned expenses.
+     *
+     * Deleting (not cancelling) occurrences ensures reactivation can freely
+     * regenerate them — cancelled rows would be skipped by the materializer's
+     * terminal-status protection.
      */
     suspend fun deactivateRule(ruleId: Long) {
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.deactivateRule")
@@ -54,11 +58,11 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
         database.withTransaction {
             manualRecurringExpenseDao.setActiveStatus(ruleId, false)
 
-            // Cancel future PLANNED occurrences
+            // Delete future PLANNED occurrences and their reminders
             val plannedIds = occurrenceDao.getPlannedIdsBySource(SOURCE_TYPE, ruleId)
             if (plannedIds.isNotEmpty()) {
-                occurrenceDao.updateStatus(plannedIds, "CANCELLED", now)
                 reminderDeliveryDao.deleteByOccurrenceIds(plannedIds)
+                occurrenceDao.deleteOpenPlannedBySource(SOURCE_TYPE, ruleId)
             }
 
             // Cancel planned expenses for this rule
