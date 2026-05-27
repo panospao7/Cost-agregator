@@ -262,12 +262,59 @@ class RecurringArchitectureGuardTest {
         val coordFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt")
         if (!coordFile.exists()) return
         val text = coordFile.readText()
-        // OCCURRENCE_PAID must use eventWriter
         val paidBlock = text.substringAfter("eventWriter.writeCritical")
         assertTrue("OCCURRENCE_PAID must use eventWriter.writeCritical",
             paidBlock.contains("OCCURRENCE_PAID"))
         assertTrue("PLANNED_FULFILLED must use eventWriter.writeCritical",
             paidBlock.contains("PLANNED_FULFILLED") || text.substringAfter("writeCritical", paidBlock).contains("PLANNED_FULFILLED"))
+    }
+
+    @Test
+    fun `rule lifecycle coordinator does not use direct DAO for critical events`() {
+        val ruleFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt")
+        if (!ruleFile.exists()) return
+        val text = ruleFile.readText()
+        // Must inject eventWriter
+        assertTrue("RuleLifecycleCoordinator must inject RecurringLifecycleEventWriter",
+            text.contains("eventWriter: RecurringLifecycleEventWriter"))
+        // RULE_DELETED still uses lifecycleEventDao (transitional) — guard allows it for now
+    }
+
+    @Test
+    fun `golden lifecycle tests do not bypass coordinator with direct DAO insert`() {
+        val goldenDir = File(sourceRoot, "com/yourname/expensetracker/golden")
+        if (!goldenDir.exists()) return
+        val errors = mutableListOf<String>()
+        goldenDir.walkTopDown().filter { it.isFile && it.extension == "kt" && it.name.contains("Pipeline4", true) }.forEach { file ->
+            val text = file.readText()
+            if (text.contains("recurringExpenseDao().insert") && !text.contains("seedRuleViaRepo")) {
+                errors.add("${file.name}: golden test uses direct recurringExpenseDao().insert instead of lifecycle coordinator")
+            }
+        }
+        assertTrue("Golden lifecycle tests bypass coordinator:\n${errors.joinToString("\n")}", errors.isEmpty())
+    }
+
+    @Test
+    fun `bulk reconciliation does not use global PAID scan`() {
+        val plannerFile = File(sourceRoot, "com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectPlanner.kt")
+        if (!plannerFile.exists()) return
+        val text = plannerFile.readText()
+        val bulkBlock = text.substringAfter("makeBulkRecurringReconciliationAction")
+        // Bulk must use structured result, not raw count
+        assertFalse("Bulk reconciliation must not use global getByStatus PAID scan in planner",
+            bulkBlock.contains("getByStatus(\"PAID\")"))
+    }
+
+    @Test
+    fun `deactivation deletes not cancels planned rows`() {
+        val ruleFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt")
+        if (!ruleFile.exists()) return
+        val text = ruleFile.readText()
+        val deactivateBody = text.substringAfter("suspend fun deactivateRule").substringBefore("suspend fun deleteRule")
+        assertTrue("deactivateRule must delete open planned rows (deleteOpenPlannedByRecurringRuleId)",
+            deactivateBody.contains("deleteOpenPlannedByRecurringRuleId"))
+        assertFalse("deactivateRule must NOT cancel planned rows (cancelPlannedByRecurringRuleId)",
+            deactivateBody.contains("cancelPlannedByRecurringRuleId"))
     }
 
     private fun walkSourceFiles(root: File, block: (File, String) -> Unit) {

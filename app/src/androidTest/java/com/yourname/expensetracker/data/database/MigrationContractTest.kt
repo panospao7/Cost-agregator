@@ -850,6 +850,64 @@ class MigrationContractTest {
         }
     }
 
+    // ── Pipeline 4 migration tests ──────────────────────────────────────────
+
+    @Test
+    fun migration_139_to_140_canonicalizes_occurrence_keys() {
+        withTestDb("migration-139-140.db", version = 139) { db ->
+            db.execSQL("CREATE TABLE IF NOT EXISTS manual_recurring_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, merchant TEXT NOT NULL, amount REAL NOT NULL, currency TEXT DEFAULT 'EUR', frequency TEXT NOT NULL, nextDate INTEGER NOT NULL, createdAt INTEGER NOT NULL DEFAULT 0, categoryId INTEGER DEFAULT NULL, isSubscription INTEGER DEFAULT 0, subscriptionCategory TEXT DEFAULT NULL, usageTargetPerMonth INTEGER DEFAULT NULL, cancellationUrl TEXT DEFAULT NULL, isActive INTEGER DEFAULT 1)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS recurring_occurrences (id INTEGER PRIMARY KEY AUTOINCREMENT, sourceType TEXT NOT NULL, sourceId INTEGER NOT NULL, occurrenceKey TEXT NOT NULL UNIQUE, dueDate INTEGER NOT NULL, status TEXT NOT NULL, linkedExpenseId INTEGER, expectedAmount REAL NOT NULL, expectedCurrency TEXT NOT NULL, paidAt INTEGER, paidAmount REAL, paidCurrency TEXT, frequency TEXT NOT NULL, merchant TEXT, categoryId INTEGER, createdAt INTEGER NOT NULL DEFAULT 0, updatedAt INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_ro_source ON recurring_occurrences(sourceType, sourceId)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS recurring_reminder_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, occurrenceId INTEGER NOT NULL, reminderWindow TEXT NOT NULL, scheduledAt INTEGER NOT NULL, status TEXT NOT NULL, lastSentAt INTEGER, dismissedAt INTEGER, snoozedUntil INTEGER, notificationId INTEGER, createdAt INTEGER NOT NULL DEFAULT 0, claimedAt INTEGER, lastAttemptAt INTEGER, attemptCount INTEGER NOT NULL DEFAULT 0, failureReason TEXT, updatedAt INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_rrd_occ_win ON recurring_reminder_deliveries(occurrenceId, reminderWindow)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS recurring_lifecycle_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurrenceId INTEGER, eventType TEXT NOT NULL, occurredAt INTEGER NOT NULL, oldStatus TEXT, newStatus TEXT, metadata TEXT)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS planned_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT NOT NULL, amount REAL NOT NULL, currency TEXT DEFAULT 'EUR', currencyAssumption TEXT DEFAULT 'LEGACY_DEFAULT', date INTEGER NOT NULL, categoryId INTEGER, isRecurring INTEGER DEFAULT 0, priority TEXT DEFAULT 'LIKELY', createdAt INTEGER NOT NULL DEFAULT 0, sourceOccurrenceKey TEXT, sourceRecurringRuleId INTEGER, status TEXT DEFAULT 'PLANNED', linkedActualExpenseId INTEGER, merchantKey TEXT, updatedAt INTEGER NOT NULL DEFAULT 0, openSourceOccurrenceKey TEXT UNIQUE)")
+
+            // Legacy old-format key + new-format duplicate (PAID wins over PLANNED)
+            db.execSQL("INSERT INTO recurring_occurrences (sourceType, sourceId, occurrenceKey, dueDate, status, linkedExpenseId, expectedAmount, expectedCurrency, frequency, merchant, createdAt, updatedAt) VALUES ('RECURRING_RULE', 1, '1|1700000000|MONTHLY', 1700000000, 'PAID', 100, 5.0, 'EUR', 'MONTHLY', 'Spotify', 1000, 1000)")
+            db.execSQL("INSERT INTO recurring_occurrences (sourceType, sourceId, occurrenceKey, dueDate, status, expectedAmount, expectedCurrency, frequency, merchant, createdAt, updatedAt) VALUES ('RECURRING_RULE', 1, 'RECURRING_RULE|1|1700000000|MONTHLY', 1700000000, 'PLANNED', 5.0, 'EUR', 'MONTHLY', 'Spotify', 1000, 1000)")
+
+            AppDatabase.MIGRATION_139_140.migrate(db)
+
+            val cursor = db.query("SELECT occurrenceKey FROM recurring_occurrences")
+            val keys = mutableListOf<String>()
+            while (cursor.moveToNext()) keys.add(cursor.getString(0))
+            cursor.close()
+            assertTrue("Must have canonical keys", keys.all { it.startsWith("RECURRING_RULE|") })
+            assertTrue("Duplicate rows deduped", keys.size == 1)
+        }
+    }
+
+    @Test
+    fun migration_140_to_141_adds_fk_and_preserves_data() {
+        withTestDb("migration-140-141.db", version = 140) { db ->
+            db.execSQL("CREATE TABLE IF NOT EXISTS recurring_occurrences (id INTEGER PRIMARY KEY AUTOINCREMENT, sourceType TEXT NOT NULL, sourceId INTEGER NOT NULL, occurrenceKey TEXT NOT NULL UNIQUE, dueDate INTEGER NOT NULL, status TEXT NOT NULL, linkedExpenseId INTEGER, expectedAmount REAL NOT NULL, expectedCurrency TEXT NOT NULL, paidAt INTEGER, paidAmount REAL, paidCurrency TEXT, frequency TEXT NOT NULL, merchant TEXT, categoryId INTEGER, createdAt INTEGER NOT NULL DEFAULT 0, updatedAt INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("INSERT INTO recurring_occurrences (sourceType, sourceId, occurrenceKey, dueDate, status, expectedAmount, expectedCurrency, frequency, merchant, createdAt, updatedAt) VALUES ('RECURRING_RULE', 1, 'RECURRING_RULE|1|1800000000|MONTHLY', 1800000000, 'PLANNED', 10.0, 'EUR', 'MONTHLY', 'Netflix', 1000, 1000)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS recurring_reminder_deliveries (id INTEGER PRIMARY KEY AUTOINCREMENT, occurrenceId INTEGER NOT NULL, reminderWindow TEXT NOT NULL, scheduledAt INTEGER NOT NULL, status TEXT NOT NULL, lastSentAt INTEGER, dismissedAt INTEGER, snoozedUntil INTEGER, notificationId INTEGER, createdAt INTEGER NOT NULL DEFAULT 0, claimedAt INTEGER, lastAttemptAt INTEGER, attemptCount INTEGER NOT NULL DEFAULT 0, failureReason TEXT, updatedAt INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_rrd_occ_win ON recurring_reminder_deliveries(occurrenceId, reminderWindow)")
+            db.execSQL("INSERT INTO recurring_reminder_deliveries (occurrenceId, reminderWindow, scheduledAt, status, createdAt, updatedAt, notificationId) VALUES (1, 'DUE_DAY', 1800000000, 'SCHEDULED', 1000, 1000, 42)")
+
+            AppDatabase.MIGRATION_140_141.migrate(db)
+
+            val rem = db.query("SELECT occurrenceId, reminderWindow, notificationId FROM recurring_reminder_deliveries")
+            assertTrue(rem.moveToFirst())
+            assertEquals(1, rem.getLong(0))
+            assertEquals("DUE_DAY", rem.getString(1))
+            assertEquals(42, rem.getInt(2))
+            rem.close()
+
+            var fkRejected = false
+            try { db.execSQL("INSERT INTO recurring_reminder_deliveries (occurrenceId, reminderWindow, scheduledAt, status, createdAt, updatedAt) VALUES (999, 'DUE_DAY', 1800000000, 'SCHEDULED', 1000, 1000)") } catch (_: Exception) { fkRejected = true }
+            assertTrue("FK rejects orphan insert", fkRejected)
+
+            db.execSQL("DELETE FROM recurring_occurrences WHERE id = 1")
+            val cnt = db.query("SELECT COUNT(*) FROM recurring_reminder_deliveries")
+            cnt.moveToFirst()
+            assertEquals(0, cnt.getInt(0))
+            cnt.close()
+        }
+    }
+
     private inline fun withTestDb(
         name: String,
         version: Int,
