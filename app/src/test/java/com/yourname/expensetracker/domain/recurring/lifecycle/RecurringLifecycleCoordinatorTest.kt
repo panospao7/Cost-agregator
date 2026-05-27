@@ -82,7 +82,8 @@ class RecurringLifecycleCoordinatorTest {
             lifecycleEventDao = lifecycleEventDao,
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
-            plannedExpenseDao = plannedExpenseDao
+            plannedExpenseDao = plannedExpenseDao,
+            eventWriter = mockk(relaxed = true)
         )
     }
 

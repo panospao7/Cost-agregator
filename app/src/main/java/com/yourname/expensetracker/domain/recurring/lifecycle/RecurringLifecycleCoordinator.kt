@@ -204,44 +204,34 @@ class RecurringLifecycleCoordinator @Inject constructor(
             }
             claimed = true
 
-            lifecycleEventDao.insert(
-                RecurringLifecycleEvent(
-                    occurrenceId = match.id,
-                    eventType = "OCCURRENCE_PAID",
-                    occurredAt = now,
-                    oldStatus = "PLANNED",
-                    newStatus = "PAID",
-                    metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
-                )
+            eventWriter.writeCritical(
+                occurrenceId = match.id,
+                eventType = "OCCURRENCE_PAID",
+                oldStatus = "PLANNED",
+                newStatus = "PAID",
+                metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
             )
 
             val planned = plannedExpenseDao.getBySourceOccurrenceKey(match.occurrenceKey)
             if (planned != null) {
                 plannedExpenseDao.linkToActualExpense(planned.id, expenseId, now)
                 // Write PLANNED_FULFILLED event for provenance tracking
-                lifecycleEventDao.insert(
-                    RecurringLifecycleEvent(
-                        occurrenceId = match.id,
-                        eventType = "PLANNED_FULFILLED",
-                        occurredAt = now,
-                        oldStatus = "PLANNED",
-                        newStatus = "FULFILLED",
-                        metadata = """{"plannedExpenseId":${planned.id},"occurrenceKey":"${match.occurrenceKey}","expenseId":$expenseId,"source":"direct_expense_link"}"""
-                    )
+                eventWriter.writeCritical(
+                    occurrenceId = match.id,
+                    eventType = "PLANNED_FULFILLED",
+                    oldStatus = "PLANNED",
+                    newStatus = "FULFILLED",
+                    metadata = """{"plannedExpenseId":${planned.id},"occurrenceKey":"${match.occurrenceKey}","expenseId":$expenseId,"source":"direct_expense_link"}"""
                 )
             }
 
             val suppressed = reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(match.id, now, "expense_linked:$expenseId")
             // Write REMINDER_SUPPRESSED_PAID event when reminders are cancelled due to payment
-            lifecycleEventDao.insert(
-                RecurringLifecycleEvent(
-                    occurrenceId = match.id,
-                    eventType = if (suppressed > 0) "REMINDER_SUPPRESSED_PAID" else "REMINDER_SUPPRESSION_NOOP",
-                    occurredAt = now,
-                    oldStatus = null,
-                    newStatus = if (suppressed > 0) "CANCELLED" else null,
-                    metadata = """{"expenseId":$expenseId,"suppressedCount":$suppressed,"source":"direct_expense_link"}"""
-                )
+            eventWriter.writeCritical(
+                occurrenceId = match.id,
+                eventType = if (suppressed > 0) "REMINDER_SUPPRESSED_PAID" else "REMINDER_SUPPRESSION_NOOP",
+                newStatus = if (suppressed > 0) "CANCELLED" else null,
+                metadata = """{"expenseId":$expenseId,"suppressedCount":$suppressed,"source":"direct_expense_link"}"""
             )
         }
 
@@ -348,6 +338,25 @@ class RecurringLifecycleCoordinator @Inject constructor(
         }
 
         return linkExpenseToOccurrenceDetailed(expenseId, "expense_update_unlinked_try_match")
+    }
+
+    /**
+     * Reconciles all expenses linked to occurrences after a bulk update that
+     * may have changed recurring-relevant fields (amount/date/currency/merchant).
+     */
+    suspend fun reconcileAllLinkedExpensesAfterBulkUpdate(source: String): Int {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.reconcileAllLinkedExpensesAfterBulkUpdate")
+        val occurrences = occurrenceDao.getByStatus("PAID")
+        val expenseIds = occurrences.mapNotNull { it.linkedExpenseId }.distinct()
+        var reconciled = 0
+        for (expenseId in expenseIds) {
+            try {
+                reconcileExpenseLinkAfterUpdate(expenseId, "bulk_update:$source")
+                reconciled++
+            } catch (_: Exception) { /* individual failure doesn't stop batch */ }
+        }
+        Timber.d("Bulk recurring reconcile: %d of %d linked expenses reconciled", reconciled, expenseIds.size)
+        return reconciled
     }
 
     private fun isExpenseEligibleForRecurring(expense: com.yourname.expensetracker.data.database.entity.Expense): Boolean {
@@ -686,7 +695,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Snapshot returned after a successful claim, used to validate the delivery
+     * Unlinks an expense from its linked occurrence, resetting it back to PLANNED.
      * is still dispatchable before sending a notification.
      */
     data class ReminderDispatchSnapshot(

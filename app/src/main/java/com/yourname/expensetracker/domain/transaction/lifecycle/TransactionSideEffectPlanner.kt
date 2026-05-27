@@ -572,11 +572,14 @@ class TransactionSideEffectPlanner @Inject constructor(
                 .put("changedFields", changedFields.joinToString(",") { it.name })
                 .build()
         ) {
-            // Bulk recurring reconciliation: recurring matching runs per-expense
-            // on create/update via makeRecurringMatchingAction. Bulk changes to
-            // amount/date/currency are unlikely; merchant renames are handled by
-            // merchant key matching. Deferred to per-expense reconciliation.
-            SideEffectOutcome.Completed
+            try {
+                val reconciled = recurringLifecycleCoordinator.get()
+                    .reconcileAllLinkedExpensesAfterBulkUpdate(source)
+                if (reconciled > 0) SideEffectOutcome.Completed
+                else SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK)
+            } catch (e: Exception) {
+                SideEffectOutcome.FailedRetryable(e.message ?: "Bulk recurring reconcile failed", e.javaClass.name)
+            }
         }
     }
 }

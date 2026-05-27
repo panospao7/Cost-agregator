@@ -70,7 +70,8 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             lifecycleEventDao = database.recurringLifecycleEventDao(),
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
-            plannedExpenseDao = database.plannedExpenseDao()
+            plannedExpenseDao = database.plannedExpenseDao(),
+            eventWriter = mockk(relaxed = true)
         )
 
         // Multi-currency repository for dashboard verification

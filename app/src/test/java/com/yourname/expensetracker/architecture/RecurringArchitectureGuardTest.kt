@@ -235,6 +235,41 @@ class RecurringArchitectureGuardTest {
             bulkBody.contains("DISABLED_BY_SETTINGS"))
     }
 
+    @Test
+    fun `deactivateRule deletes not cancels open occurrences`() {
+        val ruleFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt")
+        if (!ruleFile.exists()) return
+        val text = ruleFile.readText()
+        val deactivateBody = text.substringAfter("suspend fun deactivateRule")
+        assertTrue("deactivateRule must delete open occurrences (deleteOpenPlannedBySource), not cancel them",
+            deactivateBody.contains("deleteOpenPlannedBySource"))
+        assertFalse("deactivateRule must NOT use updateStatus on PLANNED occurrences",
+            deactivateBody.contains("updateStatus(plannedIds"))
+    }
+
+    @Test
+    fun `migration 139_140 has reminder dedup table`() {
+        val appDbFile = File(sourceRoot, "com/yourname/expensetracker/data/database/AppDatabase.kt")
+        if (!appDbFile.exists()) return
+        val text = appDbFile.readText()
+        val migrationBody = text.substringAfter("MIGRATION_139_140").substringBefore("MIGRATION_140_141")
+        assertTrue("MIGRATION_139_140 must have reminder_keep_139_140 dedup table",
+            migrationBody.contains("reminder_keep_139_140"))
+    }
+
+    @Test
+    fun `critical events use eventWriter not direct DAO in coordinator`() {
+        val coordFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt")
+        if (!coordFile.exists()) return
+        val text = coordFile.readText()
+        // OCCURRENCE_PAID must use eventWriter
+        val paidBlock = text.substringAfter("eventWriter.writeCritical")
+        assertTrue("OCCURRENCE_PAID must use eventWriter.writeCritical",
+            paidBlock.contains("OCCURRENCE_PAID"))
+        assertTrue("PLANNED_FULFILLED must use eventWriter.writeCritical",
+            paidBlock.contains("PLANNED_FULFILLED") || text.substringAfter("writeCritical", paidBlock).contains("PLANNED_FULFILLED"))
+    }
+
     private fun walkSourceFiles(root: File, block: (File, String) -> Unit) {
         val files = root.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
