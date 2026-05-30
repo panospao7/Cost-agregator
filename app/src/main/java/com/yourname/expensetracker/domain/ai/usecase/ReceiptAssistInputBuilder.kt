@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
@@ -20,11 +21,13 @@ import javax.inject.Inject
  */
 class ReceiptAssistInputBuilder @Inject constructor(
     private val aiPolicy: AiPolicy,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
-    fun build(receipt: ScannedReceipt, settings: AiSettings): ReceiptAssistInput {
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_EXTRACTION)
+    suspend fun build(receipt: ScannedReceipt, settings: AiSettings): ReceiptAssistInput {
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_EXTRACTION) ||
+            privacySettingsRepository.getSettings().redactBeforeCloud
         
         // Keep image metadata whenever a local receipt image exists.
         // Individual providers decide whether they can safely use it.

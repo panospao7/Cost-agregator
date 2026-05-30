@@ -4,9 +4,12 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,11 +26,15 @@ class ReceiptAssistInputBuilderTest {
     fun setup() {
         aiPolicy = mockk()
         timeProvider = FakeTimeProvider(1_710_000_000_000L)
-        builder = ReceiptAssistInputBuilder(aiPolicy, timeProvider)
+        builder = ReceiptAssistInputBuilder(
+            aiPolicy,
+            timeProvider,
+            FakePrivacySettingsRepository(PrivacySettings(redactBeforeCloud = false))
+        )
     }
 
     @Test
-    fun `build keeps contextual receipt fields when redaction off`() {
+    fun `build keeps contextual receipt fields when redaction off`() = runTest {
         every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns false
         val receipt = makeReceipt(
             rawOcrText = "LIDL HELLAS\nCARD 1111 2222 3333 4444\nTOTAL 12.34",
@@ -46,7 +53,7 @@ class ReceiptAssistInputBuilderTest {
     }
 
     @Test
-    fun `build includes local image metadata when image cloud assist is enabled`() {
+    fun `build includes local image metadata when image cloud assist is enabled`() = runTest {
         every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns false
         val receipt = makeReceipt(rawOcrText = "ΑΒ ΒΑΣΙΛΟΠΟΥΛΟΣ")
 
@@ -60,7 +67,7 @@ class ReceiptAssistInputBuilderTest {
     }
 
     @Test
-    fun `build redacts long sensitive numeric values when redaction on`() {
+    fun `build redacts long sensitive numeric values when redaction on`() = runTest {
         every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns true
         val receipt = makeReceipt(
             rawOcrText = "CARD 4111 1111 1111 1111\nIBAN GR1601101250000000012300695\nPHONE 2101234567"

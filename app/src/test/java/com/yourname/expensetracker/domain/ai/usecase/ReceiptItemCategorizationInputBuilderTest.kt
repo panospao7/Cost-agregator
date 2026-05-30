@@ -7,6 +7,8 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import io.mockk.coEvery
 import io.mockk.every
@@ -37,7 +39,10 @@ class ReceiptItemCategorizationInputBuilderTest {
             receiptRepository = receiptRepository,
             categoryRepository = categoryRepository,
             receiptParser = receiptParser,
-            aiPolicy = aiPolicy
+            aiPolicy = aiPolicy,
+            privacySettingsRepository = FakePrivacySettingsRepository(
+                PrivacySettings(redactBeforeCloud = false)
+            )
         )
     }
 

@@ -96,7 +96,7 @@ class SuggestReceiptExtractionUseCaseTest {
         val suggestion = ReceiptAssistSuggestion(merchant = SuggestedValue("Lidl"))
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
@@ -112,7 +112,7 @@ class SuggestReceiptExtractionUseCaseTest {
         val input = makeInput()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { inputBuilder.build(receipt, any()) } returns input
         coEvery {
             aiArtifactRepository.getLatest("scanned_receipt:1", AiCapability.RECEIPT_EXTRACTION)
         } returns freshReadyArtifact(stableHash(input))
@@ -137,7 +137,7 @@ class SuggestReceiptExtractionUseCaseTest {
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
@@ -167,7 +167,7 @@ class SuggestReceiptExtractionUseCaseTest {
         val secondInput = makeInput(currentTimeMs = now + 9999L)
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returnsMany listOf(firstInput, secondInput)
+        coEvery { inputBuilder.build(receipt, any()) } returnsMany listOf(firstInput, secondInput)
         coEvery {
             aiArtifactRepository.getLatest("scanned_receipt:1", AiCapability.RECEIPT_EXTRACTION)
         } returns freshReadyArtifact(stableHash(firstInput))
@@ -192,7 +192,7 @@ class SuggestReceiptExtractionUseCaseTest {
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings().copy(receiptImageCloudEnabled = true))
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
@@ -216,7 +216,7 @@ class SuggestReceiptExtractionUseCaseTest {
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery {
             aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any(), any())
@@ -246,7 +246,7 @@ class SuggestReceiptExtractionUseCaseTest {
         val input = makeInput()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { receiptAssistService.suggest(input) } returns
             AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
@@ -269,7 +269,7 @@ class SuggestReceiptExtractionUseCaseTest {
         val input = makeInput()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
-        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { receiptAssistService.suggest(input) } throws CancellationException("cancelled")
 

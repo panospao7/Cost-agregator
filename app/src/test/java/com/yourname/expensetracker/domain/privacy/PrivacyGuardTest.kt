@@ -35,6 +35,28 @@ class PrivacyGuardTest {
         return dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
     }
 
+    /**
+     * Extracts the balanced-paren call text starting at the '(' located at [openParenIdx].
+     * Robust to multi-line constructor calls — accumulates characters until the matching
+     * closing paren is reached.
+     */
+    private fun balancedCall(content: String, openParenIdx: Int): String {
+        var depth = 0
+        val sb = StringBuilder()
+        var i = openParenIdx
+        while (i < content.length) {
+            val c = content[i]
+            sb.append(c)
+            if (c == '(') depth++
+            else if (c == ')') {
+                depth--
+                if (depth == 0) break
+            }
+            i++
+        }
+        return sb.toString()
+    }
+
     // ── G5: No String.hashCode() in RawContentSanitizer ──────────────────────
 
     @Test
@@ -78,6 +100,73 @@ class PrivacyGuardTest {
         }
         if (violations.isNotEmpty()) {
             fail("G4: Allow-all PrivacyGate found outside secondary constructors in main source:\n${violations.joinToString("\n")}")
+        }
+    }
+
+    // ── G4b: No object : PrivacyGate that returns Allowed — even in test ctors ─
+
+    @Test
+    fun privacy_guard_no_allow_all_gate_even_in_test_constructors() {
+        if (!mainSrcRoot.exists()) return  // not available in test env
+        val violations = mutableListOf<String>()
+        val gatePattern = Regex("object\\s*:\\s*PrivacyGate")
+        allKtFiles(mainSrcRoot).forEach { file ->
+            val lines = file.readLines()
+            lines.forEachIndexed { i, line ->
+                val trimmed = line.trim()
+                if (gatePattern.containsMatchIn(line) &&
+                    !trimmed.startsWith("//") &&
+                    !trimmed.startsWith("*")
+                ) {
+                    // Inspect the gate body: this line + the next ~4 lines.
+                    val window = lines.drop(i).take(5).joinToString("\n")
+                    if (window.contains("PrivacyDecision.Allowed")) {
+                        violations += "${file.name}:${i + 1}: ${trimmed}"
+                    }
+                }
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail(
+                "G4b: object : PrivacyGate returning PrivacyDecision.Allowed found in main source " +
+                    "(allow-all gates fail OPEN — use PrivacyDecision.FailClosed even in test constructors):\n" +
+                    violations.joinToString("\n")
+            )
+        }
+    }
+
+    // ── G4c: No CompositePrivacyGate(emptyList()) without gateHandledCapabilities
+
+    @Test
+    fun privacy_guard_no_composite_gate_without_handled_capabilities() {
+        if (!mainSrcRoot.exists()) return  // not available in test env
+        val violations = mutableListOf<String>()
+        val token = "CompositePrivacyGate("
+        allKtFiles(mainSrcRoot).forEach { file ->
+            val content = file.readText()
+            var searchFrom = 0
+            while (true) {
+                val idx = content.indexOf(token, searchFrom)
+                if (idx < 0) break
+                // The '(' sits at the end of the token.
+                val openParenIdx = idx + token.length - 1
+                val call = balancedCall(content, openParenIdx)
+                // Fails OPEN: an empty gate list with no declared handled capabilities
+                // returns Allowed for sensitive capabilities (e.g. CLOUD_AI_GENERAL).
+                if (call.contains("emptyList()") && !call.contains("gateHandledCapabilities")) {
+                    val lineNo = content.substring(0, idx).count { it == '\n' } + 1
+                    violations += "${file.name}:${lineNo}: ${token}emptyList()...) missing gateHandledCapabilities"
+                }
+                searchFrom = idx + token.length
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail(
+                "G4c: CompositePrivacyGate(emptyList(), ...) without gateHandledCapabilities found in main " +
+                    "source (this fails OPEN for sensitive capabilities — pass " +
+                    "PrivacyCapabilityHandlingPolicy.gateHandledCapabilities):\n" +
+                    violations.joinToString("\n")
+            )
         }
     }
 

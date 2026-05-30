@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.CloudCategoryOption
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.dto.CategoryRef
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -19,15 +20,17 @@ class ReceiptItemCategorizationInputBuilder @Inject constructor(
     private val receiptRepository: ReceiptRepository,
     private val categoryRepository: CategoryRepository,
     private val receiptParser: ReceiptParser,
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
     /**
      * Builds input for receipt item categorization.
      */
     suspend fun build(receipt: ScannedReceipt, settings: AiSettings): ReceiptItemCategorizationInput {
+        val privacyRequiresRedaction = privacySettingsRepository.getSettings().redactBeforeCloud
         val shouldRedact =
             aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_ITEM_CATEGORIZATION) &&
-                aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_ITEM_CATEGORIZATION)
+                (aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_ITEM_CATEGORIZATION) || privacyRequiresRedaction)
 
         // Parse line items from JSON
         val lineItems = receipt.parsedItems?.let {

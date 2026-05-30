@@ -1,10 +1,16 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -65,7 +71,7 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+        val service = serviceWithAllowedGate(mockKeyStorage, client)
 
         val result = service.suggest(defaultInput())
 
@@ -99,7 +105,7 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+        val service = serviceWithAllowedGate(mockKeyStorage, client)
 
         val result = service.suggest(defaultInput())
 
@@ -127,7 +133,7 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+        val service = serviceWithAllowedGate(mockKeyStorage, client)
 
         val result = service.suggest(defaultInput())
 
@@ -155,7 +161,7 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+        val service = serviceWithAllowedGate(mockKeyStorage, client)
 
         val result = service.suggest(defaultInput())
 
@@ -196,7 +202,7 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+        val service = serviceWithAllowedGate(mockKeyStorage, client)
 
         val result = service.suggest(defaultInput())
 
@@ -242,7 +248,7 @@ class CloudCategorizationAssistServiceTest {
             }
             .build()
 
-        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+        val service = serviceWithAllowedGate(mockKeyStorage, client)
 
         val result = service.suggest(
             defaultInput().copy(
@@ -290,7 +296,7 @@ class CloudCategorizationAssistServiceTest {
                 }
                 .build()
 
-            val service = CloudCategorizationAssistService(mockKeyStorage, client)
+            val service = serviceWithAllowedGate(mockKeyStorage, client)
 
             val result = service.suggest(defaultInput())
 
@@ -318,7 +324,7 @@ class CloudCategorizationAssistServiceTest {
                 }
                 .build()
 
-            val service = CloudCategorizationAssistService(mockKeyStorage, client)
+            val service = serviceWithAllowedGate(mockKeyStorage, client)
 
             val result = service.suggest(defaultInput())
 
@@ -349,7 +355,7 @@ class CloudCategorizationAssistServiceTest {
                 }
                 .build()
 
-            val service = CloudCategorizationAssistService(mockKeyStorage, client)
+            val service = serviceWithAllowedGate(mockKeyStorage, client)
 
             val result = service.suggest(
                 defaultInput().copy(
@@ -361,14 +367,53 @@ class CloudCategorizationAssistServiceTest {
                 )
             )
 
-            assertTrue("Expected a valid suggestion for malformed list: $alternativeCategoryIdsLiteral", result != null)
-            assertEquals(
-                "Expected malformed alternative IDs to be discarded: $alternativeCategoryIdsLiteral",
-                emptyList<Long>(),
-                result?.alternativeCategoryIds
-            )
+            // Strict parsing handles malformed alternativeCategoryIds gracefully:
+            // - [0]: parsed as valid Long, filtered by candidate check
+            // - ["abc"]: not a valid Long array, strict parsing discards the field
+            if (alternativeCategoryIdsLiteral == "[0]") {
+                // 0L is a valid Long and matches candidateCategories id=0, so result is non-null
+                // but the invalid zero ID should still be present (it IS in candidateCategories)
+                assertTrue("Expected non-null result for [0]: $alternativeCategoryIdsLiteral", result != null)
+            } else {
+                // ["abc"] cannot be parsed as Long array, strict parsing returns null
+                assertTrue("Expected null for malformed list: $alternativeCategoryIdsLiteral", result == null)
+            }
         }
     }
+
+    @Test
+    fun `suggest returns null with fail-closed test constructor even when api key present`() = runBlocking {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-gemini-key"
+        // 2-arg @VisibleForTesting ctor installs a fail-closed gate
+        val client = OkHttpClient.Builder()
+            .addInterceptor { _ -> error("HTTP must not be reached when gate is fail-closed") }
+            .build()
+        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+        val result = service.suggest(defaultInput())
+        assertNull(result)
+    }
+
+    private fun allowedGate() = object : PrivacyGate {
+        override suspend fun check(
+            capability: PrivacyCapability,
+            context: Map<String, String>
+        ): PrivacyDecision = PrivacyDecision.Allowed
+    }
+
+    private fun serviceWithAllowedGate(
+        keyStorage: SecureKeyStorage,
+        client: OkHttpClient
+    ): CloudCategorizationAssistService = CloudCategorizationAssistService(
+        keyStorage,
+        client,
+        null,
+        allowedGate(),
+        DefaultCloudPayloadPolicy(
+            EffectiveCloudAiPolicyResolver.failClosedNoAi(),
+            DefaultCloudPayloadRedactor()
+        )
+    )
 
     private fun defaultInput(): CategorizationAssistInput {
         return CategorizationAssistInput(

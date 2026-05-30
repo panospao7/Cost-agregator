@@ -42,10 +42,10 @@ class CloudQueryInterpretationService @Inject constructor(
     private var apiKeyOverride: String? = null
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP))
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP, com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy.gateHandledCapabilities))
 
     // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP)) {
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP, com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy.gateHandledCapabilities)) {
         this.apiKeyOverride = apiKeyOverride
     }
 
