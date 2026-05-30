@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import javax.inject.Inject
 
 /**
@@ -24,10 +25,12 @@ import javax.inject.Inject
  *    payload size sent to any cloud endpoint.
  */
 class ReviewExplanationInputBuilder @Inject constructor(
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
-    fun build(review: PendingReview, settings: AiSettings): ReviewExplanationInput {
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.REVIEW_EXPLANATION)
+    suspend fun build(review: PendingReview, settings: AiSettings): ReviewExplanationInput {
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.REVIEW_EXPLANATION) ||
+            privacySettingsRepository.getSettings().redactBeforeCloud
 
         val safeNotificationText = when {
             shouldRedact -> null

@@ -23,6 +23,8 @@ import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.*
@@ -51,6 +53,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     private lateinit var interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase
     private lateinit var executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase
     private lateinit var mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
+    private lateinit var privacySettingsRepository: FakePrivacySettingsRepository
     private lateinit var viewModel: AssistantViewModel
 
     @Before
@@ -63,6 +66,9 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         interpretFinancialQueryUseCase = mockk(relaxed = true)
         executeFinancialQueryUseCase = mockk(relaxed = true)
         mapFinancialQueryToNavigationUseCase = mockk(relaxed = true)
+        privacySettingsRepository = FakePrivacySettingsRepository(
+            PrivacySettings(redactBeforeCloud = false)
+        )
 
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(
@@ -81,7 +87,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
-            mapFinancialQueryToNavigationUseCase
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
         )
     }
 
@@ -98,7 +105,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
-            mapFinancialQueryToNavigationUseCase
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
         )
 
         advanceUntilIdle()
@@ -122,7 +130,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
-            mapFinancialQueryToNavigationUseCase
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
         )
 
         advanceUntilIdle()
@@ -158,7 +167,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
-            mapFinancialQueryToNavigationUseCase
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
         )
 
         advanceUntilIdle()
@@ -181,7 +191,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
-            mapFinancialQueryToNavigationUseCase
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
         )
 
         advanceUntilIdle()
@@ -290,7 +301,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
-            mapFinancialQueryToNavigationUseCase
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
         )
 
         val intent = FinancialQueryIntent(
@@ -317,6 +329,67 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `submitQuery strips history payloadJson when privacy requires redaction even though ai redaction is off`() = runTest(testDispatcher) {
+        // AiSettings.redactBeforeCloud=false but PrivacySettings.redactBeforeCloud=true -> privacy authoritative.
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                assistantEnabled = true,
+                queryInterpretationEnabled = true,
+                storeConversationHistory = true,
+                redactBeforeCloud = false
+            )
+        )
+        privacySettingsRepository = FakePrivacySettingsRepository(
+            PrivacySettings(redactBeforeCloud = true)
+        )
+        viewModel = AssistantViewModel(
+            application,
+            aiSettingsRepository,
+            aiChatRepository,
+            getAiRuntimeStatusUseCase,
+            interpretFinancialQueryUseCase,
+            executeFinancialQueryUseCase,
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
+        )
+
+        val storedHistory = listOf(
+            AiChatMessage(
+                id = 1L,
+                sessionId = 5L,
+                role = AssistantMessageRole.ASSISTANT,
+                kind = AssistantMessageKind.RESULT,
+                text = "Previous answer",
+                payloadJson = "{\"type\":\"summary\",\"primaryText\":\"sensitive\"}",
+                createdAt = 100L
+            )
+        )
+        val capturedHistories = mutableListOf<List<AiChatMessage>>()
+        val intent = FinancialQueryIntent(
+            rawQuery = "total this month",
+            normalizedQuery = "total this month",
+            filters = ExpenseQueryFilters(),
+            metric = QueryMetric.TOTAL
+        )
+        coEvery { aiChatRepository.createSession(any()) } returns 5L
+        every { aiChatRepository.observeMessages(5L) } returns flowOf(storedHistory)
+        coEvery { interpretFinancialQueryUseCase(any(), capture(capturedHistories)) } returns
+            FinancialQueryInterpretationResult.Structured(intent)
+        coEvery { executeFinancialQueryUseCase(intent) } returns FinancialQueryResult.Summary(
+            title = UiText.DynamicString("Total spending"),
+            primaryText = "42.00 EUR"
+        )
+        coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
+
+        viewModel.submitQuery("total this month")
+        advanceUntilIdle()
+
+        assertTrue(capturedHistories.isNotEmpty())
+        assertTrue(capturedHistories.last().all { it.payloadJson == null })
+    }
+
+    @Test
     fun `clarification reply keeps conversation history when history enabled`() = runTest(testDispatcher) {
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(
@@ -333,7 +406,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
-            mapFinancialQueryToNavigationUseCase
+            mapFinancialQueryToNavigationUseCase,
+            privacySettingsRepository
         )
 
         val expectedHistory = listOf(

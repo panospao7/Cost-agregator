@@ -10,7 +10,10 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.policy.AiPolicyImpl
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -36,7 +39,12 @@ class DedupeJudgeInputBuilderTest {
         aiPolicy = mockk()
         every { aiPolicy.canUseCloudFor(any(), AiCapability.DEDUPE_JUDGE) } returns true
         every { aiPolicy.shouldRedact(any(), AiCapability.DEDUPE_JUDGE) } returns false
-        builder = DedupeJudgeInputBuilder(expenseRepository, reviewQueueRepository, aiPolicy)
+        builder = DedupeJudgeInputBuilder(
+            expenseRepository,
+            reviewQueueRepository,
+            aiPolicy,
+            FakePrivacySettingsRepository(PrivacySettings(redactBeforeCloud = false))
+        )
     }
 
     @Test
@@ -276,6 +284,50 @@ class DedupeJudgeInputBuilderTest {
             300_000L,
             DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
         )
+    }
+
+    /**
+     * P8-NEW: PrivacySettings.redactBeforeCloud is authoritative. With cloud usable for
+     * DEDUPE_JUDGE and AiSettings.redactBeforeCloud=false, a privacy redact=true must still
+     * pseudonymize merchant/source labels in the built input. Uses real AiPolicyImpl.
+     */
+    @Test
+    fun `build redacts labels when privacy requires it even though ai redaction is off`() = runTest {
+        val privacyBuilder = DedupeJudgeInputBuilder(
+            expenseRepository,
+            reviewQueueRepository,
+            AiPolicyImpl(),
+            FakePrivacySettingsRepository(PrivacySettings(redactBeforeCloud = true))
+        )
+        val review = makeReview()
+        coEvery {
+            expenseRepository.getDuplicateCandidatesInWindow(
+                amount = any(),
+                date = any(),
+                currency = any(),
+                transactionType = any(),
+                windowMs = any()
+            )
+        } returns listOf(
+            Expense(id = 1L, amount = 10.0, merchant = "Lidl", merchantKey = MerchantKeyGenerator.generate("Lidl"), transactionType = TransactionType.PURCHASE, date = 1_000L)
+        )
+        coEvery { reviewQueueRepository.getPendingReviewsByMerchant("Lidl") } returns emptyList()
+
+        val cloudOnRedactionOff = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            dedupeJudgeEnabled = true,
+            redactBeforeCloud = false
+        )
+
+        val result = privacyBuilder.build(PendingReviewWithReceipt(review, null), cloudOnRedactionOff)
+
+        assertTrue(result is DedupeJudgeBuildResult.Ready)
+        val input = (result as DedupeJudgeBuildResult.Ready).input
+        assertTrue(input.subject.merchant.startsWith("merchant_"))
+        assertTrue(input.subject.merchant != "Lidl")
+        assertTrue(input.candidates.all { it.merchant.startsWith("merchant_") })
+        assertTrue(input.candidates.none { it.merchant == "Lidl" })
     }
 
     private fun makeReview(

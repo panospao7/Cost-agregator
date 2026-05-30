@@ -6,8 +6,11 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -21,11 +24,14 @@ class ReviewExplanationInputBuilderTest {
     @Before
     fun setup() {
         aiPolicy = mockk()
-        builder = ReviewExplanationInputBuilder(aiPolicy)
+        builder = ReviewExplanationInputBuilder(
+            aiPolicy,
+            FakePrivacySettingsRepository(PrivacySettings(redactBeforeCloud = false))
+        )
     }
 
     @Test
-    fun `build pseudonymizes merchant and packageName and removes explanation when redaction enabled`() {
+    fun `build pseudonymizes merchant and packageName and removes explanation when redaction enabled`() = runTest {
         every { aiPolicy.shouldRedact(any(), AiCapability.REVIEW_EXPLANATION) } returns true
         val review = makeReview()
 
@@ -39,7 +45,7 @@ class ReviewExplanationInputBuilderTest {
     }
 
     @Test
-    fun `build keeps raw fields and clamps notification text when redaction disabled`() {
+    fun `build keeps raw fields and clamps notification text when redaction disabled`() = runTest {
         every { aiPolicy.shouldRedact(any(), AiCapability.REVIEW_EXPLANATION) } returns false
         val longNotificationText = "x".repeat(AppConfig.Ai.MAX_REVIEW_TEXT_CHARS_FOR_CLOUD + 25)
         val review = makeReview(notificationText = longNotificationText)
@@ -54,6 +60,24 @@ class ReviewExplanationInputBuilderTest {
             longNotificationText.take(AppConfig.Ai.MAX_REVIEW_TEXT_CHARS_FOR_CLOUD),
             result.notificationText
         )
+    }
+
+    @Test
+    fun `build pseudonymizes when privacy requires it even though ai redaction is off`() = runTest {
+        every { aiPolicy.shouldRedact(any(), AiCapability.REVIEW_EXPLANATION) } returns false
+        builder = ReviewExplanationInputBuilder(
+            aiPolicy,
+            FakePrivacySettingsRepository(PrivacySettings(redactBeforeCloud = true))
+        )
+        val review = makeReview()
+
+        val result = builder.build(review, AiSettings(redactBeforeCloud = false))
+
+        assertEquals("merchant_${review.suggestedMerchant.sha256Prefix()}", result.merchant)
+        assertEquals("app_${review.packageName.sha256Prefix()}", result.packageName)
+        assertNull(result.explanation)
+        assertNull(result.notificationTitle)
+        assertNull(result.notificationText)
     }
 
     private fun makeReview(notificationText: String = "Paid 42 EUR to Test Merchant"): PendingReview {

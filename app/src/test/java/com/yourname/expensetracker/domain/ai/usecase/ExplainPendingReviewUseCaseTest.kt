@@ -161,7 +161,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke skips generation when fresh READY artifact already exists`() = runTest {
         val review = makePendingReview(id = 7L)
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput(reviewId = 7L)
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput(reviewId = 7L)
         coEvery {
             aiArtifactRepository.getLatest("pending_review:7", AiCapability.REVIEW_EXPLANATION)
         } returns freshReadyArtifact(reviewId = 7L)
@@ -179,7 +179,7 @@ class ExplainPendingReviewUseCaseTest {
         val review = makePendingReview(id = 7L)
         val staleInput = makeInput(reviewId = 7L).copy(notificationText = "Different notification")
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns staleInput
+        coEvery { inputBuilder.build(any(), any()) } returns staleInput
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshReadyArtifact(reviewId = 7L)
         coEvery { reviewExplanationService.generate(any()) } returns AiServiceResult.Success(
             ReviewExplanation(headline = "Fresh", body = "Fresh body")
@@ -199,7 +199,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke stores FAILED artifact when provider returns failure`() = runTest {
         val review = makePendingReview()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery {
             aiArtifactRepository.getLatest(any(), any())
         } returns null
@@ -230,7 +230,7 @@ class ExplainPendingReviewUseCaseTest {
             caution  = null
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns AiServiceResult.Success(explanation)
 
@@ -256,7 +256,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke sets correct targetKey for review`() = runTest {
         val review = makePendingReview(id = 42L)
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput(reviewId = 42L)
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput(reviewId = 42L)
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Success(ReviewExplanation(headline = "H", body = "B"))
@@ -272,7 +272,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke stores route metadata when provider succeeds`() = runTest {
         val review = makePendingReview()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Success(ReviewExplanation("H", "B"))
@@ -291,7 +291,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke stores ON_DEVICE route metadata when local review provider succeeds`() = runTest {
         val review = makePendingReview()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery {
             aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any(), any())
         } returns AiRouteDecision(
@@ -322,7 +322,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke stores FAILED artifact when provider throws`() = runTest {
         val review = makePendingReview()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } throws RuntimeException("Network timeout")
 
@@ -345,7 +345,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke propagates CancellationException without writing FAILED artifact`() = runTest {
         val review = makePendingReview()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } throws CancellationException("cancelled")
 
@@ -370,7 +370,7 @@ class ExplainPendingReviewUseCaseTest {
     fun `invoke sets expiresAt to now plus TTL`() = runTest {
         val review = makePendingReview()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Success(ReviewExplanation("H", "B"))

@@ -14,7 +14,10 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
+import com.yourname.expensetracker.domain.ai.policy.AiPolicyImpl
 import com.yourname.expensetracker.domain.privacy.DefaultRedactionSanitizer
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import io.mockk.coEvery
 import io.mockk.every
@@ -47,7 +50,8 @@ class CategorizationAssistInputBuilderTest {
             aiPolicy,
             expenseRepository,
             merchantNormalizer,
-            DefaultRedactionSanitizer()
+            DefaultRedactionSanitizer(),
+            FakePrivacySettingsRepository(PrivacySettings(redactBeforeCloud = false))
         )
     }
 
@@ -216,6 +220,38 @@ class CategorizationAssistInputBuilderTest {
         } catch (_: CancellationException) {
             // expected: cancellation propagates instead of being swallowed
         }
+    }
+
+    @Test
+    fun `build redacts merchant and category labels when privacy requires it even though ai redaction is off`() = runTest {
+        // AiSettings redaction OFF but PrivacySettings authoritative redaction ON.
+        val privacyBuilder = CategorizationAssistInputBuilder(
+            categoryRepository,
+            AiPolicyImpl(),
+            expenseRepository,
+            merchantNormalizer,
+            DefaultRedactionSanitizer(),
+            FakePrivacySettingsRepository(PrivacySettings(redactBeforeCloud = true))
+        )
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Private Groceries", icon = "G", color = "#0000FF")
+        )
+        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns emptyList()
+
+        val result = privacyBuilder.build(makeItem(), AiSettings(redactBeforeCloud = false))
+
+        assertTrue(result.merchant.startsWith("merchant_"))
+        assertTrue(result.merchant != "Lidl")
+        assertNull(result.supportingText)
+        assertNull(result.deterministicExplanation)
+        assertTrue(result.candidateCategories.all { it.cloudLabel.startsWith("category_") })
+        assertTrue(result.candidateCategories.none { it.cloudLabel.contains("Private Groceries") })
     }
 
     private fun makeItem(): PendingReviewWithReceipt {

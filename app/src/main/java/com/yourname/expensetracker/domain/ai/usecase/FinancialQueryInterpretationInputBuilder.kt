@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationI
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
@@ -16,7 +17,8 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val expenseRepository: ExpenseRepository,
     private val timeProvider: TimeProvider,
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
     suspend fun build(
@@ -26,7 +28,8 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
     ): FinancialQueryInterpretationInput {
         val shouldRedact =
             aiPolicy.canUseCloudFor(settings, AiCapability.QUERY_INTERPRETATION) &&
-                aiPolicy.shouldRedact(settings, AiCapability.QUERY_INTERPRETATION)
+                (aiPolicy.shouldRedact(settings, AiCapability.QUERY_INTERPRETATION) ||
+                    privacySettingsRepository.getSettings().redactBeforeCloud)
         val categories = categoryRepository.getAll()
         val merchants = expenseRepository.getRecentMerchantNames()
         val merchantAliases = mutableMapOf<String, String>()

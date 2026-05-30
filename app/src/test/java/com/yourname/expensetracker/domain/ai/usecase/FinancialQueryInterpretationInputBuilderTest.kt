@@ -9,8 +9,11 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.policy.AiPolicyImpl
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -41,7 +44,10 @@ class FinancialQueryInterpretationInputBuilderTest {
             categoryRepository = categoryRepository,
             expenseRepository = expenseRepository,
             timeProvider = timeProvider,
-            aiPolicy = aiPolicy
+            aiPolicy = aiPolicy,
+            privacySettingsRepository = FakePrivacySettingsRepository(
+                PrivacySettings(redactBeforeCloud = false)
+            )
         )
     }
 
@@ -152,5 +158,44 @@ class FinancialQueryInterpretationInputBuilderTest {
         assertTrue(result.rawQuery.contains(groceriesAlias))
         assertTrue(result.conversationHistory.single().text.contains(lidlAlias))
         assertTrue(result.conversationHistory.single().text.contains(groceriesAlias))
+    }
+
+    @Test
+    fun `build redacts when privacy requires it even though ai redaction is off`() = runTest {
+        // Real AiPolicyImpl exercises the actual fix: cloud usable, AI redaction off,
+        // but PrivacySettings.redactBeforeCloud authoritative -> labels must be hashed.
+        val privacyBuilder = FinancialQueryInterpretationInputBuilder(
+            categoryRepository = categoryRepository,
+            expenseRepository = expenseRepository,
+            timeProvider = timeProvider,
+            aiPolicy = AiPolicyImpl(),
+            privacySettingsRepository = FakePrivacySettingsRepository(
+                PrivacySettings(redactBeforeCloud = true)
+            )
+        )
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Groceries", icon = "G", color = "#00FF00")
+        )
+        coEvery { expenseRepository.getRecentMerchantNames() } returns listOf("Lidl")
+
+        val cloudOnRedactionOff = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            queryInterpretationEnabled = true,
+            redactBeforeCloud = false
+        )
+
+        val result = privacyBuilder.build(
+            rawQuery = "spent at Lidl for Groceries",
+            settings = cloudOnRedactionOff
+        )
+
+        val lidlAlias = "merchant_${"Lidl".sha256Prefix()}"
+        val groceriesAlias = "category_${"Groceries".sha256Prefix()}"
+        assertEquals(listOf(lidlAlias), result.merchantNames)
+        assertTrue(result.categoryNames.contains(groceriesAlias))
+        assertTrue(result.merchantLookupMap["Lidl"] == null)
+        assertTrue(result.rawQuery.contains(lidlAlias))
+        assertTrue(result.rawQuery.contains(groceriesAlias))
     }
 }

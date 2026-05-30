@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -21,13 +22,15 @@ import kotlin.math.abs
 class DedupeJudgeInputBuilder @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val reviewQueueRepository: ReviewQueueRepository,
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
     suspend fun build(item: PendingReviewWithReceipt, settings: AiSettings): DedupeJudgeBuildResult {
         val shouldRedact =
             aiPolicy.canUseCloudFor(settings, AiCapability.DEDUPE_JUDGE) &&
-                aiPolicy.shouldRedact(settings, AiCapability.DEDUPE_JUDGE)
+                (aiPolicy.shouldRedact(settings, AiCapability.DEDUPE_JUDGE) ||
+                    privacySettingsRepository.getSettings().redactBeforeCloud)
         val review = item.review
         val reviewDate = review.suggestedDate
             ?: return DedupeJudgeBuildResult.NotNeeded(

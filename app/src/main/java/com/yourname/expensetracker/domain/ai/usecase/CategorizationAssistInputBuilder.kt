@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RedactionSanitizer
 import timber.log.Timber
 import javax.inject.Inject
@@ -26,7 +27,8 @@ class CategorizationAssistInputBuilder @Inject constructor(
     private val aiPolicy: AiPolicy,
     private val expenseRepository: ExpenseRepository,
     private val merchantNormalizer: MerchantNormalizer,
-    private val redactionSanitizer: RedactionSanitizer
+    private val redactionSanitizer: RedactionSanitizer,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
     suspend fun build(
@@ -34,7 +36,8 @@ class CategorizationAssistInputBuilder @Inject constructor(
         settings: AiSettings
     ): CategorizationAssistInput {
         val review = item.review
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
+        val privacyRedact = privacySettingsRepository.getSettings().redactBeforeCloud
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK) || privacyRedact
         val categoryRefs = categoryRepository.getAll().map { CategoryRef(id = it.id, name = it.name) }
         val rawMerchant = review.suggestedMerchant.trim().take(120)
         val merchant = if (shouldRedact) {
@@ -77,7 +80,8 @@ class CategorizationAssistInputBuilder @Inject constructor(
         currentCategoryId: Long?,
         settings: AiSettings
     ): CategorizationAssistInput {
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK) ||
+            privacySettingsRepository.getSettings().redactBeforeCloud
         val categoryRefs = categoryRepository.getAll().map { CategoryRef(id = it.id, name = it.name) }
         val rawMerchant = draftMerchant?.trim()?.takeIf { it.isNotBlank() }
             ?: receipt.parsedMerchant?.trim()?.takeIf { it.isNotBlank() }

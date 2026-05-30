@@ -94,7 +94,8 @@ class AssistantViewModel @Inject constructor(
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase,
     private val executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase,
-    private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
+    private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase,
+    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AssistantUiState())
@@ -222,7 +223,7 @@ class AssistantViewModel @Inject constructor(
                     // S11-019: Sanitize history for cloud — strip payloadJson under redaction,
                     // limit to last 10 turns to avoid stale/excessive context
                     val limited = raw.takeLast(10)
-                    if (settings.redactBeforeCloud) {
+                    if (settings.redactBeforeCloud || privacySettingsRepository.getSettings().redactBeforeCloud) {
                         limited.map { msg -> msg.copy(payloadJson = null) }
                     } else {
                         limited

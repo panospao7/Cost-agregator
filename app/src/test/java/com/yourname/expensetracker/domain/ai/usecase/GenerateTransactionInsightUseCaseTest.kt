@@ -18,6 +18,8 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -58,7 +60,10 @@ class GenerateTransactionInsightUseCaseTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiPolicy = aiPolicy,
             inputBuilder = TransactionInsightInputBuilder(),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            privacySettingsRepository = FakePrivacySettingsRepository(
+                PrivacySettings(redactBeforeCloud = false)
+            )
         )
     }
 
@@ -98,6 +103,63 @@ class GenerateTransactionInsightUseCaseTest {
         )
 
         val result = useCase(transaction)
+
+        assertNotNull(result)
+        assertEquals(AiMode.CLOUD, result?.mode)
+        assertRedacted(inputSlot.captured, transaction)
+        coVerify(exactly = 1) { dashboardBriefingService.generate(any()) }
+    }
+
+    @Test
+    fun `invoke redacts on cloud route when privacy requires it even though ai redaction is off`() = runTest {
+        val transaction = Expense(
+            id = 42L,
+            amount = 187.43,
+            currency = "EUR",
+            merchant = "Secret Market",
+            transactionType = TransactionType.PURCHASE,
+            date = NOW
+        )
+        val inputSlot = slot<DashboardBriefingInput>()
+
+        // PrivacySettings authoritative: redaction ON even though AiSettings redaction is OFF.
+        val privacyUseCase = GenerateTransactionInsightUseCase(
+            aiSettingsRepository = aiSettingsRepository,
+            aiArtifactRepository = aiArtifactRepository,
+            dashboardBriefingService = dashboardBriefingService,
+            aiCapabilityRouter = aiCapabilityRouter,
+            aiPolicy = aiPolicy,
+            inputBuilder = TransactionInsightInputBuilder(),
+            timeProvider = timeProvider,
+            privacySettingsRepository = FakePrivacySettingsRepository(
+                PrivacySettings(redactBeforeCloud = true)
+            )
+        )
+
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                allowCloudAi = true,
+                dashboardBriefingEnabled = true,
+                redactBeforeCloud = false
+            )
+        )
+        coEvery { aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, any(), any()) } returns AiRouteDecision(
+            route = AiRoute.CLOUD,
+            reason = "Cloud allowed",
+            providerName = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER,
+            modelName = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL
+        )
+        every { aiPolicy.shouldRedact(any(), AiCapability.DASHBOARD_BRIEFING) } returns false
+        coEvery { dashboardBriefingService.generate(capture(inputSlot)) } returns AiServiceResult.Success(
+            DashboardBriefing(
+                title = "Insight",
+                text = "Looks fine",
+                tone = "neutral"
+            )
+        )
+
+        val result = privacyUseCase(transaction)
 
         assertNotNull(result)
         assertEquals(AiMode.CLOUD, result?.mode)
