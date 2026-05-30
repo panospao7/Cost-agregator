@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.ai.model
 
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 
 enum class DuplicateVerdict {
     LIKELY_DUPLICATE,
@@ -67,6 +68,7 @@ sealed interface AiServiceError {
     data object SslError : AiServiceError
     data class ParseError(val message: String? = null) : AiServiceError
     data class Disabled(val reason: String) : AiServiceError
+    data class PrivacyDenied(val blocked: PrivacyBlocked) : AiServiceError
     data class Unknown(val message: String? = null) : AiServiceError
 }
 

@@ -137,6 +137,7 @@ private fun AiServiceError.toReadableMessage(): String = when (this) {
     is AiServiceError.HttpError -> "HTTP $code"
     is AiServiceError.ParseError -> message ?: "Response parse error"
     is AiServiceError.Disabled -> reason
+    is AiServiceError.PrivacyDenied -> blocked.reason
     is AiServiceError.Unknown -> message ?: "Unknown service error"
 }
 

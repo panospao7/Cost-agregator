@@ -93,6 +93,7 @@ class HybridDedupeJudgeService @Inject constructor(
         is AiServiceResult.Failure -> when (val err = result.error) {
             is AiServiceError.HttpError -> "HTTP ${err.code}"
             is AiServiceError.Disabled -> err.reason
+            is AiServiceError.PrivacyDenied -> err.blocked.reason
             is AiServiceError.ParseError -> err.message ?: "parse"
             is AiServiceError.Unknown -> err.message ?: "unknown"
             AiServiceError.Timeout -> "timeout"

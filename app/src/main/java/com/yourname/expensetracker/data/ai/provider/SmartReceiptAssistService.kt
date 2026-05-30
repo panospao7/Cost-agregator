@@ -369,6 +369,7 @@ class SmartReceiptAssistService @Inject constructor(
                 errorMessage = when (val err = error) {
                     is AiServiceError.HttpError -> "HTTP ${err.code}"
                     is AiServiceError.Disabled -> err.reason
+                    is AiServiceError.PrivacyDenied -> err.blocked.reason
                     is AiServiceError.ParseError -> err.message
                     is AiServiceError.Unknown -> err.message
                     AiServiceError.Timeout -> "timeout"

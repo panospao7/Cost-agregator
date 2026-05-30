@@ -208,6 +208,7 @@ private fun AiServiceError.toReadableMessage(): String = when (this) {
     is AiServiceError.HttpError -> "AI service returned HTTP $code."
     is AiServiceError.ParseError -> message ?: "AI response could not be parsed."
     is AiServiceError.Disabled -> reason
+    is AiServiceError.PrivacyDenied -> blocked.reason
     is AiServiceError.Unknown -> message ?: "AI receipt assist failed."
 }
 

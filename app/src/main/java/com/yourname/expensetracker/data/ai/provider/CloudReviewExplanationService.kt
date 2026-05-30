@@ -19,9 +19,11 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
+import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.toPrivacyBlocked
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -88,7 +90,12 @@ class CloudReviewExplanationService @Inject constructor(
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
         if (gateCheck.blocksExecution()) {
             Timber.w("CloudReviewExplanationService: blocked by privacy gate: ${gateCheck.reason()}")
-            return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
+            return AiServiceResult.Failure(
+                AiServiceError.PrivacyDenied(
+                    gateCheck.toPrivacyBlocked(PrivacyCapability.CLOUD_AI_GENERAL)
+                        ?: PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_GENERAL, gateCheck.reason())
+                )
+            )
         }
 
         val rawPrompt = buildRawPrompt(input)
