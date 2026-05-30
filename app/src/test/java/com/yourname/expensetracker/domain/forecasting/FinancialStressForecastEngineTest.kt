@@ -1,7 +1,11 @@
 package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -66,6 +70,7 @@ class FinancialStressForecastEngineTest {
     private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
     private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
     private lateinit var databaseReadBarrier: DatabaseReadBarrier
+    private lateinit var currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
 
     private lateinit var engine: FinancialStressForecastEngine
 
@@ -120,6 +125,7 @@ class FinancialStressForecastEngineTest {
         recurringLifecycleCoordinator = mockk(relaxed = true)
         recurringOccurrenceDao = mockk(relaxed = true)
         databaseReadBarrier = mockk(relaxed = true)
+        currencyConverter = mockk(relaxed = true)
 
         engine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
@@ -133,7 +139,7 @@ class FinancialStressForecastEngineTest {
             multiCurrencyRepository = mockk(relaxed = true),
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             recurringOccurrenceDao = recurringOccurrenceDao,
-            currencyConverter = mockk(relaxed = true),
+            currencyConverter = currencyConverter,
             accountBalanceProvider = mockk(relaxed = true),
             databaseReadBarrier = databaseReadBarrier
         )
@@ -476,6 +482,121 @@ class FinancialStressForecastEngineTest {
             )
         }
     }
+
+    // ── DBG-03: paused-rule materialized occurrence must not leak into obligations ──
+
+    @Test
+    fun `DBG-03 stress excludes paused rule materialized occurrence from obligations`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val due = now + dayMs
+        // Only the ACTIVE rule (id=7) is returned by getConfirmedPatterns (production yields
+        // active rules only), so the paused rule (id=8) is NOT in the derived ruleIds.
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = due,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        // DAO holds previously-materialized PLANNED rows for BOTH the active rule (id=7)
+        // and a PAUSED rule (id=8). Only id=7 must be counted.
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            if (due in start until end) {
+                listOf(
+                    occurrenceRow(ruleId = 7L, dueDate = due, amount = 800.0, merchant = "Rent"),
+                    occurrenceRow(ruleId = 8L, dueDate = due, amount = 50.0, merchant = "Paused Gym")
+                )
+            } else emptyList()
+        }
+        // EUR→EUR passthrough so amounts actually sum (relaxed mock returns null otherwise).
+        coEvery { currencyConverter.convert(any<Double>(), any<String>(), any<String>()) } answers {
+            com.yourname.expensetracker.domain.currency.ConversionResult(
+                originalAmount = firstArg(),
+                originalCurrency = secondArg(),
+                convertedAmount = firstArg(),
+                targetCurrency = thirdArg(),
+                rateUsed = 1.0,
+                timestamp = now
+            )
+        }
+
+        val result = engine.computeStressForecast()
+
+        // Obligations reflect ONLY the active rule (800.0); the paused rule's 50.0 is filtered.
+        assertApproxEquals(800.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    // ── DBG-06: barrier-blocked materialized read marks the horizon partial ──
+
+    @Test
+    fun `DBG-06 stress marks recurring partial when materialized read barrier-blocked`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val due = now + dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = due,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        // Restore barrier blocks the materialized read inside calculateRecurringOutflows.
+        // It is caught locally (does NOT trip the engine's outer degraded fallback).
+        every { databaseReadBarrier.checkReadAllowed(any<String>()) } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.READ,
+            operation = DatabaseAccessOperation("FinancialStressForecastEngine.calculateRecurringOutflows"),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        )
+
+        val result = engine.computeStressForecast()
+
+        // Normal (not degraded-fallback) result, but the recurring section is flagged partial.
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        assertTrue(result.horizons.all { it.recurringObligationsPartial })
+    }
+
+    private fun occurrenceRow(
+        ruleId: Long,
+        dueDate: Long,
+        amount: Double,
+        merchant: String,
+        status: String = "PLANNED",
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY
+    ): RecurringOccurrence = RecurringOccurrence(
+        sourceType = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
+        sourceId = ruleId,
+        occurrenceKey = "${RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE}|$ruleId|$dueDate|${frequency.name}",
+        dueDate = dueDate,
+        status = status,
+        expectedAmount = amount,
+        expectedCurrency = "EUR",
+        frequency = frequency.name,
+        merchant = merchant,
+        categoryId = null
+    )
 
     private fun classifyRiskLevelViaReflection(probability: Double): StressRiskLevel {
         val method = FinancialStressForecastEngine::class.java.getDeclaredMethod(

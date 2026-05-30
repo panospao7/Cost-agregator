@@ -36,6 +36,7 @@ class FinancialWeatherRepositoryTest {
     private val narrativeGenerator = mockk<NarrativeGenerator>(relaxed = true)
     private val analyticsRepository = mockk<AnalyticsRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
     private lateinit var forecastInputAssembler: ForecastInputAssembler
 
     private lateinit var repository: FinancialWeatherRepository
@@ -76,7 +77,15 @@ class FinancialWeatherRepositoryTest {
             recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true),
             databaseReadBarrier = mockk(relaxed = true)
         )
-        
+
+        // ISSUE-2: the repository now resolves the narrative currency via the typed
+        // resolveHomeCurrency(); default to a Resolved EUR so existing tests exercise
+        // the success path. Failure-path tests override this per-scenario.
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+            )
+
         repository = FinancialWeatherRepository(
             expenseRepository,
             budgetRepository,
@@ -88,7 +97,7 @@ class FinancialWeatherRepositoryTest {
             synthesisEngine,
             narrativeGenerator,
             analyticsRepository,
-            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            currencySettingsRepository = currencySettingsRepository,
             timeProvider = timeProvider
         )
     }
@@ -489,6 +498,64 @@ class FinancialWeatherRepositoryTest {
         assertEquals(listOf("Confirmed Rent"), result.map { it.merchantName })
         verify(exactly = 1) { mergedRecurringPatternsProvider.getConfirmedPatterns(manualRecurring) }
         coVerify(exactly = 0) { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) }
+    }
+
+    // =========================================================================
+    // ISSUE-2: narrative/display currency uses the resolved home currency,
+    // NOT a hardcoded EUR fallback. On resolution failure the terminal .catch
+    // surfaces UNKNOWN weather rather than silently assuming EUR.
+    // =========================================================================
+
+    @Test
+    fun `narrative uses resolved home currency not EUR fallback`() = runTest {
+        val now = 1705320000000L
+        every { timeProvider.now() } returns now
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
+        every { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
+
+        // Resolve a NON-EUR home currency to prove the narrative uses the resolved
+        // value rather than the old hardcoded EUR fallback.
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                com.yourname.expensetracker.domain.core.money.CurrencyCode("USD")
+            )
+
+        val capturedCurrency = slot<String>()
+        every { narrativeGenerator.generate(any(), any(), capture(capturedCurrency)) } returns createMockNarrative()
+
+        repository.getFinancialWeather().first()
+
+        assertEquals("USD", capturedCurrency.captured)
+    }
+
+    @Test
+    fun `home currency resolution failure surfaces UNKNOWN weather not EUR fallback`() = runTest {
+        val now = 1705320000000L
+        every { timeProvider.now() } returns now
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
+        every { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
+
+        // Resolution failure must surface UNKNOWN weather via the terminal .catch,
+        // NOT silently format amounts with an assumed EUR.
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed("datastore read error")
+
+        val result = repository.getFinancialWeather().first()
+
+        assertEquals(WeatherState.UNKNOWN, result.state)
+        // The narrative is never generated once resolution fails before it.
+        verify(exactly = 0) { narrativeGenerator.generate(any(), any(), any()) }
     }
 
     private fun createExpense(amount: Double, date: Long, type: TransactionType): Expense {

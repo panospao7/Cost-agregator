@@ -81,17 +81,32 @@ class CashFlowCalendarViewModel @Inject constructor(
         cashFlowJob?.cancel()
 
         cashFlowJob = viewModelScope.launch {
+            // DBG-01: Snapshot state ONCE so the balance currency and amount come from a
+            // single consistent view. The MoneyAmount handed to the calculator is built
+            // from the SAME resolved home currency captured here, avoiding the stale-
+            // currency window where the calculator resolves a newer currency than the one
+            // the balance was denominated in (which would trip the calculator's require).
+            val snapshot = _state.value
+            val homeCurrency = snapshot.homeCurrency
+            if (homeCurrency.isNullOrBlank()) {
+                // DBG-01: Not-ready guard. Home currency has not loaded yet, so building
+                // CurrencyCode("") would throw IllegalArgumentException and get trapped in a
+                // terminal error state that never recovers. Instead hold a benign Loading
+                // state and return; collectHomeCurrency() will re-trigger the real load once
+                // the currency arrives (or changes), so the screen recovers/refreshes.
+                _state.update { it.copy(isLoading = true, error = null) }
+                return@launch
+            }
             _state.update { it.copy(isLoading = true, error = null) }
             try {
-                // P6-CURRENT-020: pass the typed, home-currency-denominated balance.
-                // If homeCurrency is not yet loaded (null/blank), building moneyStartingBalance
-                // throws IllegalArgumentException (CurrencyCode("") is invalid), so we never
-                // reach the calculator with an invalid currency — the throw is handled by the
-                // catch below and surfaced as an error state instead of crashing.
+                // P6-CURRENT-020 / DBG-01: pass the typed, home-currency-denominated balance,
+                // built from the currency snapshot captured above so it matches the currency
+                // the calculator will resolve.
+                val startingBalance = MoneyAmount(snapshot.startingBalance, CurrencyCode(homeCurrency))
                 val cashFlows = cashFlowCalculator.calculateDailyCashFlow(
                     startDate = startDate,
                     endDate = endDate,
-                    startingBalance = _state.value.moneyStartingBalance
+                    startingBalance = startingBalance
                 )
                 // S8-020: Discard stale result
                 if (requestId != cashFlowRequestId) return@launch
@@ -154,10 +169,24 @@ class CashFlowCalendarViewModel @Inject constructor(
 
  private fun collectHomeCurrency() {
  viewModelScope.launch {
-     // S8-024: No EUR fallback — null until loaded
-     currencySettingsRepository.homeCurrency().collect { hc ->
-         _state.update { it.copy(homeCurrency = hc) }
-     }
+     // S8-024: No EUR fallback — null until loaded.
+     // DBG-01: distinctUntilChanged so we only react to genuine arrivals/changes,
+     // and re-trigger the load each time so the screen recovers from the not-ready
+     // guard on first emission and refreshes on a runtime currency change. Because
+     // loadCashFlow reads the latest state snapshot, the reload always uses the new
+     // currency for both the balance and the calculator resolution (no stale window).
+     currencySettingsRepository.homeCurrency()
+         .distinctUntilChanged()
+         .collect { hc ->
+             _state.update { it.copy(homeCurrency = hc) }
+             if (!hc.isNullOrBlank()) {
+                 // Reload the currently-viewed month using the resolved currency.
+                 loadCashFlow(
+                     Date(TimePeriodUtils.getMonthRange(_state.value.currentMonth.time).first),
+                     Date(TimePeriodUtils.getMonthRange(_state.value.currentMonth.time).second)
+                 )
+             }
+         }
  }
  }
 }

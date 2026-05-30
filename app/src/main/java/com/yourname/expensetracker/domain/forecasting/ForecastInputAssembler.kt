@@ -430,14 +430,43 @@ class ForecastInputAssembler @Inject constructor(
                 }
             }
 
+        // DBG-03: set of ACTIVE manual rule ids. The materialized read below MUST be
+        // filtered to these ids so a PAUSED (isActive=false) rule's previously-materialized
+        // PLANNED occurrences do not leak in as future obligations. projectOccurrences
+        // already returns empty for inactive rules, but getByDateRange is not active-aware,
+        // so the materialized side needs an explicit filter to match.
+        val activeRuleIds: Set<Long> = manualRecurringEntities
+            .filter { it.isActive }
+            .map { it.id }
+            .toSet()
+
         // ── Read already-materialized occurrences for dedup (READ-ONLY) ──────
         // Existing materialized rows (created by write-authorized paths) carry
         // authoritative status — including user overrides (SKIPPED/CANCELLED/
         // IGNORED) — so they take precedence over projections for the same key.
         // The read is guarded by the read barrier so it is blocked during restore.
+        //
+        // DBG-03: unlike CashFlowCalculator / FinancialStressForecastEngine, this read
+        // previously applied NO sourceType/active filter. We now (a) restrict to
+        // RECURRING_RULE rows and (b) restrict to ACTIVE rule ids, so paused rules and
+        // non-rule occurrence sources cannot contaminate the forecast.
+        // DBG-06: track barrier-block separately so we can flag the forecast as partial.
+        var materializedReadBlocked = false
         val materializedOccurrences: List<RecurringOccurrence> = try {
             databaseReadBarrier.checkReadAllowed("ForecastInputAssembler.assemble.readOccurrences")
             recurringOccurrenceDao.getByDateRange(forecastStart, forecastEnd)
+                .filter {
+                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                        it.sourceId in activeRuleIds
+                }
+        } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+            // DBG-06: restore barrier blocked the read. Projections bypass the barrier and
+            // would surface PLANNED bills WITHOUT the materialized SKIPPED/CANCELLED
+            // overrides → cancelled/skipped bills could transiently reappear. Mark the
+            // forecast partial so downstream consumers treat the recurring section as
+            // unreliable rather than authoritative.
+            materializedReadBlocked = true
+            emptyList()
         } catch (e: Exception) {
             emptyList()
         }
@@ -527,14 +556,20 @@ class ForecastInputAssembler @Inject constructor(
             confirmedOccurrences = confirmedOccurrences,
             displayCurrency = resolvedHomeCurrency,
             dataQuality = ForecastDataQuality(
-                isPartial = excludedCount > 0 || totalPlannedExcluded > 0,
+                // DBG-06: also partial when the materialized read was barrier-blocked
+                // (recurring overrides may be missing during restore).
+                isPartial = excludedCount > 0 || totalPlannedExcluded > 0 || materializedReadBlocked,
                 confidencePenalty = confidencePenalty,
                 excludedActualCount = excludedCount,
                 excludedPlannedCount = totalPlannedExcluded,
                 excludedRecurringCount = 0,
                 conversionWarnings = normalized.warnings.map { warning ->
                     "${warning.type.name}: ${warning.message}"
-                } + plannedWarnings
+                } + plannedWarnings + (
+                    if (materializedReadBlocked) {
+                        listOf("RECURRING_OCCURRENCES_UNAVAILABLE: materialized occurrence read blocked during restore — recurring section may omit user overrides")
+                    } else emptyList()
+                )
             )
         )
     }

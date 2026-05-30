@@ -639,19 +639,28 @@ class SynthesisEngine @Inject constructor(
         val ruleIdsWithOccurrences = mutableSetOf<Long>()
 
         if (manualIds.isNotEmpty()) {
+            // DBG-04: do NOT exclude by status here. Any rule with ANY materialised
+            // occurrence row in range (PLANNED, PAID, SKIPPED, CANCELLED, …) must be
+            // marked as "has occurrences" so it does NOT fall back to legacy
+            // isRecurringExpected date-matching below. Previously the query filtered to
+            // PLANNED|PAID only, so a rule whose only in-range occurrence was SKIPPED or
+            // CANCELLED returned no rows → it landed in missingRuleIds → legacy matching
+            // RE-ADDED it as a bill day, resurfacing a bill the user explicitly
+            // skipped/cancelled. Single DB round trip; status filtering happens in-loop.
             val occurrences = occurrenceDao.getByDateRange(monthStart, monthEnd)
             .filter {
                     it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
-                        it.sourceId in manualIds &&
-                        (it.status == "PLANNED" || it.status == "PAID")
+                        it.sourceId in manualIds
                 }
             val dayCal = Calendar.getInstance()
             for (occ in occurrences) {
                 // P6-CURRENT-014: every materialised occurrence marks its rule as
                 // "has occurrences" so it does NOT fall back to legacy date matching
                 // below. Only PLANNED occurrences are future obligations on the
-                // bill-day calendar — PAID rows are already-fulfilled actuals and
-                // would double-count against the matching actual expense.
+                // bill-day calendar — PAID rows are already-fulfilled actuals (would
+                // double-count against the matching actual expense), and SKIPPED/
+                // CANCELLED rows are explicit user removals (DBG-04) — neither must
+                // contribute to the bill-day map.
                 ruleIdsWithOccurrences.add(occ.sourceId)
                 if (occ.status != "PLANNED") continue
                 val day = dayCal.apply { timeInMillis = occ.dueDate }.get(Calendar.DAY_OF_MONTH)

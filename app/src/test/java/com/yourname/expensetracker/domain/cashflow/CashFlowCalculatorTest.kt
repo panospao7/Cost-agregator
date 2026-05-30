@@ -2,6 +2,10 @@ package com.yourname.expensetracker.domain.cashflow
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
@@ -534,6 +538,113 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             "Expected IllegalArgumentException for currency mismatch, got ${outcome.exceptionOrNull()}",
             outcome.exceptionOrNull() is IllegalArgumentException
         )
+    }
+
+    // ============================================================================
+    // DBG-03 – inactive (paused) rule's materialized occurrence must not leak in
+    // ============================================================================
+
+    @Test
+    fun `cashflow inactive rule materialized planned occurrence is not shown`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+
+        // Only the ACTIVE rule (id=1) is returned by getConfirmedPatterns — this mirrors
+        // production where RecurringExpenseRepository.getAll() yields active rules only.
+        // The PAUSED rule (id=2) is therefore NOT in the derived ruleIds set.
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
+        )
+        // The DAO still holds a previously-materialized PLANNED row for the paused rule (id=2).
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent"),
+            occurrence(ruleId = 2L, dueDate = d1, amount = 9.99, merchant = "Paused Gym")
+        )
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        val predicted = result[0].predictedRecurring
+        // Active rule's bill is present; the paused rule's leaked occurrence is filtered out.
+        assertTrue(predicted.any { it.merchantName == "Rent" })
+        assertFalse(predicted.any { it.merchantName == "Paused Gym" })
+    }
+
+    // ============================================================================
+    // DBG-06 – restore-barrier-blocked materialized read marks the result partial
+    // ============================================================================
+
+    @Test
+    fun `cashflow marks partial when materialized read blocked by restore barrier`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
+        )
+        // Projection succeeds (bypasses the barrier) and yields a PLANNED bill.
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
+        )
+        // The materialized read (which would carry a CANCELLED override) is blocked by restore.
+        every { databaseReadBarrier.checkReadAllowed(any<String>()) } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.READ,
+            operation = DatabaseAccessOperation("CashFlowCalculator.calculateDailyCashFlow.readOccurrences"),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        )
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        assertEquals(1, result.size)
+        // Degraded: the recurring section is flagged partial rather than silently
+        // presenting projection-only data (which omits SKIPPED/CANCELLED overrides).
+        assertTrue(result[0].isPartial)
+        // The narrow projection-failure flag must NOT be set — projection succeeded.
+        assertFalse(result[0].occurrenceGenerationFailed)
+        assertEquals(0, result[0].failedOccurrenceRuleCount)
+    }
+
+    @Test
+    fun `getUpcomingBills degrades gracefully when materialized read blocked by restore barrier`() = runTest {
+        val now = ms("2026-04-01")
+        every { timeProvider.now() } returns now
+
+        // A manual rule (id != null) so ruleIds is non-empty — the materialized read
+        // branch and its checkReadAllowed("...getUpcomingBills.readOccurrences") site
+        // only execute when at least one manual rule is present.
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = ms("2026-04-03"))
+        )
+        // Projection bypasses the barrier and yields a PLANNED bill in range.
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = ms("2026-04-03"), amount = 800.0, merchant = "Rent")
+        )
+        // The materialized read at getUpcomingBills.readOccurrences is blocked by restore.
+        every {
+            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.getUpcomingBills.readOccurrences")
+        } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.READ,
+            operation = DatabaseAccessOperation("CashFlowCalculator.getUpcomingBills.readOccurrences"),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        )
+
+        // getUpcomingBills returns List<RecurringPattern> with NO partial/degraded flag.
+        // The real contract on a barrier block (DatabaseAccessBlockedException is caught
+        // by the generic catch and degraded to emptyList() for the materialized read) is:
+        // the call does NOT throw and projection-derived PLANNED bills still surface.
+        val upcoming = calculator.getUpcomingBills(daysAhead = 10)
+
+        // Graceful degradation: projection-only result survives the blocked materialized read.
+        assertTrue(upcoming.any { it.merchantName == "Rent" })
+        // Confirm the blocked barrier site was actually exercised (not skipped).
+        verify(atLeast = 1) {
+            databaseReadBarrier.checkReadAllowed("CashFlowCalculator.getUpcomingBills.readOccurrences")
+        }
     }
 
     private fun manualPattern(

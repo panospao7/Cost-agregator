@@ -150,18 +150,38 @@ class CashFlowCalculator @Inject constructor(
             }
         }
 
+        // DBG-06: when the materialized read is blocked specifically by the restore
+        // read barrier, projections still bypass the barrier and would surface PLANNED
+        // bills WITHOUT the materialized SKIPPED/CANCELLED overrides. Track that case so
+        // we can flag the recurring section as partial/unreliable rather than silently
+        // showing cancelled bills as planned during restore.
+        var materializedReadBlocked = false
         // Read already-materialized occurrences (READ-ONLY, barrier-guarded).
         // Materialized rows carry authoritative status and override projections
         // for the same occurrenceKey (keys align — projection reuses the exact
         // expand logic the materializer uses).
+        //
+        // DBG-03: `ruleIds` is derived from `getConfirmedPatterns()` which (via
+        // RecurringExpenseRepository.getAll → dao.getAllActive) returns ACTIVE rules
+        // only. Filtering materialized rows to `sourceId in ruleIds` therefore excludes
+        // any previously-materialized PLANNED rows belonging to a PAUSED (isActive=false)
+        // rule, so a paused subscription no longer leaks in as a future obligation.
         val materializedOccurrences: List<RecurringOccurrence> = if (ruleIds.isNotEmpty()) {
             try {
                 databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readOccurrences")
                 recurringOccurrenceDao.getByDateRange(startTime, endTime)
                     .filter {
+                        // DBG-03: active-rule filter (ruleIds are active-only, see above).
                         it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
                             it.sourceId in ruleIds
                     }
+            } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                // DBG-06: barrier-blocked (restore mode). Mark partial so the recurring
+                // section is flagged unreliable instead of showing projections-only
+                // (which would drop SKIPPED/CANCELLED overrides).
+                Timber.w(e, "$TAG: materialized read blocked by restore barrier — marking partial")
+                materializedReadBlocked = true
+                emptyList()
             } catch (e: Exception) {
                 Timber.w(e, "$TAG: reading materialized occurrences failed")
                 emptyList()
@@ -196,6 +216,12 @@ class CashFlowCalculator @Inject constructor(
         }
         val occurrenceGenerationFailed = failedRuleIds.isNotEmpty()
         val failedOccurrenceRuleCount = failedRuleIds.size
+        // DBG-06: the recurring section is partial/unreliable when EITHER projection
+        // fell back to ad-hoc expansion OR the materialized read was blocked by the
+        // restore barrier (the latter drops SKIPPED/CANCELLED overrides). Keep
+        // occurrenceGenerationFailed narrow (projection failures only) and surface the
+        // broader degraded signal through isPartial below.
+        val recurringSectionPartial = occurrenceGenerationFailed || materializedReadBlocked
 
         // Part 2: Detected-only patterns (no manual rule) —
         // ad-hoc date matching on nextExpectedDate.
@@ -387,8 +413,11 @@ class CashFlowCalculator @Inject constructor(
                     endingBalance = runningBalance,
                     riskLevel = riskLevel,
                     currency = homeCurrency,
-                    // S8-022/S8-023: Surface data quality to UI
-                    isPartial = conversionFailures > 0 || occurrenceGenerationFailed,
+                    // S8-022/S8-023: Surface data quality to UI.
+                    // DBG-06: recurringSectionPartial also covers a restore-barrier-blocked
+                    // materialized read (overrides may be missing), not just conversion
+                    // failures / projection fallback.
+                    isPartial = conversionFailures > 0 || recurringSectionPartial,
                     failedConversionCount = conversionFailures,
                     // P6-CURRENT-018: Surface occurrence-projection failures so
                     // bills approximated via ad-hoc fallback are flagged, not hidden.
@@ -495,8 +524,20 @@ class CashFlowCalculator @Inject constructor(
 
     /**
      * P6-CURRENT-019: Amounts match when within ±[AMOUNT_TOLERANCE_PERCENT] of the
-     * larger magnitude. Distinct amounts (e.g. €15 vs €70) never match, so
+     * larger magnitude. Materially distinct amounts (e.g. €15 vs €70) never match, so
      * legitimately different same-merchant bills are preserved.
+     *
+     * ## DBG-05: Known limitation — intentional over-merge within ±10% (DO NOT "fix")
+     * Because the tolerance is proportional (±10% of the larger amount), two genuinely
+     * DISTINCT same-merchant, same-currency bills that happen to fall within 10% of each
+     * other on the same day WILL be merged into one (e.g. an Amazon €100 subscription and
+     * a separate €105 one-off → treated as a single recurring item). This is a deliberate
+     * accuracy tradeoff: it is strictly better than the previous name-only dedup (which
+     * merged ALL same-merchant items regardless of amount), and the proportional band is
+     * what lets us absorb normal price drift (FX rounding, minor plan changes) without
+     * spawning phantom duplicate predictions. Tightening the band to eliminate this case
+     * would re-introduce false duplicates for the far more common drift scenario, so the
+     * behavior is intentional. Documented here so future readers do not mistake it for a bug.
      */
     private fun amountsWithinTolerance(a: Double, b: Double): Boolean {
         if (!a.isFinite() || !b.isFinite()) return false

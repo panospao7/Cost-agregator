@@ -261,23 +261,45 @@ class BudgetForecastingEngine @Inject constructor(
      * `(budgetId, targetPeriodStart, forecastDate)` therefore only rejects a genuine
      * same-millisecond duplicate, which SQLite surfaces as [SQLiteConstraintException].
      *
-     * This wrapper catches ONLY [SQLiteConstraintException] and maps it to
-     * [ForecastInsertResult.DuplicateInSameInstant]. ALL other exceptions propagate
-     * unchanged so genuine I/O / write-barrier / corruption errors are never swallowed.
+     * DBG-02: `budget_forecasts` carries BOTH a composite UNIQUE index
+     * `(budgetId, targetPeriodStart, forecastDate)` AND a FOREIGN KEY
+     * `budgetId -> budgets(id)`. SQLite surfaces BOTH violations as
+     * [SQLiteConstraintException], so the catch must disambiguate on the message:
+     * only a UNIQUE-index conflict is a genuine same-instant duplicate to map to
+     * [ForecastInsertResult.DuplicateInSameInstant]. A FOREIGN KEY failure (e.g. the
+     * budget was deleted mid-flight) is a real referential-integrity error — it is
+     * rethrown so it surfaces instead of being silently swallowed as a duplicate.
+     * ALL other exceptions also propagate unchanged so genuine I/O / write-barrier /
+     * corruption errors are never swallowed.
      */
     @VisibleForTesting
     internal suspend fun insertForecast(forecast: BudgetForecast): ForecastInsertResult {
         return try {
             ForecastInsertResult.Inserted(budgetForecastDao.insertWithDeactivation(forecast))
         } catch (e: SQLiteConstraintException) {
-            Timber.w(
-                e,
-                "BudgetForecastingEngine: forecast insert hit unique-index conflict " +
-                    "(same-instant duplicate for budgetId=%d, forecastDate=%d)",
-                forecast.budgetId,
-                forecast.forecastDate
-            )
-            ForecastInsertResult.DuplicateInSameInstant
+            // DBG-02: disambiguate the constraint type via the SQLite message. Only a
+            // UNIQUE-index conflict is the same-instant duplicate this path expects;
+            // a FOREIGN KEY (or any other non-UNIQUE) constraint failure must NOT be
+            // mislabeled as a duplicate and silently dropped — rethrow so the genuine
+            // referential-integrity error is observable.
+            if (e.message?.contains("UNIQUE", ignoreCase = true) == true) {
+                Timber.w(
+                    e,
+                    "BudgetForecastingEngine: forecast insert hit unique-index conflict " +
+                        "(same-instant duplicate for budgetId=%d, forecastDate=%d)",
+                    forecast.budgetId,
+                    forecast.forecastDate
+                )
+                ForecastInsertResult.DuplicateInSameInstant
+            } else {
+                Timber.e(
+                    e,
+                    "BudgetForecastingEngine: forecast insert hit a non-UNIQUE constraint " +
+                        "(e.g. FOREIGN KEY) for budgetId=%d — rethrowing instead of mapping to duplicate",
+                    forecast.budgetId
+                )
+                throw e
+            }
         }
     }
 

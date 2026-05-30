@@ -19,7 +19,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
-import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
 @Singleton
@@ -74,7 +73,16 @@ class FinancialWeatherRepository @Inject constructor(
         // TODO (A03/Dashboard): Forecast conversions in SynthesisEngine should use
         // convertAsOf(atMillis=expense.date) for historical accuracy instead of current
         // rates. Currently forecast inputs use the latest available rates.
-        val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
+        // ISSUE-2: Use the typed resolved home currency for the narrative/display
+        // currency instead of homeCurrency().first() with a hard EUR fallback. On a
+        // genuine resolution failure, rethrow so the terminal .catch below surfaces an
+        // UNKNOWN weather state rather than silently formatting amounts as EUR.
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
+                throw IllegalStateException("Home currency unavailable for weather narrative: ${resolution.reason}")
+        }
         val narrative = narrativeGenerator.generate(forecast, assembledInput.budgetStatuses, homeCurrency)
 
         // 5. Map to UI Model

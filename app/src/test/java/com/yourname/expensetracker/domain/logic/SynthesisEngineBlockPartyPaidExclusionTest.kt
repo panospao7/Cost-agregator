@@ -127,4 +127,105 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
         // PAID occurrence must NOT appear as a future recurring obligation.
         assertEquals(0.0, day20!!.recurringImpact, 0.001)
     }
+
+    /**
+     * DBG-04: A rule whose only in-range occurrence is SKIPPED must NOT reappear as a
+     * bill day. Before the fix, the occurrence query filtered to PLANNED|PAID only, so
+     * a SKIPPED-only rule returned no rows → it fell into missingRuleIds → the legacy
+     * isRecurringExpected date-matcher RE-ADDED it on its monthly anchor day. After the
+     * fix, ANY materialised occurrence row (regardless of status) marks the rule as
+     * "has occurrences", so it never falls back to legacy matching — and since SKIPPED
+     * is not PLANNED, it contributes nothing to the bill-day map.
+     */
+    @Test
+    fun `block party excludes SKIPPED occurrences and does not resurface via legacy matching`() = runBlocking {
+        val now = dayOfMonth(2024, Calendar.APRIL, 15)
+        every { timeProvider.now() } returns now
+
+        val skippedDue = dayOfMonth(2024, Calendar.APRIL, 10)
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = skippedDue, status = "SKIPPED")
+        )
+
+        val engine = SynthesisEngine(timeProvider, occurrenceDao)
+
+        // Manual pattern (id != null) whose MONTHLY anchor is day 10 — exactly the day the
+        // legacy matcher would otherwise re-add it.
+        val patterns = listOf(
+            com.yourname.expensetracker.domain.model.RecurringPattern(
+                merchantName = "LANDLORD", averageAmount = 100.0, currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY, periodVarianceDays = 0,
+                amountVariancePercent = 0.0, nextExpectedDate = skippedDue, confidence = 1.0f,
+                previousDates = emptyList(), id = 1L
+            )
+        )
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = patterns,
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(budgetSnapshot(2000.0)),
+            spendingPace = pace()
+        )
+
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(30) { 0f },
+            budgetLimit = 2000.0
+        )
+
+        val day10 = blockParty.find { it.dayOfMonth == 10 }
+        assertNotNull(day10)
+        // The user explicitly SKIPPED this occurrence — it must NOT reappear as a bill day.
+        assertEquals(0.0, day10!!.recurringImpact, 0.001)
+    }
+
+    /**
+     * DBG-04 (CANCELLED variant): same guarantee as the SKIPPED case — a rule whose only
+     * in-range occurrence is CANCELLED must not be resurrected by the legacy fallback.
+     */
+    @Test
+    fun `block party excludes CANCELLED occurrences and does not resurface via legacy matching`() = runBlocking {
+        val now = dayOfMonth(2024, Calendar.APRIL, 15)
+        every { timeProvider.now() } returns now
+
+        val cancelledDue = dayOfMonth(2024, Calendar.APRIL, 10)
+        coEvery { occurrenceDao.getByDateRange(any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = cancelledDue, status = "CANCELLED")
+        )
+
+        val engine = SynthesisEngine(timeProvider, occurrenceDao)
+
+        val patterns = listOf(
+            com.yourname.expensetracker.domain.model.RecurringPattern(
+                merchantName = "LANDLORD", averageAmount = 100.0, currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY, periodVarianceDays = 0,
+                amountVariancePercent = 0.0, nextExpectedDate = cancelledDue, confidence = 1.0f,
+                previousDates = emptyList(), id = 1L
+            )
+        )
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = patterns,
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(budgetSnapshot(2000.0)),
+            spendingPace = pace()
+        )
+
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(30) { 0f },
+            budgetLimit = 2000.0
+        )
+
+        val day10 = blockParty.find { it.dayOfMonth == 10 }
+        assertNotNull(day10)
+        // The user explicitly CANCELLED this occurrence — it must NOT reappear as a bill day.
+        assertEquals(0.0, day10!!.recurringImpact, 0.001)
+    }
 }

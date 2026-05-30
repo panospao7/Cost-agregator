@@ -1,8 +1,13 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.PaceStatus
@@ -387,6 +392,118 @@ class ForecastInputAssemblerTest {
         assertEquals(200f, pace.pacePercentage)
         assertEquals(PaceStatus.OVER_PACE, pace.paceStatus)
     }
+
+    // ── DBG-03: paused-rule materialized occurrence must not leak into forecast ──
+
+    @Test
+    fun `DBG-03 assemble excludes paused rule materialized occurrence`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+
+        val due = ms(2026, Calendar.JANUARY, 20, 0)
+        // DAO holds previously-materialized PLANNED rows for BOTH an active rule (id=1)
+        // and a PAUSED rule (id=2). Only the active rule's occurrence must survive.
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = due, amount = 800.0, merchant = "Rent"),
+            occurrence(ruleId = 2L, dueDate = due, amount = 9.99, merchant = "Paused Gym")
+        )
+
+        val activeRule = ManualRecurringExpense(
+            id = 1L, merchant = "Rent", amount = 800.0,
+            frequency = RecurrenceFrequency.MONTHLY, nextDate = due, isActive = true
+        )
+        val pausedRule = ManualRecurringExpense(
+            id = 2L, merchant = "Paused Gym", amount = 9.99,
+            frequency = RecurrenceFrequency.MONTHLY, nextDate = due, isActive = false
+        )
+
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = listOf(activeRule, pausedRule),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        val merchants = result.confirmedOccurrences.map { it.merchant }
+        assertTrue(merchants.contains("Rent"))
+        assertFalse(merchants.contains("Paused Gym"))
+    }
+
+    // ── DBG-06: barrier-blocked materialized read marks the forecast partial ──
+
+    @Test
+    fun `DBG-06 assemble marks partial when materialized read barrier-blocked`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        // Restore barrier blocks the materialized read. Projections bypass the barrier and
+        // would otherwise surface PLANNED bills WITHOUT SKIPPED/CANCELLED overrides.
+        every { databaseReadBarrier.checkReadAllowed(any<String>()) } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.READ,
+            operation = DatabaseAccessOperation("ForecastInputAssembler.assemble.readOccurrences"),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        )
+
+        val rule = ManualRecurringExpense(
+            id = 1L, merchant = "Rent", amount = 800.0,
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = ms(2026, Calendar.JANUARY, 20, 0)
+        )
+
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = listOf(rule),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        // Degraded: recurring section flagged unreliable rather than silently dropping overrides.
+        assertTrue(result.dataQuality.isPartial)
+        assertTrue(
+            result.dataQuality.conversionWarnings.any { it.contains("RECURRING_OCCURRENCES_UNAVAILABLE") }
+        )
+    }
+
+    private fun occurrence(
+        ruleId: Long,
+        dueDate: Long,
+        amount: Double,
+        merchant: String,
+        status: String = "PLANNED",
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY
+    ): RecurringOccurrence = RecurringOccurrence(
+        sourceType = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
+        sourceId = ruleId,
+        occurrenceKey = "${RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE}|$ruleId|$dueDate|${frequency.name}",
+        dueDate = dueDate,
+        status = status,
+        expectedAmount = amount,
+        expectedCurrency = "EUR",
+        frequency = frequency.name,
+        merchant = merchant,
+        categoryId = null
+    )
 
     private fun recurring(
         merchant: String,

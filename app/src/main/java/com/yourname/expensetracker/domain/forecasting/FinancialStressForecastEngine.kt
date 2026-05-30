@@ -208,7 +208,8 @@ class FinancialStressForecastEngine @Inject constructor(
         val horizonEnd = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
         
         // 1. Calculate recurring obligations within this horizon
-        val recurringOutflows = calculateRecurringOutflows(patterns, horizonStart, horizonEnd, displayCurrency)
+        val recurringOutflowResult = calculateRecurringOutflows(patterns, horizonStart, horizonEnd, displayCurrency)
+        val recurringOutflows = recurringOutflowResult.total
         
         // 2. Estimate expected income using pre-normalized deposits
         val expectedIncome = estimateIncome(daysAhead, normalizedDeposits)
@@ -244,7 +245,10 @@ class FinancialStressForecastEngine @Inject constructor(
             recurringObligations = recurringOutflows,
             expectedIncome = expectedIncome,
             discretionaryBuffer = discretionaryBuffer,
-            displayCurrency = displayCurrency
+            displayCurrency = displayCurrency,
+            // DBG-06: recurring obligations are unreliable when the restore barrier blocked
+            // the materialized read (SKIPPED/CANCELLED overrides may be missing).
+            recurringObligationsPartial = recurringOutflowResult.materializedReadBlocked
         )
     }
 
@@ -275,11 +279,15 @@ class FinancialStressForecastEngine @Inject constructor(
         startDate: Long,
         endDate: Long,
         displayCurrency: String
-    ): Double {
+    ): RecurringOutflowResult {
         val manualPatterns = patterns.filter { it.id != null && it.confidence >= 0.50f }
         val detectedPatterns = patterns.filter { it.id == null && it.confidence >= 0.50f }
 
         var totalOutflows = 0.0
+        // DBG-06: set when the materialized read is blocked by the restore barrier, so the
+        // caller can flag the horizon's recurring section as partial/unreliable (projections
+        // bypass the barrier and would drop SKIPPED/CANCELLED overrides).
+        var materializedReadBlocked = false
 
         // ── Part 1: Manual patterns — READ-ONLY occurrence path ─────────────
         if (manualPatterns.isNotEmpty()) {
@@ -304,10 +312,21 @@ class FinancialStressForecastEngine @Inject constructor(
             // Read already-materialized rows (READ-ONLY, barrier-guarded). They
             // carry authoritative status (incl. user overrides) and override
             // projections for the same occurrenceKey — no double-count.
+            //
+            // DBG-03: `ruleIds` is derived from `getConfirmedPatterns()` which (via
+            // RecurringExpenseRepository.getAll → dao.getAllActive) yields ACTIVE rules
+            // only. Filtering materialized rows to `sourceId in ruleIds` therefore drops
+            // any previously-materialized PLANNED rows for a PAUSED (isActive=false) rule,
+            // so a paused subscription no longer leaks in as a future obligation.
             val materialized = try {
                 databaseReadBarrier.checkReadAllowed("FinancialStressForecastEngine.calculateRecurringOutflows")
                 recurringOccurrenceDao.getByDateRange(startDate, endDate)
                     .filter { it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE && it.sourceId in ruleIds }
+            } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                // DBG-06: restore barrier blocked the read — degrade and flag partial.
+                Timber.w(e, "$TAG: materialized read blocked by restore barrier — marking partial")
+                materializedReadBlocked = true
+                emptyList()
             } catch (e: Exception) {
                 Timber.w(e, "$TAG: reading materialized occurrences failed")
                 emptyList()
@@ -371,7 +390,7 @@ class FinancialStressForecastEngine @Inject constructor(
             totalOutflows += expandDetectedPatterns(detectedPatterns, startDate, endDate)
         }
 
-        return totalOutflows
+        return RecurringOutflowResult(total = totalOutflows, materializedReadBlocked = materializedReadBlocked)
     }
 
     /**
@@ -758,7 +777,15 @@ data class StressHorizon(
     val recurringObligations: Double,
     val expectedIncome: Double,
     val discretionaryBuffer: Double,
-    val displayCurrency: String = ""
+    val displayCurrency: String = "",
+    /**
+     * DBG-06: true when the recurring obligations figure is unreliable because the
+     * materialized-occurrence read was blocked by the restore barrier. When set, the
+     * recurring section may be missing user overrides (SKIPPED/CANCELLED) and the UI
+     * should label it as a degraded/partial estimate rather than authoritative.
+     * Additive with a neutral default — existing constructors are unaffected.
+     */
+    val recurringObligationsPartial: Boolean = false
 ) {
     val moneyProjectedBalance: MoneyAmount get() = MoneyAmount(projectedBalance, CurrencyCode(displayCurrency))
     val moneyMinProjectedBalance: MoneyAmount get() = MoneyAmount(minProjectedBalance, CurrencyCode(displayCurrency))
@@ -796,3 +823,16 @@ private data class MonteCarloHorizonResult(
     val moneyPercentile75: MoneyAmount get() = MoneyAmount(percentile75, CurrencyCode(displayCurrency))
     val moneyPercentile90: MoneyAmount get() = MoneyAmount(percentile90, CurrencyCode(displayCurrency))
 }
+
+/**
+ * Internal result of recurring-outflow calculation for a horizon.
+ *
+ * DBG-06: [materializedReadBlocked] signals that the materialized-occurrence read
+ * was blocked by the restore barrier, so [total] is based on projections only and
+ * may be missing user overrides (SKIPPED/CANCELLED). Callers should flag the horizon
+ * as partial/degraded in that case.
+ */
+private data class RecurringOutflowResult(
+    val total: Double,
+    val materializedReadBlocked: Boolean = false
+)

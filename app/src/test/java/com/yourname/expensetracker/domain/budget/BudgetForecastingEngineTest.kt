@@ -690,6 +690,49 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         assertEquals("write barrier closed", thrown?.message)
     }
 
+    @Test
+    fun `forecast_insert_foreign_key_violation_is_not_mapped_to_duplicate`() = runTest {
+        // DBG-02: budget_forecasts has BOTH a UNIQUE index and a FOREIGN KEY
+        // (budgetId -> budgets.id). A FK failure (budget deleted mid-flight) ALSO throws
+        // SQLiteConstraintException but is a genuine referential-integrity error — it must
+        // NOT be silently mislabeled as a same-instant duplicate. The wrapper disambiguates
+        // on the message and rethrows non-UNIQUE constraint failures.
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            android.database.sqlite.SQLiteConstraintException("FOREIGN KEY constraint failed (code 787)")
+
+        val attempt = BudgetForecast(
+            budgetId = 42L,
+            forecastDate = now,
+            targetPeriodStart = now,
+            targetPeriodEnd = now + 1_000L,
+            predictedSpending = 1.0,
+            predictedRemaining = 1.0,
+            confidenceScore = 0.5,
+            riskLevel = ForecastRiskLevel.LOW,
+            overspendProbability = 0.1
+        )
+
+        var thrown: Throwable? = null
+        try {
+            engine.insertForecast(attempt)
+        } catch (e: android.database.sqlite.SQLiteConstraintException) {
+            thrown = e
+        }
+
+        // The FK violation must surface as the original constraint exception, NOT be
+        // swallowed as a duplicate.
+        assertTrue(
+            "FK constraint violation must rethrow, not map to DuplicateInSameInstant",
+            thrown is android.database.sqlite.SQLiteConstraintException
+        )
+        assertTrue(
+            "rethrown exception must carry the FOREIGN KEY message",
+            thrown?.message?.contains("FOREIGN KEY") == true
+        )
+        coVerify(exactly = 0) { budgetForecastDao.update(any()) }
+        coVerify(exactly = 0) { budgetForecastDao.insert(any()) }
+    }
+
     // =========================================================================
     // P6-CURRENT-010: Forecast data-quality columns + exclusion-proportional
     // confidence reduction.

@@ -20,6 +20,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -249,6 +250,98 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             assertThat(errorState.dailyCashFlows).isNotEmpty()
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // ============================================================================
+    // DBG-01 — cold-start race + runtime currency-change recovery
+    // ============================================================================
+
+    /**
+     * DBG-01: On a NON-immediate dispatcher the home-currency flow emits AFTER the first
+     * load is triggered. The first load must hit the not-ready guard (NOT build
+     * CurrencyCode("") and crash into a terminal error). When the currency later arrives,
+     * the collector must trigger a reload so the screen recovers.
+     */
+    @Test
+    fun `DBG-01 currency arriving after first load recovers without terminal error and reloads`() = runTest(testDispatcher) {
+        // Self-contained fixture: the setup() viewModel was built with flowOf("EUR") and
+        // shares THIS test's StandardTestDispatcher scheduler plus the class-level
+        // cashFlowCalculator mock. The first advanceUntilIdle() below also drains the
+        // setup() viewModel's init coroutines, whose EUR resolution would invoke the shared
+        // calculator and inflate its global call count — breaking the exactly=0 assertion.
+        // Use a FRESH calculator mock and a FRESH viewModel so the "no calculator call
+        // before currency arrives" check is isolated from the setup() viewModel.
+        val freshCalculator = mockk<CashFlowCalculator>(relaxed = true)
+        coEvery { freshCalculator.calculateDailyCashFlow(any(), any(), any()) } returns createMockCashFlows()
+        coEvery { freshCalculator.getUpcomingBills(30) } returns emptyList()
+
+        val currencyFlow = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 1)
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns currencyFlow
+        coEvery { repo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+
+        val vm = CashFlowCalendarViewModel(freshCalculator, timeProvider, currencySettingsRepository = repo)
+
+        // Init runs: loadCurrentMonth() is triggered while the currency flow has NOT emitted.
+        advanceUntilIdle()
+
+        // Not-ready guard engaged: NO terminal error, and the FRESH calculator was NOT
+        // invoked with an invalid currency (it was not invoked at all yet). Asserting on the
+        // fresh mock keeps this immune to the setup() viewModel's EUR-driven init calls.
+        assertThat(vm.state.value.error).isNull()
+        assertThat(vm.state.value.homeCurrency).isNull()
+        coVerify(exactly = 0) { freshCalculator.calculateDailyCashFlow(any(), any(), any()) }
+
+        // Currency arrives AFTER the first load was already triggered.
+        currencyFlow.emit("EUR")
+        advanceUntilIdle()
+
+        // Recovery: reload ran, currency is set, data is loaded, and there is no error.
+        val recovered = vm.state.value
+        assertThat(recovered.error).isNull()
+        assertThat(recovered.homeCurrency).isEqualTo("EUR")
+        assertThat(recovered.isLoading).isFalse()
+        assertThat(recovered.dailyCashFlows).isNotEmpty()
+        coVerify(atLeast = 1) {
+            freshCalculator.calculateDailyCashFlow(any(), any(), MoneyAmount(0.0, CurrencyCode("EUR")))
+        }
+    }
+
+    /**
+     * DBG-01: A runtime home-currency change must trigger a reload and pass the NEW
+     * currency to the calculator (no stale-currency window that would otherwise trip the
+     * calculator's home-currency `require`). No terminal error results from the change.
+     */
+    @Test
+    fun `DBG-01 runtime currency change reloads with new currency and no mismatch`() = runTest(testDispatcher) {
+        val currencyFlow = MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 1)
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns currencyFlow
+        coEvery { repo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+
+        val balances = mutableListOf<MoneyAmount>()
+        coEvery {
+            cashFlowCalculator.calculateDailyCashFlow(any(), any(), capture(balances))
+        } returns createMockCashFlows()
+
+        val vm = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = repo)
+
+        // Initial currency resolves to EUR and loads cleanly.
+        currencyFlow.emit("EUR")
+        advanceUntilIdle()
+        assertThat(vm.state.value.homeCurrency).isEqualTo("EUR")
+        assertThat(vm.state.value.error).isNull()
+
+        // Runtime change to USD must trigger a reload built from the NEW currency.
+        currencyFlow.emit("USD")
+        advanceUntilIdle()
+
+        val afterChange = vm.state.value
+        assertThat(afterChange.homeCurrency).isEqualTo("USD")
+        assertThat(afterChange.error).isNull()
+        assertThat(afterChange.isLoading).isFalse()
+        // The reload used the resolved (new) currency — no stale EUR balance into a USD calculator.
+        assertThat(balances.map { it.currency }).contains(CurrencyCode("USD"))
     }
 
     private fun mockCurrencyRepo(): CurrencySettingsRepository {
