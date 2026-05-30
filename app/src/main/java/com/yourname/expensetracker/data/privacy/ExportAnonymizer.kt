@@ -10,21 +10,25 @@ import javax.inject.Singleton
  * Sanitises a copy of the database before export by removing sensitive raw
  * data fields that are not needed by the user receiving the backup.
  *
- * Currently strips:
- * - `rawOcrText` from `scanned_receipts`
- * - Raw notification content fields (`title`, `text`, `bigText`, `subText`,
- *   `extrasJson`, `parseResult`) from `raw_notifications`
+ * Strips, per PII-bearing table (all in a single transaction):
+ * - `scanned_receipts.rawOcrText`
+ * - `raw_notifications` raw content (`title`, `text`, `bigText`, `subText`,
+ *   `extrasJson`, `parseResult`)
+ * - `notification_intake` raw content (`title`, `text`, `bigText`, `subText`,
+ *   `extrasJson`; dedup fingerprint/content hash preserved)
+ * - `ai_artifacts` generated text (`summaryText`, `explanationText`,
+ *   `payloadJson`, `errorMessage`)
+ * - `ai_chat_messages` free-form input (`text` → '', `payloadJson` → NULL)
+ * - `merchant_locations` GPS/display PII (`displayName` → '',
+ *   `latitude`/`longitude` → 0.0, `displayAddress`/`osmId` → NULL)
+ * - `email_receipt_sources` raw email fields (`emailSender`, `emailSubject`,
+ *   `emailMessageId` → NULL; dedup hashes/fingerprint preserved)
  *
  * The operation is performed **in-place** on the provided file, so callers
  * must pass a **temporary copy** — never the live database file.
  *
- * TODO (P2-27): Expand sanitization scope to cover additional PII-bearing tables:
- *   - `ai_artifacts` (generated text may echo user financial data)
- *   - `ai_chat_messages` (free-form user input)
- *   - `merchant_locations` (GPS coordinates)
- *   - `email_receipt_sources` (email addresses)
- *   Each table needs a column-level redaction strategy and opt-in/opt-out toggle
- *   in PrivacySettings.
+ * Each table is redacted only if present (`tableExists`) so the routine is
+ * forward/backward compatible across schema versions.
  */
 @Singleton
 class ExportAnonymizer @Inject constructor() {
@@ -62,9 +66,19 @@ class ExportAnonymizer @Inject constructor() {
             try {
                 val ocrPurged = sanitizeScannedReceipts(db)
                 val notificationPurged = sanitizeRawNotifications(db)
+                val intakePurged = sanitizeNotificationIntake(db)
+                val aiArtifactsPurged = sanitizeAiArtifacts(db)
+                val aiChatPurged = sanitizeAiChatMessages(db)
+                val merchantLocPurged = sanitizeMerchantLocations(db)
+                val emailPurged = sanitizeEmailReceiptSources(db)
                 db.setTransactionSuccessful()
 
-                Timber.d("$TAG: Sanitised $ocrPurged scanned_receipts and $notificationPurged raw_notifications")
+                Timber.d(
+                    "$TAG: Sanitised receipts=$ocrPurged notifications=$notificationPurged " +
+                        "notificationIntake=$intakePurged aiArtifacts=$aiArtifactsPurged " +
+                        "aiChat=$aiChatPurged merchantLocations=$merchantLocPurged " +
+                        "emailSources=$emailPurged"
+                )
             } finally {
                 db.endTransaction()
             }
@@ -130,6 +144,118 @@ class ExportAnonymizer @Inject constructor() {
         )
         Timber.d("$TAG: Nulled raw content in $count raw_notification rows")
         return count
+    }
+
+    /**
+     * Nulls out raw content columns in [NotificationIntakeEntity]
+     * (`notification_intake`) for rows that still carry visible payload text.
+     * Mirrors [sanitizeRawNotifications]; dedup fingerprint/content hash are
+     * preserved. Note: `notification_intake` has no `parseResult` column.
+     *
+     * @return number of rows updated
+     */
+    private fun sanitizeNotificationIntake(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "notification_intake")) return 0
+
+        val cursor = db.rawQuery(
+            "SELECT COUNT(*) FROM notification_intake WHERE " +
+                "title IS NOT NULL OR text IS NOT NULL OR bigText IS NOT NULL " +
+                "OR subText IS NOT NULL OR extrasJson IS NOT NULL",
+            null
+        )
+        val count = cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
+        if (count == 0) return 0
+
+        db.execSQL(
+            """
+            UPDATE notification_intake SET
+                title = NULL,
+                text = NULL,
+                bigText = NULL,
+                subText = NULL,
+                extrasJson = NULL
+            WHERE title IS NOT NULL OR text IS NOT NULL OR bigText IS NOT NULL
+                OR subText IS NOT NULL OR extrasJson IS NOT NULL
+            """.trimIndent()
+        )
+        Timber.d("$TAG: Nulled raw content in $count notification_intake rows")
+        return count
+    }
+
+    /**
+     * Nulls out AI-generated text columns in `ai_artifacts`.
+     * @return number of rows updated
+     */
+    private fun sanitizeAiArtifacts(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "ai_artifacts")) return 0
+        val where = "summaryText IS NOT NULL OR explanationText IS NOT NULL " +
+            "OR payloadJson IS NOT NULL OR errorMessage IS NOT NULL"
+        val count = countWhere(db, "ai_artifacts", where)
+        if (count == 0) return 0
+        db.execSQL(
+            "UPDATE ai_artifacts SET summaryText = NULL, explanationText = NULL, " +
+                "payloadJson = NULL, errorMessage = NULL WHERE $where"
+        )
+        Timber.d("$TAG: Nulled AI artifact text in $count rows")
+        return count
+    }
+
+    /**
+     * Clears free-form chat text in `ai_chat_messages`.
+     * `text` is NOT NULL so it is set to '' (empty) rather than NULL.
+     * @return number of rows updated
+     */
+    private fun sanitizeAiChatMessages(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "ai_chat_messages")) return 0
+        val where = "text <> '' OR payloadJson IS NOT NULL"
+        val count = countWhere(db, "ai_chat_messages", where)
+        if (count == 0) return 0
+        db.execSQL("UPDATE ai_chat_messages SET text = '', payloadJson = NULL WHERE $where")
+        Timber.d("$TAG: Cleared AI chat text in $count rows")
+        return count
+    }
+
+    /**
+     * Strips GPS/display PII from `merchant_locations`.
+     * `latitude`/`longitude` are NOT NULL so they are zeroed.
+     * @return number of rows updated
+     */
+    private fun sanitizeMerchantLocations(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "merchant_locations")) return 0
+        val where = "displayName <> '' OR displayAddress IS NOT NULL OR osmId IS NOT NULL " +
+            "OR latitude <> 0.0 OR longitude <> 0.0"
+        val count = countWhere(db, "merchant_locations", where)
+        if (count == 0) return 0
+        db.execSQL(
+            "UPDATE merchant_locations SET displayName = '', displayAddress = NULL, " +
+                "osmId = NULL, latitude = 0.0, longitude = 0.0 WHERE $where"
+        )
+        Timber.d("$TAG: Stripped location PII in $count rows")
+        return count
+    }
+
+    /**
+     * Redacts raw email fields in `email_receipt_sources`, preserving dedup
+     * hashes (`emailMessageIdHash`, `contentFingerprintHash`, `fingerprint`)
+     * and `provider`. Mirrors EmailReceiptDao.redactSensitiveFieldsOlderThan.
+     * @return number of rows updated
+     */
+    private fun sanitizeEmailReceiptSources(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "email_receipt_sources")) return 0
+        val where = "emailSender IS NOT NULL OR emailSubject IS NOT NULL OR emailMessageId IS NOT NULL"
+        val count = countWhere(db, "email_receipt_sources", where)
+        if (count == 0) return 0
+        db.execSQL(
+            "UPDATE email_receipt_sources SET emailSender = NULL, emailSubject = NULL, " +
+                "emailMessageId = NULL WHERE $where"
+        )
+        Timber.d("$TAG: Redacted email source fields in $count rows")
+        return count
+    }
+
+    private fun countWhere(db: SQLiteDatabase, table: String, where: String): Int {
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM $table WHERE $where", null)
+        return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
     private fun tableExists(db: SQLiteDatabase, tableName: String): Boolean {

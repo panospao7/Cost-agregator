@@ -18,7 +18,9 @@ class PrivacyAuditLoggerImpl @Inject constructor(
 
     private val allowedContextKeys = setOf(
         "operation", "caller", "entityType", "entityId",
-        "provider", "modelId", "payloadHash", "receiptId"
+        "provider", "modelId", "payloadHash", "receiptId",
+        // P8F-03: cloud-call provenance fields (non-sensitive booleans/ids/enums)
+        "purpose", "redactionApplied", "rawTextIncluded", "rawImageIncluded", "correlationId"
     )
 
     override suspend fun logDecision(

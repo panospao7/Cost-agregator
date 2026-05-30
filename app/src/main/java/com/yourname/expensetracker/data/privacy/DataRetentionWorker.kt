@@ -55,12 +55,12 @@ class DataRetentionWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.d(TAG, "Data retention worker started")
 
-        val guardResult = executionGuard.runGuarded(
+        val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "data_retention",
                 allowDuringBackupExport = false
             )
-        ) {
+        ) { ctx ->
             val settings = privacySettingsRepository.getSettings()
             val now = timeProvider.now()
 
@@ -69,19 +69,23 @@ class DataRetentionWorker @AssistedInject constructor(
             val emailCutoff = now - TimeUnit.DAYS.toMillis(30)
             // AI chat messages use the same 30-day retention as email by default
             val aiChatCutoff = now - TimeUnit.DAYS.toMillis(30)
+            // P8F-06: Diagnostic events carry free-text PII (message/exceptionMessage/metadataJson).
+            // No dedicated diagnostics retention setting exists, so reuse the same 30-day default
+            // the worker applies to other non-configurable data (email, ai_chat_messages).
+            val diagnosticsCutoff = now - TimeUnit.DAYS.toMillis(30)
 
             // PRIV-441-12: Use injectable RetentionRegistry instead of inline list
             val allTargets = retentionRegistry.allTargets()
             val results = mutableListOf<RetentionPurgeResult>()
 
             // Notification target uses its own cutoff
-            executionGuard.checkpoint("data_retention_notifications")
+            ctx.checkpoint("data_retention_notifications")
             allTargets.firstOrNull { it.name == "raw_notifications" }?.let {
                 results += it.purge(notificationCutoff)
             }
 
             // OCR target uses its own cutoff
-            executionGuard.checkpoint("data_retention_ocr")
+            ctx.checkpoint("data_retention_ocr")
             allTargets.firstOrNull { it.name == "scanned_receipts.rawOcrText" }?.let {
                 results += it.purge(ocrCutoff)
             }
@@ -92,6 +96,8 @@ class DataRetentionWorker @AssistedInject constructor(
                     val cutoff = when (target.name) {
                         "email_receipt_sources" -> emailCutoff  // PRIV-43B-12: redact not delete
                         "ai_chat_messages" -> aiChatCutoff      // PR-D: proper 30-day cutoff
+                        "notification_intake" -> notificationCutoff   // P8F-01: same captured content as raw_notifications
+                        "pipeline_diagnostic_events" -> diagnosticsCutoff  // P8F-06: free-text PII, 30-day default
                         else -> now  // ai_artifacts uses TTL-based expiry (expiresAt < now is correct)
                     }
                     results += target.purge(cutoff)
@@ -106,6 +112,10 @@ class DataRetentionWorker @AssistedInject constructor(
                     Log.d(TAG, "RetentionTarget[${result.targetName}]: purged=${result.rowsPurged} success=${result.success} error=${result.errorMessage}")
                 }
             }
+
+            // P9-S4 (NEW-03): feed real purge counts into BackgroundJobRun. rowsUpdated
+            // is the total rows purged/redacted across all retention targets this run.
+            ctx.addRowsUpdated(results.sumOf { it.rowsPurged })
 
             val notifCount = results.firstOrNull { it.targetName == "raw_notifications" }?.rowsPurged ?: 0
             val ocrCount = results.firstOrNull { it.targetName == "scanned_receipts.rawOcrText" }?.rowsPurged ?: 0

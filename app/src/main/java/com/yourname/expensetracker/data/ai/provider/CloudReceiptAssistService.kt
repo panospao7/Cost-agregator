@@ -21,6 +21,8 @@ import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -49,7 +51,10 @@ class CloudReceiptAssistService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val cloudPayloadPolicy: CloudPayloadPolicy
+    private val cloudPayloadPolicy: CloudPayloadPolicy,
+    // P8F-03: cloud-call provenance audit. Hilt resolves this from the PrivacyModule
+    // binding; the default keeps @VisibleForTesting/secondary constructors fail-closed.
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
@@ -130,6 +135,18 @@ class CloudReceiptAssistService @Inject constructor(
         )
         val requestPayload = buildRequestPayloadFromPrepared(prepared)
         val requestBody = requestPayload.jsonBody
+        // P8F-03: record cloud-call provenance (provider/model/payloadHash/redaction flags)
+        auditLogger.logCloudCall(
+            capability,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL,
+                purpose = CloudPayloadPurpose.RECEIPT_ASSIST,
+                payload = prepared,
+                correlationId = CloudCorrelation.newCorrelationId()
+            )
+        )
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -260,6 +277,18 @@ class CloudReceiptAssistService @Inject constructor(
         // PRIV-441-01: Use CloudPayloadPolicy for bank statement validation — no direct redactBeforeCloud
         val prepared = cloudPayloadPolicy.prepareBankStatementValidation(prompt)
         val safePrompt = prepared.text
+        // P8F-03: record cloud-call provenance for the bank-statement fallback path
+        auditLogger.logCloudCall(
+            PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL,
+                purpose = CloudPayloadPurpose.BANK_STATEMENT_VALIDATION,
+                payload = prepared,
+                correlationId = CloudCorrelation.newCorrelationId()
+            )
+        )
 
         val parts = JSONArray().put(JSONObject().put("text", safePrompt))
         val requestJson = JSONObject().apply {

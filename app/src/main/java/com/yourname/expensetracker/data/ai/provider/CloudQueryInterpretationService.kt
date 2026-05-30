@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
@@ -12,8 +13,10 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.MediaType.Companion.toMediaType
@@ -36,7 +39,9 @@ class CloudQueryInterpretationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val redactor: CloudPayloadRedactor = DefaultCloudPayloadRedactor()
+    private val redactor: CloudPayloadRedactor = DefaultCloudPayloadRedactor(),
+    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test/secondary ctors inert)
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : QueryInterpretationService {
 
     private var apiKeyOverride: String? = null
@@ -69,7 +74,30 @@ class CloudQueryInterpretationService @Inject constructor(
             return unsupported("Cloud AI disabled by privacy gate")
         }
 
-        val requestBody = buildRequestBody(input)
+        val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
+        // ARCH-04: Redact PII from prompt before sending to cloud AI
+        val redacted = redactor.redactText(prompt, CloudPayloadPurpose.QUERY_INTERPRETATION)
+        // P8F-03: record cloud-call provenance (provenance comes from the redacted payload)
+        auditLogger.logCloudCall(
+            PrivacyCapability.CLOUD_AI_GENERAL,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL,
+                purpose = CloudPayloadPurpose.QUERY_INTERPRETATION,
+                payload = PreparedCloudPayload(
+                    purpose = CloudPayloadPurpose.QUERY_INTERPRETATION,
+                    text = redacted.text,
+                    redactionApplied = redacted.redactionApplied,
+                    fieldsRedacted = redacted.fieldsRedacted,
+                    payloadHash = redacted.payloadHash,
+                    rawTextIncluded = !redacted.redactionApplied,
+                    rawImageIncluded = false
+                ),
+                correlationId = CloudCorrelation.newCorrelationId()
+            )
+        )
+        val requestBody = buildRequestBody(redacted.text)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -134,19 +162,15 @@ class CloudQueryInterpretationService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: FinancialQueryInterpretationInput): String {
-        val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
-        // ARCH-04: Redact PII from prompt before sending to cloud AI
-        // TODO (W17): Apply CloudPayloadRedactor before building prompt (ARCH-04).
-        // CloudQueryInterpretationService is already migrated in ARCH-04.
-        val redacted = redactor.redactText(prompt, CloudPayloadPurpose.QUERY_INTERPRETATION)
+    private fun buildRequestBody(promptText: String): String {
+        // PRIV/ARCH-04: prompt is already redacted by the caller (interpret()).
         return JSONObject().apply {
             put(
                 "contents",
                 JSONArray().put(
                     JSONObject().put(
                         "parts",
-                        JSONArray().put(JSONObject().put("text", redacted.text))
+                        JSONArray().put(JSONObject().put("text", promptText))
                     )
                 )
             )

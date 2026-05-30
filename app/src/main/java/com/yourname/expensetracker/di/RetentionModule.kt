@@ -93,6 +93,37 @@ object RetentionModule {
                 val count = appDatabase.emailReceiptDao().redactSensitiveFieldsOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+        },
+
+        object : RetentionTarget {
+            override val name = "notification_intake"
+            // P8F-01: Null out raw payload text (title/text/bigText/subText/extrasJson) past
+            // the retention window — mirrors the raw_notifications target since intake carries
+            // the same captured notification content. cutoffMs is the notification cutoff,
+            // passed by DataRetentionWorker.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                val dao = appDatabase.notificationIntakeDao()
+                var total = 0
+                val now = timeProvider.now()
+                while (true) {
+                    val batch = dao.getUnpurgedIntakeOlderThan(cutoffMs, 100)
+                    if (batch.isEmpty()) break
+                    for (n in batch) dao.purgeRawPayload(n.id, now)
+                    total += batch.size
+                }
+                RetentionPurgeResult(name, total, true)
+            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+        },
+
+        object : RetentionTarget {
+            override val name = "pipeline_diagnostic_events"
+            // P8F-06: Hard-delete old diagnostic rows (free-text message / exceptionMessage /
+            // metadataJson can carry PII). cutoffMs is the diagnostics cutoff, passed by
+            // DataRetentionWorker.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                val count = appDatabase.pipelineDiagnosticEventDao().deleteOlderThan(cutoffMs)
+                RetentionPurgeResult(name, count, true)
+            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
         }
     )
 

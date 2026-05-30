@@ -18,6 +18,8 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -47,7 +49,9 @@ class CloudDashboardBriefingService @Inject constructor(
     private val promptFormatter: DashboardBriefingPromptFormatter,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val cloudPayloadPolicy: CloudPayloadPolicy
+    private val cloudPayloadPolicy: CloudPayloadPolicy,
+    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
@@ -252,6 +256,18 @@ class CloudDashboardBriefingService @Inject constructor(
         val rawPrompt = promptFormatter.buildPrompt(input, shouldRedact = false)
         val prepared = policy.prepareText(CloudPayloadPurpose.DASHBOARD_BRIEFING, rawPrompt)
         val prompt = prepared.text
+        // P8F-03: record cloud-call provenance
+        auditLogger.logCloudCall(
+            PrivacyCapability.CLOUD_AI_DAILY_BRIEFING,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL,
+                purpose = CloudPayloadPurpose.DASHBOARD_BRIEFING,
+                payload = prepared,
+                correlationId = CloudCorrelation.newCorrelationId()
+            )
+        )
         return JSONObject().apply {
             put(
                 "contents",

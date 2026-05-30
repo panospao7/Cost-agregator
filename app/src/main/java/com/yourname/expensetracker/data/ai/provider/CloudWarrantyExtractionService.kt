@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +41,10 @@ class CloudWarrantyExtractionService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val cloudPayloadPolicy: CloudPayloadPolicy
+    private val cloudPayloadPolicy: CloudPayloadPolicy,
+    // P8F-03: cloud-call provenance audit. Provided explicitly by AiModule's @Provides
+    // factory; default keeps the @VisibleForTesting constructor fail-closed.
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) {
     private var apiKeyOverride: String? = null
 
@@ -69,6 +73,18 @@ class CloudWarrantyExtractionService @Inject constructor(
         // PRIV-43B-01: Build full raw prompt, then prepare through policy
         val rawPrompt = buildRawPrompt(input)
         val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.WARRANTY_EXTRACTION, rawPrompt)
+        // P8F-03: record cloud-call provenance
+        auditLogger.logCloudCall(
+            PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = "gemini-2.0-flash",
+                purpose = CloudPayloadPurpose.WARRANTY_EXTRACTION,
+                payload = prepared,
+                correlationId = correlationId
+            )
+        )
 
         val requestBody = JSONObject().apply {
             put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prepared.text)))))

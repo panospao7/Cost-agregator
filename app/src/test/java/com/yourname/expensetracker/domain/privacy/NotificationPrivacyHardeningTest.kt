@@ -155,4 +155,33 @@ class NotificationPrivacyHardeningTest {
         assertEquals(listOf("privacy_check", "blocked_drop"), executionOrder)
         assertFalse(executionOrder.contains("extras_extraction"))
     }
+
+    // ── P8F-05: Fail-closed — only Allowed proceeds to capture/persist ────────
+
+    /**
+     * Models the corrected NotificationCaptureService privacy-gate `when`:
+     * only [PrivacyDecision.Allowed] proceeds; every other decision
+     * (including [PrivacyDecision.NotApplicable]) MUST block persistence.
+     */
+    private fun proceedsToCapture(decision: PrivacyDecision): Boolean = when (decision) {
+        is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> false
+        is PrivacyDecision.Allowed -> true
+        else -> false // NotApplicable / any non-Allowed decision fails closed
+    }
+
+    @Test
+    fun not_applicable_decision_does_not_persist() {
+        assertFalse(
+            "NotApplicable privacy decision must not proceed to capture/persist (fail-closed)",
+            proceedsToCapture(PrivacyDecision.NotApplicable)
+        )
+    }
+
+    @Test
+    fun only_allowed_decision_proceeds_to_persist() {
+        assertTrue(proceedsToCapture(PrivacyDecision.Allowed))
+        assertFalse(proceedsToCapture(PrivacyDecision.Denied("denied")))
+        assertFalse(proceedsToCapture(PrivacyDecision.FailClosed("fail-closed")))
+        assertFalse(proceedsToCapture(PrivacyDecision.NotApplicable))
+    }
 }

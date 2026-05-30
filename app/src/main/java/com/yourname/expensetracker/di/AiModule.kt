@@ -217,9 +217,10 @@ abstract class AiModule {
             secureKeyStorage: SecureKeyStorage,
             @CloudAiHttpClient cloudAiClient: OkHttpClient,
             privacyGate: PrivacyGate,
-            cloudPayloadPolicy: com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
+            cloudPayloadPolicy: com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy,
+            auditLogger: com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
         ): CloudReceiptItemCategorizationService =
-            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient, privacyGate, cloudPayloadPolicy)
+            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient, privacyGate, cloudPayloadPolicy, auditLogger)
 
         @Provides
         @Singleton
@@ -227,8 +228,9 @@ abstract class AiModule {
             secureKeyStorage: SecureKeyStorage,
             @CloudAiHttpClient cloudAiClient: OkHttpClient,
             privacyGate: PrivacyGate,
-            cloudPayloadPolicy: com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
+            cloudPayloadPolicy: com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy,
+            auditLogger: com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
         ): com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
-            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient, privacyGate, cloudPayloadPolicy)
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient, privacyGate, cloudPayloadPolicy, auditLogger)
     }
 }

@@ -425,7 +425,6 @@ class WarrantyTrackerRepository @Inject constructor(
             return null
         }
 
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.WARRANTY_EXTRACTION)
         val input = WarrantyExtractionInput(
             receiptText = receipt.rawOcrText,
             merchant = receipt.parsedMerchant,

@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -48,7 +49,10 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val privacyGate: PrivacyGate,
-    private val cloudPayloadPolicy: CloudPayloadPolicy
+    private val cloudPayloadPolicy: CloudPayloadPolicy,
+    // P8F-03: cloud-call provenance audit. Provided explicitly by AiModule's @Provides
+    // factory; default keeps the @VisibleForTesting constructor fail-closed.
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : ReceiptItemCategorizationService {
 
     @androidx.annotation.VisibleForTesting
@@ -87,6 +91,18 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         // PRIV-43B-03: Build full raw prompt, then prepare through policy — no empty-string probe
         val rawPrompt = buildPrompt(input)
         val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.ITEM_CATEGORIZATION, rawPrompt)
+        // P8F-03: record cloud-call provenance
+        auditLogger.logCloudCall(
+            PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL,
+                purpose = CloudPayloadPurpose.ITEM_CATEGORIZATION,
+                payload = prepared,
+                correlationId = correlationId
+            )
+        )
 
         return withContext(Dispatchers.IO) {
             val requestBody = buildRequestBody(prepared.text)

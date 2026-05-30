@@ -493,7 +493,20 @@ class NotificationCaptureService : NotificationListenerService() {
                     }
                     is PrivacyDecision.Allowed -> { /* proceed */ }
                     else -> {
-                        Timber.d("Privacy check inconclusive for $packageName — proceeding with capture")
+                        // Fail closed (defense-in-depth): NotApplicable / any
+                        // non-Allowed decision MUST block capture. Previously this
+                        // branch logged "proceeding with capture" and fell through,
+                        // which failed OPEN. Only an explicit Allowed proceeds.
+                        Timber.d("Privacy gate did not allow notification capture from $packageName — blocking (fail-closed)")
+                        notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                            stage = "privacy_gate",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                            correlationId = correlationId,
+                            isTerminal = true
+                        ))
+                        return@launch
                     }
                 }
 

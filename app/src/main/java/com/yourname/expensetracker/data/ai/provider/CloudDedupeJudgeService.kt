@@ -19,6 +19,8 @@ import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -59,7 +61,9 @@ class CloudDedupeJudgeService @Inject constructor(
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
-    private val cloudPayloadPolicy: CloudPayloadPolicy
+    private val cloudPayloadPolicy: CloudPayloadPolicy,
+    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : DedupeJudgeService {
 
     @androidx.annotation.VisibleForTesting
@@ -94,6 +98,18 @@ class CloudDedupeJudgeService @Inject constructor(
 
         val rawPrompt = buildRawPrompt(input)
         val prepared = cloudPayloadPolicy.prepareText(CloudPayloadPurpose.DEDUPE_JUDGE, rawPrompt)
+        // P8F-03: record cloud-call provenance
+        auditLogger.logCloudCall(
+            PrivacyCapability.CLOUD_AI_GENERAL,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL,
+                purpose = CloudPayloadPurpose.DEDUPE_JUDGE,
+                payload = prepared,
+                correlationId = CloudCorrelation.newCorrelationId()
+            )
+        )
         val requestBody = buildRequestBody(prepared.text)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()

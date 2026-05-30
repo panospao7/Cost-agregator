@@ -28,7 +28,6 @@ enum class ExportPrivacyPolicy {
  */
 class ExportPrivacyGate(
     private val settingsRepository: PrivacySettingsRepository,
-    private val auditLogger: PrivacyAuditLogger,
     private val isDebugBuild: Boolean = false
 ) : PrivacyGate {
 
@@ -79,7 +78,9 @@ class ExportPrivacyGate(
             else -> PrivacyDecision.NotApplicable
         }
 
-        auditLogger.logDecision(capability, decision, context)
+        // Per PrivacyGate contract (#2): concrete gates do NOT audit. Only
+        // CompositePrivacyGate writes the final audit row, so auditing here
+        // would produce duplicate audit entries.
         return decision
     }
 }

@@ -151,4 +151,14 @@ interface NotificationIntakeDao {
         WHERE id = :id
     """)
     suspend fun purgeTransientPayload(id: Long, nowMs: Long): Int
+
+    // ── Data retention worker support (P8F-01) ─────────────────────────────────
+
+    @Query("""
+        SELECT * FROM notification_intake
+        WHERE capturedAt < :cutoffMs
+          AND rawPayloadPurgedAt IS NULL
+        LIMIT :limit
+    """)
+    suspend fun getUnpurgedIntakeOlderThan(cutoffMs: Long, limit: Int): List<NotificationIntakeEntity>
 }

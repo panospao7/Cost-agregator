@@ -25,7 +25,9 @@ class RetentionRegistryTest {
             "scanned_receipts.rawOcrText",
             "ai_artifacts",
             "ai_chat_messages",
-            "email_receipt_sources"
+            "email_receipt_sources",
+            "notification_intake",
+            "pipeline_diagnostic_events"
         )
 
         val targets = requiredTargets.map { makeTarget(it) }.toSet()

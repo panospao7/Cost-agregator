@@ -57,6 +57,36 @@ class PrivacyGuardTest {
         return sb.toString()
     }
 
+    /**
+     * Extracts the balanced-brace block starting at the '{' located at
+     * [openBraceIdx] (inclusive of both braces). Used to scan the FULL body of
+     * an `object : PrivacyGate { ... }` so a `PrivacyDecision.Allowed` on any
+     * line — not just the first few — is caught.
+     */
+    private fun balancedBraceBody(content: String, openBraceIdx: Int): String {
+        var depth = 0
+        val sb = StringBuilder()
+        var i = openBraceIdx
+        while (i < content.length) {
+            val c = content[i]
+            sb.append(c)
+            if (c == '{') depth++
+            else if (c == '}') {
+                depth--
+                if (depth == 0) break
+            }
+            i++
+        }
+        return sb.toString()
+    }
+
+    /** Returns the trimmed text of the line in [content] containing [index]. */
+    private fun lineTextAt(content: String, index: Int): String {
+        val start = content.lastIndexOf('\n', index).let { if (it < 0) 0 else it + 1 }
+        val end = content.indexOf('\n', index).let { if (it < 0) content.length else it }
+        return content.substring(start, end).trim()
+    }
+
     // ── G5: No String.hashCode() in RawContentSanitizer ──────────────────────
 
     @Test
@@ -107,22 +137,28 @@ class PrivacyGuardTest {
 
     @Test
     fun privacy_guard_no_allow_all_gate_even_in_test_constructors() {
-        if (!mainSrcRoot.exists()) return  // not available in test env
+        // Fail loudly if the scan root is missing so a green run proves the
+        // guard actually executed (previously this returned silently).
+        assertTrue(
+            "G4b: mainSrcRoot not found: $mainSrcRoot — guard cannot run",
+            mainSrcRoot.exists()
+        )
         val violations = mutableListOf<String>()
         val gatePattern = Regex("object\\s*:\\s*PrivacyGate")
         allKtFiles(mainSrcRoot).forEach { file ->
-            val lines = file.readLines()
-            lines.forEachIndexed { i, line ->
-                val trimmed = line.trim()
-                if (gatePattern.containsMatchIn(line) &&
-                    !trimmed.startsWith("//") &&
-                    !trimmed.startsWith("*")
-                ) {
-                    // Inspect the gate body: this line + the next ~4 lines.
-                    val window = lines.drop(i).take(5).joinToString("\n")
-                    if (window.contains("PrivacyDecision.Allowed")) {
-                        violations += "${file.name}:${i + 1}: ${trimmed}"
-                    }
+            val content = file.readText()
+            gatePattern.findAll(content).forEach { match ->
+                val matchIdx = match.range.first
+                val lineText = lineTextAt(content, matchIdx)
+                if (lineText.startsWith("//") || lineText.startsWith("*")) return@forEach
+                // Scan the FULL object body via balanced-brace matching — not a
+                // fixed 5-line window — so a PrivacyDecision.Allowed on the 6th+
+                // line is still caught.
+                val braceIdx = content.indexOf('{', match.range.last + 1)
+                val body = if (braceIdx >= 0) balancedBraceBody(content, braceIdx) else ""
+                if (body.contains("PrivacyDecision.Allowed")) {
+                    val lineNo = content.substring(0, matchIdx).count { it == '\n' } + 1
+                    violations += "${file.name}:${lineNo}: ${lineText}"
                 }
             }
         }
@@ -139,9 +175,18 @@ class PrivacyGuardTest {
 
     @Test
     fun privacy_guard_no_composite_gate_without_handled_capabilities() {
-        if (!mainSrcRoot.exists()) return  // not available in test env
+        // Fail loudly if the scan root is missing so a green run proves the
+        // guard actually executed (previously this returned silently).
+        assertTrue(
+            "G4c: mainSrcRoot not found: $mainSrcRoot — guard cannot run",
+            mainSrcRoot.exists()
+        )
         val violations = mutableListOf<String>()
         val token = "CompositePrivacyGate("
+        // Whitespace-robust: matches `gateHandledCapabilities = emptySet()` and
+        // `gateHandledCapabilities=emptySet()` (any spacing). Such a call NAMES
+        // the param but still fails OPEN because no capabilities are guarded.
+        val emptyHandledPattern = Regex("gateHandledCapabilities\\s*=\\s*emptySet\\s*\\(\\s*\\)")
         allKtFiles(mainSrcRoot).forEach { file ->
             val content = file.readText()
             var searchFrom = 0
@@ -151,19 +196,28 @@ class PrivacyGuardTest {
                 // The '(' sits at the end of the token.
                 val openParenIdx = idx + token.length - 1
                 val call = balancedCall(content, openParenIdx)
-                // Fails OPEN: an empty gate list with no declared handled capabilities
-                // returns Allowed for sensitive capabilities (e.g. CLOUD_AI_GENERAL).
-                if (call.contains("emptyList()") && !call.contains("gateHandledCapabilities")) {
+                // Fails OPEN when the gate list is empty AND either:
+                //  (a) gateHandledCapabilities is not passed at all, or
+                //  (b) gateHandledCapabilities is passed as emptySet() — naming
+                //      the param without guarding any capability still fails open.
+                if (call.contains("emptyList()") &&
+                    (!call.contains("gateHandledCapabilities") ||
+                        emptyHandledPattern.containsMatchIn(call))
+                ) {
                     val lineNo = content.substring(0, idx).count { it == '\n' } + 1
-                    violations += "${file.name}:${lineNo}: ${token}emptyList()...) missing gateHandledCapabilities"
+                    val reason = if (emptyHandledPattern.containsMatchIn(call))
+                        "gateHandledCapabilities = emptySet() (fails OPEN)"
+                    else
+                        "missing gateHandledCapabilities"
+                    violations += "${file.name}:${lineNo}: ${token}emptyList()...) $reason"
                 }
                 searchFrom = idx + token.length
             }
         }
         if (violations.isNotEmpty()) {
             fail(
-                "G4c: CompositePrivacyGate(emptyList(), ...) without gateHandledCapabilities found in main " +
-                    "source (this fails OPEN for sensitive capabilities — pass " +
+                "G4c: CompositePrivacyGate(emptyList(), ...) without real gateHandledCapabilities found " +
+                    "in main source (this fails OPEN for sensitive capabilities — pass a non-empty " +
                     "PrivacyCapabilityHandlingPolicy.gateHandledCapabilities):\n" +
                     violations.joinToString("\n")
             )

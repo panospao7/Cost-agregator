@@ -68,7 +68,6 @@ abstract class PrivacyModule {
             // PR8: ExportPrivacyGate added — release builds always block RAW_DATABASE_EXPORT
             val exportGate = ExportPrivacyGate(
                 settingsRepository = privacySettingsRepository,
-                auditLogger = auditLogger,
                 isDebugBuild = com.yourname.expensetracker.BuildConfig.DEBUG
             )
             // PRIV-441-03: Pass gateHandledCapabilities so composite fails closed for unhandled sensitive capabilities

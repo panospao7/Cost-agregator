@@ -35,7 +35,7 @@ class ExportPrivacyPolicyTest {
         every { repo.observeLoadState() } returns flowOf(PrivacySettingsLoadState.Loaded(settings))
         coEvery { repo.getLoadState() } returns PrivacySettingsLoadState.Loaded(settings)
 
-        return ExportPrivacyGate(repo, PrivacyAuditLogger.NO_OP, isDebugBuild)
+        return ExportPrivacyGate(repo, isDebugBuild)
     }
 
     @Test

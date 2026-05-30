@@ -34,4 +34,9 @@ interface PipelineDiagnosticEventDao {
 
     @Query("SELECT * FROM pipeline_diagnostic_events ORDER BY timestamp DESC LIMIT :limit")
     fun observeRecent(limit: Int = 50): Flow<List<PipelineDiagnosticEvent>>
+
+    // ── Data retention worker support (P8F-06) ─────────────────────────────────
+
+    @Query("DELETE FROM pipeline_diagnostic_events WHERE timestamp < :cutoffMs")
+    suspend fun deleteOlderThan(cutoffMs: Long): Int
 }
