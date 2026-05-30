@@ -31,16 +31,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * ## A02: Multi-currency safety
- * Some aggregation paths (weekly, daily totals) still use raw DAO doubles that
- * silently sum amounts across different currencies. Callers that invoke these
- * methods on datasets spanning multiple currencies will get wrong results.
- *
- * TODO (A02): Guard with require(isSingleCurrencyDataset) or refactor to use
- *             normalizer — currently silently wrong for multi-currency.
- *
- * TODO (PR-E11): Accept NormalizedAnalyticsInput instead of querying raw expenses.
- * Engine should not call CurrencyConverter itself unless explicitly responsible.
+ * ## Multi-currency safety
+ * All period aggregation paths (year/month/week/day/category) are currency-safe:
+ * they delegate to [MultiCurrencyRepository] historical aggregation, which converts
+ * each expense at its transaction-date rate and never raw-sums mixed currencies.
  *
  * ## DSH-10-FIXED: Analytics methods now return reactive Flows
  *
@@ -53,20 +47,18 @@ import javax.inject.Singleton
  * query on each trigger emission. This avoids changing the DAO layer's aggregate queries
  * (which remain one-shot) while still providing reactive updates to callers.
  *
- * ## I4: Most methods now use [MultiCurrencyRepository] for currency-safe aggregation
- * The following methods have been migrated away from raw DAO doubles:
- * - [getMonthlyTotals] — uses [MultiCurrencyRepository.getHomeCurrencyMonthlyTotals]
- * - [getYearlyTotals] — uses [MultiCurrencyRepository.getHomeCurrencyPurchaseTotal]
- * - [getCategoryBreakdown] — uses [MultiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals]
- * - [getAverageForPeriodType] YEAR/MONTH/DAY — uses the MCR equivalents above
+ * ## I4 / P5-P1-01: All period methods use [MultiCurrencyRepository] historical aggregation
+ * Every public period method uses per-expense TRANSACTION_DATE, PURCHASE-only conversion
+ * so totals across granularities share one rate basis and exclude deposits/transfers:
+ * - [getMonthlyTotals] — [MultiCurrencyRepository.getMonthlyAggregatesHistorical]
+ * - [getYearlyTotals] — [MultiCurrencyRepository.getHomeCurrencyPurchaseTotalHistoricalResult]
+ * - [getWeeklyTotals] — [MultiCurrencyRepository.getWeeklyAggregatesHistorical]
+ * - [getDailyTotals] / [getDailyTotalsForRange] — [MultiCurrencyRepository.getDailyAggregatesHistorical]
+ * - [getCategoryBreakdown] — [MultiCurrencyRepository.getCategoryAggregatesHistorical]
+ * - [getAverageForPeriodType] uses the matching historical APIs above.
  *
- * The following methods still use raw DAO calls because no MCR equivalent exists yet:
- * - [getWeeklyTotals] — uses [ExpenseRepository.getWeeklyTotalsForPeriod]
- * - [getDailyTotals] / [getDailyTotalsForRange] — uses [ExpenseRepository.getDailyTotalsWithDatesForPeriod]
- *
- * ### Future work
- * Add `getHomeCurrencyWeeklyTotals()` and `getHomeCurrencyDailyTotals()` to
- * [MultiCurrencyRepository] and migrate the remaining methods.
+ * Conversion partial-state ([MoneyAggregate.isPartial] / [MoneyAggregate.warningMessage])
+ * is propagated onto every [PeriodTotal].
  */
 @Singleton
 class TotalsAggregationEngine @Inject constructor(
@@ -84,15 +76,18 @@ class TotalsAggregationEngine @Inject constructor(
     }
 
     /**
-     * I4: Replaced deprecated [ExpenseRepository.getMonthlyTotalsForPeriod] (raw DAO doubles)
-     * with [MultiCurrencyRepository.getHomeCurrencyMonthlyTotals] which converts per-currency
-     * monthly totals to the user's home currency. The aggregate's [MoneyAggregate.displayAmount]
-     * supplies the converted total and [MoneyAggregate.totalTransactionCount] supplies the count.
+     * P5-P1-01 / P5-NEW-09 FIX: Uses [MultiCurrencyRepository.getMonthlyAggregatesHistorical]
+     * (per-expense TRANSACTION_DATE, PURCHASE-only) so monthly totals share the same rate
+     * basis as the weekly/daily drilldown, analytics summary, and yearly totals. The
+     * aggregate's [MoneyAggregate.displayAmount] supplies the converted total,
+     * [MoneyAggregate.totalTransactionCount] supplies the count, and
+     * [MoneyAggregate.isPartial]/[MoneyAggregate.warningMessage] propagate conversion gaps.
      */
     fun getMonthlyTotals(year: Int): Flow<List<PeriodTotal>> = reactiveFlow {
         val (startMs, endMs) = getYearRange(year)
-        // P5-CURRENT-006: Use PURCHASE-filtered monthly totals to exclude deposits/transfers
-        val monthlyTotals = multiCurrencyRepository.getHomeCurrencyPurchaseMonthlyTotals(startMs, endMs)
+        // P5-NEW-09 / P5-P1-01 FIX: per-expense TRANSACTION_DATE PURCHASE-only totals,
+        // same rate basis as weekly/daily drilldown and analytics summary.
+        val monthlyTotals = multiCurrencyRepository.getMonthlyAggregatesHistorical(startMs, endMs)
         val average = getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
         val totalsByKey = monthlyTotals.associateBy { it.monthKey }
@@ -113,7 +108,9 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.MONTH,
                 startDateMs = monthStart,
                 endDateMs = monthEnd,
-                status = getPeriodStatus(total, average)
+                status = getPeriodStatus(total, average),
+                isPartial = monthly?.aggregate?.isPartial ?: false,
+                warningMessage = monthly?.aggregate?.warningMessage
             )
         }
     }
@@ -126,21 +123,13 @@ class TotalsAggregationEngine @Inject constructor(
      * DSH-3: When a week straddles a month boundary, the visible date range
      * is clipped to the current month so that daily drill-down does not show
      * days outside the month.
-     *
-     * ## I4 Migration plan
-     * This method still uses [ExpenseRepository.getWeeklyTotalsForPeriod] (raw DAO doubles).
-     * [MultiCurrencyRepository] currently has no `getHomeCurrencyWeeklyTotals()` — it should
-     * be added (similar to [MultiCurrencyRepository.getHomeCurrencyMonthlyTotals]) so that
-     * weekly totals are also currency-converted. Once available, replace:
-     * ```
-     * expenseRepository.getWeeklyTotalsForPeriod(monthStartMs, monthEndMs)
-     * → multiCurrencyRepository.getHomeCurrencyWeeklyTotals(monthStartMs, monthEndMs)
-     * ```
      */
-    // A02-FIXED: Uses MultiCurrencyRepository.getHomeCurrencyWeeklyTotals() for currency-safe aggregation.
+    // P5-NEW-01 FIX: Uses MultiCurrencyRepository.getWeeklyAggregatesHistorical() —
+    // PURCHASE-only, per-expense TRANSACTION_DATE conversion — so weekly drilldown
+    // excludes deposits/transfers and uses the same rate basis as monthly/yearly.
     fun getWeeklyTotals(year: Int, month: Int): Flow<List<PeriodTotal>> = reactiveFlow {
         val (monthStartMs, monthEndMs) = getMonthRange(year, month)
-        val weeklyAggregates = multiCurrencyRepository.getHomeCurrencyWeeklyTotals(monthStartMs, monthEndMs)
+        val weeklyAggregates = multiCurrencyRepository.getWeeklyAggregatesHistorical(monthStartMs, monthEndMs)
         val average = getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
 
         if (weeklyAggregates.isEmpty()) return@reactiveFlow emptyList()
@@ -184,17 +173,9 @@ class TotalsAggregationEngine @Inject constructor(
      * month. When the ISO week overlaps into the previous or next month,
      * only days within the month are returned. This ensures weekly drill-down
      * does not show days that belong to a different month in the dashboard.
-     *
-     * ## I4 Migration plan
-     * Still uses [ExpenseRepository.getDailyTotalsWithDatesForPeriod] (raw DAO doubles).
-     * [MultiCurrencyRepository] needs a `getHomeCurrencyDailyTotals()` method.
-     * Once available, replace the DAO call with:
-     * ```
-     * multiCurrencyRepository.getHomeCurrencyDailyTotals(clippedStart, clippedEnd)
-     * ```
-     * and use [MoneyAggregate.displayAmount] / [MoneyAggregate.totalTransactionCount].
      */
-    // A02-FIXED: Uses MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation.
+    // P5-NEW-01 FIX: Uses MultiCurrencyRepository.getDailyAggregatesHistorical() —
+    // PURCHASE-only, per-expense TRANSACTION_DATE conversion.
     fun getDailyTotals(year: Int, weekOfYear: Int): Flow<List<PeriodTotal>> = reactiveFlow {
         val (startMs, endMs) = getWeekRange(year, weekOfYear)
 
@@ -209,7 +190,7 @@ class TotalsAggregationEngine @Inject constructor(
         if (clippedStart >= clippedEnd) {
             emptyList()
         } else {
-            val dailyAggregates = multiCurrencyRepository.getHomeCurrencyDailyTotals(clippedStart, clippedEnd)
+            val dailyAggregates = multiCurrencyRepository.getDailyAggregatesHistorical(clippedStart, clippedEnd)
             val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
             dailyAggregates.map { periodAgg ->
@@ -233,9 +214,10 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
-    // A02-FIXED: Uses MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation.
+    // P5-NEW-01 FIX: Uses MultiCurrencyRepository.getDailyAggregatesHistorical() —
+    // PURCHASE-only, per-expense TRANSACTION_DATE conversion.
     fun getDailyTotalsForRange(startMs: Long, endMs: Long): Flow<List<PeriodTotal>> = reactiveFlow {
-        val dailyAggregates = multiCurrencyRepository.getHomeCurrencyDailyTotals(startMs, endMs)
+        val dailyAggregates = multiCurrencyRepository.getDailyAggregatesHistorical(startMs, endMs)
         val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
         dailyAggregates.map { periodAgg ->
@@ -261,12 +243,10 @@ class TotalsAggregationEngine @Inject constructor(
     /**
      * Returns yearly spending totals for the last 5 years.
      *
-     * Both the total amount and transaction count reflect **purchase-only**
-     * data. I4: Replaced deprecated [ExpenseRepository.getTotalForPeriod] and
-     * [ExpenseRepository.getTransactionCountForPeriod] with a single call to
-     * [MultiCurrencyRepository.getHomeCurrencyPurchaseTotal] which returns a
-     * [MoneyAggregate] containing both the currency-converted total and
-     * transaction count.
+     * Both the total amount and transaction count reflect **purchase-only** data.
+     * P5-P1-01 / P5-NEW-09 FIX: uses per-expense TRANSACTION_DATE historical
+     * conversion via [purchaseTotalHistorical] (same basis as monthly/weekly/daily
+     * and analytics summary) and propagates conversion partial-state.
      */
     fun getYearlyTotals(): Flow<List<PeriodTotal>> = reactiveFlow {
         val now = timeProvider.now()
@@ -278,21 +258,34 @@ class TotalsAggregationEngine @Inject constructor(
         
         years.map { year ->
             val (startMs, endMs) = getYearRange(year)
-            // Single MCR call returns both currency-converted amount and tx count
-            val aggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(startMs, endMs)
+            val aggregate = purchaseTotalHistorical(startMs, endMs)
+            val total = aggregate?.displayAmount ?: 0.0
             
             PeriodTotal(
                 periodLabel = year.toString(),
                 periodKey = year.toString(),
-                totalAmount = aggregate.displayAmount,
-                transactionCount = aggregate.totalTransactionCount,
+                totalAmount = total,
+                transactionCount = aggregate?.totalTransactionCount ?: 0,
                 periodType = PeriodType.YEAR,
                 startDateMs = startMs,
                 endDateMs = endMs,
-                status = getPeriodStatus(aggregate.displayAmount, average)
+                status = getPeriodStatus(total, average),
+                isPartial = aggregate?.isPartial ?: false,
+                warningMessage = aggregate?.warningMessage
             )
         }.filter { it.totalAmount > 0 || it.periodKey == currentYear.toString() }
     }
+
+    /**
+     * P5-P1-01 FIX: per-expense TRANSACTION_DATE historical PURCHASE total in home currency.
+     * Returns null when home currency is unavailable so callers degrade gracefully
+     * (treat as zero / skip) rather than fabricating a sentinel-currency aggregate.
+     */
+    private suspend fun purchaseTotalHistorical(startMs: Long, endMs: Long): MoneyAggregate? =
+        when (val result = multiCurrencyRepository.getHomeCurrencyPurchaseTotalHistoricalResult(startMs, endMs)) {
+            is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available -> result.aggregate
+            is com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable -> null
+        }
 
     /**
      * SRH-13-FIXED: Uncategorized category breakdown.
@@ -307,14 +300,15 @@ class TotalsAggregationEngine @Inject constructor(
      *
      * ## I4
      * Replaced deprecated [ExpenseRepository.getCategoryBreakdown] (raw DAO doubles)
-     * with [MultiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals] for
-     * currency-safe purchase-only totals, plus [CategoryRepository.getAll] for
+     * with [MultiCurrencyRepository.getCategoryAggregatesHistorical] for currency-safe,
+     * purchase-only, per-expense TRANSACTION_DATE totals (P5-P1-01: same rate basis as
+     * the monthly/yearly/weekly/daily totals), plus [CategoryRepository.getAll] for
      * category metadata.
      */
     fun getCategoryBreakdown(startMs: Long, endMs: Long, periodLabel: String): Flow<List<CategoryBreakdown>> = reactiveCategoryBreakdownFlow {
         val categories = categoryRepository.getAll()
         val categoryMap = categories.associateBy { it.id }
-        val categoryAggregates = multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(startMs, endMs)
+        val categoryAggregates = multiCurrencyRepository.getCategoryAggregatesHistorical(startMs, endMs)
         val grandTotal = categoryAggregates.values.sumOf { it.displayAmount }
 
         categoryAggregates.mapNotNull { (categoryId, aggregate) ->
@@ -364,16 +358,16 @@ class TotalsAggregationEngine @Inject constructor(
                     val endYear = if (excludeCurrent) currentYear - 1 else currentYear
                     val yearTotals = (currentYear - 4..endYear).mapNotNull { year ->
                         val (startMs, endMs) = getYearRange(year)
-                        // I4: replaced deprecated expenseRepository.getTotalForPeriod with MCR
-                        val total = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(startMs, endMs).displayAmount
+                        // P5-P1-01 FIX: historical TRANSACTION_DATE basis matches getYearlyTotals
+                        val total = purchaseTotalHistorical(startMs, endMs)?.displayAmount ?: 0.0
                         if (total > 0) total else null
                     }
                     yearTotals.takeIf { it.isNotEmpty() }?.average() ?: 0.0
                 }
                 PeriodType.MONTH -> {
                     val startMs = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -12))
-                    // I4: replaced deprecated expenseRepository.getMonthlyTotalsForPeriod with MCR
-                    val months = multiCurrencyRepository.getHomeCurrencyMonthlyTotals(startMs, now)
+                    // P5-P1-01 FIX: historical TRANSACTION_DATE basis matches getMonthlyTotals
+                    val months = multiCurrencyRepository.getMonthlyAggregatesHistorical(startMs, now)
                     if (excludeCurrent) {
                         // DSH-13: Use time-based filtering instead of positional dropLast(1).
                         // The current (incomplete) month is excluded by comparing the monthKey
@@ -391,7 +385,7 @@ class TotalsAggregationEngine @Inject constructor(
                 }
                 PeriodType.WEEK -> {
                     val startMs = TimePeriodUtils.getStartOfWeek(TimePeriodUtils.addDays(now, -56))
-                    val weeks = multiCurrencyRepository.getHomeCurrencyWeeklyTotals(startMs, now)
+                    val weeks = multiCurrencyRepository.getWeeklyAggregatesHistorical(startMs, now)
                     if (excludeCurrent) {
                         val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
                         weeks.filter { periodAgg ->
@@ -407,10 +401,9 @@ class TotalsAggregationEngine @Inject constructor(
                 }
                 PeriodType.DAY -> {
                     val startMs = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(now, -30))
-                    // I4: replaced deprecated expenseRepository.getAverageDailySpend with
-                    // computation from MultiCurrencyRepository.getHomeCurrencyPurchaseTotal
+                    // P5-P1-01 FIX: historical TRANSACTION_DATE basis matches the daily drilldown
                     val daysCount = TimePeriodUtils.daysBetween(startMs, now).coerceAtLeast(1)
-                    val total = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(startMs, now).displayAmount
+                    val total = purchaseTotalHistorical(startMs, now)?.displayAmount ?: 0.0
                     total / daysCount
                 }
             }

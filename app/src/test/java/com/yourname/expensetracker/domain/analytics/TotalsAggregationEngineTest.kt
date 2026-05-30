@@ -35,12 +35,12 @@ class TotalsAggregationEngineTest {
 
     @Before
     fun setup() {
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns emptyList()
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns emptyMap()
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns emptyList()
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns emptyList()
-        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.empty(CurrencyCode("EUR")))
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns emptyMap()
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns emptyList()
 
         // Reactive flows depend on expenseRepository.getTotalSpent() to trigger emission
         every { expenseRepository.getTotalSpent() } returns flowOf(null)
@@ -51,7 +51,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getMonthlyTotals returns empty list when no expenses`() = runTest {
-        // @Before sets getHomeCurrencyPurchaseMonthlyTotals to return emptyList(),
+        // @Before sets getMonthlyAggregatesHistorical to return emptyList(),
         // which causes 12 zero-filled months. No per-test MCR override needed.
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
@@ -65,7 +65,7 @@ class TotalsAggregationEngineTest {
     fun `getMonthlyTotals calculates correct totals from repository`() = runTest {
         val januaryStart = getStartOfMonth(2026, Calendar.JANUARY)
         val januaryEnd = getEndOfMonth(2026, Calendar.JANUARY)
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
             MonthMoneyAggregate("2026-01", MoneyAggregate.singleCurrency(150.0, CurrencyCode("EUR"), 2))
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
@@ -82,7 +82,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getWeeklyTotals returns empty list when no expenses`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-W1", MoneyAggregate.empty(CurrencyCode("EUR")))
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
@@ -95,7 +95,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getWeeklyTotals groups by week correctly`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-W3", MoneyAggregate.singleCurrency(300.0, CurrencyCode("EUR"), 5))
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
@@ -115,7 +115,7 @@ class TotalsAggregationEngineTest {
         val dailyAggs = (12..18).map { day ->
             PeriodMoneyAggregate("2026-01-%02d".format(day), MoneyAggregate.empty(CurrencyCode("EUR")))
         }
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns dailyAggs
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns dailyAggs
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
         val result = engine.getDailyTotals(2026, 3).first()
@@ -133,7 +133,7 @@ class TotalsAggregationEngineTest {
             PeriodMoneyAggregate("2026-01-13", MoneyAggregate.empty(CurrencyCode("EUR"))),
             PeriodMoneyAggregate("2026-01-14", MoneyAggregate.empty(CurrencyCode("EUR")))
         )
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns dayAggs
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns dayAggs
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 25.0
 
         val result = engine.getDailyTotalsForRange(dayStart, getEndOfDay(2026, Calendar.JANUARY, 14)).first()
@@ -150,7 +150,7 @@ class TotalsAggregationEngineTest {
             if (day == 12) PeriodMoneyAggregate("2026-01-12", MoneyAggregate.singleCurrency(50.0, CurrencyCode("EUR"), 3))
             else PeriodMoneyAggregate("2026-01-%02d".format(day), MoneyAggregate.empty(CurrencyCode("EUR")))
         }
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns dayAggs
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns dayAggs
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 40.0
 
         val result = engine.getDailyTotals(2026, 3).first()
@@ -164,7 +164,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getCategoryBreakdown calculates percentages correctly`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns mapOf(
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns mapOf(
             1L to MoneyAggregate.singleCurrency(250.0, CurrencyCode("EUR"), 10),
             2L to MoneyAggregate.singleCurrency(150.0, CurrencyCode("EUR"), 5),
             3L to MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), 3)
@@ -198,7 +198,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getCategoryBreakdown sorts by totalAmount descending`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns mapOf(
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns mapOf(
             1L to MoneyAggregate.singleCurrency(50.0, CurrencyCode("EUR"), 2),
             2L to MoneyAggregate.singleCurrency(500.0, CurrencyCode("EUR"), 10),
             3L to MoneyAggregate.singleCurrency(150.0, CurrencyCode("EUR"), 5)
@@ -223,7 +223,7 @@ class TotalsAggregationEngineTest {
         // Since the MCR returns category totals keyed by categoryId, the engine
         // looks up the Category entity by ID. If the entity has valid fields,
         // those are used (the nulls in the DAO result are not consulted).
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns mapOf(
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns mapOf(
             1L to MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), 5)
         )
         coEvery { categoryRepository.getAll() } returns listOf(
@@ -270,7 +270,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getAverageForPeriodType handles repository exceptions`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } throws RuntimeException("DB error")
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws RuntimeException("DB error")
 
         val result = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
@@ -279,7 +279,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getMonthlyTotals handles repository exception`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } throws RuntimeException("DB error")
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } throws RuntimeException("DB error")
 
         val result = engine.getMonthlyTotals(2026).first()
 
@@ -288,7 +288,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getWeeklyTotals handles repository exception`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } throws RuntimeException("DB error")
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } throws RuntimeException("DB error")
 
         val result = engine.getWeeklyTotals(2026, 1).first()
 
@@ -297,7 +297,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getDailyTotals handles repository exception`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } throws RuntimeException("DB error")
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } throws RuntimeException("DB error")
 
         val result = engine.getDailyTotals(2026, 3).first()
 
@@ -306,7 +306,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getCategoryBreakdown handles repository exception`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } throws RuntimeException("DB error")
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } throws RuntimeException("DB error")
 
         val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan").first()
 
@@ -315,7 +315,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getCategoryBreakdown handles zero grand total`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns mapOf(
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns mapOf(
             1L to MoneyAggregate.singleCurrency(0.0, CurrencyCode("EUR"), 0)
         )
         coEvery { categoryRepository.getAll() } returns listOf(
@@ -330,7 +330,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getWeeklyTotals calculates correct week labels`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-W2", MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), 2)),
             PeriodMoneyAggregate("2026-W3", MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR"), 4)),
             PeriodMoneyAggregate("2026-W4", MoneyAggregate.singleCurrency(150.0, CurrencyCode("EUR"), 3))
@@ -355,7 +355,7 @@ class TotalsAggregationEngineTest {
         val purchaseOnlyTotal = 450.0 // Simulates PURCHASE-only sum from SQL
         val purchaseOnlyCount = 8
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
             MonthMoneyAggregate("2026-01", MoneyAggregate.singleCurrency(purchaseOnlyTotal, CurrencyCode("EUR"), purchaseOnlyCount))
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
@@ -374,7 +374,7 @@ class TotalsAggregationEngineTest {
         val dayEnd = getEndOfDay(2026, Calendar.MARCH, 10)
         val purchaseOnlyDailyTotal = 75.0
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-03-10", MoneyAggregate.singleCurrency(purchaseOnlyDailyTotal, CurrencyCode("EUR"), 3))
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 50.0
@@ -390,7 +390,7 @@ class TotalsAggregationEngineTest {
     fun `getCategoryBreakdown surfaces purchase-only data without deposits or transfers`() = runTest {
         // Simulates what the DB returns after SPENDING_TYPE_SQL filter:
         // Only PURCHASE amounts appear; deposits/transfers are excluded at SQL layer
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns mapOf(
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns mapOf(
             1L to MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR"), 5),
             2L to MoneyAggregate.singleCurrency(100.0, CurrencyCode("EUR"), 3)
         )
@@ -412,7 +412,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getCategoryBreakdown preserves descending sort by purchase amount`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns mapOf(
+        coEvery { multiCurrencyRepo.getCategoryAggregatesHistorical(any(), any()) } returns mapOf(
             1L to MoneyAggregate.singleCurrency(50.0, CurrencyCode("EUR"), 2),
             2L to MoneyAggregate.singleCurrency(500.0, CurrencyCode("EUR"), 10),
             3L to MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR"), 5)
@@ -435,7 +435,7 @@ class TotalsAggregationEngineTest {
         val purchaseOnlyTotal = 275.0
         val purchaseOnlyCount = 6
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-W2", MoneyAggregate.singleCurrency(purchaseOnlyTotal, CurrencyCode("EUR"), purchaseOnlyCount))
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
@@ -458,7 +458,7 @@ class TotalsAggregationEngineTest {
             if (day == 12) PeriodMoneyAggregate("2026-01-12", MoneyAggregate.singleCurrency(purchaseOnlyTotal, CurrencyCode("EUR"), purchaseOnlyCount))
             else PeriodMoneyAggregate("2026-01-%02d".format(day), MoneyAggregate.empty(CurrencyCode("EUR")))
         }
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns dayAggs
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns dayAggs
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 60.0
 
         val result = engine.getDailyTotals(2026, 3).first()
@@ -472,7 +472,7 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getDailyTotalsForRange preserves purchase-only counts from repository`() = runTest {
-        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-02-05", MoneyAggregate.singleCurrency(45.0, CurrencyCode("EUR"), 2)),
             PeriodMoneyAggregate("2026-02-06", MoneyAggregate.singleCurrency(110.0, CurrencyCode("EUR"), 5))
         )
@@ -503,7 +503,7 @@ class TotalsAggregationEngineTest {
         val referenceDate = getStartOfDay(2026, Calendar.APRIL, 15)
         every { timeProvider.now() } returns referenceDate
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
             MonthMoneyAggregate("2025-05", MoneyAggregate.singleCurrency(1200.0, CurrencyCode("EUR"), 10)),
             MonthMoneyAggregate("2025-06", MoneyAggregate.singleCurrency(900.0, CurrencyCode("EUR"), 8)),
             MonthMoneyAggregate("2025-07", MoneyAggregate.singleCurrency(1500.0, CurrencyCode("EUR"), 12))
@@ -520,7 +520,7 @@ class TotalsAggregationEngineTest {
         val referenceDate = getStartOfDay(2026, Calendar.APRIL, 15)
         every { timeProvider.now() } returns referenceDate
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-W10", MoneyAggregate.singleCurrency(250.0, CurrencyCode("EUR"), 5)),
             PeriodMoneyAggregate("2026-W11", MoneyAggregate.singleCurrency(350.0, CurrencyCode("EUR"), 7)),
             PeriodMoneyAggregate("2026-W12", MoneyAggregate.singleCurrency(300.0, CurrencyCode("EUR"), 6))
@@ -539,8 +539,8 @@ class TotalsAggregationEngineTest {
 
         // Engine computes daily average from getHomeCurrencyPurchaseTotal / daysCount
         // April 15 - 30 days => March 16, daysBetween = 30. total/30 = 42.50 => total = 1275.0
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } returns
-            MoneyAggregate.singleCurrency(1275.0, CurrencyCode("EUR"), 0)
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.singleCurrency(1275.0, CurrencyCode("EUR"), 0))
 
         val average = engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
@@ -554,7 +554,7 @@ class TotalsAggregationEngineTest {
         every { timeProvider.now() } returns referenceDate
 
         // Engine uses getHomeCurrencyPurchaseTotal for each year
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val cal = Calendar.getInstance().apply { timeInMillis = startMs }
             val total = when (cal.get(Calendar.YEAR)) {
@@ -563,7 +563,7 @@ class TotalsAggregationEngineTest {
                 2025 -> 12000.0
                 else -> 0.0
             }
-            MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0)
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0))
         }
 
         val average = engine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
@@ -579,7 +579,7 @@ class TotalsAggregationEngineTest {
         val referenceDate = getStartOfDay(2026, Calendar.APRIL, 15)
         every { timeProvider.now() } returns referenceDate
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
             MonthMoneyAggregate("2025-06", MoneyAggregate.singleCurrency(800.0, CurrencyCode("EUR"), 8)),
             MonthMoneyAggregate("2025-07", MoneyAggregate.singleCurrency(1000.0, CurrencyCode("EUR"), 10)),
             MonthMoneyAggregate("2026-04", MoneyAggregate.singleCurrency(400.0, CurrencyCode("EUR"), 4))
@@ -596,7 +596,7 @@ class TotalsAggregationEngineTest {
         val referenceDate = getStartOfDay(2026, Calendar.APRIL, 15)
         every { timeProvider.now() } returns referenceDate
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns listOf(
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
             PeriodMoneyAggregate("2026-W13", MoneyAggregate.singleCurrency(200.0, CurrencyCode("EUR"), 4)),
             PeriodMoneyAggregate("2026-W14", MoneyAggregate.singleCurrency(400.0, CurrencyCode("EUR"), 8)),
             PeriodMoneyAggregate("2026-W15", MoneyAggregate.singleCurrency(150.0, CurrencyCode("EUR"), 3))
@@ -625,7 +625,7 @@ class TotalsAggregationEngineTest {
         every { timeProvider.now() } returns referenceDate
 
         // Current year (2026) has a non-zero total that must be excluded
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val cal = Calendar.getInstance().apply { timeInMillis = startMs }
             val total = when (cal.get(Calendar.YEAR)) {
@@ -635,7 +635,7 @@ class TotalsAggregationEngineTest {
                 2026 -> 5000.0
                 else -> 0.0
             }
-            MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0)
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0))
         }
 
         val average = engine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = true)
@@ -651,7 +651,7 @@ class TotalsAggregationEngineTest {
         every { timeProvider.now() } returns referenceDate
 
         // Current year (2026) has a non-zero total that must be included
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val cal = Calendar.getInstance().apply { timeInMillis = startMs }
             val total = when (cal.get(Calendar.YEAR)) {
@@ -661,7 +661,7 @@ class TotalsAggregationEngineTest {
                 2026 -> 5000.0
                 else -> 0.0
             }
-            MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0)
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0))
         }
 
         val average = engine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
@@ -676,7 +676,7 @@ class TotalsAggregationEngineTest {
         val referenceDate = getStartOfDay(2026, Calendar.APRIL, 15)
         every { timeProvider.now() } returns referenceDate
 
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val cal = Calendar.getInstance().apply { timeInMillis = startMs }
             val total = when (cal.get(Calendar.YEAR)) {
@@ -685,7 +685,7 @@ class TotalsAggregationEngineTest {
                 2026 -> 3000.0
                 else -> 0.0
             }
-            MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0)
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), 0))
         }
 
         val avgExclude = engine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = true)
@@ -717,7 +717,7 @@ class TotalsAggregationEngineTest {
         every { timeProvider.now() } returns now
 
         // Engine uses getHomeCurrencyPurchaseTotal for each year
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val cal = Calendar.getInstance().apply { timeInMillis = startMs }
             val (total, count) = when (cal.get(Calendar.YEAR)) {
@@ -725,7 +725,7 @@ class TotalsAggregationEngineTest {
                 2026 -> 3500.0 to 35
                 else -> 0.0 to 0
             }
-            MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), count)
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), count))
         }
 
         val result = engine.getYearlyTotals().first()
@@ -753,7 +753,7 @@ class TotalsAggregationEngineTest {
         // 2024 (10000) < 12000 → UNDER_AVERAGE
         // 2025 (14000) > 12000 → OVER_AVERAGE
         // 2026 (2000)  < 12000 → UNDER_AVERAGE (partial year, below completed-year average)
-        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } answers {
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } answers {
             val startMs = firstArg<Long>()
             val cal = Calendar.getInstance().apply { timeInMillis = startMs }
             val (total, count) = when (cal.get(Calendar.YEAR)) {
@@ -762,7 +762,7 @@ class TotalsAggregationEngineTest {
                 2026 -> 2000.0 to 20
                 else -> 0.0 to 0
             }
-            MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), count)
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(MoneyAggregate.singleCurrency(total, CurrencyCode("EUR"), count))
         }
 
         val result = engine.getYearlyTotals().first()
@@ -778,6 +778,94 @@ class TotalsAggregationEngineTest {
         assertEquals(PeriodStatus.UNDER_AVERAGE, y2024!!.status)
         assertEquals(PeriodStatus.OVER_AVERAGE, y2025!!.status)
         assertEquals(PeriodStatus.UNDER_AVERAGE, y2026!!.status)
+    }
+
+    // ========== P5-P1-01 / P5-NEW-01 / P5-NEW-09 — historical PURCHASE-only basis + partial propagation ==========
+
+    private fun partialAggregate(amount: Double, count: Int): MoneyAggregate =
+        MoneyAggregate.partial(
+            displayAmount = amount,
+            displayCurrency = CurrencyCode("EUR"),
+            sourceBuckets = listOf(com.yourname.expensetracker.domain.core.money.MoneyBucket(CurrencyCode("EUR"), amount, count)),
+            failures = listOf(
+                com.yourname.expensetracker.domain.core.money.ConversionFailure(
+                    originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(50.0, CurrencyCode("USD")),
+                    targetCurrency = CurrencyCode("EUR"),
+                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
+                    transactionCount = 1
+                )
+            )
+        )
+
+    @Test
+    fun `getWeeklyTotals reads PURCHASE-only historical API not type-agnostic latest`() = runTest {
+        coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
+            PeriodMoneyAggregate("2026-W03", MoneyAggregate.singleCurrency(120.0, CurrencyCode("EUR"), 4))
+        )
+        coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
+
+        engine.getWeeklyTotals(2026, 1).first()
+
+        io.mockk.coVerify { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) }
+    }
+
+    @Test
+    fun `getDailyTotalsForRange reads PURCHASE-only historical API`() = runTest {
+        coEvery { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) } returns listOf(
+            PeriodMoneyAggregate("2026-01-12", MoneyAggregate.singleCurrency(40.0, CurrencyCode("EUR"), 2))
+        )
+        coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 20.0
+
+        engine.getDailyTotalsForRange(
+            getStartOfDay(2026, Calendar.JANUARY, 12),
+            getEndOfDay(2026, Calendar.JANUARY, 12)
+        ).first()
+
+        io.mockk.coVerify { multiCurrencyRepo.getDailyAggregatesHistorical(any(), any()) }
+    }
+
+    @Test
+    fun `getMonthlyTotals propagates isPartial and warning from aggregate`() = runTest {
+        coEvery { multiCurrencyRepo.getMonthlyAggregatesHistorical(any(), any()) } returns listOf(
+            MonthMoneyAggregate("2026-01", partialAggregate(150.0, 2))
+        )
+        coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
+
+        val result = engine.getMonthlyTotals(2026).first()
+
+        val january = result.first { it.periodKey == "2026-01" }
+        assertTrue(january.isPartial)
+        assertNotNull(january.warningMessage)
+    }
+
+    @Test
+    fun `getYearlyTotals uses historical result API and propagates partial`() = runTest {
+        val now = getStartOfDay(2026, Calendar.APRIL, 15)
+        every { timeProvider.now() } returns now
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Available(partialAggregate(1000.0, 5))
+
+        val result = engine.getYearlyTotals().first()
+
+        assertTrue(result.isNotEmpty())
+        assertTrue(result.all { it.isPartial })
+        assertTrue(result.all { it.warningMessage != null })
+    }
+
+    @Test
+    fun `getYearlyTotals degrades to zero when home currency unavailable`() = runTest {
+        val now = getStartOfDay(2026, Calendar.APRIL, 15)
+        every { timeProvider.now() } returns now
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotalHistoricalResult(any(), any()) } returns
+            com.yourname.expensetracker.domain.core.money.MoneyAggregateResult.Unavailable(
+                reason = "Home currency unavailable",
+                requestedRateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE
+            )
+
+        val result = engine.getYearlyTotals().first()
+
+        // Only the current year survives the >0 filter, with a zero total and no crash.
+        assertTrue(result.all { it.totalAmount == 0.0 })
     }
 
     private fun createCategoryTotalResult(

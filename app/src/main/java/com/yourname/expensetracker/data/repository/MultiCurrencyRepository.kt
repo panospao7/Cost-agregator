@@ -508,8 +508,10 @@ class MultiCurrencyRepository @Inject constructor(
      * Returns list of [PeriodMoneyAggregate] sorted by week ascending.
      */
     @Deprecated(
-        "Uses latest-rate conversion. Use getWeeklyAggregatesHistorical() for historical accuracy.",
-        level = DeprecationLevel.WARNING
+        "Type-agnostic latest-rate weekly totals (includes deposits/transfers). " +
+            "Use getWeeklyAggregatesHistorical() for PURCHASE-only historical accuracy.",
+        replaceWith = ReplaceWith("getWeeklyAggregatesHistorical(startDate, endDate)"),
+        level = DeprecationLevel.ERROR
     )
     suspend fun getHomeCurrencyWeeklyTotals(
         startDate: Long,
@@ -536,8 +538,10 @@ class MultiCurrencyRepository @Inject constructor(
      * Returns list of [PeriodMoneyAggregate] sorted by day ascending.
      */
     @Deprecated(
-        "Uses latest-rate conversion. Use getDailyAggregatesHistorical() for historical accuracy.",
-        level = DeprecationLevel.WARNING
+        "Type-agnostic latest-rate daily totals (includes deposits/transfers). " +
+            "Use getDailyAggregatesHistorical() for PURCHASE-only historical accuracy.",
+        replaceWith = ReplaceWith("getDailyAggregatesHistorical(startDate, endDate)"),
+        level = DeprecationLevel.ERROR
     )
     suspend fun getHomeCurrencyDailyTotals(
         startDate: Long,

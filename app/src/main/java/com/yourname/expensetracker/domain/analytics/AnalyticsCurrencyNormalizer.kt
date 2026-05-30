@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.core.money.toCurrencyCodeOrNull
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -123,35 +126,49 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
             val normalizedAmount = when {
                 sourceCurrency == homeCurrency -> expense.effectiveAmount
                 else -> {
-                    val conversion = currencyConverter.convertAsOf(
+                    // P5-NEW-07 FIX: use convertOutcome (TRANSACTION_DATE) so staleness is
+                    // evaluated against the rate's validDate, not its lastUpdated. Historical
+                    // bases never silently fall back to latest (StaleRatePolicy.None).
+                    val outcome = currencyConverter.convertOutcome(
                         amount = expense.effectiveAmount,
                         fromCurrency = sourceCurrency.code,
                         toCurrency = homeCurrency.code,
-                        atMillis = expense.date
+                        rateBasis = RateBasis.TRANSACTION_DATE,
+                        atMillis = expense.date,
+                        stalePolicy = StaleRatePolicy.forBasis(RateBasis.TRANSACTION_DATE)
                     )
-                    if (conversion == null) {
-                        accumulateWarning(
-                            warnings = warnings,
-                            type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
-                            sourceCurrency = sourceCurrency.code,
-                            message = "Analytics excluded transaction(s) because exchange rates were unavailable.",
-                            expenseId = expense.id
-                        )
-                        return@mapNotNull null
+                    when (outcome) {
+                        is ConversionOutcome.Failed -> {
+                            accumulateWarning(
+                                warnings = warnings,
+                                type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                                sourceCurrency = sourceCurrency.code,
+                                message = "Analytics excluded transaction(s) because exchange rates were unavailable.",
+                                expenseId = expense.id
+                            )
+                            return@mapNotNull null
+                        }
+                        is ConversionOutcome.Converted -> {
+                            latestRateTimestamp = maxTimestamp(latestRateTimestamp, outcome.rateLastUpdated)
+                            // P5-NEW-07: detect stale rates against the rate's validDate (the date
+                            // the rate was valid for), not lastUpdated. A backfilled historical rate
+                            // has validDate ≈ expense.date even if lastUpdated is recent. validDate
+                            // of 0L is an unset sentinel and is not treated as stale.
+                            val rateValidDate = outcome.rateValidDate
+                            val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
+                            if (rateValidDate != null && rateValidDate > 0L &&
+                                kotlin.math.abs(expense.date - rateValidDate) > sevenDaysMs) {
+                                accumulateWarning(
+                                    warnings = warnings,
+                                    type = AnalyticsConversionWarningType.STALE_EXCHANGE_RATE,
+                                    sourceCurrency = sourceCurrency.code,
+                                    message = "Analytics used possibly stale exchange rates for transactions older than available rate data.",
+                                    expenseId = expense.id
+                                )
+                            }
+                            outcome.convertedAmount
+                        }
                     }
-                    latestRateTimestamp = maxTimestamp(latestRateTimestamp, conversion.timestamp)
-                    // Detect stale rates: rate timestamp is more than 7 days older than expense date
-                    val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
-                    if (conversion.timestamp > 0 && expense.date - conversion.timestamp > sevenDaysMs) {
-                        accumulateWarning(
-                            warnings = warnings,
-                            type = AnalyticsConversionWarningType.STALE_EXCHANGE_RATE,
-                            sourceCurrency = sourceCurrency.code,
-                            message = "Analytics used possibly stale exchange rates for transactions older than available rate data.",
-                            expenseId = expense.id
-                        )
-                    }
-                    conversion.convertedAmount
                 }
             }
 

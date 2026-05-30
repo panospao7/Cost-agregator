@@ -93,6 +93,41 @@ class AnalyticsCurrencyNormalizerTest {
         assertThat(result.warnings.single().sourceCurrencies).containsExactly("USD")
     }
 
+    @Test
+    fun `normalizeExpenses flags stale rate using validDate not lastUpdated`() = runTest {
+        // Backfilled rate: lastUpdated is recent (near expense date) but validDate is far in the past.
+        // P5-NEW-07: staleness must key off validDate, so this MUST be flagged stale.
+        val expenseDate = 1_700_000_000_000L
+        val farPastValidDate = expenseDate - 30L * 24 * 60 * 60 * 1000 // 30 days before
+        exchangeRateStore.putRate("USD", "EUR", rate = 2.0, updatedAt = expenseDate, validDate = farPastValidDate)
+
+        val result = normalizer.normalizeExpenses(
+            expenses = listOf(expense(id = 6L, amount = 10.0, currency = "USD")),
+            homeCurrencyCode = "EUR"
+        )
+
+        assertThat(result.includedExpenses).hasSize(1) // still included
+        assertThat(result.warnings.map { it.type })
+            .contains(AnalyticsConversionWarningType.STALE_EXCHANGE_RATE)
+    }
+
+    @Test
+    fun `normalizeExpenses does not flag stale when validDate is near expense date`() = runTest {
+        // Recent lastUpdated, validDate within 7 days of the expense → NOT stale.
+        val expenseDate = 1_700_000_000_000L
+        val nearValidDate = expenseDate - 2L * 24 * 60 * 60 * 1000 // 2 days before
+        exchangeRateStore.putRate("USD", "EUR", rate = 2.0, updatedAt = expenseDate, validDate = nearValidDate)
+
+        val result = normalizer.normalizeExpenses(
+            expenses = listOf(expense(id = 7L, amount = 10.0, currency = "USD")),
+            homeCurrencyCode = "EUR"
+        )
+
+        assertThat(result.includedExpenses).hasSize(1)
+        assertThat(result.warnings.map { it.type })
+            .doesNotContain(AnalyticsConversionWarningType.STALE_EXCHANGE_RATE)
+    }
+
     private fun expense(id: Long, amount: Double, currency: String) = Expense(
         id = id,
         amount = amount,
@@ -120,12 +155,13 @@ class AnalyticsCurrencyNormalizerTest {
     private class FakeExchangeRateStore : ExchangeRateStore {
         private val rates = mutableMapOf<Pair<String, String>, DomainExchangeRate>()
 
-        fun putRate(from: String, to: String, rate: Double, updatedAt: Long) {
+        fun putRate(from: String, to: String, rate: Double, updatedAt: Long, validDate: Long = 0L) {
             rates[from.uppercase() to to.uppercase()] = DomainExchangeRate(
                 fromCurrency = from.uppercase(),
                 toCurrency = to.uppercase(),
                 rate = rate,
-                lastUpdated = updatedAt
+                lastUpdated = updatedAt,
+                validDate = validDate
             )
         }
 

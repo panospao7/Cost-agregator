@@ -109,14 +109,18 @@ Full source: `pipeline-5-currency-dashboard-analytics-debug-report.md`
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| P5-P1-01 | P1 | Historical totals use latest-rate aggregate conversion | Bug | `MultiCurrencyRepository` period totals use `convert()` not `convertAsOf()` | 📝 TODO ONLY |
-| P5-P1-02 | P1 | `ExchangeRateDao.getRate()` ambiguous with historical rows | Bug | Added `ORDER BY lastUpdated DESC LIMIT 1` (from prior session) | ✅ FIXED |
-| P5-P1-03 | P1 | Dashboard adapter drops `MoneyAggregate` and partial warnings | Bug | `DashboardContractsAdapter` maps to DTOs losing `isPartial`/`warningMessage` | 📝 TODO ONLY |
-| P5-P1-04 | P1 | Weekly/daily totals drilldown functionally broken | Bug | Deprecated raw mixed-currency path returns empty lists | 📝 TODO ONLY |
-| P5-P1-05 | P1 | Dashboard widgets raw-sum `effectiveAmount` | Bug | Spending/forecast/widgets use raw amounts, not normalized | 📝 TODO ONLY |
-| P5-P1-06 | P1 | Stale-rate state not propagated to analytics quality | Bug | `staleRateCount` hardcoded to 0 | 📝 TODO ONLY |
-| P5-P1-07 | P1 | `MultiCurrencyRepository` inconsistent `MoneyAggregateBuilder` use | Bug | Manual mapping drops bucket transaction counts | 📝 TODO ONLY |
-| P5-P1-08 | P1 | Budget-vs-actual comparisons not fully normalized | Bug | Compares normalized spending against raw budget amounts | 📝 TODO ONLY |
+| P5-P1-01 | P1 | Historical totals use latest-rate aggregate conversion | Bug | TotalsAggregationEngine year/month/week/day/category now use `MultiCurrencyRepository.get*AggregatesHistorical` / `getHomeCurrencyPurchaseTotalHistoricalResult` (per-expense TRANSACTION_DATE). Dashboard already used `DashboardNormalizedInput` (TRANSACTION_DATE). | ✅ FIXED |
+| P5-P1-02 | P1 | `ExchangeRateDao.getRate()` ambiguous with historical rows | Bug | `getLatestRateForPair()` orders by `validDate DESC, lastUpdated DESC`; `getRate()` ERROR-deprecated; `getRateAsOf()` added; `storeRate` sets `validDate` | ✅ FIXED |
+| P5-P1-03 | P1 | Dashboard adapter drops `MoneyAggregate` and partial warnings | Bug | Dashboard summary/category/widgets carry `isPartial`/`warningMessage`/`CurrencyQualityUi`; budget snapshot now carries `isPartial`/`conversionWarning` | ✅ FIXED |
+| P5-P1-04 | P1 | Weekly/daily totals drilldown functionally broken | Bug | Drilldown now PURCHASE-only historical via `getWeeklyAggregatesHistorical`/`getDailyAggregatesHistorical`; type-agnostic helpers ERROR-deprecated | ✅ FIXED |
+| P5-P1-05 | P1 | Dashboard widgets raw-sum `effectiveAmount` | Bug | Widgets consume `DashboardNormalizedInput`; no raw fallback; enforced by money guard G-MONEY-15/16 | ✅ FIXED |
+| P5-P1-06 | P1 | Stale-rate state not propagated to analytics quality | Bug | `staleRateCount` populated; `DataQualityReport` applies stale penalty; normalizer keys staleness off `validDate` | ✅ FIXED |
+| P5-P1-07 | P1 | `MultiCurrencyRepository` inconsistent `MoneyAggregateBuilder` use | Bug | MCR aggregates funnel through `MoneyAggregateBuilder`/`MoneyNormalizationEngine`; legacy `Result<Double>` APIs deprecated | ✅ FIXED |
+| P5-P1-08 | P1 | Budget-vs-actual comparisons not fully normalized | Bug | Conversion failure → `BudgetHealthStatus.UNKNOWN` (not ON_TRACK); `isPartial`/`conversionWarning` carried through to dashboard snapshot. Residual: limit (PERIOD_END) vs spend (latest) basis split tracked as P6-CURRENT-001 | ⚠ PARTIAL |
+| P5-NEW-01 | P1 | Weekly/daily drilldown included non-spending types (latest rate) | Bug | Routed to PURCHASE-only historical APIs; type-agnostic helpers ERROR-deprecated; tests added | ✅ FIXED |
+| P5-NEW-06 | P1 | Budget dashboard dropped partial/conversion warning | Bug | `BudgetStatusSnapshot` gained `isPartial`/`conversionWarning`; mapped in `DashboardContractsAdapter`; test added | ✅ FIXED |
+| P5-NEW-07 | P2 | Analytics stale detection used `lastUpdated` not `validDate` | Bug | `AnalyticsCurrencyNormalizer` uses `convertOutcome(TRANSACTION_DATE)` and keys staleness off `rateValidDate`; tests added | ✅ FIXED |
+| P5-NEW-09 | P2 | Monthly/yearly `PeriodTotal` dropped partial warnings | Bug | `getMonthlyTotals`/`getYearlyTotals` propagate `isPartial`/`warningMessage`; tests added | ✅ FIXED |
 
 ## Pipeline 6 — Budget / Forecasting / Cashflow
 

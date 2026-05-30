@@ -31,12 +31,29 @@ Every currency conversion in ExpenseTracker must declare which **rate basis** it
 | Use Case | Rate Basis |
 |----------|-----------|
 | Dashboard historical totals | `TRANSACTION_DATE` |
+| Analytics Totals (year/month/week/day/category) | `TRANSACTION_DATE` |
 | Budget limit conversion | `PERIOD_END` |
 | Cashflow actual expenses | `TRANSACTION_DATE` |
 | Cashflow predicted recurring | `FORECAST_DATE` |
 | Current portfolio valuation | `LATEST_AVAILABLE` |
 | Row-level display conversion | `LATEST_AVAILABLE` |
 | Period report estimates | `PERIOD_MIDPOINT_ESTIMATE` |
+
+### Analytics Totals drilldown contract (P5-P1-01 / P5-NEW-01)
+
+`TotalsAggregationEngine` reports **PURCHASE-only** spending across every
+granularity (year → month → week → day → category) using
+`TRANSACTION_DATE` historical conversion via the `MultiCurrencyRepository`
+`get*AggregatesHistorical` / `getHomeCurrencyPurchaseTotalHistoricalResult`
+APIs. Because all granularities share one basis and the same PURCHASE-only
+filter, a drilldown reconciles with its parent (`sum(daily) == week`,
+`sum(week) == month`) and never includes deposits/transfers/withdrawals.
+
+The legacy type-agnostic latest-rate helpers
+`MultiCurrencyRepository.getHomeCurrencyWeeklyTotals` /
+`getHomeCurrencyDailyTotals` are `@Deprecated(DeprecationLevel.ERROR)` —
+they mixed transaction types and rate bases and must not be used in any
+reporting/financial path.
 
 ## Staleness Policy
 

@@ -59,6 +59,40 @@ class DashboardContractsAdapterTest {
         verify(exactly = 0) { financialWeatherRepository.getAllRecurringPatterns() }
     }
 
+    @Test
+    fun `observeBudgetStatuses propagates isPartial and conversionWarning to snapshot`() = runTest {
+        val budget = com.yourname.expensetracker.data.database.entity.Budget(
+            id = 1L,
+            categoryId = null,
+            amount = 100.0,
+            currency = "USD",
+            period = com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY,
+            startDate = 1_700_000_000_000L,
+            isActive = true
+        )
+        val status = com.yourname.expensetracker.domain.budget.BudgetStatus(
+            budget = budget,
+            category = null,
+            spentAmount = 50.0,
+            remainingAmount = 0.0,
+            percentUsed = 0f,
+            healthStatus = com.yourname.expensetracker.domain.budget.BudgetHealthStatus.UNKNOWN,
+            periodStart = 1_700_000_000_000L,
+            periodEnd = 1_702_000_000_000L,
+            effectiveLimit = 100.0,
+            isPartial = true,
+            conversionWarning = "Budget limit could not be converted from USD to EUR"
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
+
+        val result = adapter.observeBudgetStatuses().first()
+
+        assertEquals(1, result.size)
+        assertEquals(true, result[0].isPartial)
+        assertEquals("Budget limit could not be converted from USD to EUR", result[0].conversionWarning)
+        assertEquals(com.yourname.expensetracker.domain.budget.BudgetHealthStatus.UNKNOWN, result[0].healthStatus)
+    }
+
     private fun recurringPattern(merchant: String, amount: Double): RecurringPattern {
         return RecurringPattern(
             merchantName = merchant,

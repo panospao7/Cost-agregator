@@ -11,5 +11,9 @@ data class BudgetStatusSnapshot(
     val percentUsed: Double,
     val healthStatus: BudgetHealthStatus,
     val periodStart: Long,
-    val periodEnd: Long
+    val periodEnd: Long,
+    /** P5-NEW-06: true when the budget limit and/or spend could not be fully converted. */
+    val isPartial: Boolean = false,
+    /** P5-NEW-06: human-readable conversion warning when [isPartial], else null. */
+    val conversionWarning: String? = null
 )

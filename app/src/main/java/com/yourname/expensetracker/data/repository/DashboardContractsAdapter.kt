@@ -63,12 +63,12 @@ class DashboardContractsAdapter @Inject constructor(
     override fun observeDashboardCategories(): Flow<List<DashboardCategory>> =
         categoryRepository.allCategories.map { list -> list.map { it.toDashboardCategory() } }
 
-    // P5-P1-08 RESOLVED: Budget-vs-actual currency normalization.
+    // P5-P1-08 / P5-NEW-06 RESOLVED: Budget-vs-actual currency normalization + warning propagation.
     //  BudgetRepository.getBudgetStatuses() computes spentAmount via MultiCurrencyRepository
-    //  which converts all transactions to home currency. The budget limit amount is stored
-    //  in the budget's own currency — if budget.currency != homeCurrency, the limit is
-    //  converted at query time (fixed in P6-P1-06). BudgetVsActualEngine is used by
-    //  AdvancedAnalyticsEngine for deep analytics; this dashboard path is correct as-is.
+    //  (all transactions converted to home currency) and converts the budget limit at the
+    //  period-end historical rate (P6-P1-06). When conversion is incomplete, BudgetStatus
+    //  carries isPartial/conversionWarning and health=UNKNOWN; those are now forwarded to the
+    //  dashboard snapshot so the UI can surface an "unreliable" state instead of a silent number.
     override fun observeBudgetStatuses(): Flow<List<BudgetStatusSnapshot>> =
         budgetRepository.getBudgetStatuses().map { statuses ->
             statuses.map { status ->
@@ -81,7 +81,9 @@ class DashboardContractsAdapter @Inject constructor(
                     percentUsed = status.percentUsed.toDouble(),
                     healthStatus = status.healthStatus,
                     periodStart = status.periodStart,
-                    periodEnd = status.periodEnd
+                    periodEnd = status.periodEnd,
+                    isPartial = status.isPartial,
+                    conversionWarning = status.conversionWarning
                 )
             }
         }
