@@ -209,7 +209,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
-        val forecastInputAssembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), currencyConverter = mockk(), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk())
+        val forecastInputAssembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), currencyConverter = mockk(), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk(), databaseReadBarrier = mockk(relaxed = true))
         val mergedRecurringPatternsProvider = MergedRecurringPatternsProvider(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = mockk(relaxed = true),

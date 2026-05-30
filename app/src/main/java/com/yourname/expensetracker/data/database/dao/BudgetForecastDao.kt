@@ -13,7 +13,19 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface BudgetForecastDao {
     
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Raw insert. Uses [OnConflictStrategy.ABORT] (P6-CURRENT-008).
+     *
+     * The unique index is `(budgetId, targetPeriodStart, forecastDate)`. A normal
+     * refresh writes a new row with `forecastDate = now()`, which never collides;
+     * ABORT therefore only triggers on a genuine same-millisecond duplicate. On
+     * collision SQLite raises [android.database.sqlite.SQLiteConstraintException]
+     * instead of silently overwriting a historical row (the prior REPLACE behaviour).
+     *
+     * Production never calls this directly — all writes go through
+     * [insertWithDeactivation], which preserves history via deactivation.
+     */
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(forecast: BudgetForecast): Long
     
     @Update

@@ -4,6 +4,7 @@ package com.yourname.expensetracker.domain.forecasting
 // confidencePenalty, excluded counts, and conversionWarnings. Downstream engines
 // (SynthesisEngine) should apply dataQuality.confidencePenalty to final confidence scores.
 
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
@@ -32,11 +33,9 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToLong
-import timber.log.Timber
 
 /**
  * Single source of truth for forecast-input assembly used by weather/dashboard forecast paths.
@@ -86,7 +85,9 @@ class ForecastInputAssembler @Inject constructor(
     /** @suppress Coordinator injected for occurrence-driven dedup. */
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     /** @suppress DAO injected to query materialized occurrences for dedup. */
-    private val recurringOccurrenceDao: RecurringOccurrenceDao
+    private val recurringOccurrenceDao: RecurringOccurrenceDao,
+    /** @suppress P6-CURRENT-024: guards read-only access to materialized occurrences. */
+    private val databaseReadBarrier: DatabaseReadBarrier
 ) {
     /**
      * REC-20: Effective amount stability in recurring forecasting.
@@ -384,49 +385,78 @@ class ForecastInputAssembler @Inject constructor(
         budgetStatuses: List<BudgetStatusSnapshot>,
         homeCurrency: String? = null
     ): ForecastInput {
-        val resolvedHomeCurrency = try {
-            homeCurrency ?: currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            Timber.w(e, "ForecastInputAssembler: failed to resolve home currency, falling back to EUR")
-            "EUR"
-        }
+        // P6-CURRENT-025: Fail-closed home-currency resolution.
+        // Mirrors CashFlowCalculator / BudgetRepository: use the typed
+        // HomeCurrencyResolution and NEVER silently assume EUR. On Failed we
+        // throw so the forecast does not proceed with a wrong-currency baseline.
+        // Callers handle this fail-closed signal: FinancialWeatherRepository has a
+        // .catch that surfaces "weather unavailable"; CalculateFinancialForecastUseCase
+        // propagates it (same contract CashFlowCalculator already uses).
+        val resolvedHomeCurrency = homeCurrency
+            ?: when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+                is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved ->
+                    resolution.currency.code
+                is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault ->
+                    resolution.currency.code
+                is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
+                    throw IllegalStateException(
+                        "Home currency unavailable for forecast assembly: ${resolution.reason}"
+                    )
+            }
         val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(expenses, resolvedHomeCurrency)
         val normalizedExpenses = normalized.includedExpenses
 
-        // Generate concrete occurrences for active manual recurring rules
+        // P6-CURRENT-024: READ paths must not write. Compute occurrences IN MEMORY
+        // via the coordinator's read-only projection — no row materialization, no
+        // lifecycle events, no write barrier. Materialization stays owned by
+        // write-authorized paths (rule create/update, recurring screen, projection
+        // service).
         val now = timeProvider.now()
         val forecastStart = TimePeriodUtils.getStartOfMonth(now)
         val forecastEnd = TimePeriodUtils.getEndOfMonth(now)
-        for (rule in manualRecurringEntities) {
-            if (!rule.isActive) continue
-            try {
-                recurringLifecycleCoordinator.generateOccurrences(
-                    ruleId = rule.id,
-                    startDate = forecastStart,
-                    endDate = forecastEnd,
-                    options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
-                        createReminderDeliveries = false,
-                        generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
-                    )
-                )
-            } catch (e: Exception) {
-                // Non-fatal: if one rule fails to generate, continue with the rest
-            }
-        }
 
-        // ── Query materialized occurrences for dedup + confirmed occurrences ──
-        // Get all occurrences in the forecast window. These serve two purposes:
-        // 1) Build a set of occurrenceKeys for planned-expense cross-dedup
-        // 2) Provide full occurrence data for downstream occurrence-driven forecasting
+        val projectedOccurrences: List<RecurringOccurrence> = manualRecurringEntities
+            .filter { it.isActive }
+            .flatMap { rule ->
+                try {
+                    recurringLifecycleCoordinator.projectOccurrences(
+                        ruleId = rule.id,
+                        startDate = forecastStart,
+                        endDate = forecastEnd
+                    )
+                } catch (e: Exception) {
+                    // Non-fatal: if one rule fails to project, continue with the rest
+                    emptyList()
+                }
+            }
+
+        // ── Read already-materialized occurrences for dedup (READ-ONLY) ──────
+        // Existing materialized rows (created by write-authorized paths) carry
+        // authoritative status — including user overrides (SKIPPED/CANCELLED/
+        // IGNORED) — so they take precedence over projections for the same key.
+        // The read is guarded by the read barrier so it is blocked during restore.
         val materializedOccurrences: List<RecurringOccurrence> = try {
+            databaseReadBarrier.checkReadAllowed("ForecastInputAssembler.assemble.readOccurrences")
             recurringOccurrenceDao.getByDateRange(forecastStart, forecastEnd)
         } catch (e: Exception) {
             emptyList()
         }
-        val materializedOccurrenceKeys = materializedOccurrences
+
+        // Merge by occurrenceKey: projections fill the window, materialized rows
+        // override their keys. Because projection reuses the materializer's exact
+        // key/expand logic, keys align and there is no divergence/double-count.
+        val mergedOccurrencesByKey = LinkedHashMap<String, RecurringOccurrence>()
+        for (occ in projectedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
+        for (occ in materializedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
+        val mergedOccurrences = mergedOccurrencesByKey.values.toList()
+
+        // PLANNED keys serve two purposes:
+        // 1) Cross-dedup planned expenses linked via sourceOccurrenceKey
+        // 2) Provide confirmed occurrences for downstream occurrence-driven forecasting
+        val plannedOccurrenceKeys = mergedOccurrences
             .filter { it.status == "PLANNED" }
             .map { it.occurrenceKey }.toSet()
-        val confirmedOccurrences = materializedOccurrences
+        val confirmedOccurrences = mergedOccurrences
             .filter { it.status == "PLANNED" }
             .map { occ ->
                 ConfirmedOccurrence(
@@ -441,7 +471,7 @@ class ForecastInputAssembler @Inject constructor(
 
         val deduplicatedPlannedExpenses = plannedExpenses.filterNot { planned ->
             planned.sourceOccurrenceKey != null &&
-                planned.sourceOccurrenceKey in materializedOccurrenceKeys
+                planned.sourceOccurrenceKey in plannedOccurrenceKeys
         }
 
         // ── Planned expense quality tracking ──────────────────────────────────

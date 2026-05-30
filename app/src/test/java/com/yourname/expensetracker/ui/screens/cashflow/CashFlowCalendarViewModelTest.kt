@@ -9,6 +9,9 @@ import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
@@ -72,7 +75,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             cashFlowCalculator.calculateDailyCashFlow(
                 startDate = Date(monthRange.first),
                 endDate = Date(monthRange.second),
-                startingBalance = 0.0
+                startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
             )
         }
         coVerify(exactly = 1) { cashFlowCalculator.getUpcomingBills(30) }
@@ -83,7 +86,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         val startDate = Date(TimePeriodUtils.getStartOfMonth(fixedNow.time))
         val endDate = Date(TimePeriodUtils.getEndOfMonth(fixedNow.time))
 
-        coEvery { cashFlowCalculator.calculateDailyCashFlow(startDate, endDate, 0.0) } returns createMockCashFlows()
+        coEvery { cashFlowCalculator.calculateDailyCashFlow(startDate, endDate, MoneyAmount(0.0, CurrencyCode("EUR"))) } returns createMockCashFlows()
 
         viewModel.state.test {
             awaitItem() // initial
@@ -130,7 +133,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         }
 
         coVerify(atLeast = 1) {
-            cashFlowCalculator.calculateDailyCashFlow(any(), any(), 1_000.0)
+            cashFlowCalculator.calculateDailyCashFlow(any(), any(), MoneyAmount(1_000.0, CurrencyCode("EUR")))
         }
     }
 
@@ -190,6 +193,35 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `partial flag from occurrence generation failure surfaces in state`() = runTest(UnconfinedTestDispatcher()) {
+        // P6-CURRENT-018: a day flagged occurrenceGenerationFailed must surface
+        // through the VM state so the UI can show a data-quality signal.
+        coEvery { cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) } returns listOf(
+            createDailyCashFlow(
+                fixedNow,
+                100.0,
+                90.0,
+                occurrenceGenerationFailed = true,
+                failedOccurrenceRuleCount = 1
+            )
+        )
+
+        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockCurrencyRepo())
+        advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem()
+            advanceUntilIdle()
+            val loaded = awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+            val day = loaded.dailyCashFlows.first()
+            assertThat(day.occurrenceGenerationFailed).isTrue()
+            assertThat(day.failedOccurrenceRuleCount).isEqualTo(1)
+            assertThat(day.isPartial).isTrue()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `calculator failure surfaces as coroutine exception after loading state`() = runTest(UnconfinedTestDispatcher()) {
         val startDate = Date(TimePeriodUtils.getStartOfMonth(fixedNow.time))
         val endDate = Date(TimePeriodUtils.getEndOfMonth(fixedNow.time))
@@ -222,6 +254,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
     private fun mockCurrencyRepo(): CurrencySettingsRepository {
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { repo.homeCurrency() } returns flowOf("EUR")
+        coEvery { repo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         return repo
     }
 
@@ -273,7 +306,9 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
     private fun createDailyCashFlow(
         date: Date,
         startingBalance: Double,
-        endingBalance: Double
+        endingBalance: Double,
+        occurrenceGenerationFailed: Boolean = false,
+        failedOccurrenceRuleCount: Int = 0
     ): DailyCashFlow {
         return DailyCashFlow(
             date = date,
@@ -282,7 +317,10 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             expenses = emptyList(),
             predictedRecurring = emptyList(),
             endingBalance = endingBalance,
-            riskLevel = if (endingBalance < startingBalance) CashFlowRiskLevel.MEDIUM else CashFlowRiskLevel.LOW
+            riskLevel = if (endingBalance < startingBalance) CashFlowRiskLevel.MEDIUM else CashFlowRiskLevel.LOW,
+            isPartial = occurrenceGenerationFailed,
+            occurrenceGenerationFailed = occurrenceGenerationFailed,
+            failedOccurrenceRuleCount = failedOccurrenceRuleCount
         )
     }
 }

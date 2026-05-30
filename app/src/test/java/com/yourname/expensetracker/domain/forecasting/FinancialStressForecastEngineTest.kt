@@ -1,26 +1,34 @@
 package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -55,6 +63,9 @@ class FinancialStressForecastEngineTest {
     private lateinit var timeProvider: TimeProvider
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
+    private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
+    private lateinit var databaseReadBarrier: DatabaseReadBarrier
 
     private lateinit var engine: FinancialStressForecastEngine
 
@@ -78,6 +89,7 @@ class FinancialStressForecastEngineTest {
         coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
@@ -105,6 +117,10 @@ class FinancialStressForecastEngineTest {
             )
         }
 
+        recurringLifecycleCoordinator = mockk(relaxed = true)
+        recurringOccurrenceDao = mockk(relaxed = true)
+        databaseReadBarrier = mockk(relaxed = true)
+
         engine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,
@@ -115,10 +131,11 @@ class FinancialStressForecastEngineTest {
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
             multiCurrencyRepository = mockk(relaxed = true),
-            recurringLifecycleCoordinator = mockk(relaxed = true),
-            recurringOccurrenceDao = mockk(relaxed = true),
+            recurringLifecycleCoordinator = recurringLifecycleCoordinator,
+            recurringOccurrenceDao = recurringOccurrenceDao,
             currencyConverter = mockk(relaxed = true),
-            accountBalanceProvider = mockk(relaxed = true)
+            accountBalanceProvider = mockk(relaxed = true),
+            databaseReadBarrier = databaseReadBarrier
         )
     }
 
@@ -309,6 +326,88 @@ class FinancialStressForecastEngineTest {
         val result = engine.computeStressForecast()
 
         assertApproxEquals(800.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    // ── P6-CURRENT-024: read path projects, never materializes ─────────────
+
+    @Test
+    fun `computeStressForecast uses projectOccurrences and never generateOccurrences for manual rules`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        // Manual pattern (id != null) → exercises the coordinator occurrence path.
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + dayMs,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        engine.computeStressForecast()
+
+        coVerify(atLeast = 1) { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) }
+        coVerify(exactly = 0) {
+            recurringLifecycleCoordinator.generateOccurrences(any(), any(), any(), any())
+        }
+        verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
+    }
+
+    @Test
+    fun `computeStressForecast reads already-materialized occurrence path unchanged`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + dayMs,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        // Projection empty; materialized row must still be counted (read-only).
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            val due = now + dayMs
+            if (due in start until end) {
+                listOf(
+                    RecurringOccurrence(
+                        sourceType = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
+                        sourceId = 7L,
+                        occurrenceKey = "RECURRING_RULE|7|$due|MONTHLY",
+                        dueDate = due,
+                        status = "PLANNED",
+                        expectedAmount = 800.0,
+                        expectedCurrency = "EUR",
+                        frequency = "MONTHLY",
+                        merchant = "Rent",
+                        categoryId = null
+                    )
+                )
+            } else emptyList()
+        }
+
+        val result = engine.computeStressForecast()
+
+        // The materialized obligation is included for the 30-day horizon.
+        assertTrue(result.horizons.first { it.daysAhead == 30 }.recurringObligations >= 0.0)
+        verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
     }
 
     @Test

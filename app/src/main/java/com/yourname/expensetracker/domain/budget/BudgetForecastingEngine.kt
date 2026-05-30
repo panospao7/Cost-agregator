@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.budget
 
+import android.database.sqlite.SQLiteConstraintException
+import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
@@ -54,7 +56,14 @@ class BudgetForecastingEngine @Inject constructor(
     /** @suppress Converter injected to normalise budget.amount to home currency. */
     private val currencyConverter: CurrencyConverter,
     /** @suppress Write barrier injected to guard forecast writes during restore. */
-    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
+    /**
+     * P6-CURRENT-026: Durable diagnostics for forecast generation. Nullable + defaulted so existing
+     * test construction sites compile unchanged; Hilt injects the real writer in production via the
+     * existing DiagnosticsModule binding. Emission is always best-effort.
+     */
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter? = null,
+    private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink? = null
 ) {
     private val budgetCalculator = BudgetCalculator(timeProvider)
 
@@ -65,6 +74,15 @@ class BudgetForecastingEngine @Inject constructor(
         private const val TREND_THRESHOLD = 0.10
         private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000.0
         private const val DESIRED_HISTORY_MONTHS = 3.0
+
+        /**
+         * P6-CURRENT-010: Maximum fraction of confidence removed when ALL historical
+         * expenses were excluded (exclusionRatio == 1.0). Must be in [0,1] so the derived
+         * retention factor (1 - ratio*weight) stays in [0,1]. 0.5 means a fully-excluded
+         * history halves confidence rather than zeroing it (some signal may remain from
+         * other quality dimensions), while partial exclusions scale linearly below that.
+         */
+        private const val EXCLUSION_CONFIDENCE_PENALTY_WEIGHT = 0.5
     }
 
     /**
@@ -82,6 +100,15 @@ class BudgetForecastingEngine @Inject constructor(
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed -> {
+                emitForecastDiagnostic(
+                    stage = "FORECAST_UNAVAILABLE",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                    budgetId = budget.id,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("reason", ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE)
+                        .build()
+                )
                 return@withContext BudgetForecastResult.Unavailable(
                     budgetId = budget.id,
                     reasonCode = ForecastUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
@@ -104,6 +131,16 @@ class BudgetForecastingEngine @Inject constructor(
         val normalizedBudgetAmount = when (outcome) {
             is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted -> outcome.convertedAmount
             is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed -> {
+                emitForecastDiagnostic(
+                    stage = "FORECAST_UNAVAILABLE",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                    budgetId = budget.id,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("reason", ForecastUnavailableReason.LIMIT_CONVERSION_FAILED)
+                        .put("currency", budget.currency)
+                        .build()
+                )
                 return@withContext BudgetForecastResult.Unavailable(
                     budgetId = budget.id,
                     reasonCode = ForecastUnavailableReason.LIMIT_CONVERSION_FAILED,
@@ -118,10 +155,39 @@ class BudgetForecastingEngine @Inject constructor(
         val remainingForecastDays = com.yourname.expensetracker.domain.util.TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()
         val historicalData = getHistoricalSpendingData(budget, homeCurrency)
         val predictedSpending = calculatePredictedSpending(historicalData, remainingForecastDays)
-        val confidence = calculateConfidence(historicalData)
+        val baseConfidence = calculateConfidence(historicalData)
+        // P6-CURRENT-010: Reduce confidence proportionally to how much history was excluded
+        // (FX-conversion failures, invalid currencies) by the AnalyticsCurrencyNormalizer.
+        //
+        // Formula (deterministic, bounded [0,1]):
+        //   exclusionRatio  = excludedExpenseCount / inputExpenseCount   (0 when no input)
+        //   retentionFactor = 1 - exclusionRatio * EXCLUSION_CONFIDENCE_PENALTY_WEIGHT
+        //   confidence      = baseConfidence * retentionFactor
+        //
+        // Proof it stays in [0,1]:
+        //   - baseConfidence ∈ [0,1]                  (calculateConfidence clamps to [0,1])
+        //   - excludedExpenseCount ≤ inputExpenseCount and both ≥ 0, so exclusionRatio ∈ [0,1]
+        //   - EXCLUSION_CONFIDENCE_PENALTY_WEIGHT ∈ [0,1], so exclusionRatio*weight ∈ [0,1]
+        //   - retentionFactor = 1 - (that) ∈ [1-weight, 1] ⊆ [0,1]
+        //   - product of two values in [0,1] is in [0,1]; coerceIn is belt-and-suspenders.
+        // When no expenses are excluded, exclusionRatio = 0 ⇒ retentionFactor = 1 ⇒ confidence
+        // is unchanged (so existing no-exclusion forecasts/tests are unaffected).
+        val exclusionRatio = if (historicalData.inputExpenseCount > 0) {
+            historicalData.excludedExpenseCount.toDouble() / historicalData.inputExpenseCount
+        } else 0.0
+        val retentionFactor = 1.0 - (exclusionRatio * EXCLUSION_CONFIDENCE_PENALTY_WEIGHT)
+        val confidence = (baseConfidence * retentionFactor).coerceIn(0.0, 1.0)
         val riskLevel = determineRiskLevel(budget, predictedSpending, confidence, spentToDate, normalizedBudgetAmount)
         val overspendProbability = calculateOverspendProbability(normalizedBudgetAmount, predictedSpending, spentToDate, confidence)
         val predictedRemaining = normalizedBudgetAmount - spentToDate - predictedSpending
+
+        // P6-CURRENT-010: Persist forecast data-quality. excludedExpenseCount/qualityWarnings come
+        // from the same normalizer pass that gathered history; rateBasis records the FX basis used
+        // for spend normalization (AnalyticsCurrencyNormalizer converts historical/period spend at
+        // RateBasis.TRANSACTION_DATE — see AnalyticsCurrencyNormalizer.normalizeInternal).
+        val excludedExpenseCount = historicalData.excludedExpenseCount
+        val qualityWarnings = historicalData.qualityWarnings
+        val isPartial = excludedExpenseCount > 0 || qualityWarnings.isNotEmpty()
 
         val forecast = BudgetForecast(
             budgetId = budget.id,
@@ -134,14 +200,127 @@ class BudgetForecastingEngine @Inject constructor(
             riskLevel = riskLevel,
             overspendProbability = overspendProbability,
             createdAt = now,
-            currency = homeCurrency
+            currency = homeCurrency,
+            isPartial = isPartial,
+            excludedExpenseCount = excludedExpenseCount,
+            qualityWarningsJson = serializeQualityWarnings(qualityWarnings),
+            rateBasis = com.yourname.expensetracker.domain.core.money.RateBasis.TRANSACTION_DATE.name
         )
-        val persistedId = budgetForecastDao.insertWithDeactivation(forecast)
+        val persistedId = when (val insertResult = insertForecast(forecast)) {
+            is ForecastInsertResult.Inserted -> insertResult.id
+            ForecastInsertResult.DuplicateInSameInstant -> {
+                // P6-CURRENT-008: A same-millisecond duplicate hit the unique index
+                // (budgetId, targetPeriodStart, forecastDate) under OnConflictStrategy.ABORT.
+                // Do NOT crash and do NOT overwrite a historical row — route to the existing
+                // skip/unavailable diagnostic path. A normal refresh uses a fresh forecastDate
+                // and never reaches this branch.
+                emitForecastDiagnostic(
+                    stage = "FORECAST_UNAVAILABLE",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                    budgetId = budget.id,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("reason", ForecastUnavailableReason.UNKNOWN)
+                        .put("detail", "DUPLICATE_IN_SAME_INSTANT")
+                        .build()
+                )
+                return@withContext BudgetForecastResult.Unavailable(
+                    budgetId = budget.id,
+                    reasonCode = ForecastUnavailableReason.UNKNOWN,
+                    reason = "Forecast skipped: a forecast already exists for this budget at the same instant (forecastDate=$now)",
+                    createdAt = now
+                )
+            }
+        }
         val persisted = forecast.copy(id = persistedId).also { f ->
             f.spentToDate = spentToDate
             f.normalizedBudgetAmount = normalizedBudgetAmount
         }
+        emitForecastDiagnostic(
+            stage = "FORECAST_GENERATED",
+            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+            budgetId = budget.id,
+            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                .put("predictedSpending", predictedSpending)
+                .put("confidence", confidence)
+                .put("riskLevel", riskLevel)
+                .put("overspendProbability", overspendProbability)
+                .put("currency", homeCurrency)
+                .build()
+        )
         BudgetForecastResult.Available(persisted)
+    }
+
+    /**
+     * P6-CURRENT-008: Production insert path wrapper that yields a typed result.
+     *
+     * Delegates to [BudgetForecastDao.insertWithDeactivation] — the deactivate-then-insert
+     * `@Transaction` that preserves forecast history by deactivating the previous active row
+     * before inserting the new one. The DAO's raw [BudgetForecastDao.insert] now uses
+     * [androidx.room.OnConflictStrategy.ABORT]; the unique index
+     * `(budgetId, targetPeriodStart, forecastDate)` therefore only rejects a genuine
+     * same-millisecond duplicate, which SQLite surfaces as [SQLiteConstraintException].
+     *
+     * This wrapper catches ONLY [SQLiteConstraintException] and maps it to
+     * [ForecastInsertResult.DuplicateInSameInstant]. ALL other exceptions propagate
+     * unchanged so genuine I/O / write-barrier / corruption errors are never swallowed.
+     */
+    @VisibleForTesting
+    internal suspend fun insertForecast(forecast: BudgetForecast): ForecastInsertResult {
+        return try {
+            ForecastInsertResult.Inserted(budgetForecastDao.insertWithDeactivation(forecast))
+        } catch (e: SQLiteConstraintException) {
+            Timber.w(
+                e,
+                "BudgetForecastingEngine: forecast insert hit unique-index conflict " +
+                    "(same-instant duplicate for budgetId=%d, forecastDate=%d)",
+                forecast.budgetId,
+                forecast.forecastDate
+            )
+            ForecastInsertResult.DuplicateInSameInstant
+        }
+    }
+
+    /**
+     * P6-CURRENT-026: Best-effort durable diagnostic for forecast generation.
+     *
+     * Mirrors the [BudgetMonitor] emission pattern: write-barrier-guarded and tolerant of
+     * [com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException] (routed to the
+     * [diagnosticSink]). A failure to emit NEVER fails the forecast — all exceptions except
+     * [kotlinx.coroutines.CancellationException] are swallowed. Runs on [ioDispatcher] (the
+     * caller already executes inside withContext(ioDispatcher)).
+     */
+    private suspend fun emitForecastDiagnostic(
+        stage: String,
+        outcome: com.yourname.expensetracker.domain.diagnostics.EventOutcome,
+        budgetId: Long,
+        severity: com.yourname.expensetracker.domain.diagnostics.EventSeverity =
+            com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
+        metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata =
+            com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.empty()
+    ) {
+        val writer = diagnosticEventWriter ?: return
+        try {
+            writeBarrier.checkWritesAllowed("BudgetForecastingEngine.diagnostic")
+            writer.emit(
+                com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = stage,
+                    outcome = outcome,
+                    severity = severity,
+                    entityType = "Budget",
+                    entityId = budgetId,
+                    metadata = metadata
+                )
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                diagnosticSink?.recordBlockedOperation("BudgetForecastingEngine.diagnostic", e.mode, "P6")
+            } else {
+                Timber.w(e, "BudgetForecastingEngine: skipping diagnostic insert (stage=%s)", stage)
+            }
+        }
     }
 
     /**
@@ -189,6 +368,15 @@ class BudgetForecastingEngine @Inject constructor(
         val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(threeMonthsAgo, now)
         val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, homeCurrency)
         val relevantExpenses = normalized.includedExpenses
+
+        // P6-CURRENT-010: Capture data-quality signals from the normalizer. The normalizer
+        // EXCLUDES historical expenses it cannot convert to home currency (invalid currency,
+        // missing exchange rate); excludedCount/totalInputCount/warnings describe that loss.
+        // These flow onto the persisted BudgetForecast row (isPartial, excludedExpenseCount,
+        // qualityWarningsJson) and drive the exclusion-proportional confidence penalty below.
+        val excludedExpenseCount = normalized.excludedCount
+        val inputExpenseCount = normalized.totalInputCount
+        val qualityWarnings = normalized.warnings.map { "${it.type.name}: ${it.message}" }
 
         // Log conversion warnings if any occurred
         if (normalized.hasWarnings) {
@@ -257,7 +445,10 @@ class BudgetForecastingEngine @Inject constructor(
             standardDeviation = standardDeviation,
             monthsOfHistory = normalizedSeries.filledMonthCount,
             observedMonthCount = normalizedSeries.observedMonthCount,
-            trend = trend
+            trend = trend,
+            excludedExpenseCount = excludedExpenseCount,
+            inputExpenseCount = inputExpenseCount,
+            qualityWarnings = qualityWarnings
         )
     }
     
@@ -310,6 +501,21 @@ class BudgetForecastingEngine @Inject constructor(
         }
         
         return min(max(confidence, 0.0), 1.0)
+    }
+
+    /**
+     * P6-CURRENT-010: Serialize data-quality warnings into the `qualityWarningsJson` column.
+     *
+     * Uses the same `org.json` JSON-array approach the codebase already relies on for other
+     * JSON-typed columns/metadata (e.g. SafeEventMetadata.toJson, SourceLinkEventMetadataBuilder).
+     * Returns null when there are no warnings so legacy/clean rows keep the NULL default rather
+     * than storing an empty `[]`.
+     */
+    private fun serializeQualityWarnings(warnings: List<String>): String? {
+        if (warnings.isEmpty()) return null
+        val array = org.json.JSONArray()
+        warnings.forEach { array.put(it) }
+        return array.toString()
     }
     
     /**
@@ -470,6 +676,26 @@ class BudgetForecastingEngine @Inject constructor(
 }
 
 /**
+ * P6-CURRENT-008: Typed outcome of a forecast insert.
+ *
+ * Makes a same-millisecond unique-index conflict (under [androidx.room.OnConflictStrategy.ABORT]
+ * on the `(budgetId, targetPeriodStart, forecastDate)` index) observable instead of either a
+ * silent REPLACE (the prior behaviour) or an unhandled crash. A normal refresh writes a fresh
+ * `forecastDate` and yields [Inserted]; only a genuine same-instant duplicate yields
+ * [DuplicateInSameInstant].
+ */
+sealed interface ForecastInsertResult {
+    /** The forecast was persisted; [id] is the new row id (history preserved via deactivation). */
+    data class Inserted(val id: Long) : ForecastInsertResult
+
+    /**
+     * A forecast already exists for the same (budgetId, targetPeriodStart, forecastDate).
+     * No existing row was overwritten. Callers route this to the skip/unavailable path.
+     */
+    data object DuplicateInSameInstant : ForecastInsertResult
+}
+
+/**
  * Historical spending data for forecasting.
  */
 private data class HistoricalData(
@@ -478,7 +704,15 @@ private data class HistoricalData(
     val standardDeviation: Double,
     val monthsOfHistory: Int,
     val observedMonthCount: Int,
-    val trend: SpendingTrend
+    val trend: SpendingTrend,
+    // P6-CURRENT-010: Data-quality signals captured from the currency normalizer so the
+    // forecast row can record how much history was dropped (e.g. FX conversion failures).
+    /** Number of historical expenses excluded during normalization (e.g. FX failures). */
+    val excludedExpenseCount: Int = 0,
+    /** Total historical expenses fed into normalization (denominator for the exclusion ratio). */
+    val inputExpenseCount: Int = 0,
+    /** Human-readable normalization warnings raised while gathering history. */
+    val qualityWarnings: List<String> = emptyList()
 )
 
 private enum class SpendingTrend {

@@ -61,9 +61,13 @@ class CashFlowCalendarViewModel @Inject constructor(
     private var cashFlowRequestId = 0L
 
  init {
+ // P6-CURRENT-020: collect the home currency FIRST so the typed starting balance
+ // (MoneyAmount, denominated in home currency) can be built before the initial load
+ // runs. The load guards the not-yet-loaded case, but observing currency first keeps
+ // the common path from needlessly erroring on startup.
+ collectHomeCurrency()
  loadCurrentMonth()
  loadUpcomingBills()
- collectHomeCurrency()
  }
 
     fun loadCurrentMonth() {
@@ -79,10 +83,15 @@ class CashFlowCalendarViewModel @Inject constructor(
         cashFlowJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
             try {
+                // P6-CURRENT-020: pass the typed, home-currency-denominated balance.
+                // If homeCurrency is not yet loaded (null/blank), building moneyStartingBalance
+                // throws IllegalArgumentException (CurrencyCode("") is invalid), so we never
+                // reach the calculator with an invalid currency — the throw is handled by the
+                // catch below and surfaced as an error state instead of crashing.
                 val cashFlows = cashFlowCalculator.calculateDailyCashFlow(
                     startDate = startDate,
                     endDate = endDate,
-                    startingBalance = _state.value.startingBalance
+                    startingBalance = _state.value.moneyStartingBalance
                 )
                 // S8-020: Discard stale result
                 if (requestId != cashFlowRequestId) return@launch

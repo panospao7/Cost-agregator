@@ -908,6 +908,221 @@ class MigrationContractTest {
         }
     }
 
+    // ── Pipeline 6 migration: budget_forecasts recreate (141 -> 142) ────────
+
+    /**
+     * Builds the v141 budget_forecasts schema (with the legacy ON DELETE RESTRICT
+     * FK to budgets) plus a minimal budgets parent table, then seeds one budget
+     * and one forecast row. Shared setup for the 141->142 contract tests.
+     */
+    private fun seedV141BudgetForecastSchema(db: SupportSQLiteDatabase) {
+        // Minimal v141 budgets parent (only columns needed for the FK + seeding).
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS budgets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                categoryId INTEGER,
+                amount REAL NOT NULL,
+                period TEXT NOT NULL,
+                periodMode TEXT NOT NULL DEFAULT 'ROLLING',
+                startDate INTEGER NOT NULL,
+                isActive INTEGER NOT NULL DEFAULT 1,
+                notifyAtWarning REAL NOT NULL DEFAULT 0.75,
+                notifyAtCritical REAL NOT NULL DEFAULT 0.9,
+                rollover INTEGER NOT NULL DEFAULT 0,
+                rolloverDeficitTracking INTEGER NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
+                createdAt INTEGER NOT NULL,
+                lastWarningNotifiedAt INTEGER,
+                lastCriticalNotifiedAt INTEGER,
+                lastExceededNotifiedAt INTEGER,
+                activeOverallKey INTEGER,
+                activeCategoryKey INTEGER
+            )
+            """.trimIndent()
+        )
+
+        // v141 budget_forecasts: 16 persisted columns + ON DELETE RESTRICT FK.
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS budget_forecasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                budgetId INTEGER NOT NULL,
+                forecastDate INTEGER NOT NULL,
+                targetPeriodStart INTEGER NOT NULL,
+                targetPeriodEnd INTEGER NOT NULL,
+                predictedSpending REAL NOT NULL,
+                predictedRemaining REAL NOT NULL,
+                confidenceScore REAL NOT NULL,
+                riskLevel TEXT NOT NULL,
+                overspendProbability REAL NOT NULL,
+                recommendationsJson TEXT,
+                actualSpending REAL,
+                forecastAccuracy REAL,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                isActive INTEGER NOT NULL DEFAULT 1,
+                createdAt INTEGER NOT NULL,
+                FOREIGN KEY(budgetId) REFERENCES budgets(id) ON UPDATE NO ACTION ON DELETE RESTRICT
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId ON budget_forecasts (budgetId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate ON budget_forecasts (forecastDate)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive ON budget_forecasts (isActive)")
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_budget_forecasts_budgetId_targetPeriodStart_forecastDate " +
+                "ON budget_forecasts (budgetId, targetPeriodStart, forecastDate)"
+        )
+
+        // Seed: one budget (id=1) and one forecast row referencing it.
+        db.execSQL(
+            "INSERT INTO budgets (id, categoryId, amount, period, startDate, createdAt) " +
+                "VALUES (1, NULL, 500.0, 'MONTHLY', 1700000000000, 1700000000000)"
+        )
+        db.execSQL(
+            """
+            INSERT INTO budget_forecasts (
+                id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                overspendProbability, recommendationsJson, actualSpending,
+                forecastAccuracy, currency, isActive, createdAt
+            ) VALUES (
+                1, 1, 1700000000000, 1700000000000, 1702592000000,
+                420.5, 79.5, 0.85, 'MEDIUM',
+                0.3, '["trim dining"]', NULL,
+                NULL, 'EUR', 1, 1700000000000
+            )
+            """.trimIndent()
+        )
+    }
+
+    @Test
+    fun migrate_141_to_142_preserves_forecasts() {
+        withTestDb("migration-contract-141-142-preserve.db", version = 141) { db ->
+            seedV141BudgetForecastSchema(db)
+
+            AppDatabase.MIGRATION_141_142.migrate(db)
+
+            val row = db.query(
+                """
+                SELECT id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                       predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                       overspendProbability, recommendationsJson, actualSpending,
+                       forecastAccuracy, currency, isActive, createdAt
+                FROM budget_forecasts WHERE id = 1
+                """.trimIndent()
+            )
+            assertTrue("seeded forecast row must survive the migration", row.moveToFirst())
+            assertEquals(1L, row.getLong(0))
+            assertEquals(1L, row.getLong(1))
+            assertEquals(1700000000000L, row.getLong(2))
+            assertEquals(1700000000000L, row.getLong(3))
+            assertEquals(1702592000000L, row.getLong(4))
+            assertEquals(420.5, row.getDouble(5), 0.0001)
+            assertEquals(79.5, row.getDouble(6), 0.0001)
+            assertEquals(0.85, row.getDouble(7), 0.0001)
+            assertEquals("MEDIUM", row.getString(8))
+            assertEquals(0.3, row.getDouble(9), 0.0001)
+            assertEquals("[\"trim dining\"]", row.getString(10))
+            assertTrue("actualSpending must remain NULL", row.isNull(11))
+            assertTrue("forecastAccuracy must remain NULL", row.isNull(12))
+            assertEquals("EUR", row.getString(13))
+            assertEquals(1, row.getInt(14))
+            assertEquals(1700000000000L, row.getLong(15))
+            row.close()
+
+            // All four indices must exist with the exact names Room expects.
+            fun indexExists(name: String): Boolean {
+                db.query("SELECT 1 FROM sqlite_master WHERE type='index' AND name='$name'").use {
+                    return it.moveToFirst()
+                }
+            }
+            assertTrue(indexExists("index_budget_forecasts_budgetId"))
+            assertTrue(indexExists("index_budget_forecasts_forecastDate"))
+            assertTrue(indexExists("index_budget_forecasts_isActive"))
+            assertTrue(indexExists("index_budget_forecasts_budgetId_targetPeriodStart_forecastDate"))
+        }
+    }
+
+    @Test
+    fun migrate_141_to_142_adds_quality_columns_with_defaults() {
+        withTestDb("migration-contract-141-142-defaults.db", version = 141) { db ->
+            seedV141BudgetForecastSchema(db)
+
+            AppDatabase.MIGRATION_141_142.migrate(db)
+
+            // New columns present.
+            val colCursor = db.query("PRAGMA table_info(budget_forecasts)")
+            val columns = mutableSetOf<String>()
+            while (colCursor.moveToNext()) {
+                columns.add(colCursor.getString(1))
+            }
+            colCursor.close()
+            assertTrue(columns.contains("isPartial"))
+            assertTrue(columns.contains("excludedExpenseCount"))
+            assertTrue(columns.contains("qualityWarningsJson"))
+            assertTrue(columns.contains("rateBasis"))
+
+            // Legacy row gets safe defaults.
+            val defaults = db.query(
+                "SELECT isPartial, excludedExpenseCount, qualityWarningsJson, rateBasis FROM budget_forecasts WHERE id = 1"
+            )
+            assertTrue(defaults.moveToFirst())
+            assertEquals("isPartial defaults to 0", 0, defaults.getInt(0))
+            assertEquals("excludedExpenseCount defaults to 0", 0, defaults.getInt(1))
+            assertTrue("qualityWarningsJson defaults to NULL", defaults.isNull(2))
+            assertTrue("rateBasis defaults to NULL", defaults.isNull(3))
+            defaults.close()
+
+            // New columns are writable.
+            db.execSQL(
+                "UPDATE budget_forecasts SET isPartial = 1, excludedExpenseCount = 3, " +
+                    "qualityWarningsJson = '[\"low_sample\"]', rateBasis = 'DAILY_AVG' WHERE id = 1"
+            )
+            val written = db.query(
+                "SELECT isPartial, excludedExpenseCount, qualityWarningsJson, rateBasis FROM budget_forecasts WHERE id = 1"
+            )
+            assertTrue(written.moveToFirst())
+            assertEquals(1, written.getInt(0))
+            assertEquals(3, written.getInt(1))
+            assertEquals("[\"low_sample\"]", written.getString(2))
+            assertEquals("DAILY_AVG", written.getString(3))
+            written.close()
+        }
+    }
+
+    @Test
+    fun migrate_141_to_142_relaxes_budget_fk_to_cascade() {
+        withTestDb("migration-contract-141-142-cascade.db", version = 141) { db ->
+            seedV141BudgetForecastSchema(db)
+
+            AppDatabase.MIGRATION_141_142.migrate(db)
+
+            // Enforce FK constraints for the cascade behavior check.
+            db.execSQL("PRAGMA foreign_keys=ON")
+
+            // Sanity: forecast row exists before the parent delete.
+            val before = db.query("SELECT COUNT(*) FROM budget_forecasts WHERE budgetId = 1")
+            before.moveToFirst()
+            assertEquals(1, before.getInt(0))
+            before.close()
+
+            // Deleting the parent budget must cascade-purge its forecasts.
+            db.execSQL("DELETE FROM budgets WHERE id = 1")
+
+            val after = db.query("SELECT COUNT(*) FROM budget_forecasts WHERE budgetId = 1")
+            after.moveToFirst()
+            assertEquals("forecast must be cascade-deleted with its budget", 0, after.getInt(0))
+            after.close()
+
+            // No dangling FK references remain.
+            val fkViolations = db.query("PRAGMA foreign_key_check")
+            assertFalse("no FK violations after cascade delete", fkViolations.moveToFirst())
+            fkViolations.close()
+        }
+    }
+
     private inline fun withTestDb(
         name: String,
         version: Int,

@@ -1,14 +1,27 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,13 +32,101 @@ import java.util.Calendar
 class ForecastInputAssemblerTest {
 
     private lateinit var timeProvider: TimeProvider
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var currencyConverter: CurrencyConverter
+    private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
+    private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
+    private lateinit var databaseReadBarrier: DatabaseReadBarrier
     private lateinit var assembler: ForecastInputAssembler
 
     @Before
     fun setup() {
         timeProvider = mockk()
-        assembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), currencyConverter = mockk(relaxed = true), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk())
+        analyticsCurrencyNormalizer = mockk()
+        currencySettingsRepository = mockk()
+        currencyConverter = mockk(relaxed = true)
+        recurringLifecycleCoordinator = mockk(relaxed = true)
+        recurringOccurrenceDao = mockk(relaxed = true)
+        databaseReadBarrier = mockk(relaxed = true)
+        assembler = ForecastInputAssembler(
+            timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository,
+            currencyConverter = currencyConverter,
+            recurringLifecycleCoordinator = recurringLifecycleCoordinator,
+            recurringOccurrenceDao = recurringOccurrenceDao,
+            databaseReadBarrier = databaseReadBarrier
+        )
         every { timeProvider.now() } returns ms(2026, Calendar.JANUARY, 15, 12)
+    }
+
+    // ── P6-CURRENT-025: fail-closed home currency ──────────────────────────
+
+    @Test
+    fun `assemble home currency failure does not default to eur`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Failed("datastore read error")
+
+        val thrown = runCatching {
+            assembler.assemble(
+                expenses = emptyList(),
+                manualRecurringEntities = emptyList(),
+                detectedRecurringPatterns = emptyList(),
+                plannedExpenses = emptyList(),
+                savingsGoals = emptyList(),
+                budgetStatuses = emptyList()
+            )
+        }.exceptionOrNull()
+
+        // Fail-closed: must throw rather than silently assume EUR.
+        assertTrue("Expected IllegalStateException, got $thrown", thrown is IllegalStateException)
+        // No EUR assumption: normalization (which would carry the assumed currency)
+        // must never run when home currency is unavailable.
+        coVerify(exactly = 0) { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) }
+    }
+
+    // ── P6-CURRENT-024: read paths must not write ──────────────────────────
+
+    @Test
+    fun `assemble uses projectOccurrences and never generateOccurrences on read path`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val rule = ManualRecurringExpense(
+            id = 1,
+            merchant = "Netflix",
+            amount = 15.0,
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = ms(2026, Calendar.JANUARY, 20, 0)
+        )
+
+        assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = listOf(rule),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList()
+        )
+
+        coVerify(exactly = 1) { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) }
+        coVerify(exactly = 0) {
+            recurringLifecycleCoordinator.generateOccurrences(any(), any(), any(), any())
+        }
+        // Reading already-materialized occurrences is guarded by the read barrier.
+        verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
     }
 
     @Test

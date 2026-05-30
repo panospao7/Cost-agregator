@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 141
+const val APP_DATABASE_SCHEMA_VERSION = 142
 
 @Database(
     entities = [
@@ -8429,6 +8429,105 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // Migration 141 -> 142: Combined change to budget_forecasts (Pipeline 6).
+        //   (a) P6-CURRENT-010: add four data-quality columns
+        //       (isPartial, excludedExpenseCount, qualityWarningsJson, rateBasis).
+        //   (b) P6-CURRENT-005 / P6-P1-15: relax the budgetId -> budgets(id) foreign
+        //       key from ON DELETE RESTRICT to ON DELETE CASCADE (Option A: CASCADE-purge).
+        // SQLite cannot ALTER/DROP a foreign key in place, so the FK change forces a
+        // full table-recreate; the four new columns are therefore added in the
+        // recreated table's CREATE TABLE (not via a separate ALTER). Existing rows are
+        // copied with an explicit column list; the new columns take their defaults
+        // (isPartial=0, excludedExpenseCount=0, qualityWarningsJson=NULL, rateBasis=NULL).
+        // Mirrors the table-recreate pattern of MIGRATION_29_30.
+        val MIGRATION_141_142 = object : androidx.room.migration.Migration(141, 142) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // 1. Create the recreated table = all existing columns (exact names,
+                    //    affinities, notnull, defaults from schema 141) PLUS the four new
+                    //    data-quality columns, with the FK relaxed to ON DELETE CASCADE.
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS budget_forecasts_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            budgetId INTEGER NOT NULL,
+                            forecastDate INTEGER NOT NULL,
+                            targetPeriodStart INTEGER NOT NULL,
+                            targetPeriodEnd INTEGER NOT NULL,
+                            predictedSpending REAL NOT NULL,
+                            predictedRemaining REAL NOT NULL,
+                            confidenceScore REAL NOT NULL,
+                            riskLevel TEXT NOT NULL,
+                            overspendProbability REAL NOT NULL,
+                            recommendationsJson TEXT,
+                            actualSpending REAL,
+                            forecastAccuracy REAL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            isActive INTEGER NOT NULL DEFAULT 1,
+                            createdAt INTEGER NOT NULL,
+                            isPartial INTEGER NOT NULL DEFAULT 0,
+                            excludedExpenseCount INTEGER NOT NULL DEFAULT 0,
+                            qualityWarningsJson TEXT,
+                            rateBasis TEXT,
+                            FOREIGN KEY(budgetId) REFERENCES budgets(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+
+                    // 2. Copy every existing row using an EXPLICIT column list (no SELECT *).
+                    //    The four new columns are omitted so they take their defaults.
+                    database.execSQL(
+                        """
+                        INSERT INTO budget_forecasts_new (
+                            id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                            predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                            overspendProbability, recommendationsJson, actualSpending,
+                            forecastAccuracy, currency, isActive, createdAt
+                        )
+                        SELECT
+                            id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                            predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                            overspendProbability, recommendationsJson, actualSpending,
+                            forecastAccuracy, currency, isActive, createdAt
+                        FROM budget_forecasts
+                        """.trimIndent()
+                    )
+
+                    // 3. Drop the old table.
+                    database.execSQL("DROP TABLE budget_forecasts")
+
+                    // 4. Rename the recreated table into place.
+                    database.execSQL("ALTER TABLE budget_forecasts_new RENAME TO budget_forecasts")
+
+                    // 5. Recreate ALL FOUR indices with the EXACT names Room expects
+                    //    (three non-unique + the UNIQUE composite). Room validates index
+                    //    names strictly.
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId " +
+                        "ON budget_forecasts (budgetId)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate " +
+                        "ON budget_forecasts (forecastDate)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive " +
+                        "ON budget_forecasts (isActive)"
+                    )
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_budget_forecasts_budgetId_targetPeriodStart_forecastDate " +
+                        "ON budget_forecasts (budgetId, targetPeriodStart, forecastDate)"
+                    )
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -8605,7 +8704,8 @@ MIGRATION_91_92,
             MIGRATION_137_138,
             MIGRATION_138_139,
             MIGRATION_139_140,
-            MIGRATION_140_141
+            MIGRATION_140_141,
+            MIGRATION_141_142
     )
 }
 }

@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.forecasting.ForecastDataQuality
+import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
@@ -396,6 +398,52 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         assertEquals(40.0, day10.actualSpent, 0.01)
         assertEquals(1, day10.topTransactions.size)
         assertTrue(day10.status != BlockPartyStatus.NO_DATA)
+    }
+
+    @Test
+    fun `financial_forecast_contains_currency_conversion_warnings`() {
+        // P6-CURRENT-015: Drive synthesis through the ForecastInput path (the same path the
+        // use-case/UI flows through). The assembler reports a currency-conversion warning and a
+        // non-zero excluded count via ForecastDataQuality; the resulting FinancialForecast must
+        // surface isPartial == true, the warning text in qualityWarnings, and the excluded count.
+        val warning = "MISSING_EXCHANGE_RATE: Analytics excluded transaction(s) because exchange rates were unavailable."
+        val input = ForecastInputAssembler.ForecastInput(
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 100.0,
+                daysElapsed = 15,
+                daysInMonth = 31,
+                projectedTotal = 200.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 100.0f,
+                paceStatus = PaceStatus.ON_PACE,
+                displayCurrency = "EUR",
+            ),
+            dataQuality = ForecastDataQuality(
+                isPartial = true,
+                excludedActualCount = 2,
+                excludedPlannedCount = 1,
+                excludedRecurringCount = 0,
+                conversionWarnings = listOf(warning),
+                confidencePenalty = 0.1
+            )
+        )
+
+        val forecast = engine.synthesize(input)
+
+        assertTrue("forecast must be flagged partial", forecast.isPartial)
+        assertTrue(
+            "qualityWarnings must carry the conversion warning text",
+            forecast.qualityWarnings.contains(warning)
+        )
+        // excludedCount is the sum of the per-source exclusions (2 actual + 1 planned + 0 recurring).
+        assertEquals(3, forecast.excludedCount)
+        assertTrue("confidence stays in [0,1]", forecast.confidence in 0.0..1.0)
     }
 
     private fun createRecurringPattern(

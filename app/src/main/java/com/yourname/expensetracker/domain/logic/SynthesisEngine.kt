@@ -100,7 +100,20 @@ class SynthesisEngine @Inject constructor(
             confirmedOccurrences = input.confirmedOccurrences
         )
         val finalConfidence = (forecast.confidence - input.dataQuality.confidencePenalty).coerceIn(0.0, 1.0)
-        return forecast.copy(confidence = finalConfidence)
+        // P6-CURRENT-015: Surface input data-quality on the domain model so the UI/agents can
+        // show when a forecast was computed from partial data. The excluded count is the sum of
+        // the per-source exclusions tracked by ForecastInputAssembler (actual + planned +
+        // recurring); the warnings are copied verbatim from ForecastDataQuality.conversionWarnings.
+        val quality = input.dataQuality
+        val excluded = quality.excludedActualCount +
+            quality.excludedPlannedCount +
+            quality.excludedRecurringCount
+        return forecast.copy(
+            confidence = finalConfidence,
+            isPartial = quality.isPartial,
+            qualityWarnings = quality.conversionWarnings,
+            excludedCount = excluded
+        )
     }
 
     fun synthesize(
@@ -634,7 +647,13 @@ class SynthesisEngine @Inject constructor(
                 }
             val dayCal = Calendar.getInstance()
             for (occ in occurrences) {
+                // P6-CURRENT-014: every materialised occurrence marks its rule as
+                // "has occurrences" so it does NOT fall back to legacy date matching
+                // below. Only PLANNED occurrences are future obligations on the
+                // bill-day calendar — PAID rows are already-fulfilled actuals and
+                // would double-count against the matching actual expense.
                 ruleIdsWithOccurrences.add(occ.sourceId)
+                if (occ.status != "PLANNED") continue
                 val day = dayCal.apply { timeInMillis = occ.dueDate }.get(Calendar.DAY_OF_MONTH)
                 if (day in 1..daysInMonth) {
                     result.getOrPut(day) { mutableListOf() }.add(occ.toRecurringPattern())

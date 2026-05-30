@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -59,7 +60,8 @@ class FinancialStressForecastEngine @Inject constructor(
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     private val recurringOccurrenceDao: RecurringOccurrenceDao,
     private val currencyConverter: CurrencyConverter,
-    private val accountBalanceProvider: AccountBalanceProvider
+    private val accountBalanceProvider: AccountBalanceProvider,
+    private val databaseReadBarrier: DatabaseReadBarrier
 ) {
     companion object {
         private const val TAG = "FinancialStressForecast"
@@ -279,30 +281,42 @@ class FinancialStressForecastEngine @Inject constructor(
 
         var totalOutflows = 0.0
 
-        // ── Part 1: Manual patterns — canonical occurrence path ──────────────
+        // ── Part 1: Manual patterns — READ-ONLY occurrence path ─────────────
         if (manualPatterns.isNotEmpty()) {
             val ruleIds = manualPatterns.mapNotNull { it.id }.distinct()
-            // Generate (materialise) occurrences for each rule
+            // P6-CURRENT-024: PROJECT occurrences in memory (no writes). Rules whose
+            // projection throws fall back to ad-hoc expansion (bills not dropped).
             val failedRuleIds = mutableListOf<Long>()
+            val projected = mutableListOf<RecurringOccurrence>()
             for (ruleId in ruleIds) {
                 try {
-                    recurringLifecycleCoordinator.generateOccurrences(
+                    projected += recurringLifecycleCoordinator.projectOccurrences(
                         ruleId = ruleId,
                         startDate = startDate,
-                        endDate = endDate,
-                        options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
-                            createReminderDeliveries = false,
-                            generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
-                        )
+                        endDate = endDate
                     )
                 } catch (e: Exception) {
-                    Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d", ruleId)
+                    Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d", ruleId)
                     failedRuleIds.add(ruleId)
                 }
             }
-            // Query all materialised occurrences in range for these rules
-            val allOccurrences = recurringOccurrenceDao.getByDateRange(startDate, endDate)
-                .filter { it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE && it.sourceId in ruleIds }
+
+            // Read already-materialized rows (READ-ONLY, barrier-guarded). They
+            // carry authoritative status (incl. user overrides) and override
+            // projections for the same occurrenceKey — no double-count.
+            val materialized = try {
+                databaseReadBarrier.checkReadAllowed("FinancialStressForecastEngine.calculateRecurringOutflows")
+                recurringOccurrenceDao.getByDateRange(startDate, endDate)
+                    .filter { it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE && it.sourceId in ruleIds }
+            } catch (e: Exception) {
+                Timber.w(e, "$TAG: reading materialized occurrences failed")
+                emptyList()
+            }
+
+            val mergedByKey = LinkedHashMap<String, RecurringOccurrence>()
+            for (occ in projected) mergedByKey[occ.occurrenceKey] = occ
+            for (occ in materialized) mergedByKey[occ.occurrenceKey] = occ
+            val allOccurrences = mergedByKey.values
 
             for (occ in allOccurrences) {
                 // P0-1: Filter by status — only count PLANNED and PAID
@@ -342,7 +356,7 @@ class FinancialStressForecastEngine @Inject constructor(
                 }
             }
 
-            // P0-3 fallback: for rules that failed generateOccurrences, fall back to ad-hoc expansion
+            // P0-3 fallback: for rules that failed projection, fall back to ad-hoc expansion
             if (failedRuleIds.isNotEmpty()) {
                 val failedPatterns = manualPatterns.filter { it.id in failedRuleIds }
                 if (failedPatterns.isNotEmpty()) {

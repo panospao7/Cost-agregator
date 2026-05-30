@@ -25,6 +25,7 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.data.repository.DeleteGroupMemberResult
@@ -353,6 +354,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
         val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
         val multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true)
         coEvery { multiCurrencyRepository.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
@@ -430,7 +432,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             recurringLifecycleCoordinator = mockk(),
             recurringOccurrenceDao = mockk(),
             currencyConverter = currencyConverter,
-            accountBalanceProvider = mockk(relaxed = true)
+            accountBalanceProvider = mockk(relaxed = true),
+            databaseReadBarrier = mockk(relaxed = true)
         )
 
         val healthScoreV2 = FinancialHealthScoreV2(

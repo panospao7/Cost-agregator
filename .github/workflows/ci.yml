@@ -100,6 +100,12 @@ jobs:
       - name: Run lint
         run: ./gradlew :app:lintDebug --no-daemon --stacktrace
 
+      - name: Assemble debug build
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Verify DB access boundaries
+        run: ./gradlew :app:verifyDbAccessBoundaries --stacktrace
+
       - name: Upload lint results
         if: always()
         uses: actions/upload-artifact@v4

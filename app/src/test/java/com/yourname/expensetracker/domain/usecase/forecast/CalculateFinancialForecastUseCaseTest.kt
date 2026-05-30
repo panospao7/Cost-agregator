@@ -65,6 +65,10 @@ class CalculateFinancialForecastUseCaseTest {
         val mockCurrencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true)
 
         every { mockCurrencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { mockCurrencySettingsRepository.resolveHomeCurrency() } returns
+            com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+            )
         coEvery {
             mockAnalyticsCurrencyNormalizer.normalizeSnapshots(any(), any())
         } coAnswers {
@@ -85,7 +89,8 @@ class CalculateFinancialForecastUseCaseTest {
             currencySettingsRepository = mockCurrencySettingsRepository,
             currencyConverter = mockk(relaxed = true),
             recurringLifecycleCoordinator = mockk(relaxed = true),
-            recurringOccurrenceDao = mockk(relaxed = true)
+            recurringOccurrenceDao = mockk(relaxed = true),
+            databaseReadBarrier = mockk(relaxed = true)
         )
 
         every { timeBoundaryTicker.dayBoundaryTicks() } returns flowOf(0L)

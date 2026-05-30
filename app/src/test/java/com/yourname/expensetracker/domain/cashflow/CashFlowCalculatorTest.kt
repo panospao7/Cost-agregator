@@ -9,15 +9,23 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -45,6 +53,10 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var recurringExpenseEngine: RecurringExpenseEngine
     private lateinit var recurringExpenseRepository: RecurringExpenseRepository
+    private lateinit var recurringPatternsProvider: MergedRecurringPatternsProvider
+    private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
+    private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
+    private lateinit var databaseReadBarrier: com.yourname.expensetracker.data.backup.DatabaseReadBarrier
     private lateinit var calculator: CashFlowCalculator
 
     @Before
@@ -53,9 +65,14 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         expenseRepository = mockk(relaxed = true)
         recurringExpenseEngine = mockk(relaxed = true)
         recurringExpenseRepository = mockk(relaxed = true)
-        val recurringPatternsProvider = mockk<MergedRecurringPatternsProvider>(relaxed = true)
-        val recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
-        val recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
+        recurringPatternsProvider = mockk<MergedRecurringPatternsProvider>(relaxed = true)
+        recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
+        recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
+        databaseReadBarrier = mockk(relaxed = true)
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
+            every { it.homeCurrency() } returns flowOf("EUR")
+            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        }
 
         calculator = CashFlowCalculator(
             expenseRepository = expenseRepository,
@@ -64,8 +81,9 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             recurringOccurrenceDao = recurringOccurrenceDao,
             analyticsCurrencyNormalizer = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
-            currencyConverter = mockk(relaxed = true)
+            currencySettingsRepository = currencySettingsRepository,
+            currencyConverter = mockk(relaxed = true),
+            databaseReadBarrier = databaseReadBarrier
         )
     }
 
@@ -83,7 +101,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns tx
         every { expenseRepository.getAllExpenses() } returns flowOf(tx)
-        coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns listOf(
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             RecurringPattern(
                 merchantName = "Netflix",
                 averageAmount = 10.0,
@@ -97,7 +115,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             )
         )
 
-        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-04")), startingBalance = 100.0)
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-04")), startingBalance = MoneyAmount(100.0, CurrencyCode("EUR")))
 
         assertEquals(3, result.size)
 
@@ -121,7 +139,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         every { expenseRepository.getAllExpenses() } returns flowOf(tx)
         coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
 
-        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = 50.0)
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(50.0, CurrencyCode("EUR")))
 
         assertEquals(1, result.size)
         assertApproxEquals(-30.0, result.first().endingBalance)
@@ -135,7 +153,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
         coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
 
-        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-03")), startingBalance = 600.0)
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-03")), startingBalance = MoneyAmount(600.0, CurrencyCode("EUR")))
 
         assertEquals(2, result.size)
         assertTrue(result.all { it.endingBalance == 600.0 })
@@ -163,7 +181,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         )
         val outOfRange = inRange.copy(merchantName = "Rent", nextExpectedDate = ms("2026-05-10"))
 
-        coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns listOf(inRange, outOfRange)
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(inRange, outOfRange)
 
         val upcoming = calculator.getUpcomingBills(daysAhead = 10)
         assertEquals(1, upcoming.size)
@@ -198,7 +216,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
 
         val result = calculator.calculateDailyCashFlow(
-            Date(d1), Date(ms("2026-04-03")), startingBalance = 3000.0
+            Date(d1), Date(ms("2026-04-03")), startingBalance = MoneyAmount(3000.0, CurrencyCode("EUR"))
         )
 
         assertEquals(2, result.size)
@@ -243,7 +261,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
 
         val result = calculator.calculateDailyCashFlow(
-            Date(d1), Date(ms("2026-04-02")), startingBalance = 0.0
+            Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
         )
 
         assertEquals(1, result.size)
@@ -277,7 +295,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
 
         val result = calculator.calculateDailyCashFlow(
-            Date(d1), Date(ms("2026-04-02")), startingBalance = 0.0
+            Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
         )
 
         assertEquals(1, result.size)
@@ -309,7 +327,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
 
         val result = calculator.calculateDailyCashFlow(
-            Date(d1), Date(ms("2026-04-02")), startingBalance = 100.0
+            Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(100.0, CurrencyCode("EUR"))
         )
 
         assertEquals(1, result.size)
@@ -335,7 +353,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
 
         val result = calculator.calculateDailyCashFlow(
-            Date(d1), Date(ms("2026-04-02")), startingBalance = 100.0
+            Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(100.0, CurrencyCode("EUR"))
         )
 
         assertEquals(1, result.size)
@@ -347,14 +365,243 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         assertApproxEquals(110.0, result[0].endingBalance)
     }
 
+    // ============================================================================
+    // P6-CURRENT-024 – read paths must not write (projection, not generation)
+    // ============================================================================
+
+    @Test
+    fun `cashflow uses projectOccurrences and never generateOccurrences on read path`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        coVerify(exactly = 1) { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) }
+        coVerify(exactly = 0) {
+            recurringLifecycleCoordinator.generateOccurrences(any(), any(), any(), any())
+        }
+        verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
+    }
+
+    @Test
+    fun `cashflow already-materialized occurrence path is read unchanged via read barrier`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
+        )
+        // Projection yields nothing; the already-materialized row must still surface.
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
+        )
+
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        assertEquals(1, result[0].predictedRecurring.size)
+        assertEquals("Rent", result[0].predictedRecurring.first().merchantName)
+        verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
+    }
+
+    // ============================================================================
+    // P6-CURRENT-018 – occurrence-generation failure fallback + partial flag
+    // ============================================================================
+
+    @Test
+    fun `cashflow marks partial when occurrence projection fails`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } throws
+            RuntimeException("projection boom")
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        assertEquals(1, result.size)
+        // Failure flagged, not silently dropped.
+        assertTrue(result[0].occurrenceGenerationFailed)
+        assertEquals(1, result[0].failedOccurrenceRuleCount)
+        assertTrue(result[0].isPartial)
+        // Bill recovered via ad-hoc fallback (NOT dropped to zero UI signal).
+        assertEquals(1, result[0].predictedRecurring.size)
+        assertEquals("Rent", result[0].predictedRecurring.first().merchantName)
+    }
+
+    @Test
+    fun `cashflow not partial when projection succeeds`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = d1)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = d1, amount = 800.0, merchant = "Rent")
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        assertFalse(result[0].occurrenceGenerationFailed)
+        assertEquals(0, result[0].failedOccurrenceRuleCount)
+    }
+
+    // ============================================================================
+    // P6-CURRENT-019 – content-aware dedup (merchantKey + amount + currency + day)
+    // ============================================================================
+
+    @Test
+    fun `cashflow dedupes recurring by merchantkey amount date not name`() = runTest {
+        val d1 = ms("2026-04-01")
+        // Actual expense "Netflix"; predicted detected pattern "Netflix!" — same
+        // merchantKey ("netflix") but a DIFFERENT lowercase-trim name ("netflix!"),
+        // so the OLD name-only dedup would have kept it. Content-aware dedup removes it.
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(d1, 15.0, TransactionType.PURCHASE, merchant = "Netflix")
+        )
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            detectedPattern(merchant = "Netflix!", amount = 15.0, nextDate = d1)
+        )
+
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        // Predicted suppressed because it matches the actual expense by content.
+        assertTrue(result[0].predictedRecurring.isEmpty())
+    }
+
+    @Test
+    fun `cashflow two identical predictions same day deduped`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            detectedPattern(merchant = "Spotify", amount = 9.99, nextDate = d1),
+            detectedPattern(merchant = "Spotify", amount = 9.99, nextDate = d1)
+        )
+
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        // Predicted-vs-predicted dedup collapses identical projections to one.
+        assertEquals(1, result[0].predictedRecurring.size)
+    }
+
+    @Test
+    fun `cashflow distinct same-merchant bills are NOT merged`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        // Same merchant, materially different amounts (15 vs 70) → legitimately distinct.
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            detectedPattern(merchant = "Netflix", amount = 15.0, nextDate = d1),
+            detectedPattern(merchant = "Netflix", amount = 70.0, nextDate = d1)
+        )
+
+        val result = calculator.calculateDailyCashFlow(Date(d1), Date(ms("2026-04-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR")))
+
+        // Both bills must survive — amount is part of the dedup key.
+        assertEquals(2, result[0].predictedRecurring.size)
+        assertTrue(result[0].predictedRecurring.any { it.averageAmount == 15.0 })
+        assertTrue(result[0].predictedRecurring.any { it.averageAmount == 70.0 })
+    }
+
+    // ============================================================================
+    // P6-CURRENT-020 – typed starting balance currency precondition
+    // ============================================================================
+
+    @Test
+    fun `cashflow_starting_balance_currency_mismatch_rejected`() = runTest {
+        val d1 = ms("2026-04-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+
+        // Home currency resolves to EUR (see setUp); a USD starting balance must be
+        // rejected outright rather than auto-converted.
+        val outcome = runCatching {
+            calculator.calculateDailyCashFlow(
+                Date(d1),
+                Date(ms("2026-04-02")),
+                startingBalance = MoneyAmount(100.0, CurrencyCode("USD"))
+            )
+        }
+
+        assertTrue(
+            "Expected IllegalArgumentException for currency mismatch, got ${outcome.exceptionOrNull()}",
+            outcome.exceptionOrNull() is IllegalArgumentException
+        )
+    }
+
+    private fun manualPattern(
+        id: Long,
+        merchant: String,
+        amount: Double,
+        nextDate: Long,
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY
+    ): RecurringPattern = RecurringPattern(
+        id = id,
+        merchantName = merchant,
+        averageAmount = amount,
+        currency = "EUR",
+        frequency = frequency,
+        periodVarianceDays = 0,
+        amountVariancePercent = 0.0,
+        nextExpectedDate = nextDate,
+        confidence = 1.0f,
+        previousDates = emptyList()
+    )
+
+    private fun detectedPattern(
+        merchant: String,
+        amount: Double,
+        nextDate: Long,
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY
+    ): RecurringPattern = RecurringPattern(
+        id = null,
+        merchantName = merchant,
+        averageAmount = amount,
+        currency = "EUR",
+        frequency = frequency,
+        periodVarianceDays = 0,
+        amountVariancePercent = 0.0,
+        nextExpectedDate = nextDate,
+        confidence = 0.95f,
+        previousDates = emptyList()
+    )
+
+    private fun occurrence(
+        ruleId: Long,
+        dueDate: Long,
+        amount: Double,
+        merchant: String,
+        status: String = "PLANNED",
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY
+    ): RecurringOccurrence = RecurringOccurrence(
+        sourceType = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
+        sourceId = ruleId,
+        occurrenceKey = "${RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE}|$ruleId|$dueDate|${frequency.name}",
+        dueDate = dueDate,
+        status = status,
+        expectedAmount = amount,
+        expectedCurrency = "EUR",
+        frequency = frequency.name,
+        merchant = merchant,
+        categoryId = null
+    )
+
     private fun expense(
         date: Long,
         amount: Double,
         type: TransactionType,
-        transferDir: TransferDirection? = null
+        transferDir: TransferDirection? = null,
+        merchant: String = "T"
     ) = Expense(
         amount = amount,
-        merchant = "T",
+        merchant = merchant,
         transactionType = type,
         date = date,
         transferDirection = transferDir

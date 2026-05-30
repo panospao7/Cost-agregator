@@ -4,7 +4,7 @@
 > Each issue's **full fix strategy + implementation plan** lives in its source debug report.
 > Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`
 > **Last updated: 2026-05-30 (documentation audit — Pipeline 3 & 4 complete through `214c4266`)**
-> **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items (45 ✅ FIXED + 8 ⚠ PARTIAL + 76 📝 TODO ONLY + 1 ⏭ DEFERRED)**
+> **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items (50 ✅ FIXED + 8 ⚠ PARTIAL + 71 📝 TODO ONLY + 1 ⏭ DEFERRED)**
 >
 > **NOTE (2026-05-30):** Pipeline 3 and Pipeline 4 commits are complete through commit `214c4266`. Statuses in this tracker should be reconciled against the actual evaluations in `pipeline3_evaluation.md` and `pipeline4_evaluation.md`. Key discrepancies found during documentation audit:
 > - P3-P0-01 (`createdAt=0`): Tracker says ✅ FIXED, evaluation says still OPEN
@@ -128,21 +128,21 @@ Full source: `pipeline-6-budget-forecasting-cashflow-debug-report.md`
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| P6-P1-01 | P1 | Budget forecast refresh fails on unique index conflict | Bug | Added `@Insert(onConflict = OnConflictStrategy.REPLACE)` (from prior session) | ✅ FIXED |
+| P6-P1-01 | P1 | Budget forecast refresh fails on unique index conflict | Bug | Refresh fix preserved via UNIQUE index `(budgetId, targetPeriodStart, forecastDate)` + `insertWithDeactivation` (deactivate-then-insert in one `@Transaction`, sole production insert path). Conflict strategy is now `ABORT` (changed from `REPLACE` by P6-CURRENT-008 to stop overwriting history); a refresh uses a new `forecastDate` so no collision | ✅ FIXED |
 | P6-P1-02 | P1 | Forecast rows persisted with `createdAt=0` and wrong currency | Bug | Engine passes `createdAt=now`, `currency=homeCurrency` (from prior session) | ✅ FIXED |
-| P6-P1-03 | P1 | Budget/forecast/planned writes lack restore guard | Bug | No `RestoreMaintenanceMode` check in budget CRUD/paths | 📝 TODO ONLY |
-| P6-P1-04 | P1 | Budget alerts use gross `percentUsed` when adjusted spend exists | Bug | `BudgetMonitor` uses gross even when `effectiveSpend` is available | 📝 TODO ONLY |
-| P6-P1-05 | P1 | Rollover ignores partial conversion state from prior periods | Bug | Uses `.displayAmount` only; ignores `isPartial`/`warningMessage` | 📝 TODO ONLY |
+| P6-P1-03 | P1 | Budget/forecast/planned writes lack restore guard | Bug | Write-barrier guards present across `BudgetRepository` add/update/delete/toggle/deleteAll/restore + notification toggles, `BudgetForecastingEngine.generateForecastResult`/`updateForecastAccuracy`, and `PlannedExpenseRepository` add/delete; no unguarded budget/forecast/planned write remains | ✅ FIXED |
+| P6-P1-04 | P1 | Budget alerts use gross `percentUsed` when adjusted spend exists | Bug | (via P6-CURRENT-002) `BudgetMonitor` reads `adjustedSpendBreakdown?.effectiveSpend` and recomputes `adjustedPercent` for all thresholds; gross is only a logged fallback on offset-engine failure | ✅ FIXED |
+| P6-P1-05 | P1 | Rollover ignores partial conversion state from prior periods | Bug | `BudgetRepository.createBudgetStatus` rollover loop ORs `periodAggregate.isPartial` and merges warnings into `BudgetStatus.isPartial`/`conversionWarning`; each completed period converts at its own period-end | ✅ FIXED |
 | P6-P1-06 | P1 | Budget limit conversion uses current rate, not period-specific | Bug | `convertBudgetAmountToHomeCurrency()` uses `convert()` latest rate | 📝 TODO ONLY |
 | P6-P1-07 | P1 | Forecast data quality exists but `SynthesisEngine` ignores it | Bug | `dataQuality.confidencePenalty` now applied at `synthesize()` via `finalConfidence` computation | ✅ FIXED |
 | P6-P1-08 | P1 | Planned expenses not normalized before forecast arithmetic | Bug | Groups by currency and sums raw amounts | 📝 TODO ONLY |
 | P6-P1-09 | P1 | Cancelled/skipped planned expenses still enter forecast | Bug | `SynthesisEngine` filters `status == "PLANNED"`; `ForecastInputAssembler.mapPlannedExpenses` also filters PLANNED-only | ✅ FIXED |
-| P6-P1-10 | P1 | Recurring occurrence status lost before forecast | Bug | Queries all occurrences without status filter | 📝 TODO ONLY |
+| P6-P1-10 | P1 | Recurring occurrence status lost before forecast | Bug | `ForecastInputAssembler.assemble` filters materialized occurrences to `status == "PLANNED"`, carries status into `ConfirmedOccurrence`, normalizes amount to home currency | ✅ FIXED |
 | P6-P1-11 | P1 | Cash-flow calendar raw-sums multi-currency amounts | Bug | Sums `effectiveAmount` across currencies | 📝 TODO ONLY |
 | P6-P1-12 | P1 | Cash-flow output displays pre-dedup recurring predictions | Bug | `DailyCashFlow` stores original list, not deduped | 📝 TODO ONLY |
 | P6-P1-13 | P1 | Stress forecast is not a real account-balance forecast | Bug | Computes 90-day net-cashflow estimate, not account balance | 📝 TODO ONLY |
 | P6-P1-14 | P1 | Stress forecast counts PAID occurrences as active outflows | Bug | `ACTIVE_OCCURRENCE_STATUSES` still includes `"PAID"` | 📝 TODO ONLY |
-| P6-P1-15 | P1 | Deleting budget can fail after forecasts exist | Bug | FK `RESTRICT` blocks delete; no archive/delete-forecasts step | 📝 TODO ONLY |
+| P6-P1-15 | P1 | Deleting budget can fail after forecasts exist | Bug | FK `budget_forecasts.budgetId → budgets(id)` relaxed `RESTRICT → CASCADE` via `MIGRATION_141_142`; `BudgetRepository.deleteBudget` keeps an explicit forecast-delete inside its write-barrier-guarded `withTransaction`; `deleteAll`/`restoreDebugSnapshot` now succeed with forecasts present | ✅ FIXED |
 
 ## Pipeline 7 — Backup / Restore
 
@@ -151,7 +151,7 @@ Full source: `pipeline-7-backup-restore-debug-report.md`
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
 | P7-P0-01 | P0 | Legacy `.db` import lacks journal and maintenance mode | Bug | `importDatabase()` has no `RestoreJournal`/`RestoreMaintenanceMode`; crash corrupts live DB | 📝 TODO ONLY |
-| P7-P0-02 | P0 | Startup crash recovery can resume writes after failed recovery | Bug | Fail-closed: preserve journal, enter `RESTORE_COMPLETE_RESTART_REQUIRED` (from prior session) | ✅ FIXED |
+| P7-P0-02 / P7-CURRENT-003 | P0 | Startup crash recovery can resume writes after failed recovery (incl. across the *next* restart) | Bug | Fail-closed: preserve journal; failed crash-recovery now enters persistent `CRITICAL_RECOVERY_REQUIRED` (was `RESTORE_COMPLETE_RESTART_REQUIRED`); startup auto-reset exempts `CRITICAL_RECOVERY_REQUIRED` so writes stay blocked across repeated restarts. Test: `AppStartupCoordinatorRecoveryTest` | ✅ FIXED |
 | P7-P1-01 | P1 | Restore uses stale injected Room instance after DB file swap | Bug | Uses same injected Room for verification after file swap | 📝 TODO ONLY |
 | P7-P1-02 | P1 | Maintenance mode not a global DB write barrier | Bug | `isWritesAllowed()` enforcement is caller-by-caller | 📝 TODO ONLY |
 | P7-P1-03 | P1 | Backup creation does not freeze writes or use SQLite backup API | Bug | `createCostBackup()` does not enter backup mode; concurrent writes cause inconsistent snapshot | 📝 TODO ONLY |
@@ -188,7 +188,7 @@ Full source: `pipeline-9-workers-background-jobs-debug-report.md`
 |----|-----|-------|------|-------------|--------|
 | P9-P1-01 | P1 | `BackgroundJobRun` table unused by workers | Enhancement | Created `WorkerRunLogger` interface + impl with `BackgroundJobRunDao` | ✅ FIXED |
 | P9-P1-02 | P1 | No shared `WorkerExecutionGuard` | Enhancement | `WorkerExecutionGuard` class exists; used by all 7 workers with shared restore/spec/privacy checks | ✅ FIXED |
-| P9-P1-03 | P1 | Restore/backup cancellation not a running-worker barrier | Bug | `cancelUniqueWork()` is async; workers may continue during restore | 📝 TODO ONLY |
+| P9-P1-03 | P1 | Restore/backup cancellation not a running-worker barrier | Bug | Real `WorkerLeaseRegistry` + `WorkerDrainController` drain wired via `MaintenanceOperationRunner`; all looping workers (incl. MerchantKeyBackfill + Warranty) now `executionGuard.checkpoint()` | ✅ FIXED (needs guard unit test) |
 | P9-P1-04 | P1 | Daily briefing one-shot chain breaks on early exits | Bug | Returns early without `scheduleDailyBriefing()` for restore/privacy/artifact-skip | 📝 TODO ONLY |
 | P9-P1-05 | P1 | Bill reminder worker disabled by static `WorkerSpec` | Bug | `WorkerSpec.DEFAULTS["bill_reminder_periodic"]` now `enabled = true` (version bump) | ✅ FIXED |
 | P9-P1-06 | P1 | Bill reminders not exactly-once safe | Bug | Atomic `claimDelivery()` sets CLAIMED state; worker checks claim result before dispatch | ✅ FIXED |
@@ -279,7 +279,7 @@ Universal contracts extracted from the architectural strategy — each represent
 | 3 — Receipt Capture | 1 | 10 | 11 | 3 | 2 | 6 |
 | 4 — Recurring/Bill Reminders | 2 | 10 | 12 | 5 | 0 | 7 |
 | 5 — Currency/Dashboard | 0 | 8 | 8 | 1 | 0 | 7 |
-| 6 — Budget/Forecasting | 0 | 15 | 15 | 4 | 0 | 11 |
+| 6 — Budget/Forecasting | 0 | 15 | 15 | 9 | 0 | 6 |
 | 7 — Backup/Restore | 2 | 8 | 10 | 2 | 0 | 8 |
 | 8 — Privacy/AI | 0 | 12 | 12 | 1 | 1 | 10 |
 | 9 — Workers | 0 | 11 | 11 | 5 | 0 | 6 |
@@ -287,13 +287,13 @@ Universal contracts extracted from the architectural strategy — each represent
 | 11 — Email Receipt | 0 | 8 | 8 | 3 | 1 | 4 |
 | 12 — Import/Export | 1 | 10 | 11 | 4 | 2 | 5 |
 | **UNIVERSAL CONTRACTS** | **0** | **0** | **10** | **9** | **1** | **0** |
-| **TOTAL** | **8** | **112** | **130** | **45** | **8** | **77** |
+| **TOTAL** | **8** | **112** | **130** | **50** | **8** | **72** |
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 45 |
+| ✅ FIXED | 50 |
 | ⚠ PARTIAL | 8 |
-| 📝 TODO ONLY | 76 |
+| 📝 TODO ONLY | 71 |
 | ⏭ DEFERRED | 1 |
 
 ## Key Changes Since Last Update (2026-05-11 verification)

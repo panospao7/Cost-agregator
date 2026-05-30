@@ -60,13 +60,21 @@ class FinancialWeatherRepositoryTest {
                 )
             }
         }
+        val assemblerCurrencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).also {
+            every { it.homeCurrency() } returns flowOf("EUR")
+            coEvery { it.resolveHomeCurrency() } returns
+                com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+                )
+        }
         forecastInputAssembler = ForecastInputAssembler(
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
-            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            currencySettingsRepository = assemblerCurrencySettingsRepository,
             currencyConverter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>(relaxed = true),
             recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true),
-            recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
+            recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true),
+            databaseReadBarrier = mockk(relaxed = true)
         )
         
         repository = FinancialWeatherRepository(

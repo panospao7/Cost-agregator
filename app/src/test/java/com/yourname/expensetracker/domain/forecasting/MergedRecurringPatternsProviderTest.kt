@@ -31,7 +31,7 @@ class MergedRecurringPatternsProviderTest {
         recurringExpenseRepository = mockk(relaxed = true)
         recurringExpenseEngine = mockk(relaxed = true)
         timeProvider = mockk()
-        forecastInputAssembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), currencyConverter = mockk(relaxed = true), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk())
+        forecastInputAssembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), currencyConverter = mockk(relaxed = true), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk(), databaseReadBarrier = mockk(relaxed = true))
         provider = MergedRecurringPatternsProvider(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = recurringExpenseRepository,

@@ -139,6 +139,112 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * P6-CURRENT-024: Pure, read-only projection of occurrences for a rule.
+     *
+     * Computes occurrences IN MEMORY using the exact same expand → resolve
+     * pipeline as [generateOccurrences], but **never** materializes rows, never
+     * inserts, never writes lifecycle events, and never calls the write barrier.
+     * This is the read-safe entry point for forecast / cashflow / stress paths,
+     * which must not mutate the database while merely reading projections.
+     *
+     * The returned [RecurringOccurrence] objects are transient (id = 0, not
+     * persisted). Their [RecurringOccurrence.occurrenceKey] is identical to the
+     * key the materializer would assign, so callers can dedupe projected rows
+     * against already-materialized rows by key with no divergence or
+     * double-counting.
+     *
+     * Resolution against actual expenses mirrors the materializer path exactly:
+     * candidates matched to an eligible expense are returned as PAID, the rest
+     * as PLANNED. User-driven terminal overrides (SKIPPED/CANCELLED/IGNORED/
+     * MISSED) live only in materialized rows and are therefore intentionally not
+     * reconstructed here — callers honor those by reading materialized rows and
+     * deduping by [RecurringOccurrence.occurrenceKey].
+     *
+     * @param ruleId The ID of the [ManualRecurringExpense] rule.
+     * @param startDate Start of the range (inclusive, epoch ms).
+     * @param endDate End of the range (exclusive, epoch ms).
+     * @return Transient (unsaved) occurrences for the window. Empty if the rule
+     *   is inactive.
+     * @throws IllegalArgumentException if the rule is not found.
+     */
+    suspend fun projectOccurrences(
+        ruleId: Long,
+        startDate: Long,
+        endDate: Long
+    ): List<RecurringOccurrence> {
+        // NOTE: deliberately NO writeBarrier.checkWritesAllowed — this is a
+        // read-only projection and must succeed even when writes are blocked.
+        val rule = manualRecurringExpenseDao.getById(ruleId)
+            ?: throw IllegalArgumentException("Recurring rule not found: id=$ruleId")
+
+        // P4-CURRENT-010 parity: Inactive rules project nothing.
+        if (!rule.isActive) return emptyList()
+
+        // Anchor advancement — identical to generateOccurrences so projected
+        // dueDates/keys match what materialization would produce.
+        var anchorDate = rule.nextDate
+        var advanceIterations = 0
+        while (anchorDate < startDate && rule.frequency != RecurrenceFrequency.IRREGULAR) {
+            if (++advanceIterations > 1000) {
+                Timber.w("Anchor advance loop exceeded 1000 iterations for ruleId=%d, breaking", ruleId)
+                break
+            }
+            anchorDate = expander.advanceDate(anchorDate, rule.frequency)
+        }
+
+        val request = RecurringOccurrenceExpander.ExpandRequest(
+            merchant = rule.merchant,
+            amount = rule.amount,
+            currency = rule.currency,
+            frequency = rule.frequency,
+            categoryId = rule.categoryId,
+            startDate = startDate,
+            endDate = endDate,
+            anchorDate = anchorDate,
+            sourceType = SOURCE_TYPE_RECURRING_RULE,
+            sourceId = rule.id
+        )
+
+        val candidates = expander.expand(request)
+        // Read-only: resolver needs actual expenses to mark PAID vs PLANNED.
+        val actualExpenses = expenseDao.getExpensesBetween(startDate, endDate)
+        val resolved = resolver.resolve(candidates, actualExpenses)
+
+        val now = timeProvider.now()
+        return resolved.map { r -> buildTransientOccurrence(r, now) }
+    }
+
+    /**
+     * Builds an in-memory [RecurringOccurrence] from a resolved candidate.
+     * Mirrors the materializer's entity mapping but is never persisted
+     * (id stays 0). Used by [projectOccurrences].
+     */
+    private fun buildTransientOccurrence(
+        resolved: OccurrenceConflictResolver.ResolvedOccurrence,
+        now: Long
+    ): RecurringOccurrence {
+        val candidate = resolved.candidate
+        return RecurringOccurrence(
+            sourceType = candidate.sourceType,
+            sourceId = candidate.sourceId,
+            occurrenceKey = candidate.occurrenceKey,
+            dueDate = candidate.dueDate,
+            status = resolved.status,
+            linkedExpenseId = resolved.linkedExpenseId,
+            expectedAmount = candidate.expectedAmount,
+            expectedCurrency = candidate.expectedCurrency,
+            paidAt = if (resolved.status == "PAID") now else null,
+            paidAmount = resolved.paidAmount,
+            paidCurrency = resolved.paidCurrency,
+            frequency = candidate.frequency,
+            merchant = candidate.merchant,
+            categoryId = candidate.categoryId,
+            createdAt = now,
+            updatedAt = now
+        )
+    }
+
+    /**
      * Links an actual expense to a planned occurrence (marking it PAID).
      *
      * Matching rules (all must hold):

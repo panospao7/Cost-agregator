@@ -4,12 +4,14 @@ import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
@@ -559,5 +561,204 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         coVerify(exactly = 2) { budgetForecastDao.insertWithDeactivation(any()) }
         coVerify(exactly = 0) { budgetForecastDao.insert(any()) }
+    }
+
+    // =========================================================================
+    // P6-CURRENT-008: REPLACE -> ABORT + typed conflict, WITHOUT re-breaking refresh.
+    //
+    // The unique index is (budgetId, targetPeriodStart, forecastDate). A normal
+    // refresh stamps a fresh forecastDate and never collides, so ABORT only fires
+    // on a genuine same-millisecond duplicate. History is preserved by the
+    // deactivate-then-insert transaction (insertWithDeactivation), not by REPLACE.
+    // =========================================================================
+
+    @Test
+    fun `forecast_refresh_at_new_millisecond_keeps_history_one_active`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-03", 100.0, 1L)
+        )
+
+        // In-memory store mimicking insertWithDeactivation's @Transaction:
+        // deactivate the prior active row for the same (budgetId, targetPeriodStart,
+        // targetPeriodEnd) then insert the new row as active. This models the real DB
+        // behaviour where two rows with DIFFERENT forecastDate values coexist under the
+        // (budgetId, targetPeriodStart, forecastDate) unique index — i.e. ABORT does NOT
+        // collide on a normal refresh.
+        val store = mutableListOf<BudgetForecast>()
+        var nextId = 1L
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } answers {
+            val f = firstArg<BudgetForecast>()
+            for (i in store.indices) {
+                val existing = store[i]
+                if (existing.budgetId == f.budgetId &&
+                    existing.targetPeriodStart == f.targetPeriodStart &&
+                    existing.targetPeriodEnd == f.targetPeriodEnd &&
+                    existing.isActive
+                ) {
+                    store[i] = existing.copy(isActive = false)
+                }
+            }
+            val assignedId = nextId++
+            store.add(f.copy(id = assignedId, isActive = true))
+            assignedId
+        }
+
+        // First generation at forecastDate = now.
+        val first = engine.generateForecastResult(budget)
+        // Refresh: forecastDate = now + 1ms (distinct index key, no collision).
+        every { timeProvider.now() } returns now + 1
+        val second = engine.generateForecastResult(budget)
+
+        assertTrue("first generation available", first is BudgetForecastResult.Available)
+        assertTrue("refresh available (ABORT did not re-break refresh)", second is BudgetForecastResult.Available)
+        assertEquals("history preserved: two rows persisted", 2, store.size)
+        assertEquals("exactly one active forecast", 1, store.count { it.isActive })
+        assertEquals(
+            "the newest forecastDate is the active one",
+            now + 1,
+            store.single { it.isActive }.forecastDate
+        )
+    }
+
+    @Test
+    fun `forecast_insert_same_millisecond_returns_conflict_not_replace`() = runTest {
+        val existingRow = BudgetForecast(
+            id = 99L,
+            budgetId = 1L,
+            forecastDate = now,
+            targetPeriodStart = now,
+            targetPeriodEnd = now + 1_000L,
+            predictedSpending = 123.0,
+            predictedRemaining = 877.0,
+            confidenceScore = 0.5,
+            riskLevel = ForecastRiskLevel.LOW,
+            overspendProbability = 0.1,
+            isActive = true
+        )
+        // Witness for "no overwrite": the mock NEVER mutates this because the insert throws.
+        val store = mutableListOf(existingRow)
+
+        // Same-instant duplicate: the (budgetId, targetPeriodStart, forecastDate) unique
+        // index rejects the row under OnConflictStrategy.ABORT, surfaced as a constraint
+        // violation from the transactional insert.
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            android.database.sqlite.SQLiteConstraintException(
+                "UNIQUE constraint failed: budget_forecasts.budgetId, " +
+                    "budget_forecasts.targetPeriodStart, budget_forecasts.forecastDate"
+            )
+
+        val duplicateAttempt = existingRow.copy(id = 0L)
+        val result = engine.insertForecast(duplicateAttempt)
+
+        // Typed conflict — not a crash, not a silent REPLACE.
+        assertEquals(ForecastInsertResult.DuplicateInSameInstant, result)
+        // No existing row was overwritten: the engine performed no update / raw insert fallback.
+        coVerify(exactly = 0) { budgetForecastDao.update(any()) }
+        coVerify(exactly = 0) { budgetForecastDao.insert(any()) }
+        assertEquals(1, store.size)
+        assertEquals(99L, store.single().id)
+        assertEquals(123.0, store.single().predictedSpending, 0.0)
+        assertTrue(store.single().isActive)
+    }
+
+    @Test
+    fun `forecast_insert_propagates_non_constraint_exceptions`() = runTest {
+        // The wrapper must catch ONLY SQLiteConstraintException; critical errors must propagate.
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } throws
+            IllegalStateException("write barrier closed")
+
+        val attempt = BudgetForecast(
+            budgetId = 1L,
+            forecastDate = now,
+            targetPeriodStart = now,
+            targetPeriodEnd = now + 1_000L,
+            predictedSpending = 1.0,
+            predictedRemaining = 1.0,
+            confidenceScore = 0.5,
+            riskLevel = ForecastRiskLevel.LOW,
+            overspendProbability = 0.1
+        )
+
+        var thrown: Throwable? = null
+        try {
+            engine.insertForecast(attempt)
+        } catch (e: IllegalStateException) {
+            thrown = e
+        }
+        assertTrue("non-constraint exception must propagate", thrown is IllegalStateException)
+        assertEquals("write barrier closed", thrown?.message)
+    }
+
+    // =========================================================================
+    // P6-CURRENT-010: Forecast data-quality columns + exclusion-proportional
+    // confidence reduction.
+    //
+    // The engine sources excluded counts / warnings from the SAME
+    // AnalyticsCurrencyNormalizer pass that gathers history
+    // (getHistoricalSpendingData). When the normalizer drops historical expenses
+    // (e.g. FX conversion failed) the persisted forecast must record isPartial,
+    // excludedExpenseCount, a non-empty qualityWarningsJson, and a confidence
+    // strictly below the equivalent no-exclusion case.
+    // =========================================================================
+
+    @Test
+    fun `budget_forecast_confidence_reduced_when_historical_expenses_excluded`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val includedSnapshots = listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 200.0, 1L),
+            snapshot("2026-03", 300.0, 1L)
+        )
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns includedSnapshots
+
+        // Baseline: default pass-through normalizer (no exclusions, no warnings).
+        val baseline = engine.generateForecast(budget, forecastPeriodDays = 30)
+        assertEquals(false, baseline.isPartial)
+        assertEquals(0, baseline.excludedExpenseCount)
+        assertEquals(null, baseline.qualityWarningsJson)
+
+        // Exclusion case: the normalizer keeps the SAME included expenses (so the base
+        // confidence is identical) but reports 2 additional inputs as excluded plus a
+        // conversion warning — so only the exclusion penalty differs from the baseline.
+        coEvery { mockCurrencyNormalizer.normalizeSnapshots(any(), any()) } answers {
+            val expenses = firstArg<List<ExpenseSnapshot>>()
+            val homeCurrency = secondArg<String>()
+            AnalyticsNormalizationResult(
+                homeCurrency = homeCurrency,
+                normalizedExpenses = expenses.map {
+                    NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                },
+                includedExpenses = expenses,
+                warnings = listOf(
+                    AnalyticsConversionWarning(
+                        type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                        message = "Analytics excluded transaction(s) because exchange rates were unavailable.",
+                        affectedTransactionCount = 2,
+                        sourceCurrencies = listOf("JPY")
+                    )
+                ),
+                latestRateTimestamp = null,
+                // 2 inputs excluded => excludedCount = totalInputCount - normalizedExpenses.size = 2
+                totalInputCount = expenses.size + 2
+            )
+        }
+
+        val partial = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        assertTrue(
+            "confidence must be reduced when historical expenses are excluded",
+            partial.confidenceScore < baseline.confidenceScore
+        )
+        assertTrue("confidence stays in [0,1]", partial.confidenceScore in 0.0..1.0)
+        assertEquals(true, partial.isPartial)
+        assertEquals(2, partial.excludedExpenseCount)
+        val json = partial.qualityWarningsJson
+        assertTrue(
+            "qualityWarningsJson must be non-null and non-empty",
+            json != null && json.isNotBlank() && json != "[]"
+        )
+        // Confirm the FX RateBasis used for spend normalization is recorded.
+        assertEquals("TRANSACTION_DATE", partial.rateBasis)
     }
 }

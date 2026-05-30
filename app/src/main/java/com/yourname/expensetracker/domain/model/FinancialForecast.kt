@@ -21,13 +21,27 @@ data class FinancialForecast(
     val components: ForecastComponents,
     val actionableInsights: List<UiText>,
     /** @suppress Currency code this forecast is denominated in (e.g. "EUR", "USD"). */
-    val displayCurrency: String = ""
+    val displayCurrency: String = "",
+
+    // P6-CURRENT-015: Forecast data-quality surface.
+    // Populated by SynthesisEngine.synthesize(input) from ForecastInput.dataQuality so the
+    // UI/agents can show when a forecast was computed from partial data (e.g. some expenses
+    // could not be FX-converted). Defaulted to neutral values so existing constructions stay
+    // source-compatible.
+    /** True when this forecast was computed from a partial/incomplete input window. */
+    val isPartial: Boolean = false,
+    /** Human-readable data-quality warnings (e.g. currency-conversion failures). */
+    val qualityWarnings: List<String> = emptyList(),
+    /** Count of inputs excluded from this forecast (FX-conversion failures, dedup, etc.). */
+    val excludedCount: Int = 0
 ) {
     init {
         require(confidence.isFinite() && confidence in 0.0..1.0) { "confidence must be between 0 and 1" }
         require(actionableInsights.none { insight -> (insight as? UiText.DynamicString)?.value?.isBlank() == true }) {
             "actionableInsights cannot contain blank entries"
         }
+        require(qualityWarnings.none { it.isBlank() }) { "qualityWarnings cannot contain blank entries" }
+        require(excludedCount >= 0) { "excludedCount must be non-negative" }
     }
 }
 

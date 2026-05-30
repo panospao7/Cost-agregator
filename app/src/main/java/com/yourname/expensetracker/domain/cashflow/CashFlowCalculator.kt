@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.cashflow
 
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
@@ -8,11 +9,14 @@ import com.yourname.expensetracker.data.database.entity.toRecurringPattern
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -20,6 +24,7 @@ import timber.log.Timber
 import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 
 data class DailyCashFlow(
     val date: Date,
@@ -34,7 +39,16 @@ data class DailyCashFlow(
     /** S8-023: true when one or more currency conversions failed for this day */
     val isPartial: Boolean = false,
     /** S8-023: count of failed currency conversions for this day */
-    val failedConversionCount: Int = 0
+    val failedConversionCount: Int = 0,
+    /**
+     * P6-CURRENT-018: true when occurrence projection failed for one or more
+     * manual recurring rules and the calculator fell back to ad-hoc expansion.
+     * Bills are NOT dropped (they are recovered via fallback), but the result is
+     * approximate, so this surfaces a data-quality signal to the UI.
+     */
+    val occurrenceGenerationFailed: Boolean = false,
+    /** P6-CURRENT-018: number of manual rules whose occurrence projection failed. */
+    val failedOccurrenceRuleCount: Int = 0
 )
 
 enum class CashFlowRiskLevel {
@@ -53,32 +67,39 @@ class CashFlowCalculator @Inject constructor(
     private val recurringOccurrenceDao: RecurringOccurrenceDao,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val currencyConverter: CurrencyConverter
+    private val currencyConverter: CurrencyConverter,
+    private val databaseReadBarrier: DatabaseReadBarrier
 ) {
-    companion object {
-        private const val TAG = "CashFlowCalculator"
-    }
 
     /**
      * Calculates daily cash flow for a given date range.
      *
-     * @param startingBalance The opening balance for the forecast period.
-     *   **MUST be denominated in the user's home currency.** Passing a balance in a
-     *   foreign currency will produce incorrect projections since all internal
-     *   calculations normalize to home currency.
+     * @param startingBalance The opening balance for the forecast period as a typed
+     *   [MoneyAmount]. The currency precondition is now **type-enforced**: this MUST be
+     *   denominated in the user's home currency. A balance whose currency does not match
+     *   the resolved home currency is **rejected** with [IllegalArgumentException] rather
+     *   than auto-converted, since all internal calculations normalize to home currency.
      *
-     * ## FCST-3: Occurrence-driven prediction
-     * This method uses [RecurringLifecycleCoordinator.generateOccurrences] (called inside
-     * [getUpcomingBills]) to materialise PLANNED occurrences from manual recurring rules,
-     * then queries [RecurringOccurrenceDao] for the canonical list of upcoming obligations.
-     * Detected-only patterns (without a manual rule) are handled via ad-hoc date matching
-     * on [RecurringPattern.nextExpectedDate]. This two-path approach ensures that all
-     * recurring obligations are captured without double-counting.
+     * ## FCST-3 / P6-CURRENT-024: Read-only occurrence-driven prediction
+     * This method PROJECTS occurrences in memory via
+     * [RecurringLifecycleCoordinator.projectOccurrences] (no row materialization,
+     * no lifecycle events, no write barrier) and merges them by occurrenceKey with
+     * any already-materialized rows read through [RecurringOccurrenceDao] (guarded
+     * by [DatabaseReadBarrier]). Materialized rows carry authoritative status and
+     * override projections for the same key. Detected-only patterns (without a
+     * manual rule) are handled via ad-hoc date matching on
+     * [RecurringPattern.nextExpectedDate]. This approach captures all recurring
+     * obligations without double-counting and without writing on a read path.
+     *
+     * ## P6-CURRENT-018: Occurrence projection failure
+     * If projection fails for a manual rule, the calculator falls back to ad-hoc
+     * expansion for that rule (so bills are not silently dropped) and flags the
+     * affected days via [DailyCashFlow.occurrenceGenerationFailed].
      */
     suspend fun calculateDailyCashFlow(
         startDate: Date,
         endDate: Date,
-        startingBalance: Double = 0.0
+        startingBalance: MoneyAmount
     ): List<DailyCashFlow> {
         // CURR-70F-09: Use typed resolution — fail explicitly if home currency unavailable
         val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
@@ -87,64 +108,94 @@ class CashFlowCalculator @Inject constructor(
             is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
                 throw IllegalStateException("Home currency unavailable for cash flow: ${resolution.reason}")
         }
+        // P6-CURRENT-020: Reject (do NOT auto-convert) a starting balance whose currency
+        // does not match the resolved home currency. The type now carries the currency,
+        // so a mismatch is a caller bug, not something to silently coerce.
+        require(startingBalance.currency.code.equals(homeCurrency, ignoreCase = true)) {
+            "startingBalance currency '${startingBalance.currency.code}' does not match home currency '$homeCurrency'. " +
+                "Pass the starting balance in the home currency (no auto-conversion is performed)."
+        }
         val calendar = Calendar.getInstance()
         val results = mutableListOf<DailyCashFlow>()
-        var runningBalance = startingBalance
+        var runningBalance = startingBalance.amount
 
         val startTime = startDate.time
         val endTime = endDate.time
 
         // ── Pre-compute occurrence-driven predictions (FCST-3) ──────────────
-        // Part 1: Manual rules — materialise occurrences via the lifecycle
-        // coordinator, then query PLANNED occurrences for the full range.
+        // P6-CURRENT-024: READ-ONLY. Manual rules are PROJECTED in memory via the
+        // coordinator (no row materialization, no lifecycle events, no write
+        // barrier). Already-materialized rows are read separately (guarded by the
+        // read barrier) so user overrides (SKIPPED/CANCELLED) still take effect.
         val recurringPatterns = recurringPatternsProvider.getConfirmedPatterns()
-        val ruleIds = recurringPatterns
-            .filter { it.id != null }
+        val manualPatterns = recurringPatterns.filter { it.id != null }
+        val ruleIds = manualPatterns
             .mapNotNull { it.id }
             .distinct()
 
-        if (ruleIds.isNotEmpty()) {
-            for (ruleId in ruleIds) {
-                try {
-                    recurringLifecycleCoordinator.generateOccurrences(
-                        ruleId = ruleId,
-                        startDate = startTime,
-                        endDate = endTime,
-                        options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
-                            createReminderDeliveries = false,
-                            generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
-                        )
-                    )
-                } catch (e: Exception) {
-                    Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d", ruleId)
-                }
+        // P6-CURRENT-018: track rules whose projection failed so we can fall back
+        // to ad-hoc expansion (bills are NOT silently dropped) and surface a flag.
+        val failedRuleIds = mutableListOf<Long>()
+        val projectedOccurrences = mutableListOf<RecurringOccurrence>()
+        for (ruleId in ruleIds) {
+            try {
+                projectedOccurrences += recurringLifecycleCoordinator.projectOccurrences(
+                    ruleId = ruleId,
+                    startDate = startTime,
+                    endDate = endTime
+                )
+            } catch (e: Exception) {
+                Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d — falling back to ad-hoc expansion", ruleId)
+                failedRuleIds.add(ruleId)
             }
         }
 
-        val plannedOccurrences = if (ruleIds.isNotEmpty()) {
-            recurringOccurrenceDao.getByDateRange(startTime, endTime)
-                .filter {
-                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
-                        it.sourceId in ruleIds &&
-                        it.status == "PLANNED"
-                }
+        // Read already-materialized occurrences (READ-ONLY, barrier-guarded).
+        // Materialized rows carry authoritative status and override projections
+        // for the same occurrenceKey (keys align — projection reuses the exact
+        // expand logic the materializer uses).
+        val materializedOccurrences: List<RecurringOccurrence> = if (ruleIds.isNotEmpty()) {
+            try {
+                databaseReadBarrier.checkReadAllowed("CashFlowCalculator.calculateDailyCashFlow.readOccurrences")
+                recurringOccurrenceDao.getByDateRange(startTime, endTime)
+                    .filter {
+                        it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                            it.sourceId in ruleIds
+                    }
+            } catch (e: Exception) {
+                Timber.w(e, "$TAG: reading materialized occurrences failed")
+                emptyList()
+            }
         } else {
             emptyList()
         }
 
+        val mergedOccurrencesByKey = LinkedHashMap<String, RecurringOccurrence>()
+        for (occ in projectedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
+        for (occ in materializedOccurrences) mergedOccurrencesByKey[occ.occurrenceKey] = occ
+        val plannedOccurrences = mergedOccurrencesByKey.values.filter { it.status == "PLANNED" }
+
         // Build a day-indexed map from occurrences (yyyy-MM-dd → patterns)
         val occurrencePatternsByDay = mutableMapOf<String, MutableList<RecurringPattern>>()
         for (occ in plannedOccurrences) {
-            val occCal = Calendar.getInstance().apply { timeInMillis = occ.dueDate }
-            val dayKey = String.format(
-                Locale.US, "%04d-%02d-%02d",
-                occCal.get(Calendar.YEAR),
-                occCal.get(Calendar.MONTH) + 1,
-                occCal.get(Calendar.DAY_OF_MONTH)
-            )
-            occurrencePatternsByDay.getOrPut(dayKey) { mutableListOf() }
+            occurrencePatternsByDay.getOrPut(formatDayKey(occ.dueDate)) { mutableListOf() }
                 .add(occ.toRecurringPattern())
         }
+
+        // P6-CURRENT-018: Ad-hoc fallback for rules whose projection failed.
+        // Mirror FinancialStressForecastEngine's failed-rule fallback so the bills
+        // still appear in the forecast (approximate, flagged via occurrenceGenerationFailed).
+        if (failedRuleIds.isNotEmpty()) {
+            val failedPatterns = manualPatterns.filter { it.id in failedRuleIds }
+            for (pattern in failedPatterns) {
+                for (dueDate in expandPatternDueDates(pattern, startTime, endTime)) {
+                    occurrencePatternsByDay.getOrPut(formatDayKey(dueDate)) { mutableListOf() }
+                        .add(pattern)
+                }
+            }
+        }
+        val occurrenceGenerationFailed = failedRuleIds.isNotEmpty()
+        val failedOccurrenceRuleCount = failedRuleIds.size
 
         // Part 2: Detected-only patterns (no manual rule) —
         // ad-hoc date matching on nextExpectedDate.
@@ -222,15 +273,43 @@ class CashFlowCalculator @Inject constructor(
                 }
             }
             
-            // FCST-12: Deduplicate by merchant/date when both actual and predicted
-            // expenses exist on the same day. If an actual expense has the same merchant
-            // as a predicted recurring pattern, the predicted amount is omitted to
-            // prevent double-counting.
-            val actualMerchants = (incomeList + expenseList).mapTo(mutableSetOf()) {
-                it.merchant.lowercase().trim()
+            // P6-CURRENT-019: Content-aware dedup (replaces merchant-name-only).
+            // A predicted recurring item is suppressed only when it matches another
+            // item by canonical merchant key (MerchantKeyGenerator) + currency +
+            // amount within tolerance, on this same day. This dedupes:
+            //   • predicted-vs-actual: a real expense already covers the bill
+            //   • predicted-vs-predicted: duplicate projections collapse to one
+            // It does NOT merge legitimately distinct same-merchant bills (e.g. a
+            // €15 and a €70 Netflix charge), because amount/currency are part of the key.
+            val actualSignatures = (incomeList + expenseList).map { exp ->
+                ContentSignature(
+                    merchantKey = merchantKeyOf(exp.merchant),
+                    currency = exp.currency.uppercase(Locale.US),
+                    amount = exp.amount
+                )
             }
-            val deduplicatedPredicted = predictedRecurringList.filterNot { pattern ->
-                pattern.merchantName.lowercase().trim() in actualMerchants
+            val deduplicatedPredicted = mutableListOf<RecurringPattern>()
+            for (pattern in predictedRecurringList) {
+                val patternKey = merchantKeyOf(pattern.merchantName)
+                val patternCurrency = pattern.currency.uppercase(Locale.US)
+
+                // predicted-vs-actual
+                val matchesActual = actualSignatures.any { sig ->
+                    sig.merchantKey == patternKey &&
+                        sig.currency == patternCurrency &&
+                        amountsWithinTolerance(sig.amount, pattern.averageAmount)
+                }
+                if (matchesActual) continue
+
+                // predicted-vs-predicted (against already-accepted items)
+                val matchesAccepted = deduplicatedPredicted.any { accepted ->
+                    merchantKeyOf(accepted.merchantName) == patternKey &&
+                        accepted.currency.uppercase(Locale.US) == patternCurrency &&
+                        amountsWithinTolerance(accepted.averageAmount, pattern.averageAmount)
+                }
+                if (matchesAccepted) continue
+
+                deduplicatedPredicted.add(pattern)
             }
 
             // Calculate ending balance — normalize to home currency
@@ -309,8 +388,12 @@ class CashFlowCalculator @Inject constructor(
                     riskLevel = riskLevel,
                     currency = homeCurrency,
                     // S8-022/S8-023: Surface data quality to UI
-                    isPartial = conversionFailures > 0,
-                    failedConversionCount = conversionFailures
+                    isPartial = conversionFailures > 0 || occurrenceGenerationFailed,
+                    failedConversionCount = conversionFailures,
+                    // P6-CURRENT-018: Surface occurrence-projection failures so
+                    // bills approximated via ad-hoc fallback are flagged, not hidden.
+                    occurrenceGenerationFailed = occurrenceGenerationFailed,
+                    failedOccurrenceRuleCount = failedOccurrenceRuleCount
                 )
             )
             
@@ -333,31 +416,39 @@ class CashFlowCalculator @Inject constructor(
             .mapNotNull { it.id }
             .distinct()
 
-        // ── Part 1: Manual rules — canonical occurrence path ────────────────
+        // ── Part 1: Manual rules — READ-ONLY occurrence path ────────────────
+        // P6-CURRENT-024: project occurrences in memory (no writes) and merge with
+        // any already-materialized rows (barrier-guarded read) by occurrenceKey so
+        // user overrides win and there is no double-count.
         val manualUpcoming = if (ruleIds.isNotEmpty()) {
-            // Generate (materialise) occurrences for each rule
+            val projected = mutableListOf<RecurringOccurrence>()
             for (ruleId in ruleIds) {
                 try {
-                    recurringLifecycleCoordinator.generateOccurrences(
+                    projected += recurringLifecycleCoordinator.projectOccurrences(
                         ruleId = ruleId,
                         startDate = startOfToday,
-                        endDate = endDate,
-                        options = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationOptions(
-                            createReminderDeliveries = false,
-                            generationSource = com.yourname.expensetracker.domain.recurring.lifecycle.OccurrenceGenerationSource.CASHFLOW_FORECAST
-                        )
+                        endDate = endDate
                     )
                 } catch (e: Exception) {
-                    Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d, skipping rule", ruleId)
+                    Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d, skipping rule", ruleId)
                 }
             }
-            // Query PLANNED occurrences = upcoming obligations
-            recurringOccurrenceDao.getByDateRange(startOfToday, endDate)
-                .filter {
-                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
-                        it.sourceId in ruleIds &&
-                        it.status == "PLANNED"
-                }
+            val materialized = try {
+                databaseReadBarrier.checkReadAllowed("CashFlowCalculator.getUpcomingBills.readOccurrences")
+                recurringOccurrenceDao.getByDateRange(startOfToday, endDate)
+                    .filter {
+                        it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                            it.sourceId in ruleIds
+                    }
+            } catch (e: Exception) {
+                Timber.w(e, "$TAG: reading materialized occurrences failed in getUpcomingBills")
+                emptyList()
+            }
+            val mergedByKey = LinkedHashMap<String, RecurringOccurrence>()
+            for (occ in projected) mergedByKey[occ.occurrenceKey] = occ
+            for (occ in materialized) mergedByKey[occ.occurrenceKey] = occ
+            mergedByKey.values
+                .filter { it.status == "PLANNED" }
                 .map { it.toRecurringPattern() }
         } else {
             emptyList()
@@ -380,4 +471,90 @@ class CashFlowCalculator @Inject constructor(
             com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
             com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
         }
+
+    /**
+     * P6-CURRENT-019: Content signature used for content-aware dedup of predicted
+     * recurring items against actual expenses and other predictions on the same day.
+     */
+    private data class ContentSignature(
+        val merchantKey: String,
+        val currency: String,
+        val amount: Double
+    )
+
+    /**
+     * Canonical merchant key with a consistent fallback (mirrors the fallback used
+     * across forecast paths): when [MerchantKeyGenerator] yields blank, fall back to
+     * the lowercase trimmed name so blank-key merchants still dedupe against
+     * themselves rather than collapsing all blanks together.
+     */
+    private fun merchantKeyOf(merchant: String): String =
+        MerchantKeyGenerator.generate(merchant)
+            .takeIf { it.isNotBlank() }
+            ?: merchant.lowercase(Locale.US).trim()
+
+    /**
+     * P6-CURRENT-019: Amounts match when within ±[AMOUNT_TOLERANCE_PERCENT] of the
+     * larger magnitude. Distinct amounts (e.g. €15 vs €70) never match, so
+     * legitimately different same-merchant bills are preserved.
+     */
+    private fun amountsWithinTolerance(a: Double, b: Double): Boolean {
+        if (!a.isFinite() || !b.isFinite()) return false
+        val reference = maxOf(abs(a), abs(b))
+        if (reference == 0.0) return abs(a - b) < 0.0001
+        return abs(a - b) <= reference * AMOUNT_TOLERANCE_PERCENT
+    }
+
+    /** Formats an epoch-ms instant to a yyyy-MM-dd key (avoids cross-year collisions). */
+    private fun formatDayKey(epochMs: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = epochMs }
+        return String.format(
+            Locale.US, "%04d-%02d-%02d",
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH) + 1,
+            cal.get(Calendar.DAY_OF_MONTH)
+        )
+    }
+
+    /**
+     * P6-CURRENT-018: Ad-hoc due-date expansion for a manual pattern, used only as a
+     * fallback when occurrence projection fails for that rule. Mirrors the
+     * calendar-aware advancement used by [FinancialStressForecastEngine.expandDetectedPatterns].
+     * Returns due dates in `[startTime, endTime)` (half-open, matching the projection range).
+     */
+    private fun expandPatternDueDates(
+        pattern: RecurringPattern,
+        startTime: Long,
+        endTime: Long
+    ): List<Long> {
+        if (pattern.frequency == RecurrenceFrequency.IRREGULAR) return emptyList()
+        if (startTime >= endTime) return emptyList()
+
+        val dueDates = mutableListOf<Long>()
+        var next = pattern.nextExpectedDate
+        var iterations = 0
+        while (next < endTime) {
+            if (++iterations > 1000) {
+                Timber.w("$TAG: expandPatternDueDates exceeded 1000 iterations, breaking")
+                break
+            }
+            if (next >= startTime) dueDates.add(next)
+            next = when (pattern.frequency) {
+                RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(next, 7)
+                RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(next, 14)
+                RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(next, 1)
+                RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(next, 3)
+                RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(next, 6)
+                RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(next, 1)
+                RecurrenceFrequency.IRREGULAR -> break
+            }
+        }
+        return dueDates
+    }
+
+    companion object {
+        private const val TAG = "CashFlowCalculator"
+        /** P6-CURRENT-019: ±10% amount tolerance for content-aware dedup. */
+        private const val AMOUNT_TOLERANCE_PERCENT = 0.10
+    }
 }

@@ -18,6 +18,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -177,6 +178,99 @@ class RecurringLifecycleCoordinatorTest {
             thrown = t
         }
 
+        assertTrue(thrown is IllegalArgumentException)
+    }
+
+    // ── P6-CURRENT-024: read-only projection performs NO DB writes ─────────
+
+    @Test
+    fun `projectOccurrences returns occurrences with no DB writes`() = runTest {
+        val rule = ManualRecurringExpense(
+            id = 1L,
+            merchant = "Netflix",
+            amount = 15.99,
+            currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = now
+        )
+        coEvery { manualRecurringExpenseDao.getById(1L) } returns rule
+
+        val candidates = listOf(
+            RecurringOccurrenceExpander.OccurrenceCandidate(
+                occurrenceKey = "RECURRING_RULE|1|$now|MONTHLY",
+                dueDate = now,
+                expectedAmount = 15.99,
+                expectedCurrency = "EUR",
+                frequency = "MONTHLY",
+                merchant = "Netflix",
+                categoryId = null,
+                sourceType = "RECURRING_RULE",
+                sourceId = 1L
+            )
+        )
+        coEvery { expander.expand(any()) } returns candidates
+        coEvery { resolver.resolve(any(), any()) } returns listOf(
+            OccurrenceConflictResolver.ResolvedOccurrence(
+                candidate = candidates.first(),
+                status = "PLANNED"
+            )
+        )
+
+        val result = coordinator.projectOccurrences(
+            ruleId = 1L,
+            startDate = startDate,
+            endDate = endDate
+        )
+
+        // Returns projected occurrences computed in memory.
+        assertEquals(1, result.size)
+        assertEquals("PLANNED", result.first().status)
+        assertEquals("RECURRING_RULE|1|$now|MONTHLY", result.first().occurrenceKey)
+        // Transient: never persisted (id stays 0).
+        assertEquals(0L, result.first().id)
+
+        // CRITICAL: no materialization, no DAO inserts/updates, no events, no
+        // write barrier — this is a pure read.
+        coVerify(exactly = 0) { materializer.materialize(any(), any()) }
+        coVerify(exactly = 0) { materializer.materializeInCurrentTransaction(any(), any()) }
+        coVerify(exactly = 0) { occurrenceDao.insert(any()) }
+        coVerify(exactly = 0) { occurrenceDao.insertAll(any()) }
+        coVerify(exactly = 0) { occurrenceDao.update(any()) }
+        coVerify(exactly = 0) { lifecycleEventDao.insert(any()) }
+        verify(exactly = 0) { writeBarrier.checkWritesAllowed(any<String>()) }
+    }
+
+    @Test
+    fun `projectOccurrences returns empty for inactive rule without writes`() = runTest {
+        val rule = ManualRecurringExpense(
+            id = 2L,
+            merchant = "OldSub",
+            amount = 5.0,
+            currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = now,
+            isActive = false
+        )
+        coEvery { manualRecurringExpenseDao.getById(2L) } returns rule
+
+        val result = coordinator.projectOccurrences(2L, startDate, endDate)
+
+        assertTrue(result.isEmpty())
+        coVerify(exactly = 0) { materializer.materialize(any(), any()) }
+        coVerify(exactly = 0) { occurrenceDao.insert(any()) }
+        verify(exactly = 0) { writeBarrier.checkWritesAllowed(any<String>()) }
+    }
+
+    @Test
+    fun `projectOccurrences throws when rule not found`() = runTest {
+        coEvery { manualRecurringExpenseDao.getById(404L) } returns null
+
+        var thrown: Throwable? = null
+        try {
+            coordinator.projectOccurrences(404L, startDate, endDate)
+        } catch (t: Throwable) {
+            thrown = t
+        }
         assertTrue(thrown is IllegalArgumentException)
     }
 }

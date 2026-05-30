@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.CategorySpentTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
@@ -43,6 +44,28 @@ import timber.log.Timber
  * Coordinates between BudgetDao, CategoryDao, ExpenseDao, and multi-currency
  * services to provide budget snapshots, spending status, and health assessments.
  * Uses [MultiCurrencyRepository] for currency-safe aggregation.
+ *
+ * ## Delete policy (P6-CURRENT-005 / P6-P1-15)
+ * Deleting a budget **purges its forecasts**. This is the documented, intentional
+ * policy: a [com.yourname.expensetracker.data.database.entity.BudgetForecast] is tied
+ * to its parent budget and has no standalone meaning once the budget is gone. The
+ * `budget_forecasts.budgetId → budgets(id)` foreign key uses `onDelete = CASCADE`
+ * (Option A: CASCADE-purge, schema v142 — see the FK KDoc on
+ * [com.yourname.expensetracker.data.database.entity.BudgetForecast]), so the database
+ * removes a budget's forecasts automatically whenever that budget row is deleted.
+ *
+ * Consequences for every budget-delete path in this repository:
+ * - [deleteBudget] removes a single budget; the CASCADE FK purges that budget's
+ *   forecasts. The method ALSO issues an explicit
+ *   [BudgetForecastDao.deleteForecastsForBudget] inside the same transaction as a
+ *   belt-and-suspenders measure (see that method for the rationale).
+ * - [deleteAll] issues `DELETE FROM budgets`; the CASCADE FK purges every forecast,
+ *   so no orphan forecast rows can remain.
+ * - [restoreDebugSnapshot] / `replaceAllAndEnforceActiveScopes` delete all budgets
+ *   before re-inserting the snapshot; the CASCADE FK purges all forecasts in the
+ *   same step. Restored budgets receive fresh ids and the forecasting engine (G5)
+ *   regenerates forecasts from scratch — pre-restore forecasts are intentionally not
+ *   carried over.
  */
 @Singleton
 class BudgetRepository @Inject constructor(
@@ -58,7 +81,14 @@ class BudgetRepository @Inject constructor(
     private val multiCurrencyRepository: MultiCurrencyRepository,
     private val writeBarrier: DatabaseWriteBarrier,
     private val database: AppDatabase,
-    private val budgetForecastDao: BudgetForecastDao
+    private val budgetForecastDao: BudgetForecastDao,
+    /**
+     * P6-CURRENT-026: Durable lifecycle diagnostics for budget CRUD. Nullable + defaulted so
+     * existing test construction sites compile unchanged; Hilt injects the real writer in
+     * production via the existing DiagnosticsModule binding. Emission is always best-effort.
+     */
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter? = null,
+    private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink? = null
 ) {
     data class DebugBudgetSnapshot(
         val budgets: List<Budget>
@@ -160,10 +190,11 @@ class BudgetRepository @Inject constructor(
         // getCategorySpentInPeriod / getTotalForPeriod already filter by
         // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
         //
-        // TODO (P6-CURRENT-001): Budget limit and spend use different FX bases.
-        // The limit is converted at period-end historical rate (below), but spend
-        // aggregates use latest-rate via MultiCurrencyRepository. For consistency,
-        // both should use the same rate basis (either both historical or both latest).
+        // P6-CURRENT-001 (RESOLVED): the limit is converted at the period-end historical
+        // rate (below) and getAggregateSpent() now converts the per-currency spend buckets
+        // at the same period-end rate via a BOUNDED grouped-by-currency query (no uncapped
+        // per-row scan), preserving the truncation-safety contract while keeping a closed
+        // period's percentUsed stable across later rate changes.
         //
         // P6-P1-06: Convert the budget limit at the period-end historical rate
         // so it matches the rate basis of expenses (converted at transaction-date
@@ -288,6 +319,7 @@ class BudgetRepository @Inject constructor(
             periodStart = periodStart,
             periodEnd = periodEnd,
             effectiveLimit = effectiveLimit,            // Store the rolled-over limit separately
+            adjustedSpendBreakdown = computeAdjustedSpend(budget, periodStart, periodEnd),
             currency = initialLimitAggregate.displayCurrency.code,
             isPartial = budgetIsPartial,
             conversionWarning = listOfNotNull(budgetWarningMessage, spentAggregate.warningMessage)
@@ -298,12 +330,48 @@ class BudgetRepository @Inject constructor(
     }
 
     /**
-     * Returns the aggregate spend for a half-open date window using SQL-level
-     * aggregation.  Delegates to [ExpenseDao.getCategorySpentInPeriod] for
-     * category-scoped budgets and [ExpenseDao.getTotalForPeriod] for
-     * whole-wallet budgets.  Both DAO methods already filter by
-     * `transactionType = 'PURCHASE' AND isNotMine = 0` and use the
-     * effective-amount SQL helper, matching the previous in-memory logic.
+     * P6-CURRENT-002: Computes the shared-expense adjusted spend breakdown so that
+     * both the UI and [com.yourname.expensetracker.domain.budget.BudgetMonitor]
+     * (which reads repository statuses) see the same effective spend. Without this,
+     * the monitor fell back to gross [BudgetStatus.spentAmount] and could fire
+     * false alerts when shared-expense reimbursements applied.
+     *
+     * Returns null on offset-engine failure; callers fall back to gross spend.
+     */
+    private suspend fun computeAdjustedSpend(
+        budget: Budget,
+        periodStart: Long,
+        periodEnd: Long
+    ): AdjustedSpendBreakdown? {
+        return try {
+            val breakdown = offsetEngine.calculateEffectiveBudgetSpend(
+                periodStart = periodStart,
+                periodEnd = periodEnd,
+                categoryId = budget.categoryId
+            )
+            AdjustedSpendBreakdown(
+                personalSpend = breakdown.totalPersonalSpend,
+                sharedSpend = breakdown.totalSharedSpend,
+                reimbursedAmount = breakdown.totalReimbursed,
+                netSharedLiability = breakdown.netSharedLiability,
+                effectiveSpend = breakdown.effectiveBudgetSpend,
+                pendingReimbursements = breakdown.getPendingReimbursement()
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to compute adjusted spend for budget ${budget.id}; monitor/UI fall back to gross spend")
+            null
+        }
+    }
+
+    /**
+     * Returns the aggregate spend for a half-open date window using **bounded**
+     * per-currency aggregation converted at the period-end (as-of [end]) rate.
+     *
+     * P6-CURRENT-001 (RESOLVED): budget actuals now share the same FX basis as the
+     * budget limit (both period-end historical). This uses the grouped-by-currency
+     * DAO query — O(currencies), no uncapped per-row scan — so it preserves the
+     * truncation-safety contract (BudgetRepositoryTruncationTest) while making a
+     * closed period's percentUsed stable when today's rate changes.
      */
     private suspend fun getAggregateSpent(
         categoryId: Long?,
@@ -311,16 +379,16 @@ class BudgetRepository @Inject constructor(
         end: Long
     ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
         val homeCurrency = resolveHomeCurrency()
-        // TODO (P3-05): N+1 category budget query — getHomeCurrencyPurchaseCategoryTotals is called
-        // once per budget period in the rollover loop. Batch all periods into a single DAO query
-        // that returns per-category totals grouped by period to eliminate the N+1 pattern.
+        // TODO (P3-05): N+1 category budget query — getHomeCurrencyPurchaseCategoryTotalsAsOf is
+        // called once per budget period in the rollover loop. Batch all periods into a single DAO
+        // query that returns per-category totals grouped by period to eliminate the N+1 pattern.
         return if (categoryId != null) {
-            multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)[categoryId]
+            multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotalsAsOf(start, end, end)[categoryId]
                 ?: com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
                     CurrencyCode(homeCurrency)
                 )
         } else {
-            multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end)
+            multiCurrencyRepository.getHomeCurrencyPurchaseTotalAsOf(start, end, end)
         }
     }
 
@@ -439,10 +507,53 @@ class BudgetRepository @Inject constructor(
         }
     }
 
+    /**
+     * P6-CURRENT-026: Best-effort durable lifecycle diagnostic for budget CRUD.
+     *
+     * Mirrors the [com.yourname.expensetracker.domain.budget.BudgetMonitor] emission pattern:
+     * write-barrier-guarded and tolerant of [com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException]
+     * (routed to the [diagnosticSink]). A failure to emit NEVER fails or rolls back the mutation —
+     * all exceptions except [kotlinx.coroutines.CancellationException] are swallowed.
+     */
+    private suspend fun emitBudgetDiagnostic(
+        stage: String,
+        outcome: com.yourname.expensetracker.domain.diagnostics.EventOutcome,
+        entityId: Long?,
+        severity: com.yourname.expensetracker.domain.diagnostics.EventSeverity =
+            com.yourname.expensetracker.domain.diagnostics.EventSeverity.INFO,
+        exception: Throwable? = null,
+        metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata =
+            com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.empty()
+    ) {
+        val writer = diagnosticEventWriter ?: return
+        try {
+            writeBarrier.checkWritesAllowed("BudgetRepository.diagnostic")
+            writer.emit(
+                com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = stage,
+                    outcome = outcome,
+                    severity = severity,
+                    entityType = "Budget",
+                    entityId = entityId,
+                    exception = exception,
+                    metadata = metadata
+                )
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                diagnosticSink?.recordBlockedOperation("BudgetRepository.diagnostic", e.mode, "P6")
+            } else {
+                Timber.w(e, "BudgetRepository: skipping diagnostic insert (stage=%s)", stage)
+            }
+        }
+    }
+
     suspend fun addBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Long> {
         return try {
             writeBarrier.checkWritesAllowed("BudgetRepository.addBudget")
-            if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
+            validateBudget(budget)
             if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
             val budgetToInsert = if (budget.createdAt == 0L) {
                 budget.copy(createdAt = timeProvider.now())
@@ -453,9 +564,28 @@ class BudgetRepository @Inject constructor(
                 else -> budgetDao.insertAndActivateCategory(budgetToInsert)
             }
             // budgetMonitor.checkBudgets() // Removed to avoid circular dependency. Monitor should observe flow.
+            emitBudgetDiagnostic(
+                stage = "BUDGET_ADDED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
+                entityId = id,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("amount", budgetToInsert.amount)
+                    .put("currency", budgetToInsert.currency)
+                    .build()
+            )
             com.yourname.expensetracker.domain.model.Result.Success(id)
         } catch (e: Exception) {
             Timber.e(e, "Failed to add budget")
+            emitBudgetDiagnostic(
+                stage = "BUDGET_ADD_FAILED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                entityId = budget.id.takeIf { it != 0L },
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                exception = e,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("reason", "ADD_REJECTED_OR_FAILED")
+                    .build()
+            )
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to add budget")
         }
     }
@@ -463,7 +593,7 @@ class BudgetRepository @Inject constructor(
     suspend fun updateBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
             writeBarrier.checkWritesAllowed("BudgetRepository.updateBudget")
-            if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
+            validateBudget(budget)
             // Reset notifications when budget is edited so user gets fresh alerts (BUG-7 Fix)
             val resetBudget = budget.copy(
                 lastWarningNotifiedAt = null,
@@ -472,9 +602,28 @@ class BudgetRepository @Inject constructor(
             )
             budgetDao.updateAndEnforceActiveScope(resetBudget)
             // budgetMonitor.checkBudgets()
+            emitBudgetDiagnostic(
+                stage = "BUDGET_UPDATED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.UPDATED,
+                entityId = budget.id,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("amount", budget.amount)
+                    .put("currency", budget.currency)
+                    .build()
+            )
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             Timber.e(e, "Failed to update budget ${budget.id}")
+            emitBudgetDiagnostic(
+                stage = "BUDGET_UPDATE_FAILED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                entityId = budget.id.takeIf { it != 0L },
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                exception = e,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("reason", "UPDATE_REJECTED_OR_FAILED")
+                    .build()
+            )
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to update budget")
         }
     }
@@ -493,7 +642,7 @@ class BudgetRepository @Inject constructor(
      */
     suspend fun updateBudgetOrThrow(budget: Budget) {
         writeBarrier.checkWritesAllowed("BudgetRepository.updateBudgetOrThrow")
-        if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
+        validateBudget(budget)
         val resetBudget = budget.copy(
             lastWarningNotifiedAt = null,
             lastCriticalNotifiedAt = null,
@@ -502,19 +651,81 @@ class BudgetRepository @Inject constructor(
         budgetDao.updateAndEnforceActiveScope(resetBudget)
     }
 
+    /**
+     * P6-CURRENT-029: Boundary validation for budget writes.
+     *
+     * The previous `amount <= 0.0` check let NaN/Infinity through (NaN <= 0.0 is
+     * false), which poisoned percent and forecast arithmetic. This validates a
+     * finite positive amount, a non-blank ISO-like currency code, and threshold
+     * ordering that mirrors [com.yourname.expensetracker.ui.screens.budget.BudgetViewModel].
+     *
+     * @throws IllegalArgumentException on any invalid field.
+     */
+    private fun validateBudget(budget: Budget) {
+        require(budget.amount.isFinite() && budget.amount > 0.0) {
+            "Budget amount must be a positive finite number"
+        }
+        require(budget.currency.isNotBlank()) { "Budget currency must not be blank" }
+        require(budget.notifyAtWarning > 0f && budget.notifyAtWarning < 1f) {
+            "Warning threshold must be between 0 and 1 (exclusive)"
+        }
+        require(budget.notifyAtCritical > budget.notifyAtWarning && budget.notifyAtCritical <= 1.0f) {
+            "Critical threshold must be greater than warning and at most 1.0"
+        }
+    }
+
+    /**
+     * Deletes a budget and purges its forecasts (P6-CURRENT-005 / P6-P1-15).
+     *
+     * The `budget_forecasts.budgetId → budgets(id)` FK is `onDelete = CASCADE`
+     * (schema v142), so `budgetDao.delete(budget)` alone is sufficient — SQLite
+     * purges the budget's forecasts automatically.
+     *
+     * **Decision: keep the explicit purge (belt-and-suspenders).** We deliberately
+     * retain the explicit [BudgetForecastDao.deleteForecastsForBudget] call inside
+     * the same [androidx.room.withTransaction] as the budget delete, for three reasons:
+     *  1. Explicit, testable control: the repository contract makes the
+     *     forecast-purge observable at the repository layer (and assertable in unit
+     *     tests that use mocked DAOs, where no real FK cascade fires).
+     *  2. Defence in depth: if a future schema/migration regression ever weakened
+     *     the FK back to RESTRICT, the explicit delete keeps this path correct
+     *     instead of silently throwing on budgets that have forecast history.
+     *  3. Zero correctness cost: deleting already-deleted (cascaded) rows is a
+     *     no-op, and both statements share one transaction so there is no partial
+     *     state. This does NOT bypass the lifecycle write-barrier — the whole
+     *     operation runs under [DatabaseWriteBarrier.checkWritesAllowed].
+     */
     suspend fun deleteBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
             writeBarrier.checkWritesAllowed("BudgetRepository.deleteBudget")
-            // Delete forecasts first to avoid FK constraint violation,
-            // then delete the budget — all in a single DB transaction.
+            // Belt-and-suspenders: the FK CASCADE (schema v142) already purges this
+            // budget's forecasts when the budget row is deleted. We ALSO purge them
+            // explicitly first, in the SAME transaction, for explicit/testable control
+            // and defence-in-depth (see KDoc above). Deleting forecasts that the
+            // cascade would also remove is a harmless no-op.
             database.withTransaction {
                 budgetForecastDao.deleteForecastsForBudget(budget.id)
                 budgetDao.delete(budget)
             }
+            emitBudgetDiagnostic(
+                stage = "BUDGET_DELETED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DELETED,
+                entityId = budget.id
+            )
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             Timber.e(e, "Failed to delete budget ${budget.id}")
-            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete budget (it may have forecast history — use archive policy or contact support)")
+            emitBudgetDiagnostic(
+                stage = "BUDGET_DELETE_FAILED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                entityId = budget.id.takeIf { it != 0L },
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                exception = e
+            )
+            // P6-CURRENT-005 / P6-P1-15: forecast history no longer blocks deletion
+            // (FK is CASCADE, schema v142), so a failure here is a genuine DB/write-barrier
+            // error rather than the old RESTRICT-era "has forecasts" rejection.
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete budget")
         }
     }
 
@@ -522,13 +733,38 @@ class BudgetRepository @Inject constructor(
         return try {
             writeBarrier.checkWritesAllowed("BudgetRepository.toggleBudget")
             budgetDao.setActiveAndEnforceScope(id, isActive)
+            emitBudgetDiagnostic(
+                stage = "BUDGET_TOGGLED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.UPDATED,
+                entityId = id,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("isActive", isActive)
+                    .build()
+            )
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             Timber.e(e, "Failed to toggle budget $id")
+            emitBudgetDiagnostic(
+                stage = "BUDGET_TOGGLE_FAILED",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                entityId = id.takeIf { it != 0L },
+                severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.WARNING,
+                exception = e,
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("isActive", isActive)
+                    .build()
+            )
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to toggle budget")
         }
     }
 
+    /**
+     * Deletes every budget. The `budget_forecasts → budgets` FK is CASCADE
+     * (schema v142), so `DELETE FROM budgets` purges every forecast as well —
+     * no orphan forecast rows can survive (P6-CURRENT-005 / P6-P1-15). This is
+     * why no explicit forecast delete is needed here: a single `deleteAll()` on
+     * the parent table is sufficient to leave the forecasts table consistent.
+     */
     suspend fun deleteAll(): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
             writeBarrier.checkWritesAllowed("BudgetRepository.deleteAll")
@@ -544,6 +780,21 @@ class BudgetRepository @Inject constructor(
         return DebugBudgetSnapshot(budgets = budgetDao.getAll())
     }
 
+    /**
+     * Restores a debug-only snapshot of budgets.
+     *
+     * Guards (NOT weakened by P6-CURRENT-005 / P6-P1-15):
+     * - [BuildConfig.DEBUG]-only: returns an error in release builds.
+     * - Write-barrier-guarded: [DatabaseWriteBarrier.checkWritesAllowed] runs before
+     *   any mutation, so the restore is blocked during restore/maintenance mode.
+     *
+     * Forecast consistency: both branches delete all budgets before re-inserting
+     * (`replaceAllAndEnforceActiveScopes` calls `deleteAll()` internally; the empty
+     * branch calls `deleteAll()` directly). Because the `budget_forecasts → budgets`
+     * FK is CASCADE (schema v142), that `DELETE FROM budgets` purges every forecast,
+     * leaving no orphans. Restored budgets get fresh ids and the forecasting engine
+     * (G5) regenerates forecasts; pre-restore forecasts are intentionally not retained.
+     */
     suspend fun restoreDebugSnapshot(snapshot: DebugBudgetSnapshot): com.yourname.expensetracker.domain.model.Result<Unit> {
         if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
             return com.yourname.expensetracker.domain.model.Result.Error(

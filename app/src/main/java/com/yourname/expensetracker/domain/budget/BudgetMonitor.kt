@@ -235,15 +235,48 @@ class BudgetMonitor @Inject constructor(
         // falling back to raw spentAmount.BudgetStatus.spentAmount is gross spend and does not
         // account for shared-expense reimbursements, which can trigger false threshold alerts.
         //
-        // TODO (P6-CURRENT-002): adjustedSpendBreakdown should come from BudgetRepository
-        // (computed during createBudgetStatus) rather than only being populated by the
-        // ViewModel. Currently the monitor may see null adjustedSpendBreakdown and fall
-        // back to raw spentAmount, causing false alerts when shared-expense offsets apply.
+        // P6-CURRENT-002 (RESOLVED): adjustedSpendBreakdown is now populated by
+        // BudgetRepository.createBudgetStatus(), so the monitor and UI share the same
+        // effective spend. The gross spentAmount fallback only applies if the offset
+        // engine failed (breakdown null), which is logged in the repository.
         val spent = status.adjustedSpendBreakdown?.effectiveSpend ?: status.spentAmount
+        // P6-CURRENT-027(b): record when the monitor falls back to gross spend because the
+        // shared-expense offset breakdown was unavailable (offset engine failed in the repo).
+        val grossFallback = status.adjustedSpendBreakdown == null
         val categoryName = status.category?.name ?: "Overall"
         val periodStart = status.periodStart
 
-        if (spent <= 0 || budget.amount <= 0) return
+        // P6-CURRENT-027(a): the early no-op return previously emitted nothing, leaving a gap
+        // in the budget-check audit trail. Emit a durable SKIPPED diagnostic so a non-positive
+        // spend/limit no-op is observable. Best-effort, write-barrier-guarded, exception-tolerant.
+        if (spent <= 0 || budget.amount <= 0) {
+            withContext(ioDispatcher) {
+                try {
+                    writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                        stage = "STATUS_SKIPPED",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                        entityType = "BudgetStatus",
+                        entityId = budget.id,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("spent", spent)
+                            .put("limit", budget.amount)
+                            .put("grossFallback", grossFallback)
+                            .put("reason", "NO_SPEND_OR_LIMIT")
+                            .build()
+                    ))
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                        diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                    } else {
+                        Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                    }
+                }
+            }
+            return
+        }
 
         // Recompute percent from adjusted spent to avoid triggering alerts on gross spend
         val effectiveLimit = status.effectiveLimit
@@ -265,6 +298,7 @@ class BudgetMonitor @Inject constructor(
                         .put("limit", effectiveLimit)
                         .put("percent", adjustedPercent)
                         .put("partial", status.isPartial)
+                        .put("grossFallback", grossFallback)
                         .build()
                 ))
             } catch (e: Exception) {
@@ -283,7 +317,7 @@ class BudgetMonitor @Inject constructor(
         when {
             adjustedPercent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent, status.currency)
                     if (delivered) {
                         budgetRepository.updateExceededNotification(budget.id, now)
                     }
@@ -294,7 +328,7 @@ class BudgetMonitor @Inject constructor(
             }
             adjustedPercent >= budget.notifyAtCritical && adjustedPercent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent, status.currency)
                     if (delivered) {
                         budgetRepository.updateCriticalNotification(budget.id, now)
                     }
@@ -305,7 +339,7 @@ class BudgetMonitor @Inject constructor(
             }
             adjustedPercent >= budget.notifyAtWarning && adjustedPercent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent, status.currency)
                     if (delivered) {
                         budgetRepository.updateWarningNotification(budget.id, now)
                     }
@@ -378,9 +412,9 @@ class BudgetMonitor @Inject constructor(
         // accounts for rollover via effectiveLimit, rather than recomputing from
         // raw spent/limit which could diverge.
         val percent = (percentUsed * 100).toInt().coerceAtLeast(0)  // allow overspend >100%
-        // NOTE: spent/effectiveLimit are in the budget's display currency (displayCurrency).
-        // When budget currency differs from home currency, BudgetRepository should ensure
-        // amounts are converted to budget currency before reaching here (tracked as P6-P1-06).
+        // NOTE: spent/effectiveLimit are denominated in displayCurrency.
+        // P6-CURRENT-003: callers pass BudgetStatus.currency (home currency after
+        // repository normalization), so the formatted symbol matches the amounts.
         val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
             .fromCode(displayCurrency)?.symbol ?: displayCurrency
         val content = String.format(
