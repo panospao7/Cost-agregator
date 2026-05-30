@@ -17,12 +17,13 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 | raw_notifications, pending_reviews (purge) | `DataRetentionWorker` | ⚠️ migrate to `RetentionCoordinator` |
 | scanned_receipts, receipt_events, email_receipts, receipt_expense_links | `ReceiptLifecycleCoordinator` | ✅ |
 | receipt_expense_links (link/unlink) | `ReceiptLinkService` | ⚠️ must use `DatabaseWriteBarrier` (PR 7) |
-| recurring_expenses, recurring_lifecycle_events | `RecurringRuleLifecycleCoordinator` | ✅ |
-| recurring_occurrences | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer` | ✅ |
-| recurring_reminder_deliveries | `ReminderDeliveryCoordinator` | ✅ |
+| recurring_expenses | `RecurringRuleLifecycleCoordinator` | ✅ |
+| recurring_lifecycle_events | `RecurringLifecycleEventWriter` (via writeCritical/writeDiagnostic) | ✅ |
+| recurring_occurrences | `RecurringLifecycleCoordinator`, `RecurringRuleLifecycleCoordinator`, `RecurringOccurrenceMaterializer` | ✅ |
+| recurring_reminder_deliveries | `RecurringLifecycleCoordinator`, `RecurringRuleLifecycleCoordinator`, `BillReminderWorker` | ✅ |
 | budgets, budget_adjustments | `BudgetRepository` | ✅ |
 | budget_forecasts | `BudgetForecastingEngine` | ✅ |
-| planned_expenses | `PlannedExpenseRepository` | ✅ |
+| planned_expenses | `RecurringLifecycleCoordinator`, `RecurringRuleLifecycleCoordinator` (via PlannedExpenseDao inside coordinator transactions) | ✅ |
 | bank_connections | `BankConnectionLifecycleCoordinator` | ⚠️ create coordinator (PR 7) |
 | investments, investment_transactions, investment_values | `InvestmentRepository` | ✅ |
 | savings_goals, savings_sweep_plans | `SavingsGoalRepository` | ✅ |
@@ -67,3 +68,12 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 - **Static (warning):** `scripts/verify_db_access_boundaries.py` reports violations (PR 6).
 - **Static (CI failure):** Same script exits non-zero on new violations (PR 10).
 - **Config:** `config/db_access_allowlist.yml` is the source of truth for the static guard.
+
+### Pipeline 4 Enforcement Additions
+- **`RecurringArchitectureGuardTest`** — 19 static architecture guard tests enforce:
+  - No direct recurring rule DAO mutation outside `RecurringRuleLifecycleCoordinator`
+  - No raw `updateOccurrenceStatus` calls outside coordinator (must use `RecurringOccurrenceStatus` enum)
+  - No legacy `markBillPaid`/`markRuleBillAsPaid` in production code
+  - Critical events use `RecurringLifecycleEventWriter` not direct DAO
+  - Deactivation deletes (not cancels) open PLANNED rows
+  - No `0L` placeholder occurrence IDs in reconcile results

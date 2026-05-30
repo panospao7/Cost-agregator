@@ -1,8 +1,9 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
-**Generated:** 2026-05-07  
-**Total Files Documented:** 804 source files (344 domain + 253 data + 30 DI + 177 other) + 475 test files  
-**Scope:** ExpenseTracker domain, data, and DI packages
+**Generated:** 2026-05-07 (last stats refresh: 2026-05-30)  
+**Total Files Documented:** ~926 source files (388 domain + 280 data + 31 DI + ~227 other) + ~500+ test files  
+**Scope:** ExpenseTracker domain, data, and DI packages  
+**Current DB Version:** v141 · **DAOs:** 62 · **Entities:** 64 · **Hilt @Module files:** 31
 
 ---
 
@@ -11,7 +12,7 @@
 ### Primary Maps (NEW)
 
 1. **[COMPLETE-BACKEND-MAP.md](./COMPLETE-BACKEND-MAP.md)** ⭐ START HERE
-   - Exhaustive list of ALL 804 backend files
+   - Exhaustive list of ALL ~926 backend files
    - Organized by package and subpackage
    - File type, purpose, dependencies for each
    - Data flow diagrams
@@ -143,9 +144,9 @@
 **Location:** `app/src/main/java/com/yourname/expensetracker/data/`
 
 - **Database** (89 files)
-   - 1 main database (AppDatabase.kt, v120)
-   - 58 DAOs (data access objects)
-   - 62 Entities (Room-managed tables, 60 registered in AppDatabase)
+   - 1 main database (AppDatabase.kt, v141)
+   - 62 DAOs (data access objects)
+   - 64 Entities (Room-managed tables, all registered in AppDatabase)
    - 6 composite models
 
 - **Repositories** (65 files)
@@ -192,10 +193,11 @@
 - **Backup** (4 files)
   - `data/backup/` — BackupVerifier, CostbackupBundle, RestoreJournal, RestoreMaintenanceMode
 
-#### DI Package (28 Hilt @Module files)
-**Location:** `app/src/main/java/com/yourname/expensetracker/di/`
+#### DI Package (31 Hilt @Module files)
 
-- 28 Hilt @Module files (27 in `di/` + `EmptyStatePresentationModule` in `ui/`)
+**Location:** `com.yourname.expensetracker.di`
+
+- 31 Hilt @Module files (30 in `di/` + `EmptyStatePresentationModule` in `ui/`)
 - 1 `@EntryPoint` (`AppStartupDelegate`)
 - Database, DAO, Repository bindings
 - AI, services, location provider modules
@@ -242,9 +244,9 @@
 ## 🎯 By Architecture Layer
 
 ### Database Layer
-- **Core:** `AppDatabase.kt` (Room database, v120)
-- **Access:** 58 DAOs for direct table access
-- **Entities:** 62 Room-managed entities (60 registered in AppDatabase)
+- **Core:** `AppDatabase.kt` (Room database, v141)
+- **Access:** 62 DAOs for direct table access
+- **Entities:** 64 Room-managed entities (all registered in AppDatabase)
 - **Models:** 6 composite query result models
 - **Coordinator:** `GroupTransactionCoordinator.kt`
 
@@ -261,7 +263,7 @@
 - Clean separation from infrastructure
 
 ### DI/Infrastructure Layer
-- **28 Hilt @Module files + 1 @EntryPoint** managing dependencies
+- **31 Hilt @Module files + 1 @EntryPoint** managing dependencies
 - Database, network, geocoding setup
 - AI capability routing
 - Service configuration
@@ -271,7 +273,7 @@
 ## 🔍 Files by Type
 
 ### Database-Related (161 files)
-- DAOs (58), Entities (62), Models (6), Converters (1), Coordinator (1), Database (1)
+- DAOs (62), Entities (64), Models (6), Converters (1), Coordinator (1), Database (1)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
 
 ### Repository-Related (65 files)
@@ -308,9 +310,9 @@
 | Domain files | 344 |
 | Data files | 253 |
 | DI files | 30 |
-| Hilt @Module files | 28 |
-| **Database Entities** | 62 |
-| **DAOs** | 58 |
+| Hilt @Module files | 31 |
+| **Database Entities** | 64 |
+| **DAOs** | 62 |
 | **Repositories** | 65 (52 data + 13 domain interfaces) |
 | **Use Cases** | 41 |
 | **ViewModels** | 39 |
@@ -499,7 +501,7 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 - ✅ ALL 344 domain files listed
 - ✅ ALL 253 data files listed
-- ✅ ALL 28 Hilt @Module files + @EntryPoint listed
+- ✅ ALL 31 Hilt @Module files + @EntryPoint listed
 - ✅ File-by-file breakdown with:
   - ✅ File path
   - ✅ Class name

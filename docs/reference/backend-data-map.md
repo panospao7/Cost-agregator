@@ -32,7 +32,7 @@ data/
 │   └── BackupVerifier.kt                 # 56-entity 3-tier verification via PRAGMA integrity_check + FK check
 │
 ├── database/               # Room ORM + migrations, entities, query models
-│   ├── AppDatabase.kt      # RoomDatabase (v113, 56 entity references)
+│   ├── AppDatabase.kt      # RoomDatabase (v141, 64 entity references)
 │   ├── converter/          # Type converters
 │   │   └── Converters.kt   # @TypeConverter for complex types
 │   ├── dao/                # Current DAO set

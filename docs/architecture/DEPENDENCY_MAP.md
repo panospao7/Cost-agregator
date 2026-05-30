@@ -253,14 +253,40 @@ Receipt Source (Camera/Gallery/Email/File)
   → ReceiptItemCategorization (entity) → ReceiptItemCategorizationDao
 ```
 
+### ReceiptMatchLifecycleService (P3)
+
+```
+ReceiptMatchLifecycleService              [domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt]
+  │  @Singleton @Inject
+  │  4 lifecycle-aware receipt match mutation methods:
+  │    saveMatchSuggestion(receiptId, expenseId, score)     → ReceiptEvent.MATCH_SUGGESTED
+  │    approveMatchSuggestion(receiptId)                     → ReceiptEvent.MATCH_APPROVED
+  │    rejectMatchSuggestion(receiptId)                      → ReceiptEvent.MATCH_REJECTED
+  │    clearMatch(receiptExpenseLinkId)                      → ReceiptEvent.MATCH_CLEARED
+  │
+  ├──► AppDatabase (withTransaction for atomicity)
+  ├──► DatabaseWriteBarrier (restore-safety gate)
+  ├──► ScannedReceiptDao (update matchedExpenseId)
+  ├──► ReceiptEventDao (insert lifecycle event)
+  ├──► ReceiptExpenseLinkDao (link management)
+  └──► TimeProvider (timestamps)
+       │
+       ▼
+  Consumed by:
+  ├──► ReceiptMatchingWorker          — Auto-match: saveMatchSuggestion()
+  ├──► ReceiptRepository              — Delegates save/approve/reject/clear from non-lifecycle code paths
+  │     └──► saveMatchSuggestion, approveMatchSuggestion (in ReceiptRepository)
+  └──► ReceiptMatchingViewModel       — User-match UI: saveMatchSuggestion()
+```
+
 ### Consumer Classes
 
 | Consumer | File | Dependency |
 |----------|------|------------|
 | `ReceiptScanViewModel` | `ui/screens/receiptscan/ReceiptScanViewModel.kt` | `ReceiptLifecycleCoordinator`, `ReceiptRepository` |
 | `ReviewViewModel` | `ui/screens/review/ReviewViewModel.kt` | `ReceiptLifecycleCoordinator`, `ReceiptRepository` |
-| `ReceiptMatchingViewModel` | `ui/screens/receiptmatching/ReceiptMatchingViewModel.kt` | `ReceiptRepository` |
-| `ReceiptRepository` | `data/repository/ReceiptRepository.kt` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService` |
+| `ReceiptMatchingViewModel` | `ui/screens/receiptmatching/ReceiptMatchingViewModel.kt` | `ReceiptRepository`, `ExpenseRepository`, `ReceiptMatchLifecycleService` |
+| `ReceiptRepository` | `data/repository/ReceiptRepository.kt` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService`, `ReceiptMatchLifecycleService` |
 | `WarrantyTrackerRepository` | `data/repository/WarrantyTrackerRepository.kt` | `AutoCreateWarrantyFromReceiptUseCase` |
 | `DashboardContractsAdapter` | `data/repository/DashboardContractsAdapter.kt` | Receipt counts |
 
@@ -291,6 +317,56 @@ RecurringPlanProjectionService            [domain/recurring/RecurringPlanProject
    │
    └──► PlannedExpenseDao                  — Materialise planned expenses
 
+RecurringRuleLifecycleCoordinator          [domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt]
+   │  @Singleton @Inject
+   │  Single writer for ALL rule-level lifecycle mutations (P4):
+   │    createRule()   → creates rule + generates occurrences + events
+   │    updateRule()   → updates rule name/amount/pattern
+   │    activateRule() → sets isActive=true + generates occurrences
+   │    deactivateRule() → sets isActive=false, deletes PLANNED occurrences
+   │    deleteRule()   → deletes rule + all occurrences/reminders/events
+   │
+   ├──► AppDatabase (withTransaction for atomicity)
+   ├──► DatabaseWriteBarrier (restore-safety gate)
+   ├──► ManualRecurringExpenseDao (read/update rule definition)
+   ├──► RecurringOccurrenceDao (create/delete/update occurrence rows)
+   ├──► RecurringReminderDeliveryDao (suppress/delete reminders)
+   ├──► PlannedExpenseDao (cancel planned expenses)
+   ├──► RecurringLifecycleEventDao (audit log)
+   └──► TimeProvider (timestamps)
+        │
+        ▼
+  Consumed by:
+  ├──► ManualRecurringExpenseRepository        — Delegates CRUD
+  ├──► RecurringExpensesViewModel              — Deactivate/delete UI actions
+  └──► BillReminderManager                     — Rule lifecycle integration (deprecated)
+
+RecurringLifecycleEventWriter              [domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt]
+   │  @Singleton @Inject
+   │  Dual-channel event writer (P4):
+   │    writeCritical(ruleId, type, payload) → Long (returns eventId)
+   │    writeDiagnostic(ruleId, type, payload, parentEventId)
+   │
+   ├──► RecurringLifecycleEventDao (insert events)
+   └──► TimeProvider (timestamps)
+
+P4 Data Types (no DAO dependencies, pure domain models):
+  ├──► OccurrenceGenerationOptions              — Controls reminder creation during generation
+  ├──► RecurringExpenseReconcileResult          — Sealed interface: Linked, AlreadyLinked, NotFound, Conflict, etc.
+  └──► RecurringOccurrenceStatus                — Typed enum: PLANNED/PAID/SKIPPED/MISSED/CANCELLED/IGNORED + transition policy
+
+BillReminderSettings                       [domain/reminder/BillReminderSettings.kt]
+  │  Data class: enabled, quietHoursStart, quietHoursEnd, dispatchInterval
+  │
+  ▼
+BillReminderSettingsRepository             [domain/reminder/BillReminderSettingsRepository.kt]
+  │  Interface + impl (BillReminderSettingsRepositoryImpl)
+  │  Bound via ReminderSettingsModule
+  │
+  ▼
+BillReminderWorker                         [service/reminder/BillReminderWorker.kt]
+  └──► Checks runtime settings before dispatching notifications
+
 TransactionLifecycleCoordinator
    └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
    └──► RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId) — direct
@@ -313,7 +389,10 @@ SnoozeReminderReceiver / DismissReminderReceiver
 | `FinancialWeatherRepository` | `data/repository/FinancialWeatherRepository.kt` | `RecurringExpenseRepository`, `PlannedExpenseRepository` |
 | `CashFlowCalculator` | `domain/cashflow/CashFlowCalculator.kt` | `RecurringLifecycleCoordinator` |
 | `ForecastInputAssembler` | `domain/forecasting/ForecastInputAssembler.kt` | `RecurringLifecycleCoordinator` |
-| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `RecurringLifecycleCoordinator.getDueReminders()` |
+| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `RecurringLifecycleCoordinator.getDueReminders()`, `BillReminderSettingsRepository` |
+| `BillRemindersViewModel` | `ui/screens/reminder/BillRemindersViewModel.kt` | `BillReminderManager`, `RecurringLifecycleCoordinator` |
+| `RecurringRuleLifecycleCoordinator` | `domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` | Single writer for rule CRUD (consumed by ViewModel) |
+| `RecurringArchitectureGuardTest` | `test/.../RecurringArchitectureGuardTest.kt` | 19 static enforcements for single-writer + typed results |
 
 ---
 
@@ -731,6 +810,7 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3); auto-provided: `GroupLifecycleCoordinator` | Groups ViewModel |
 | `TaxModule` | `di/TaxModule.kt` | `TaxConfiguration` → `GreeceTaxConfiguration`, auto-provided: `DemoTaxRateProvider` | Tax ViewModel |
 | `ExportModule` | `di/ExportModule.kt` | `QuickBooksIIFExporter`, `XeroCSVExporter`, `FreshBooksExporter` | Export ViewModel |
+| `ReminderSettingsModule` | `di/ReminderSettingsModule.kt` | `BillReminderSettingsRepository` → impl (P4) | BillReminderWorker, BillRemindersViewModel |
 
 #### Infrastructure Modules
 
@@ -745,6 +825,9 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `EmptyStateModule` | `di/EmptyStateModule.kt` | `EmptyStateRegistryInitializer` multibind | Empty state UI |
 | `EmailIngestionModule` | `di/EmailIngestionModule.kt` | `AmazonReceiptParser`, `UberReceiptParser`, `AppleReceiptParser` | Email ingestion |
 | `LocationResolverPortsModule` | `di/LocationResolverPortsModule.kt` | `LocationCachePort`, `MerchantClusterPort` | Location enrichment |
+| `DiagnosticsModule` | `di/DiagnosticsModule.kt` | `DiagnosticEventWriter`, `TransactionLifecycleEventWriter`, `ReceiptLifecycleEventWriter`, `RecurringLifecycleEventWriter`, `OperationRunRecorder`, `WorkerRunLogger`, `DiagnosticsRepository` | Diagnostics pipeline |
+| `ProvenanceModule` | `di/ProvenanceModule.kt` | Provenance event recording | Provenance tracking |
+| `RetentionModule` | `di/RetentionModule.kt` | `RetentionRegistry` with 5 `RetentionTarget` entries | Data retention workers |
 
 ---
 
@@ -920,7 +1003,7 @@ All Hybrid services use:
 | `SpendingMapViewModel` | ExpenseRepository, CategoryRepository, LocationResolver |
 | `InvestmentViewModel` | InvestmentDao, InvestmentValueDao |
 | `BankConnectionsViewModel` | BankConnectionDao |
-| `ReceiptMatchingViewModel` | ReceiptRepository, ExpenseRepository |
+| `ReceiptMatchingViewModel` | ReceiptRepository, ExpenseRepository, ReceiptMatchLifecycleService |
 | `AiSettingsViewModel` | AiSettingsRepository |
 | `AssistantViewModel` | AiChatRepository, QueryInterpretationService |
 | `BillRemindersViewModel` | BillReminderManager, RecurringLifecycleCoordinator |
@@ -928,7 +1011,7 @@ All Hybrid services use:
 ---
 
 > **Generated:** Manual analysis of 926 source files across 3 layers (UI/Domain/Data),  
-> 30 Hilt @Module files, 39 @HiltViewModel, 65+ repositories, 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound), 64 entities.  
+> 31 Hilt @Module files, 39 @HiltViewModel, 65+ repositories, 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound), 64 entities.  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---

@@ -29,7 +29,7 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v131 (migrated from v124 through v125–v131 for durable diagnostics, barrier system, lifecycle events, privacy hashing, and currency normalization)
+- Database version: v141 (migrated from v131 through v139–v141 for recurring lifecycle hardening, occurrence status typing, and reminder delivery FK enforcement)
 - 926 Kotlin source files (388 domain, 280 data, 164 ui, 31 di, 63 other/util)
 - 62 DAOs (58 in DaoModule + 3 in AiModule + 1 unbound), 64 entities registered in AppDatabase
 - 39 @HiltViewModel (38 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
@@ -60,7 +60,21 @@
 - `NetCashflowBalanceProvider` (`domain/forecasting/NetCashflowBalanceProvider.kt`): 90-day net cashflow fallback implementation of `AccountBalanceProvider`.
 - `PrivacyBlockedCard` (`ui/components/PrivacyBlockedCard.kt`): reusable Compose UI card for privacy-blocked states with lock icon.
 - New architecture docs: `ENGINE_INTERACTION_MAP.md` (engine-to-pipeline impact matrix) and `LEGAL_PATHS.md` (single allowed implementation path for each operation).
+- `ReceiptMatchLifecycleService` (`domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt`): lifecycle-aware receipt match mutations with write barrier, transaction, and durable events.
+- `RecurringRuleLifecycleCoordinator` is now the **single writer** for all rule lifecycle mutations, enforced by `RecurringArchitectureGuardTest` (14 static architecture guards).
+- `RecurringOccurrenceStatus` typed enum + `RecurringOccurrenceTransitionPolicy` for validated status transitions.
+- `RecurringLifecycleEventWriter` `writeCritical()`/`writeDiagnostic()` split for provenance vs informational events.
+- `BillReminderSettingsRepository` + `ReminderSettingsModule` DI module for runtime reminder dispatch control.
 - AI, location, shared-expense, split, privacy, backup-encryption, and `.costbackup` bundle backup/restore flows are first-class subsystems
+
+### Architecture Drift Updates (2026-05-13 — Pipeline 3: Receipt Match Lifecycle & Debug Redaction)
+- **ReceiptMatchLifecycleService** created (`domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt`) — `@Singleton @Inject` lifecycle-aware service replacing direct `ReceiptRepository` match mutations (now `DeprecationLevel.ERROR`). Every operation: checks `DatabaseWriteBarrier`, runs inside Room `withTransaction`, writes durable `ReceiptEvent`. Methods: `saveMatchSuggestion()`, `approveMatchSuggestion()`, `rejectAllSuggestions()`, `clearMatchForReceipt()`. Dependencies: `AppDatabase`, `ScannedReceiptDao`, `ReceiptEventDao`, `DatabaseWriteBarrier`, `TimeProvider`.
+- **ReceiptDebugExporter audit instrumentation** — every debug export decision writes a `DiagnosticEvent` (ALLOWED/DENIED) with reason codes (`consent_blank`, `storage_mode_<mode>`, `receipt_not_found`). `formatReceiptDebug()` signature changed: `includeImagePath` parameter defaults to `false` for privacy-by-default image path redaction.
+- **Exception message redaction policy** — `ReceiptRepository` error logging sanitizes exception messages: URIs → `[REDACTED_URI]`, file paths → `[REDACTED_PATH]`, URLs → `[REDACTED_URL]`, emails → `[REDACTED_EMAIL]`, 12-19 digit sequences → `[REDACTED_NUMBER]`.
+- **Debug data privacy-by-default** — `BankStatementLifecycleProcessor.debugData` set to `null` by default. Raw OCR text export requires `exportConsent` + `RawStorageMode.STORE_RAW`. Image paths redacted unless `includeImagePath=true`.
+- **DeprecationLevel.ERROR sweep** — `ReceiptRepository.clearMatchForReceipt()`, `saveMatchSuggestion()`, `rejectAllSuggestions()`, `exportParserDebugData()`, `debugReceipt()` all escalated to `ERROR`. `ReceiptMatchingWorker`/`ReceiptMatchingViewModel` migrated to `ReceiptMatchLifecycleService`. `ReviewViewModel` migrated to `ReceiptDebugExporter`.
+- **ReviewViewModel** — migrated debug data calls from `receiptRepository` to `ReceiptDebugExporter`. `@Suppress("DEPRECATION")` scoped to method-level only (`clearScannedData()`).
+- **`@Suppress("DEPRECATION")` scoping pattern** — annotation moved from class-level to minimum necessary method-level, signaling policy of silencing deprecation only at call-site.
 
 ### Architecture Drift Updates (2026-05-06)
 - `TransactionLifecycleCoordinator` now resolves home currency from `CurrencySettingsRepository` for conversion snapshots in both create and update paths (EUR constant is fallback only).
@@ -150,6 +164,24 @@
 - **Guard script**: `scripts/verify_privacy_boundaries.py` (G1-G13 rules).
 - **New docs**: `docs/privacy/raw-storage-policy.md`.
 - **18 new test files** for privacy behavioral verification.
+
+### Architecture Drift Updates (2026-05-20 — Pipeline 4: Recurring Lifecycle Hardening & Single Writer)
+- **DB upgraded to v141** (from v131). Migration 139→140 canonicalizes occurrence keys with full dedup strategy. Migration 140→141 adds FOREIGN KEY on `recurring_reminder_deliveries.occurrenceId` → `recurring_occurrences.id` with CASCADE delete.
+- **RecurringRuleLifecycleCoordinator** — expanded to become the single writer for all rule lifecycle mutations: `createRule()`, `activateRule()`, `updateRule()`, `deactivateRule()`, `deleteRule()`. All operations atomic in `withTransaction`, guarded by `DatabaseWriteBarrier`, with durable lifecycle events. Deactivation deletes (not cancels) open PLANNED occurrences/planned rows for clean regeneration. Activation generates 12 months of future occurrences atomically. Direct dependencies: `RecurringOccurrenceExpander`, `OccurrenceConflictResolver`, `RecurringOccurrenceMaterializer`, `ExpenseDao`, `RecurringLifecycleEventWriter`.
+- **OccurrenceGenerationOptions** created (`domain/recurring/lifecycle/OccurrenceGenerationOptions.kt`) — data class controlling reminder creation, windows, generation source, and past-due allowance during occurrence generation.
+- **RecurringExpenseReconcileResult** created (`domain/recurring/lifecycle/RecurringExpenseReconcileResult.kt`) — sealed interface with 6 variants (Linked, Unlinked, Relinked, UpdatedLinkedSnapshot, NoMatch, Skipped) replacing opaque Boolean/Unit returns for link/unlink/reconcile ops.
+- **RecurringOccurrenceStatus** created (`domain/recurring/lifecycle/RecurringOccurrenceStatus.kt`) — typed enum (PLANNED, PAID, SKIPPED, MISSED, CANCELLED, IGNORED) replacing raw status strings. `RecurringOccurrenceTransitionPolicy` centralizes transition validation with `canTransition()`/`requireAllowed()`.
+- **RecurringLifecycleEventWriter** — split into `writeCritical()` (always writes, returns Long, for provenance) and `writeDiagnostic()` (best-effort, swallows exceptions, for informational). `SafeEventMetadata` dependency removed.
+- **BillReminderSettings + BillReminderSettingsRepository** created (`domain/reminder/BillReminderSettings.kt`, `domain/reminder/BillReminderSettingsRepository.kt`) — runtime dispatch settings (enabled/disabled, quiet hours). SharedPreferences-backed impl bound via new **ReminderSettingsModule** (`di/ReminderSettingsModule.kt`).
+- **BillReminderWorker** — enhanced with post-claim revalidation (`getDispatchableClaimedReminder()`), `NotificationSendResult` sealed interface (Sent/Failed), runtime settings check, `ReminderSettingsRepository` injection.
+- **TransactionUpdateKind** — expanded with `AMOUNT`, `DATE`, `CURRENCY`, `OWNERSHIP`, `PAYMENT_CORE`. New `affectsRecurringMatch()` centralizes which update kinds trigger reconciliation.
+- **RecurringArchitectureGuardTest** created — 14 static architecture guard tests enforcing single-writer principal: no direct DAO mutation outside coordinator, no legacy `markBillPaid`, no raw `updateOccurrenceStatus` outside coordinator, critical events use `eventWriter` not direct DAO.
+- **Pipeline4LifecycleGoldenTest** created — golden tests for create → update → deactivate → reactivate → delete lifecycle through repositories.
+- **RecurringOccurrenceDao** — `updateLinkedPaymentSnapshot()` for in-place snapshot updates. `getPlannedIdsBySource()` added.
+- **PlannedExpenseDao** — `fulfillByOccurrenceKey()` takes `expenseId`. `deleteOpenPlannedByRecurringRuleId()` for deactivation cleanup.
+- **RecurringReminderDeliveryDao** — `suppressOpenDeliveriesForOccurrence()` takes `now` + reason. `markSentFromClaimed()`, `markFailedFromClaimed()`, `cancelClaimedDelivery()`, `reopenDeliveryForOccurrenceWindow()`, `recoverStaleClaimedDeliveries()`, `deleteByOccurrenceIds()` added.
+- **Single-writer principal enforced** — `RecurringRuleLifecycleCoordinator` sole writer for rule lifecycle. Legacy `BillReminderManager.markBillPaid()` removed entirely (correct path: create actual expense → `linkExpenseToOccurrence()`).
+- **5 new test files** — `RecurringArchitectureGuardTest`, `Pipeline4LifecycleGoldenTest`, 2 new instrumented migration tests in `MigrationContractTest`.
 
 ### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
 - **Database version upgraded to v129** (from v124) — later superseded by v130→v131 in the currency/privacy overhaul. Migrations 124→129 add durable diagnostics tables (`operation_runs`, `operation_run_events`), expand `pipeline_diagnostic_events` with 9 new columns, add `correlationId`/`causationId` to `transaction_events`, and add `isTerminal`/`eventId` to `operation_run_events`.
@@ -296,6 +328,7 @@ domain/
 │   ├── EmailReceiptData.kt      # Structured email receipt data
 │   └── lifecycle/               # Receipt lifecycle coordinator + services
 │       ├── ReceiptLifecycleCoordinator.kt   # Single entry point for all receipt processing
+│       ├── ReceiptMatchLifecycleService.kt  # Lifecycle-aware receipt match mutations + events
 │       ├── ReceiptLinkService.kt            # Centralized receipt-expense linking (multi-link)
 │       ├── ReceiptAssetStore.kt             # File persistence, hash computation, backup manifest
 │       ├── ReceiptInputValidator.kt         # URI / MIME / size validation
@@ -337,13 +370,17 @@ domain/
 │   └── lifecycle/               # Lifecycle coordinator + dispatcher
 │       ├── TransactionLifecycleCoordinator.kt    # Single entry point for ALL expense CUD
 │       └── TransactionSideEffectDispatcher.kt    # Post-creation side effects (budget, anomaly, learning)
-├── recurring/                   # **NEW — Recurring occurrence lifecycle**
+├── recurring/                   # Recurring occurrence lifecycle
 │   ├── RecurringOccurrenceExpander.kt    # Expands recurrence rules into concrete occurrences
 │   ├── OccurrenceConflictResolver.kt     # Resolves candidates vs actual expenses
 │   ├── RecurringPlanProjectionService.kt # Materialises planned expenses from occurrences
-│   └── lifecycle/               # **NEW — Recurring lifecycle coordinator + materializer**
+│   └── lifecycle/               # Recurring lifecycle coordinator + materializer
 │       ├── RecurringLifecycleCoordinator.kt      # Primary entry point for occurrence generation
-│       └── RecurringOccurrenceMaterializer.kt    # Persists occurrences + creates reminders
+│       ├── RecurringRuleLifecycleCoordinator.kt  # Single writer for rule CRUD lifecycle
+│       ├── RecurringOccurrenceMaterializer.kt    # Persists occurrences + creates reminders
+│       ├── OccurrenceGenerationOptions.kt        # Controls reminder creation during generation
+│       ├── RecurringExpenseReconcileResult.kt    # Sealed result for link/unlink operations
+│       └── RecurringOccurrenceStatus.kt          # Typed enum replacing raw status strings
 ├── reminder/                    # Bill reminder manager
 ├── subscription/                # Subscription detection / management
 ├── tax/                         # Tax configuration and estimation
@@ -392,7 +429,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v124) — 62 entities registered
+│   ├── AppDatabase.kt          # Room database (v141) — 64 entities registered
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   ├── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -515,7 +552,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v120 |
+| Database | `data/database/AppDatabase.kt` | Room DB v141 |
 | NotificationCaptureService | `service/NotificationCaptureService.kt` | Android notification listener service |
 
 ### Core Engines
@@ -1271,7 +1308,8 @@ KDoc annotation of EUR defaults applied across 4 analytics engines (`InsightsEng
 
 ## Database Schema
 
-### Version: v120 (post-hardening; latest migration: 119→120 for InvestmentTransaction, WarrantyLifecycleEvent, GroupSettlementEntity)
+### Version: v141 (current) — see drift entries above for P3/P4 changes
+### Historical: v120 (post-hardening; latest migration at that time: 119→120 for InvestmentTransaction, WarrantyLifecycleEvent, GroupSettlementEntity)
 
 The Room schema in v120 includes all tables from v106 plus:
 

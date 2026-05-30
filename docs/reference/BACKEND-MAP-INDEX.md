@@ -1,7 +1,7 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
-**Generated:** 2026-04-06  
-**Total Files Documented:** 477 backend files + 317 test files  
+**Generated:** 2026-04-06 (⚠️ STALE — see `docs/analyses and debug master/BACKEND-MAP-INDEX.md` for current)  
+**Total Files Documented:** 477 backend files + 317 test files (historical; current is ~926 + ~500+)  
 **Scope:** ExpenseTracker domain, data, and DI packages
 
 ---
@@ -86,8 +86,8 @@
 
 - **Database** (89 files)
   - 1 main database (AppDatabase.kt)
-  - 54 DAOs (data access objects)
-  - 55 Entities (Room-managed tables)
+  - 62 DAOs (data access objects)
+  - 64 Entities (Room-managed tables)
   - 6 composite models
 
 - **Repositories** (56 files)
@@ -103,7 +103,7 @@
   - Email parsing, location geocoding
   - Security, notifications, speech
 
-#### DI Package (27 modules)
+#### DI Package (31 modules)
 **Location:** `app/src/main/java/com/yourname/expensetracker/di/`
 
 - Database, DAO, Repository bindings
@@ -117,13 +117,13 @@
 
 ### Database Layer
 - **Core:** `AppDatabase.kt` (Room database)
-- **Access:** 54 DAOs for direct table access
-- **Entities:** 55 Room-managed entities
+- **Access:** 62 DAOs for direct table access
+- **Entities:** 64 Room-managed entities
 - **Models:** 6 composite query result models
 - **Coordinator:** `GroupTransactionCoordinator.kt`
 
 ### Repository Layer
-- **56 repositories** providing business logic
+- **65 repositories** providing business logic
 - Handle data transformation and aggregation
 - Implement domain interfaces
 - Manage database transactions
@@ -135,7 +135,7 @@
 - Clean separation from infrastructure
 
 ### DI/Infrastructure Layer
-- **27 modules** managing dependencies
+- **31 modules** managing dependencies
 - Database, network, geocoding setup
 - AI capability routing
 - Service configuration
@@ -145,7 +145,7 @@
 ## 🔍 Files by Type
 
 ### Database-Related (145 files)
-- DAOs (54), Entities (55), Models (6), Converters (1), Coordinator (1), Database (1)
+- DAOs (62), Entities (64), Models (6), Converters (1), Coordinator (1), Database (1)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
 
 ### Repository-Related (57 files)
@@ -177,9 +177,9 @@
 | **Total Backend Files** | 477 |
 | Domain files | 244 |
 | Data files | 206 |
-| DI modules | 27 |
-| **Database Entities** | 55 |
-| **DAOs** | 54 |
+| DI modules | 31 (⚠️ historical: 27) |
+| **Database Entities** | 64 (⚠️ historical: 55) |
+| **DAOs** | 62 (⚠️ historical: 54) |
 | **Repositories** | 56 |
 | **Use Cases** | 30+ |
 | **Engines** | 50+ |

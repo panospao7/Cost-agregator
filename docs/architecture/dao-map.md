@@ -56,11 +56,11 @@
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
-| `ManualRecurringExpenseDao` | `ManualRecurringExpense` | `RecurringExpenseRepository`, `ManualRecurringExpenseRepository` | RecurringExpensesVM, FinancialWeatherRepository, ManualRecurringExpenseVM |
-| `PlannedExpenseDao` | `PlannedExpense` | `PlannedExpenseRepository`, `RecurringPlanProjectionService` | HomeVM, FinancialWeatherRepository |
-| `RecurringOccurrenceDao` | `RecurringOccurrence` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer` | RecurringExpensesVM, BillReminderWorker |
-| `RecurringReminderDeliveryDao` | `RecurringReminderDelivery` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer` | BillReminderWorker |
-| `RecurringLifecycleEventDao` | `RecurringLifecycleEvent` | `RecurringLifecycleCoordinator` | Recurring audit log |
+| `ManualRecurringExpenseDao` | `ManualRecurringExpense` | `RecurringExpenseRepository`, `ManualRecurringExpenseRepository`, `RecurringRuleLifecycleCoordinator` (P4) | RecurringExpensesVM, FinancialWeatherRepository, ManualRecurringExpenseVM |
+| `PlannedExpenseDao` | `PlannedExpense` | `PlannedExpenseRepository`, `RecurringPlanProjectionService`, `RecurringRuleLifecycleCoordinator` (P4) | HomeVM, FinancialWeatherRepository |
+| `RecurringOccurrenceDao` | `RecurringOccurrence` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer`, `RecurringRuleLifecycleCoordinator` (P4) | RecurringExpensesVM, BillReminderWorker |
+| `RecurringReminderDeliveryDao` | `RecurringReminderDelivery` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer`, `RecurringRuleLifecycleCoordinator` (P4) | BillReminderWorker |
+| `RecurringLifecycleEventDao` | `RecurringLifecycleEvent` | `RecurringLifecycleCoordinator`, `RecurringLifecycleEventWriter` (P4), `RecurringRuleLifecycleCoordinator` (P4) | Recurring audit log |
 
 ## Currency Domain
 

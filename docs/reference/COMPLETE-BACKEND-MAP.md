@@ -1,8 +1,8 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-05-04 (⚠️ Minor additions post-gen: SourceStatsEvent, HybridRouter, WorkerSpecScheduler, AtRestEncryptionService)  
-**Total Files Mapped:** 490+ (255 domain + 208 data + 27 di)  
-**Test Coverage:** 317+ test files in `app/src/test/java`
+**Generated:** 2026-05-04 (⚠️ STALE — see `docs/analyses and debug master/COMPLETE-BACKEND-MAP.md` for current)  
+**Total Files Mapped:** 490+ (historical; current is ~926)  
+**Test Coverage:** 317+ test files (historical; current is ~500+)
 
 ---
 
@@ -1086,22 +1086,22 @@ Engine (integration with other domain logic)
 
 ---
 
-## Summary Statistics
+## Summary Statistics (⚠️ STALE — current values in parentheses)
 
-| Metric | Count |
-|--------|-------|
-| **Domain Files** | 283 (+12 privacy gate files + 2 backup contracts) |
-| **Data Files** | 222 (+4 privacy data files + 2 new entities/DAOs + 4 backup data files) |
-| **DI Modules** | 28 (+1 PrivacyModule) |
-| **Total Backend Files** | 533+ |
-| **Test Files** | 317+ |
-| **Database Entities** | 56 (unchanged from Phase 7; Phase 9+10 add no entities) |
-| **DAOs** | 54 (unchanged from Phase 7) |
-| **DB Version** | 113 (post-compliance hardening; latest migration: 112→113) |
-| **Repositories** | 56 |
-| **Use Cases** | ~30 |
-| **Engines** | ~50 |
-| **AI Providers** | 32 |
+| Metric | Historical Count | Current Count |
+|--------|-----------------|---------------|
+| **Domain Files** | 283 | 344 |
+| **Data Files** | 222 | 253 |
+| **DI / @Module Files** | 28 | 31 |
+| **Total Backend Files** | 533+ | ~926 |
+| **Test Files** | 317+ | ~500+ |
+| **Database Entities** | 56 | 64 |
+| **DAOs** | 54 | 62 |
+| **DB Version** | 113 | 141 |
+| **Repositories** | 56 | 65 |
+| **Use Cases** | ~30 | 41 |
+| **Engines** | ~50 | ~70 |
+| **AI Providers** | 32 | 44 |
 
 ---
 

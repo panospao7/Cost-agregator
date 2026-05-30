@@ -261,6 +261,8 @@ Auto-provided:
   AccountingExportPolicy                      → @Inject constructor (domain/export/AccountingExportPolicy.kt)
   RecurringRuleLifecycleCoordinator           → @Singleton @Inject (domain/recurring/lifecycle/)
   NetCashflowBalanceProvider                  → @Singleton @Inject (domain/forecasting/NetCashflowBalanceProvider.kt)
+  ReceiptMatchLifecycleService                → @Singleton @Inject (domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt)
+  RecurringPlanProjectionService              → @Singleton @Inject (domain/recurring/RecurringPlanProjectionService.kt)
 ```
 
 ### `TaxModule` — `di/TaxModule.kt`
@@ -273,6 +275,12 @@ Auto-provided via @Inject constructor:
 ```
 
 Note: `TaxRateProvider` interface is consumed by `TaxEstimator`; `DemoTaxRateProvider` is the single `@Inject`-constructor implementation, satisfying Hilt's auto-binding rules for single-implementation interfaces.
+
+### `ReminderSettingsModule` — `di/ReminderSettingsModule.kt`
+```
+Binds:
+  BillReminderSettingsRepository              → BillReminderSettingsRepositoryImpl
+```
 
 ### `ExportModule` — `di/ExportModule.kt`
 ```
@@ -411,4 +419,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 30 Hilt @Module files · 65+ repositories · 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound) · 64 entities · DB v131
+**Stats:** 31 Hilt @Module files · 65+ repositories · 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound) · 64 entities · DB v141

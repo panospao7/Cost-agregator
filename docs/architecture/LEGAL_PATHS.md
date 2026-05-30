@@ -72,36 +72,105 @@ FORBIDDEN:
   ❌ Any receipt mutation without ReceiptEvent
 ```
 
+```
+MATCH receipt (suggest/approve/reject/clear):
+  → ReceiptMatchLifecycleService.saveMatchSuggestion() / approveMatchSuggestion()
+  → ReceiptMatchLifecycleService.rejectAllSuggestions() / clearMatchForReceipt()
+  → Each operation: DatabaseWriteBarrier check → withTransaction → ReceiptEvent
+  → Events: MATCH_SUGGESTED / MATCH_APPROVED / MATCH_REJECTED / MATCH_CLEARED
+
+FORBIDDEN:
+  ❌ ReceiptRepository.saveMatchSuggestion() [DeprecationLevel.ERROR]
+  ❌ ReceiptRepository.rejectAllSuggestions() [DeprecationLevel.ERROR]
+  ❌ ReceiptRepository.clearMatchForReceipt() [DeprecationLevel.ERROR]
+  ❌ Any match mutation without ReceiptEvent
+```
+
+```
+DEBUG EXPORT receipt data:
+  → ReceiptDebugExporter.debugReceipt() / exportParserDebugData()
+  → Writes DiagnosticEvent (ALLOWED/DENIED with reason code)
+  → Image paths redacted by default (includeImagePath=false)
+
+FORBIDDEN:
+  ❌ ReceiptRepository.debugReceipt() [DeprecationLevel.ERROR]
+  ❌ ReceiptRepository.exportParserDebugData() [DeprecationLevel.ERROR]
+  ❌ Exporting receipts without privacy consent check
+  ❌ Including raw image paths without explicit consent
+```
+
 ---
 
 ## Recurring Rule Mutations
 
 ```
-CREATE/UPDATE rule:
-  → ManualRecurringExpenseRepository (with DatabaseWriteBarrier + timestamps + event)
+CREATE rule:
+  → RecurringRuleLifecycleCoordinator.createRule()
+  → Atomic: inserts rule + generates 12 months of occurrences + reminders + planned rows
+  → DatabaseWriteBarrier check + durable lifecycle event
+
+UPDATE rule:
+  → RecurringRuleLifecycleCoordinator.updateRule()
+  → Atomic: updates rule + regenerates occurrences in single transaction
+  → DatabaseWriteBarrier check + durable lifecycle event
+
+ACTIVATE rule:
+  → RecurringRuleLifecycleCoordinator.activateRule()
+  → Atomic: activates + generates future state in single transaction
 
 DEACTIVATE rule:
   → RecurringRuleLifecycleCoordinator.deactivateRule()
-  → Atomic: isActive=false + cancel PLANNED occurrences + suppress reminders + cancel planned
+  → Atomic: deactivates + DELETES (not cancels) open PLANNED occurrences + planned rows + suppresses reminders
+  → Clean regeneration on reactivation (no CANCELLED rows to skip)
 
 DELETE rule:
   → RecurringRuleLifecycleCoordinator.deleteRule()
-  → Atomic: delete reminders + planned + occurrences + rule + event
+  → Atomic: deletes reminders + planned + occurrences + rule + lifecycle event
 
 GENERATE occurrences:
   → RecurringLifecycleCoordinator.generateOccurrences()
+  → Uses OccurrenceGenerationOptions (controls reminder creation, windows, past-due allowance)
   → Rejects inactive rules
-  → Materializer respects terminal status guards
+  → Terminal statuses (PAID, CANCELLED, SKIPPED, MISSED, IGNORED) never auto-downgraded
+  → materializeInCurrentTransaction() for use inside existing transactions
 
 LINK expense to occurrence:
-  → RecurringLifecycleCoordinator.linkExpenseToOccurrence()
+  → RecurringLifecycleCoordinator.linkExpenseToOccurrenceDetailed()
+  → Returns RecurringExpenseReconcileResult (Linked/Unlinked/Relinked/UpdatedLinkedSnapshot/NoMatch/Skipped)
   → Atomic conditional claim (WHERE status=PLANNED AND linkedExpenseId IS NULL)
   → Fulfills planned + suppresses reminders
 
+UNLINK expense from occurrence:
+  → RecurringLifecycleCoordinator.unlinkExpenseFromOccurrenceDetailed()
+  → Returns RecurringExpenseReconcileResult
+  → Reopens PLANNED occurrence status
+
+UPDATE occurrence status:
+  → RecurringLifecycleCoordinator.updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus, reason)
+  → Uses RecurringOccurrenceTransitionPolicy.requireAllowed() for validation
+  → Typed RecurringOccurrenceStatus enum (PLANNED, PAID, SKIPPED, MISSED, CANCELLED, IGNORED)
+  → Typed RecurringOccurrenceTransitionReason (MATERIALIZER_RESOLUTION, ACTUAL_EXPENSE_LINKED, etc.)
+
+RECONCILE linked expenses after bulk update:
+  → RecurringLifecycleCoordinator.reconcileAllLinkedExpensesAfterBulkUpdate()
+  → Returns BulkRecurringReconcileResult with per-category counts
+  → Triggered by TransactionUpdateKind values: AMOUNT, DATE, CURRENCY, OWNERSHIP, PAYMENT_CORE
+
+DISPATCH reminder:
+  → BillReminderWorker → RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
+  → Post-claim revalidation: verify occurrence still PLANNED
+  → sendNotification() returns NotificationSendResult.Sent/Failed
+  → Runtime settings check (enabled/quiet hours via BillReminderSettingsRepository)
+
 FORBIDDEN:
-  ❌ ManualRecurringExpenseDao.insert/update/delete outside repository/coordinator
+  ❌ ManualRecurringExpenseDao.insert/update/delete outside coordinator
   ❌ RecurringOccurrenceDao.update() outside materializer/coordinator
-  ❌ BillReminderManager.markBillPaid() [DeprecationLevel.ERROR]
+  ❌ BillReminderManager.markBillPaid() [REMOVED — use createExpense + linkExpenseToOccurrence]
+  ❌ Raw String status in updateOccurrenceStatus() (must use RecurringOccurrenceStatus)
+  ❌ Direct DAO for critical lifecycle events (must use RecurringLifecycleEventWriter)
+  ❌ Any recurring rule mutation outside RecurringRuleLifecycleCoordinator
+  ❌ 0L placeholder occurrenceId in reconcile results
+  ❌ Bulk reconciliation using global PAID scan
 ```
 
 ---
@@ -111,8 +180,8 @@ FORBIDDEN:
 ```
 CLOUD AI call:
   → Check EffectiveCloudAiPolicy via CloudAiPrivacyGate
-  → If redactBeforeCloud: apply CloudPayloadRedactor.redactText(text, purpose)
-  → Send only redacted/prepared payload
+  → If redactBeforeCloud: apply CloudPayloadPolicy via DefaultCloudPayloadPolicy.prepare(payload, purpose)
+  → Send only PreparedCloudPayload (all 7 cloud providers use this contract)
   → Audit via CompositePrivacyGate final decision
 
 RAW DATA storage:
@@ -213,4 +282,24 @@ EVERY pipeline exit must write a durable event:
 FORBIDDEN:
   ❌ Timber-only logging for pipeline decisions (must also write durable event)
   ❌ Swallowing CancellationException (always rethrow)
+```
+
+---
+
+## Lifecycle Events
+
+```
+CRITICAL event (provenance — OCCURRENCE_PAID, PLANNED_FULFILLED):
+  → RecurringLifecycleEventWriter.writeCritical()
+  → Always writes, returns event ID
+  → Must be called for all state-changing operations
+
+DIAGNOSTIC event (informational — REMINDER_SCHEDULE_SKIPPED, etc.):
+  → RecurringLifecycleEventWriter.writeDiagnostic()
+  → Best-effort: swallows exceptions
+  → Acceptable to lose on transient failure
+
+FORBIDDEN:
+  ❌ Writing lifecycle events directly through DAO insert
+  ❌ Swallowing writeCritical() failures (must fail the operation)
 ```

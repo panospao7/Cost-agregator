@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
 **Generated:** 2026-05-18 (snapshot)  
-**Database Version:** v131  
+**Database Version:** v141  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -10,7 +10,23 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
-### Drift Sync (2026-05-06)
+### Drift Sync (2026-05-06 / P3-P4 Additions)
+
+### P3: Receipt Match Lifecycle
+- **`ReceiptMatchLifecycleService`** added — lifecycled match mutations with DatabaseWriteBarrier, typed `MATCH_SUGGESTED`/`MATCH_APPROVED`/`MATCH_REJECTED`/`MATCH_CLEARED` events.
+- **`ReceiptDebugExporter`** reworked — expanded audit coverage with `DiagnosticEvent` dedup, exception redaction, privacy-by-default consent gate.
+- **`DeprecationLevel.ERROR` sweep** — legacy `LegacyReceiptLinkService`, `LegacyMatchSuggestion`, `LegacyApproval` removed.
+
+### P4: Recurring Lifecycle Hardening + Single Writer
+- **`RecurringRuleLifecycleCoordinator`** added — single-writer for rule CRUD (create, update, activate, deactivate, delete). Uses `DatabaseWriteBarrier`. All rule mutations enforce 19 static architecture guard tests.
+- **`RecurringLifecycleEventWriter`** added — dual-channel `writeCritical()` (returns eventId) + `writeDiagnostic()`.
+- **`OccurrenceGenerationOptions`**, **`RecurringExpenseReconcileResult`**, **`RecurringOccurrenceStatus`** added — typed domain models for generation control, reconcile results, and state transitions.
+- **`BillReminderSettings`** + **`BillReminderSettingsRepository`** added — runtime dispatch config (enabled, quiet hours). Bound via `ReminderSettingsModule`.
+- **`BillReminderWorker`** now checks runtime settings before dispatching.
+- **`TransactionUpdateKind`** expanded — `AMOUNT`, `DATE`, `CURRENCY`, `OWNERSHIP`, `PAYMENT_CORE`. `affectsRecurringMatch()` centralizes reconciliation triggers.
+- **DB v131 → v141** — 8 version bumps for new tables/columns.
+- **`AppDatabase`** now references 64 entities (was 56).
+- **Single-writer principal** enforced for `RecurringRuleLifecycleCoordinator` — no direct DAO mutations outside coordinator.
 - `TransactionLifecycleCoordinator` now depends on `CurrencySettingsRepository` to resolve the user's home currency for base snapshot conversion metadata.
 - Reminder action receivers (`SnoozeReminderReceiver`, `DismissReminderReceiver`) are Hilt entry points and no longer construct raw database instances; both enforce `RestoreMaintenanceMode` write gating and use `TimeProvider`.
 - `BackupVerifier` now classifies lifecycle/event tables as exact-restore critical (`TIER_1_EXACT`) rather than validity-only.

@@ -1,7 +1,7 @@
 # Complete Backend & Database Map - ExpenseTracker
 
 **Generated:** 2026-05-07  
-**Total Files Mapped:** 804 (344 domain + 253 data + 30 di + 177 other)  
+**Total Files Mapped:** ~926 (344 domain + 253 data + 31 di + ~298 other)  
 **Test Coverage:** 475 test files (449 test + 26 androidTest)
 
 ---
@@ -60,7 +60,7 @@
    - [Security Services](#security-services)
    - [Speech Services](#speech-services)
    - [Other Services](#other-services)
- 3. [DI/Modules Package (30 files)](#dimodules-package)
+  3. [DI/Modules Package (31 files)](#dimodules-package)
  4. [App Services Package (16 files)](#app-services-package)
  5. [Dependency Graph & Data Flow](#dependency-graph--data-flow)
 
@@ -520,13 +520,14 @@
 | `privacy/CompositePrivacyGate.kt` | CompositePrivacyGate | Chains all sub-gates | Service | All sub-gates | No |
 | `privacy/RedactionSanitizer.kt` | RedactionSanitizer | PII redaction utility | Utility | - | No |
 
-### Receipt Lifecycle (7 files)
+### Receipt Lifecycle (8 files)
 
 **Location:** `com.yourname.expensetracker.domain.receipt.lifecycle`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | ReceiptLifecycleCoordinator | Single entry for ALL receipt processing | Engine | - | No |
+| `receipt/lifecycle/ReceiptMatchLifecycleService.kt` | ReceiptMatchLifecycleService | Lifecycle-aware receipt match mutations + events (P3) | Service | AppDatabase, ScannedReceiptDao, ReceiptEventDao, DatabaseWriteBarrier, TimeProvider | No |
 | `receipt/lifecycle/ReceiptLinkService.kt` | ReceiptLinkService | Centralized receipt-expense linking | Service | - | No |
 | `receipt/lifecycle/ReceiptAssetStore.kt` | ReceiptAssetStore | File persistence, hashing, backup | Service | - | No |
 | `receipt/lifecycle/ReceiptInputValidator.kt` | ReceiptInputValidator | URI/MIME/size validation | Service | - | No |
@@ -534,7 +535,7 @@
 | `receipt/lifecycle/ReceiptSideEffectDispatcher.kt` | ReceiptSideEffectDispatcher | Document-type-gated side effects | Engine | - | No |
 | `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific processing | Engine | - | No |
 
-### Recurring Expenses (10 files)
+### Recurring Expenses (14 files)
 
 **Location:** `com.yourname.expensetracker.domain.recurring`
 
@@ -544,15 +545,21 @@
 | `recurring/OccurrenceConflictResolver.kt` | OccurrenceConflictResolver | Resolves candidates vs actuals | Engine | - | No |
 | `recurring/RecurringPlanProjectionService.kt` | RecurringPlanProjectionService | Materialises PlannedExpense rows | Service | - | No |
 | `recurring/lifecycle/RecurringLifecycleCoordinator.kt` | RecurringLifecycleCoordinator | Primary entry for occurrence generation | Engine | - | No |
+| `recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` | RecurringRuleLifecycleCoordinator | Single writer for rule CRUD lifecycle (P4) | Engine | AppDatabase, writeBarrier, expander, resolver, materializer, eventWriter | No |
 | `recurring/lifecycle/RecurringOccurrenceMaterializer.kt` | RecurringOccurrenceMaterializer | Persists occurrences + reminders | Engine | - | No |
+| `recurring/lifecycle/OccurrenceGenerationOptions.kt` | OccurrenceGenerationOptions | Controls reminder creation during generation (P4) | Data | - | No |
+| `recurring/lifecycle/RecurringExpenseReconcileResult.kt` | RecurringExpenseReconcileResult | Sealed result for link/unlink ops (P4) | Model | - | No |
+| `recurring/lifecycle/RecurringOccurrenceStatus.kt` | RecurringOccurrenceStatus | Typed enum + transition policy (P4) | Enum | - | No |
 
-### Reminder Management (1 file)
+### Reminder Management (3 files)
 
 **Location:** `com.yourname.expensetracker.domain.reminder`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `reminder/BillReminderManager.kt` | BillReminderManager | Bill reminder management | Engine | - | No |
+| `reminder/BillReminderManager.kt` | BillReminderManager | Bill reminder management (deprecated) | Engine | - | No |
+| `reminder/BillReminderSettings.kt` | BillReminderSettings | Runtime reminder dispatch config (P4) | Data | - | No |
+| `reminder/BillReminderSettingsRepository.kt` | BillReminderSettingsRepository | Interface for reminder settings (P4) | Interface | - | No |
 
 ### Savings (4 files)
 
@@ -725,7 +732,7 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `database/AppDatabase.kt` | AppDatabase | Room database definition (v120) | Database | All entities, DAOs | No |
+| `database/AppDatabase.kt` | AppDatabase | Room database definition (v141) | Database | All entities, DAOs | No |
 | `database/GroupTransactionCoordinator.kt` | GroupTransactionCoordinator | Coordinates group transactions | Engine | GroupExpenseDao, GroupMemberDao | No |
 
 #### Type Converters (1 file)
@@ -798,7 +805,7 @@
 | `dao/WarrantyLifecycleEventDao.kt` | WarrantyLifecycleEventDao | Warranty lifecycle events DAO | DAO | - | No |
 | `dao/GroupSettlementDao.kt` | GroupSettlementDao | Group settlement DAO | DAO | - | No |
 
-#### Entities (62 files)
+#### Entities (64 files)
 
 **Location:** `com.yourname.expensetracker.data.database.entity`
 
@@ -1088,41 +1095,41 @@
 
 ## DI/MODULES PACKAGE
 
-**Location:** `com.yourname.expensetracker.di`
+**Location:** `com.yourname.expensetracker.di` — 31 Hilt @Module files + qualifier annotations
 
 | File | Class | Purpose | Type | Provides | Tests |
 |------|-------|---------|------|----------|-------|
-| `AiModule.kt` | AiModule | AI service binding | Module | All AI services | No |
-| `AlertsModule.kt` | AlertsModule | Alerts & anomaly binding | Module | AnomalyAlertOrchestrator | No |
-| `ApplicationScope.kt` | ApplicationScope | App scope annotation | Annotation | - | No |
+| `AiModule.kt` | AiModule | AI service binding | Module | All AI services, 3 AI DAOs, RedactionSanitizer, AiPolicy | No |
 | `BackupRepositoryModule.kt` | BackupRepositoryModule | Backup binding | Module | DatabaseBackupRepository | No |
 | `CashFlowModule.kt` | CashFlowModule | Cash flow binding | Module | CashFlowCalculator | No |
-| `CurrencyModule.kt` | CurrencyModule | Currency binding | Module | CurrencyConverter, ExchangeRates | No |
-| `DaoModule.kt` | DaoModule | DAO injection | Module | All DAOs | No |
-| `DashboardContractsModule.kt` | DashboardContractsModule | Dashboard contracts | Module | DashboardRepositoryContracts | No |
+| `CurrencyModule.kt` | CurrencyModule | Currency binding | Module | CurrencySettingsRepository, CurrencyRatesRepository, ExchangeRateStore | No |
+| `DaoModule.kt` | DaoModule | DAO injection (58 DAOs) | Module | All DAOs except AiModule-provided | No |
+| `DashboardAnomalyModule.kt` | DashboardAnomalyModule | Anomaly alert binding | Module | AnomalyAlertRepository (domain + dashboard) | No |
+| `DashboardContractsModule.kt` | DashboardContractsModule | Dashboard contracts (7 adapters) | Module | DashboardRepositoryContracts | No |
 | `DatabaseModule.kt` | DatabaseModule | Database initialization | Module | AppDatabase, GroupTransactionCoordinator | No |
-| `DispatchersModule.kt` | DispatchersModule | Coroutine dispatchers | Module | IO, Default, Main | No |
-| `EmailIngestionModule.kt` | EmailIngestionModule | Email parsing | Module | Email receipt parsers | No |
-| `EmptyStateModule.kt` | EmptyStateModule | Empty state registry | Module | Empty state configurations | No |
-| `EmptyStateRegistryInitializer.kt` | EmptyStateRegistryInitializer | Empty state init | Initializer | - | No |
-| `ExportModule.kt` | ExportModule | Export binding | Module | AccountingExporters | No |
-| `GroupsModule.kt` | GroupsModule | Groups binding | Module | GroupTransactionCoordinator | No |
-| `LocationResolverPortsModule.kt` | LocationResolverPortsModule | Location ports | Module | All geocoding services | No |
-| `NaturalLanguageModule.kt` | NaturalLanguageModule | NL binding | Module | Speech, NL search | No |
-| `NetworkModule.kt` | NetworkModule | Network client | Module | Retrofit, OkHttp | No |
-| `NetworkQualifiers.kt` | NetworkQualifiers | Network qualifiers | Qualifier | - | No |
-| `OcrImprovementsModule.kt` | OcrImprovementsModule | OCR binding | Module | OCR preprocessors | No |
-| `PrivacyModule.kt` | PrivacyModule | Privacy gate binding | Module | CompositePrivacyGate, all sub-gates | No |
-| `ReceiptParsingModule.kt` | ReceiptParsingModule | Receipt parsing | Module | All receipt parsers | No |
-| `RecurringModule.kt` | RecurringModule | Recurring expenses binding | Module | RecurringLifecycleCoordinator | No |
-| `SavingsModule.kt` | SavingsModule | Savings binding | Module | Savings engines | No |
-| `SavingsRepositoryBindingsModule.kt` | SavingsRepositoryBindingsModule | Savings repos | Module | Savings repositories | No |
-| `SecurityModule.kt` | SecurityModule | Security binding | Module | Token cipher, Key storage | No |
-| `ServiceModule.kt` | ServiceModule | Services binding | Module | All domain services | No |
-| `SubscriptionModule.kt` | SubscriptionModule | Subscription binding | Module | Subscription detection | No |
-| `TaxModule.kt` | TaxModule | Tax binding | Module | Tax estimator | No |
-| `TimeModule.kt` | TimeModule | Time provider | Module | TimeProvider, SystemTimeProvider | No |
-| `TransactionModule.kt` | TransactionModule | Transaction lifecycle binding | Module | TransactionLifecycleCoordinator | No |
+| `DiagnosticsModule.kt` | DiagnosticsModule | Diagnostic writers binding | Module | DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository | No |
+| `DispatchersModule.kt` | DispatchersModule | Coroutine dispatchers | Module | IO, Default, Main dispatchers, ApplicationScope | No |
+| `EmailIngestionModule.kt` | EmailIngestionModule | Email parsing | Module | Amazon, Uber, Apple receipt parsers | No |
+| `EmptyStateModule.kt` | EmptyStateModule | Empty state registry | Module | Empty state configurations (multibind) | No |
+| `ExportModule.kt` | ExportModule | Export binding | Module | QuickBooksIIF, XeroCSV, FreshBooks exporters | No |
+| `GroupsModule.kt` | GroupsModule | Groups binding | Module | GroupsRepository, SharedExpenseDataPort, Use cases | No |
+| `LocationResolverPortsModule.kt` | LocationResolverPortsModule | Location ports | Module | LocationCachePort, MerchantClusterPort | No |
+| `NaturalLanguageModule.kt` | NaturalLanguageModule | NL binding | Module | NaturalLanguageExpenseQueryRepository | No |
+| `NetworkModule.kt` | NetworkModule | Network client | Module | @LocationHttpClient, @CloudAiHttpClient OkHttpClient | No |
+| `OcrImprovementsModule.kt` | OcrImprovementsModule | OCR binding | Module | EnhancedMerchantExtractor, OcrLanguageProcessor, OcrPreprocessingPipeline | No |
+| `ParserModule.kt` | ParserModule | Bank parser binding | Module | GreekBankParser | No |
+| `PrivacyModule.kt` | PrivacyModule | Privacy gate binding | Module | CompositePrivacyGate, PrivacyAuditLogger, PrivacySettingsRepository | No |
+| `ProvenanceModule.kt` | ProvenanceModule | Provenance tracking | Module | Provenance event recording | No |
+| `ReceiptParsingModule.kt` | ReceiptParsingModule | Receipt parsing | Module | MerchantRulesPolicy binding | No |
+| `ReminderSettingsModule.kt` | ReminderSettingsModule | Reminder settings binding (P4) | Module | BillReminderSettingsRepository | No |
+| `RetentionModule.kt` | RetentionModule | Data retention policy | Module | RetentionRegistry with 5 targets | No |
+| `SavingsModule.kt` | SavingsModule | Savings binding | Module | SmartSavingsEngine, AutomatedSavingsRule*, SavingsGamificationEngine | No |
+| `SavingsRepositoryBindingsModule.kt` | SavingsRepositoryBindingsModule | Savings repos | Module | DomainSavingsGoalRepository binding | No |
+| `SecurityModule.kt` | SecurityModule | Security binding | Module | SecureKeyStorage | No |
+| `ServiceModule.kt` | ServiceModule | Services binding | Module | Gson, NotificationService, GeocodingService, NearbyPoi, Location, Widget, Speech | No |
+| `TaxModule.kt` | TaxModule | Tax binding | Module | TaxConfiguration → GreeceTaxConfiguration | No |
+| `TimeModule.kt` | TimeModule | Time provider | Module | TimeProvider → SystemTimeProvider | No |
+| `WorkerModule.kt` | WorkerModule | Worker logging | Module | WorkerRunLogger → WorkerRunLoggerImpl | No |
 
 ---
 
@@ -1394,11 +1401,11 @@ Engine (integration with other domain logic)
 |--------|-------|
 | **Domain Files** | 344 |
 | **Data Files** | 253 |
-| **DI / @Module Files** | 28 |
-| **Total Backend Files** | 804 |
-| **Test Files** | 475 |
-| **Database Entities** | 62 |
-| **DAOs** | 58 |
+| **DI / @Module Files** | 31 |
+| **Total Backend Files** | ~926 |
+| **Test Files** | ~500+ |
+| **Database Entities** | 64 |
+| **DAOs** | 62 |
 | **Repositories** | 65 (52 data + 13 domain interfaces) |
 | **Use Cases** | 41 |
 | **Engines** | ~70 |

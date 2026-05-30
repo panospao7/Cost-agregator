@@ -15,7 +15,7 @@
 | **ReceiptParser** | 3 (OCR), 11 (Email providers), 10 (Bank statement) | 🟡 HIGH |
 | **MoneyAggregate/Builder** | 5 (Dashboard), 6 (Budget), 12 (Export), Analytics | 🟡 HIGH |
 | **TimeProvider/TimePeriodUtils** | ALL pipelines (timestamps, periods, scheduling) | 🔴 CRITICAL |
-| **PrivacyGate/Redactor** | 1 (Notification), 3 (Receipt), 8 (AI), 10 (Bank), 11 (Email), 7 (Backup) | 🟡 HIGH |
+| **PrivacyGate/CloudPayloadPolicy** | 1 (Notification), 3 (Receipt), 8 (AI), 10 (Bank), 11 (Email), 7 (Backup) | 🟡 HIGH |
 | **TransactionSideEffectDispatcher** | 2 (Lifecycle), 4 (Recurring match), 5 (Budget recheck), Analytics | 🟡 HIGH |
 | **WarrantyExtractor** | 3 (Receipt side effects) only | 🟢 LOW |
 | **SubscriptionDetector** | 4 (Recurring detection) only | 🟢 LOW |
@@ -24,6 +24,13 @@
 | **InvestmentTracker** | Investment portfolio only | 🟢 LOW |
 | **TaxEstimator** | Tax reports, Export | 🟢 LOW |
 | **GroupTransactionCoordinator** | Groups, shared expenses, budget offsets | 🟡 HIGH |
+| **DailyBucketEngine** | 5 (Dashboard), 6 (Budget), Analytics | 🟢 LOW |
+| **BudgetVsActualEngine** | 5 (Dashboard), 6 (Budget), Analytics | 🟢 LOW |
+| **AnalyticsInputAssembler** | 5 (Dashboard), 6 (Budget/Forecast), Analytics | 🟡 HIGH |
+| **ReceiptMatchLifecycleService** | 3 (Receipt matching) only | 🟢 LOW |
+| **RecurringRuleLifecycleCoordinator** | 4 (Recurring lifecycle), 2 (Transaction reconcile) | 🟡 HIGH |
+| **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
+| **BillReminderWorker** | 4 (Reminder dispatch) | 🟢 LOW |
 
 ---
 
@@ -74,6 +81,33 @@ CategorizationEngine.classify()
   └── AnalyticsEngine (category analytics)
 ```
 
+### ReceiptMatchLifecycleService changes affect:
+```
+ReceiptMatchLifecycleService.saveMatchSuggestion() / approveMatchSuggestion()
+  ├── ReceiptMatchingWorker (auto-match)
+  ├── ReceiptMatchingViewModel (user-match UI)
+  └── ReceiptEvent (MATCH_SUGGESTED / MATCH_APPROVED / MATCH_REJECTED / MATCH_CLEARED)
+```
+
+### RecurringRuleLifecycleCoordinator changes affect:
+```
+RecurringRuleLifecycleCoordinator.createRule() / updateRule() / deactivateRule() / deleteRule()
+  ├── ManualRecurringExpenseRepository (rule CRUD delegation)
+  ├── RecurringExpenseRepository (delegation)
+  ├── RecurringOccurrenceDao (indirect via transaction)
+  ├── RecurringReminderDeliveryDao (indirect via transaction)
+  ├── PlannedExpenseDao (indirect via transaction)
+  └── RecurringLifecycleEventWriter (critical + diagnostic events)
+```
+
+### BillReminderWorker changes affect:
+```
+BillReminderWorker.doWork()
+  ├── RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
+  ├── NotificationManager.sendNotification() → NotificationSendResult
+  └── BillReminderSettingsRepository (runtime enabled/quiet hours check)
+```
+
 ---
 
 ## Safe vs Dangerous Changes
@@ -84,6 +118,11 @@ CategorizationEngine.classify()
 - InvestmentTracker — isolated portfolio domain
 - TaxEstimator — isolated tax reports
 - LocationBackfill — isolated enrichment
+- ReceiptMatchLifecycleService — isolated receipt matching domain
+- BillReminderWorker — isolated reminder dispatch
+- DailyBucketEngine — isolated daily bucket computation
+- BudgetVsActualEngine — isolated budget comparison
+- RecurringLifecycleEventWriter — isolated event writing
 
 ### DANGEROUS to change (shared engines):
 - CurrencyConverter — verify dashboard, budget, forecast, export, cashflow
@@ -91,6 +130,7 @@ CategorizationEngine.classify()
 - CategorizationEngine — verify notification, receipt, email, budget
 - TimeProvider — verify ALL timestamp-dependent logic
 - PrivacyGate — verify ALL privacy-sensitive paths
+- RecurringRuleLifecycleCoordinator — verify recurring, transaction reconciliation, reminder dispatch, backup
 
 ### VERY DANGEROUS to change (foundational):
 - MoneyAggregate model — verify every consumer of financial totals

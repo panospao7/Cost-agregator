@@ -129,8 +129,8 @@
 
 ### ReceiptMatchingViewModel
 **File:** `ui/screens/receiptmatching/ReceiptMatchingViewModel.kt`
-**Injections:** ReceiptRepository, ExpenseRepository
-**Complexity:** 🟢 Low (2 dependencies)
+**Injections:** ReceiptRepository, ExpenseRepository, ReceiptMatchLifecycleService
+**Complexity:** 🟢 Low (3 dependencies)
 
 ### InvestmentViewModel
 **File:** `ui/screens/investment/InvestmentViewModel.kt`

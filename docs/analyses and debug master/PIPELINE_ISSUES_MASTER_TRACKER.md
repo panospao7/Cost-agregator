@@ -3,8 +3,14 @@
 > Consolidated P0/P1 issues from all 12 pipeline debug reports.
 > Each issue's **full fix strategy + implementation plan** lives in its source debug report.
 > Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`
-> **Last updated: 2026-05-11 (Pipeline 2 PR4 email coordinator refactor + tracker status refresh)**
+> **Last updated: 2026-05-30 (documentation audit — Pipeline 3 & 4 complete through `214c4266`)**
 > **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items (45 ✅ FIXED + 8 ⚠ PARTIAL + 76 📝 TODO ONLY + 1 ⏭ DEFERRED)**
+>
+> **NOTE (2026-05-30):** Pipeline 3 and Pipeline 4 commits are complete through commit `214c4266`. Statuses in this tracker should be reconciled against the actual evaluations in `pipeline3_evaluation.md` and `pipeline4_evaluation.md`. Key discrepancies found during documentation audit:
+> - P3-P0-01 (`createdAt=0`): Tracker says ✅ FIXED, evaluation says still OPEN
+> - P4-P0-01 (payment fulfills planned expense): Tracker says ✅ FIXED, evaluation says PARTIAL
+> - P4-P0-02 (paid occurrence suppresses reminders): Tracker says ✅ FIXED, evaluation says PARTIAL/UNPROVEN
+> - P4-P1-07 (PAID downgrade): Tracker says ⚠ PARTIAL, evaluation says still OPEN
 
 ## Architectural Strategy (from `response (3).md`)
 

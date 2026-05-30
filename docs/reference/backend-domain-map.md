@@ -357,6 +357,7 @@ Domain Layer (This Document)
 |-----------|------|---------|-------------|
 | `ReceiptLifecycleCoordinator` | `lifecycle/ReceiptLifecycleCoordinator.kt` | **Single entry point for ALL receipt processing** | Pipeline: validate → persist asset → OCR/parse → dedupe → save → event logging → side effects. Handles camera/gallery, email, bank statement paths. |
 | `ReceiptLinkService` | `lifecycle/ReceiptLinkService.kt` | Centralized receipt-expense linking | Manages many-to-many link table `receipt_expense_links`. Supports single links (RETAIL_RECEIPT) and multi-links (BANK_STATEMENT). Writes audit events for every link/unlink. |
+| `ReceiptMatchLifecycleService` | `lifecycle/ReceiptMatchLifecycleService.kt` | **P3: Lifecycle-aware receipt match mutations.** | `saveMatchSuggestion()` / `approveMatchSuggestion()` / `rejectMatchSuggestion()` / `clearMatch()`. Each emits typed `ReceiptEvent`. Uses `DatabaseWriteBarrier` for restore safety. |
 | `ReceiptAssetStore` | `lifecycle/ReceiptAssetStore.kt` | File persistence for receipt assets | Copies images to app-local storage, computes SHA-256 hash, creates camera temp URIs via FileProvider, generates backup manifests (`ReceiptAssetManifestEntry`). |
 | `ReceiptInputValidator` | `lifecycle/ReceiptInputValidator.kt` | URI/MIME/size validation | Checks readability, supported MIME types (JPEG, PNG, WebP, PDF, HEIC), file size limit (50 MB), image decode validity. Returns `ValidationResult`. |
 | `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication | EXACT_HASH (SHA-256, 1.0), TEXT_FINGERPRINT (normalized OCR text, 0.95), SEMANTIC (merchant+amount+date+currency, 0.8), EXTERNAL_ID. Returns `DuplicateResult`. |
@@ -557,7 +558,7 @@ interface AiCapabilityRouter {
 | `GreeklishNormalizer.kt` | Greek text normalization |
 | `MerchantCanonicalizer.kt` | Merchant name standardization |
 
-### Recurring Services & Lifecycle (NEW — Phase 5 / Phase 5b)
+### Recurring Services & Lifecycle (Phase 5 / Phase 5b + P4 Lifecycle Hardening)
 **Directory:** `recurring/` and `recurring/lifecycle/`
 
 | Service / Coordinator | File | Purpose |
@@ -567,6 +568,11 @@ interface AiCapabilityRouter {
 | `RecurringPlanProjectionService` | `RecurringPlanProjectionService.kt` | Bridges recurring lifecycle to forecasting by materialising `PlannedExpense` rows from PLANNED occurrences. Deduplicates via `sourceOccurrenceKey`. Called by forecast pipeline. |
 | `RecurringLifecycleCoordinator` | `lifecycle/RecurringLifecycleCoordinator.kt` | **Primary entry point** for generating and managing recurring occurrences. Orchestrates expand → resolve → materialize. Also provides `linkExpenseToOccurrence()` (called by `TransactionLifecycleCoordinator` post-creation), `getOccurrences()`, `updateOccurrenceStatus()`, `getDueReminders()`, and **`reconcilePlannedVsActual()`** (Phase 5b — drift analysis returning `ReconciliationReport`). |
 | `RecurringOccurrenceMaterializer` | `lifecycle/RecurringOccurrenceMaterializer.kt` | Persists resolved occurrences (INSERT with IGNORE, UPDATE on status change) and creates `RecurringReminderDelivery` rows for PLANNED occurrences (DUE_DAY, N_DAYS_BEFORE, OVERDUE windows). |
+| `RecurringRuleLifecycleCoordinator` | `lifecycle/RecurringRuleLifecycleCoordinator.kt` | **P4: Single writer for rule CRUD.** `createRule()` / `updateRule()` / `activateRule()` / `deactivateRule()` / `deleteRule()`. All rule mutations route through this coordinator with DatabaseWriteBarrier enforcement. |
+| `RecurringLifecycleEventWriter` | `lifecycle/RecurringLifecycleEventWriter.kt` | **P4: Dual-channel event writer.** `writeCritical()` → Long (returns eventId), `writeDiagnostic()` for debug-level events. |
+| `OccurrenceGenerationOptions` | `lifecycle/OccurrenceGenerationOptions.kt` | **P4:** Controls reminder creation during occurrence generation (generation window, max occurrences per run). |
+| `RecurringExpenseReconcileResult` | `lifecycle/RecurringExpenseReconcileResult.kt` | **P4:** Sealed interface for link/unlink operations: `Linked`, `AlreadyLinked`, `NotFound`, `Conflict`, etc. |
+| `RecurringOccurrenceStatus` | `lifecycle/RecurringOccurrenceStatus.kt` | **P4:** Typed enum: PLANNED, PAID, SKIPPED, MISSED, CANCELLED, IGNORED + `RecurringOccurrenceTransitionPolicy` for valid state transitions. |
 
 ### Receipt Services & Lifecycle
 **Directory:** `receipt/` and `receipt/lifecycle/`
@@ -668,8 +674,10 @@ interface AiCapabilityRouter {
 | `AutomatedSavingsRuleEngine.kt` | Auto-savings setup |
 | `SavingsGamificationEngine.kt` | Savings challenges |
 | `SmartSavingsEngine.kt` | Savings optimization |
-| `BillReminderManager.kt` | Bill notification scheduling |
-| `BillReminderWorker` (data) | `service/reminder/BillReminderWorker.kt` — Periodic WorkManager worker (every 4h) dispatching Android notifications for due/overdue bill reminders via `RecurringLifecycleCoordinator.getDueReminders()` |
+| `BillReminderManager.kt` | Bill notification scheduling (deprecated — use `BillReminderWorker` + settings) |
+| `BillReminderSettings.kt` | **P4:** Runtime reminder dispatch config (enabled, quiet hours, dispatch interval) |
+| `BillReminderSettingsRepository.kt` | **P4:** Interface for reading/writing reminder settings (bound via `ReminderSettingsModule`) |
+| `BillReminderWorker` (data) | `service/reminder/BillReminderWorker.kt` — Periodic WorkManager worker (every 4h) dispatching Android notifications for due/overdue bill reminders via `RecurringLifecycleCoordinator.getDueReminders()`. Checks `BillReminderSettingsRepository` before dispatching. |
 | `AreaSpendingEngine.kt` | Geographic analytics |
 | `LifestyleInflationDetector.kt` | Spending growth detection |
 | `InvestmentTracker.kt` | Investment portfolio |
