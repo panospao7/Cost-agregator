@@ -388,3 +388,61 @@ Test source:
 This session's Pipeline 8 edits sit alongside UNRELATED uncommitted Pipeline 6/5 changes already
 present in the working tree (`BudgetRepository.kt`, `BudgetMonitor.kt`, `MultiCurrencyRepository.kt`,
 budget tests, etc.). Commit the Pipeline 8 files separately to keep attribution clean.
+
+---
+
+## Pipeline 9 — Workers / Background Jobs
+
+Audit: `docs/analyses and debug master/new debugging session/pipeline9_static_debug_report_b6abe0a (1).md` (written against old commit `b6abe0a`; reconciled against current HEAD before planning — most of the audit's 10-PR plan was ALREADY implemented; only the genuine remaining gaps were worked).
+Mode: static only — agent did NOT compile/build/run Gradle or tests.
+Implementation: slices S1–S9 + follow-up P9-NEW-13 applied. Self-review verdict: **GREEN**.
+Validation (human must run — NOT run by agent):
+- assembleDebug: pending
+- testDebugUnitTest: pending
+- check: pending
+- connectedDebugAndroidTest: **REQUIRED** (schema change — migration 142→143; see S9)
+- **KSP schema export: REQUIRED FIRST** — build must regenerate `app/schemas/.../AppDatabase/143.json` (currently absent); migration-validation tests depend on it.
+
+### Slices implemented this session
+| Slice | Issue IDs | Summary | Gate |
+|-------|-----------|---------|------|
+| S1 | P9-NEW-04 | `WorkerExecutionGuard` enforces `requiresNotificationPermission` via injected `NotificationPermissionChecker`; durable skip `NOTIFICATION_PERMISSION_DENIED`; warranty worker uses it | GREEN |
+| S2 | P9-P1-10, P9-NEW-11 | Explicit `WorkerSpec.oneShotPolicy`; `scheduleAtMidnight()` cancels when disabled; merchant_key=REPLACE, ai_daily_briefing=KEEP; version-bump still forces REPLACE | GREEN |
+| S3 | P9-P1-04 | Daily-briefing reschedule driven by `WorkerGuardResult`; reschedules on Success + all incidental Skips; only explicit spec-disable (`"Worker disabled by spec"`) stops the chain (guard↔worker literal pinned by a guard-side test) | GREEN |
+| S4 | P9-NEW-03 | Location/MerchantKey/DataRetention/ReceiptMatching/DailyBriefing migrated to `runGuardedWithContext`; feed real counts into `BackgroundJobRun` (Bill already did; Warranty stays on `runGuarded`) | GREEN |
+| S5 | P9-P1-08 | Durable `ReceiptEvent`s MATCH_ATTEMPTED / MATCH_NOT_FOUND / MATCH_SKIPPED_DOCUMENT_TYPE / AUTO_MATCH_LINK_FAILED via `ReceiptMatchLifecycleService` (barrier + transaction) | GREEN |
+| S6 | P9-P1-07, P9-NEW-07 | Atomic per-receipt claim `ScannedReceiptDao.claimForAutoMatch` (conditional UPDATE on UNMATCHED/SUGGESTED) prevents concurrent double-link; `runOnce` keeps KEEP; MATCHING enum deferred. Lease confirmed NOT mutually exclusive | GREEN |
+| S7 | P9-P1-11 | `PrivacyRuntimeWorkerPolicy` drives cancel/reschedule (no hardcoded names); background-location no longer cancels merchant_key_backfill; re-enable reschedules; data_retention exempt; uses actual persisted settings | GREEN |
+| S8 | (regression-prevention) | `WorkerGuardArchitectureGuardTest` asserts every `CoroutineWorker` uses the guard (allowlist: NotificationIntakeWorker only; SourceLinkBackfillWorker is not a CoroutineWorker) | GREEN |
+| S9 | P9-P1-09 | New `WarrantyReminderDelivery` entity+DAO (claim-before-notify, SENT only on DELIVERED, unique key warrantyId+windowDays+expiryDate); migration **142→143** (additive); whole-file backup snapshot + `BackupVerifier` TIER_1; SharedPreferences removed | GREEN (schema; needs human migration test run) |
+| P9-NEW-13 | P9-NEW-13 (found in review) | New `RetryableWorkerException` recognized by guard (precedence: Cancellation→Retryable→`classifyTransient`→Failed); Location/MerchantKey "transient/no-progress" throws now retry instead of being misclassified permanent; LocationBackfill no longer burns the permanent attempt budget on a transient throw | GREEN |
+
+### Already-done before this session (verified, NOT re-touched)
+P9-P1-01/02/03/05/06 (run logging, shared guard, lease/drain via `MaintenanceOperationRunner`, bill-reminder enable + exactly-once state machine), P9-NEW-01/02/05/06/09/12 (restore-blocked diagnostics, cancellation finalization, `allowDuringBackupExport`, data_retention not over-cancelled, startup stale recovery, typed status+statusReason), PR10 retention registry, Registry↔Spec symmetry test (`WorkerContractTest`).
+
+### SCHEMA CHANGE (S9) — read before validating
+- `APP_DATABASE_SCHEMA_VERSION` 142 → **143**. (The 141→142 bump in the working tree is the SIBLING Pipeline-6 `budget_forecasts` migration; S9 correctly stacks as 142→143.)
+- `MIGRATION_142_143` is ADDITIVE only (CREATE TABLE `warranty_reminder_deliveries` + unique index `(warrantyId,windowDays,expiryDate)` + FK index on `warrantyId`, FK→`warranties(id)` ON DELETE CASCADE). No DROP/ALTER. `fallbackToDestructiveMigration` stays OFF.
+- Reviewer verified the CREATE TABLE byte-matches the entity column-for-column (against sibling `recurring_reminder_deliveries` in 142.json). No SQL DEFAULT clauses (Kotlin defaults don't emit them) — confirmed.
+- **`143.json` NOT yet generated** — KSP emits it on build; `MigrationRegistrationTest` 142→143 + `MigrationContractTest` depend on it. Run a build first, then commit the schema file.
+
+### Known compile/build-risk areas (agent could not compile)
+- `143.json` schema export missing (see above) — top priority for the human build.
+- New Hilt bindings: `NotificationPermissionChecker`→`AndroidNotificationPermissionChecker` (WorkerModule), `WarrantyReminderDeliveryDao` (DaoModule) — needs `assembleDebug`/kapt, not just Kotlin compile.
+- S4 test-mock migration: all 5 migrated worker tests now stub `runGuardedWithContext` (strict mock in MerchantKey unit test) — verified migrated; a stale `runGuarded` stub would have failed loudly.
+- `WorkerRunContext.rowsSkipped`/`errors` are collected but NOT persisted by the guard's `run.success()` (only rowsScanned/rowsUpdated/notificationsSent). Documented as a follow-up, not a regression.
+
+### Tests added/updated
+- New: `WorkerExecutionGuardTest`, `WorkerSpecSchedulerTest`, `WorkerGuardArchitectureGuardTest`, `PrivacyRuntimeWorkerPolicyTest`, `PrivacySettingsRepositoryImplWorkerGatingTest`, `ReceiptMatchLifecycleServiceTest`, `ScannedReceiptClaimTest`, `WarrantyReminderDeliveryDaoTest`, `DataRetentionWorkerTest`.
+- Updated: `WorkerIdempotencyTest`, `DailyBriefingWorkerTest`, `LocationBackfillWorkerTest`, `MerchantKeyBackfillWorkerTest` (unit + androidTest), `ReceiptMatchingWorkerTest`, `WarrantyExpirationWorkerTest`, `WorkerLeaseRegistryTest`, `MigrationRegistrationTest`, `BackupRestoreContractTest`.
+- Instrumentation (HUMAN/device-run): `MigrationContractTest` 142→143 (table shape, unique-index enforcement, FK cascade + orphan rejection).
+
+### Open follow-ups (NOT blocking; not in this session's scope)
+- Persist `rowsSkipped`/`errors` in `BackgroundJobRun` (extend `run.success(...)` + columns).
+- `notificationsSent` counts delivery *attempts that returned without throwing*, not confirmed deliveries — gate on a real delivery result (affects DailyBriefing/ReceiptMatching).
+- MerchantKey no-progress retry has no cross-run attempt cap (bounded only by WorkManager backoff) — consider a persistent cap like LocationBackfill's.
+- Unified `NotificationDeliveryResult` port across workers (P9-NEW-10) and a retention diagnostics target (P9-NEW-08 remainder) remain partial/deferred.
+- Pre-existing (untouched, flagged): the `LocationBackfillWorker` resolver-catch budget asymmetry was corrected this session; no other open worker-test contradictions found.
+
+### Working-tree note
+Pipeline 9 edits sit alongside UNRELATED uncommitted Pipeline 5/6/7/8 changes already in the working tree. Commit the Pipeline 9 files separately to keep attribution clean. The 142→143 schema bump must be sequenced after the sibling Pipeline-6 141→142 migration (it already is).

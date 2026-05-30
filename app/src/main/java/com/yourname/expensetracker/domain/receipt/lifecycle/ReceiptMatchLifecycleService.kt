@@ -22,6 +22,13 @@ import javax.inject.Singleton
  *
  * PR 1: Created to migrate ViewModel/Worker callers off deprecated
  * ReceiptRepository match mutation APIs.
+ *
+ * P9-P1-08: Extended with diagnostics-only writers
+ * ([recordMatchAttempted], [recordMatchNotFound],
+ * [recordMatchSkippedDocumentType], [recordAutoMatchLinkFailed]) so that
+ * worker-side match outcomes that were previously silent (only logged via
+ * Timber or skipped with `continue`) now emit durable [ReceiptEvent]s.
+ * These writers do not mutate match status; they record audit events only.
  */
 @Singleton
 class ReceiptMatchLifecycleService @Inject constructor(
@@ -126,6 +133,102 @@ class ReceiptMatchLifecycleService @Inject constructor(
                 actor = "system:match_lifecycle",
                 message = "Match cleared for receipt",
                 metadata = null, errorDetails = null
+            ))
+        }
+    }
+
+    // ── P9-P1-08: diagnostics-only match-outcome writers ────────────────────
+    // These mirror the saveMatchSuggestion pattern (write-barrier check +
+    // withTransaction + receiptEventDao.insert + "system:match_lifecycle"
+    // actor) but do NOT mutate match status — they record audit events only.
+
+    /**
+     * Records that a match attempt is starting for [receiptId].
+     *
+     * P9-P1-08: Previously the worker invoked the matcher with no durable trace.
+     */
+    suspend fun recordMatchAttempted(receiptId: Long, lookbackDays: Int) {
+        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordMatchAttempted")
+        val now = timeProvider.now()
+        database.withTransaction {
+            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = receiptId, sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = ReceiptLifecycleEventTypes.MATCH_ATTEMPTED, occurredAt = now,
+                oldStatus = receipt.processingStatus, newStatus = null,
+                actor = "system:match_lifecycle",
+                message = "Match attempt started (lookbackDays=$lookbackDays)",
+                metadata = null, errorDetails = null
+            ))
+        }
+    }
+
+    /**
+     * Records that a match attempt produced no candidate for [receiptId].
+     *
+     * P9-P1-08: Previously the NoMatch branch did nothing.
+     */
+    suspend fun recordMatchNotFound(receiptId: Long) {
+        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordMatchNotFound")
+        val now = timeProvider.now()
+        database.withTransaction {
+            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = receiptId, sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = ReceiptLifecycleEventTypes.MATCH_NOT_FOUND, occurredAt = now,
+                oldStatus = receipt.processingStatus, newStatus = null,
+                actor = "system:match_lifecycle",
+                message = "No matching expense found for receipt",
+                metadata = null, errorDetails = null
+            ))
+        }
+    }
+
+    /**
+     * Records that matching was skipped for [receiptId] because its document
+     * type (or processing status) is ineligible for matching.
+     *
+     * P9-P1-08: Previously the worker silently `continue`d past these receipts.
+     */
+    suspend fun recordMatchSkippedDocumentType(receiptId: Long, documentType: String?) {
+        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordMatchSkippedDocumentType")
+        val now = timeProvider.now()
+        database.withTransaction {
+            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            val effectiveDocumentType = documentType ?: receipt.documentType
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = receiptId, sourceType = receipt.sourceType,
+                documentType = effectiveDocumentType,
+                eventType = ReceiptLifecycleEventTypes.MATCH_SKIPPED_DOCUMENT_TYPE, occurredAt = now,
+                oldStatus = receipt.processingStatus, newStatus = null,
+                actor = "system:match_lifecycle",
+                message = "Skipped matching: documentType=$effectiveDocumentType, processingStatus=${receipt.processingStatus}",
+                metadata = null, errorDetails = null
+            ))
+        }
+    }
+
+    /**
+     * Records that an auto-match link attempt failed for [receiptId].
+     *
+     * P9-P1-08: Previously this path was only logged via Timber.w and produced
+     * no durable trace.
+     */
+    suspend fun recordAutoMatchLinkFailed(receiptId: Long, expenseId: Long?, reason: String?) {
+        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordAutoMatchLinkFailed")
+        val now = timeProvider.now()
+        database.withTransaction {
+            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = receiptId, sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = ReceiptLifecycleEventTypes.AUTO_MATCH_LINK_FAILED, occurredAt = now,
+                oldStatus = receipt.processingStatus, newStatus = null,
+                actor = "system:match_lifecycle",
+                message = "Auto-match link failed for expense $expenseId",
+                metadata = null, errorDetails = reason
             ))
         }
     }

@@ -79,11 +79,20 @@ MATCH receipt (suggest/approve/reject/clear):
   → Each operation: DatabaseWriteBarrier check → withTransaction → ReceiptEvent
   → Events: MATCH_SUGGESTED / MATCH_APPROVED / MATCH_REJECTED / MATCH_CLEARED
 
+AUTO-MATCH receipt (ReceiptMatchingWorker, periodic + manual runOnce):
+  → ReceiptMatchLifecycleService writes durable events for every outcome:
+      MATCH_ATTEMPTED / MATCH_NOT_FOUND / MATCH_SKIPPED_DOCUMENT_TYPE / AUTO_MATCH_LINK_FAILED
+  → Concurrency invariant: per-receipt atomic claim ScannedReceiptDao.claimForAutoMatch
+    (conditional UPDATE WHERE matchStatus IN ('UNMATCHED','SUGGESTED')) is the
+    load-bearing overlap guard — concurrent periodic+manual runs cannot double-link.
+    WorkerLeaseRegistry is a drain/registry mechanism, NOT mutual exclusion per worker.
+
 FORBIDDEN:
   ❌ ReceiptRepository.saveMatchSuggestion() [DeprecationLevel.ERROR]
   ❌ ReceiptRepository.rejectAllSuggestions() [DeprecationLevel.ERROR]
   ❌ ReceiptRepository.clearMatchForReceipt() [DeprecationLevel.ERROR]
   ❌ Any match mutation without ReceiptEvent
+  ❌ Relying on WorkerLeaseRegistry for auto-match mutual exclusion
 ```
 
 ```
@@ -214,8 +223,9 @@ RESTORE:
   → Journal every state transition (atomic write: temp+rename)
   → Maintenance mode persisted with commit() (not apply())
   → Delete WAL/SHM before installing restored DB
-  → On rollback failure: stay in RESTART_REQUIRED (fail-closed)
-  → Forced restart after success
+  → On rollback failure: enter CRITICAL_RECOVERY_REQUIRED (fail-closed, persists across restarts)
+  → On startup crash-recovery failure: enter CRITICAL_RECOVERY_REQUIRED (NOT reset on later restarts)
+  → Forced restart after success (RESTORE_COMPLETE_RESTART_REQUIRED; auto-reset to NORMAL on next clean start)
 
 FORBIDDEN:
   ❌ Any DB write during restore (DatabaseWriteBarrier blocks all)
@@ -230,19 +240,38 @@ FORBIDDEN:
 
 ```
 EVERY worker:
-  → WorkerExecutionGuard.runGuarded() [checks barrier FIRST, then logs run]
-  → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED
+  → WorkerExecutionGuard.runGuarded() / runGuardedWithContext()
+       [checks barrier FIRST, then logs run]
+  → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
   → Checkpoint before long loops (ensureActive/writeBarrier)
+  → Guard enforces requiresNotificationPermission via NotificationPermissionChecker
+       (durable skip: NOTIFICATION_PERMISSION_DENIED)
+
+RETRY CONTRACT:
+  → To request a WorkManager retry, THROW RetryableWorkerException.
+  → Guard catch precedence:
+       CancellationException (rethrow) → RetryableWorkerException (Retry)
+       → classifyTransient(message/IOException) (Retry) → Failed (PERMANENT).
+  → classifyTransient matches only: timeout / interrupted / deadlock /
+       SQLITE_BUSY / database is locked (case-insensitive) OR IOException.
+  → A plain RuntimeException with a non-transient message is PERMANENT
+       (burns the attempt budget) — do NOT use it to signal "retry".
 
 SCHEDULING:
   → WorkerRegistry.scheduleAll() for startup
-  → WorkerSpecScheduler.scheduleFromSpec() for periodic
-  → WorkerSpecScheduler.scheduleAtMidnight() for one-shot (uses actual worker class)
+  → WorkerSpecScheduler.scheduleFromSpec() for periodic (WorkerSpec.existingWorkPolicy)
+  → WorkerSpecScheduler.scheduleAtMidnight() for one-shot (WorkerSpec.oneShotPolicy;
+       uses actual worker class; CANCELS existing unique work when spec is disabled)
+  → A spec version bump always forces REPLACE over either policy.
+  → DailyBriefing reschedules next midnight on Success AND incidental Skips
+       (fresh-artifact/no-work/privacy-denied/restore-blocked); only an explicit
+       spec-disable ("Worker disabled by spec") stops the chain.
 
 FORBIDDEN:
   ❌ WorkManager.enqueue() outside WorkerRegistry/WorkerSpecScheduler
   ❌ runBlocking inside suspend worker code
   ❌ Writing BackgroundJobRun before checking write barrier
+  ❌ Throwing a plain RuntimeException to mean "retry" (it is PERMANENT)
 ```
 
 ---

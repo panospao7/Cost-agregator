@@ -10,6 +10,9 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
+import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -30,11 +33,23 @@ class MerchantKeyBackfillWorkerTest {
 
     private lateinit var context: Context
     private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var executionGuard: WorkerExecutionGuard
 
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
         expenseRepository = mockk()
+        // S4: production now calls runGuardedWithContext; a bare relaxed mock would
+        // never invoke the block, so the doWork verifications below would never run.
+        // Stub it to invoke the block with a relaxed run context.
+        executionGuard = mockk(relaxed = true)
+        coEvery {
+            executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>())
+        } coAnswers {
+            val block = secondArg<suspend (WorkerRunContext) -> Any>()
+            WorkerGuardResult.Success(block.invoke(mockk(relaxed = true)))
+        }
+        coEvery { executionGuard.checkpoint(any()) } returns Unit
     }
 
     private fun buildWorker(): MerchantKeyBackfillWorker =
@@ -48,7 +63,7 @@ class MerchantKeyBackfillWorkerTest {
                     appContext,
                     workerParameters,
                     expenseRepository,
-                    executionGuard = mockk(relaxed = true)
+                    executionGuard = executionGuard
                 )
             })
             .build()

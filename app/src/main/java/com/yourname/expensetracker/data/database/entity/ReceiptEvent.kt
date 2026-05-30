@@ -23,6 +23,10 @@ import androidx.room.PrimaryKey
  * @property sourceType The source type of the receipt at the time of the event.
  * @property documentType The document type of the receipt at the time of the event.
  * @property eventType The type of lifecycle event (e.g. "CAPTURED", "OCR_COMPLETED", "EXPENSE_CREATED").
+ *   See [com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventTypes] for the
+ *   canonical taxonomy. Worker-side match-outcome events (P9-P1-08) include
+ *   "MATCH_ATTEMPTED", "MATCH_NOT_FOUND", "MATCH_SKIPPED_DOCUMENT_TYPE", and
+ *   "AUTO_MATCH_LINK_FAILED".
  * @property occurredAt Epoch millisecond timestamp of when the event occurred.
  * @property oldStatus The processing status before the transition.
  * @property newStatus The processing status after the transition.

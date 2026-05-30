@@ -23,6 +23,13 @@ import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
  * 2. Add an [Entry] to [entries] with the same name.
  * 3. The worker is automatically paused by [RestoreMaintenanceMode.pauseAllWorkers]
  *    and scheduled by [scheduleAll].
+ *
+ * ## Privacy gating
+ * Privacy-setting changes do NOT cancel/reschedule workers by hardcoded name.
+ * The mapping from privacy toggles to gated workers lives in
+ * [PrivacyRuntimeWorkerPolicy]; [com.yourname.expensetracker.data.privacy.PrivacySettingsRepositoryImpl]
+ * reschedules re-enabled workers by looking up their [Entry.schedule] here, so a
+ * disabled [WorkerSpec] is still honoured on reschedule.
  */
 object WorkerRegistry {
 

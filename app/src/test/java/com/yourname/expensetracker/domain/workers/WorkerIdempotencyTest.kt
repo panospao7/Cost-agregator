@@ -2,8 +2,8 @@ package com.yourname.expensetracker.domain.workers
 
 import androidx.work.BackoffPolicy
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,22 +39,17 @@ class WorkerIdempotencyTest {
     }
 
     @Test
-    fun `restore mode blocks worker execution`() {
-        // Given: the bill_reminder_periodic worker is disabled by default
+    fun `all default workers are enabled including bill reminder`() {
+        // P9-CURRENT-005/P9-P1-05: bill_reminder_periodic is enabled by infrastructure
+        // (version bump to 2). Runtime opt-in/quiet-hours gating is enforced separately
+        // by BillReminderSettingsRepository inside BillReminderWorker, not by the spec.
         val spec = WorkerSpec.DEFAULTS["bill_reminder_periodic"]
         assertNotNull("bill_reminder_periodic spec must exist", spec)
+        assertTrue("bill_reminder_periodic should be enabled by default", spec!!.enabled)
 
-        // Then: it is not enabled, so WorkerSpecScheduler.scheduleFromSpec
-        // will skip enqueuing (the first check in that method is `if (!spec.enabled)`)
-        assertFalse("bill_reminder_periodic should be disabled by default",
-            spec!!.enabled)
-
-        // Given: all other default workers (except bill_reminder) are enabled
+        // All default workers are enabled at the spec level.
         WorkerSpec.DEFAULTS.forEach { (name, workerSpec) ->
-            if (name != "bill_reminder_periodic") {
-                assertTrue("Worker '$name' should be enabled by default",
-                    workerSpec.enabled)
-            }
+            assertTrue("Worker '$name' should be enabled by default", workerSpec.enabled)
         }
     }
 
@@ -87,11 +82,34 @@ class WorkerIdempotencyTest {
             assertTrue("Worker '$name' name must not be blank",
                 spec.name.isNotBlank())
 
-            // merchant_key_backfill should use REPLACE (per WRK-N5 comment)
+            // P9-CURRENT-020 (resolved): merchant_key_backfill uses an explicit
+            // oneShotPolicy of REPLACE, matching MerchantKeyBackfillWorker's KDoc
+            // intent (re-schedulable after completion).
             if (name == "merchant_key_backfill") {
-                assertEquals("merchant_key_backfill should use KEEP per default",
-                    ExistingPeriodicWorkPolicy.KEEP, spec.existingWorkPolicy)
+                assertEquals("merchant_key_backfill must use REPLACE one-shot policy",
+                    ExistingWorkPolicy.REPLACE, spec.oneShotPolicy)
             }
         }
+    }
+
+    @Test
+    fun `oneShotPolicy defaults to KEEP and merchant_key overrides to REPLACE`() {
+        // The data class default for oneShotPolicy is KEEP so a one-shot is
+        // scheduled at most once unless a spec explicitly opts into REPLACE.
+        val defaultSpec = WorkerSpec(name = "default_one_shot")
+        assertEquals("oneShotPolicy should default to KEEP",
+            ExistingWorkPolicy.KEEP, defaultSpec.oneShotPolicy)
+
+        // ai_daily_briefing keeps the default KEEP (its midnight chain relies on it).
+        val briefing = WorkerSpec.DEFAULTS["ai_daily_briefing"]
+        assertNotNull("ai_daily_briefing spec must exist", briefing)
+        assertEquals("ai_daily_briefing should keep KEEP one-shot policy",
+            ExistingWorkPolicy.KEEP, briefing!!.oneShotPolicy)
+
+        // merchant_key_backfill overrides to REPLACE.
+        val merchantKey = WorkerSpec.DEFAULTS["merchant_key_backfill"]
+        assertNotNull("merchant_key_backfill spec must exist", merchantKey)
+        assertEquals("merchant_key_backfill should override to REPLACE one-shot policy",
+            ExistingWorkPolicy.REPLACE, merchantKey!!.oneShotPolicy)
     }
 }

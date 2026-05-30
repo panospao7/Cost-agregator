@@ -11,9 +11,11 @@ import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
@@ -60,18 +62,14 @@ class DailyBriefingWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
-        // P2-30: Default to false — only reschedule on successful generation.
-        // When the privacy guard denies, we must NOT reschedule to avoid an
-        // infinite schedule-skip loop.
-        var shouldScheduleNext = false
 
-        val guardResult = executionGuard.runGuarded(
+        val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "ai_daily_briefing",
                 requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
                 allowDuringBackupExport = false
             )
-        ) {
+        ) { ctx ->
             val startedAt = timeProvider.now()
             val dateKey = java.time.Instant.ofEpochMilli(startedAt)
                 .atZone(ZoneId.systemDefault())
@@ -83,8 +81,10 @@ class DailyBriefingWorker @AssistedInject constructor(
             if (existing != null && existing.status == com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY) {
                 val now = timeProvider.now()
                 if (existing.expiresAt == null || now < existing.expiresAt) {
+                    // No work to do this run, but the block returns normally so the
+                    // guard surfaces Success — the midnight chain stays armed below.
                     Timber.d("DailyBriefingWorker: fresh artifact found, skipping generation.")
-                    return@runGuarded
+                    return@runGuardedWithContext
                 }
             }
 
@@ -99,21 +99,67 @@ class DailyBriefingWorker @AssistedInject constructor(
                     startedAt = startedAt,
                     notificationId = notificationId
                 )
+                // P9-S4 (NEW-03): record the proactive briefing delivery so the run
+                // surfaces a non-zero notificationsSent in BackgroundJobRun. This is
+                // best-effort at the worker boundary: the delivery use case completed
+                // without throwing or timing out. (The use case may still internally
+                // no-op on settings/dedupe; surfacing that would require a delivery
+                // return value, which is out of scope for this counts-only slice.)
+                ctx.addNotificationsSent()
             }
-            shouldScheduleNext = true
             Timber.d("DailyBriefingWorker: completed successfully.")
         }
 
-        if (shouldScheduleNext) {
+        if (shouldRescheduleNextMidnight(guardResult)) {
             runCatching { aiWorkScheduler.scheduleDailyBriefing() }
         }
 
         return guardResult.toWorkerResult()
     }
 
+    /**
+     * P9-P1-04 / PR3: rescheduling is driven by the guard RESULT, not by whether
+     * the inner block did real work. Keep the one-shot midnight chain alive on
+     * every terminal outcome EXCEPT an explicit disable.
+     *
+     * Reschedule when the run is [WorkerGuardResult.Success] or an incidental
+     * [WorkerGuardResult.Skipped] (fresh artifact / no work, privacy-denied,
+     * privacy fail-closed, restore-blocked, write-barrier-denied). Previously the
+     * chain only re-armed after full generation+delivery success, so any of those
+     * incidental skips silently broke it forever until an app restart re-seeded it.
+     *
+     * Do NOT reschedule when the worker is explicitly disabled by spec/runtime
+     * ([DISABLED_BY_SPEC_REASON]): slice S2's [com.yourname.expensetracker.domain.workers.WorkerSpecScheduler.scheduleAtMidnight]
+     * cancels the unique work when the spec is disabled, and the disable path owns
+     * (re)arming if the worker is re-enabled — re-arming here would fight that.
+     *
+     * Retry/Failure are not rescheduled here: WorkManager owns retry backoff, and
+     * the next midnight is re-seeded on the following terminal Success/Skip.
+     *
+     * Privacy-denied still reschedules because there is no tight loop to fear: the
+     * next run is bounded by the midnight initial delay, and if the capability is
+     * also toggled off at the spec level, scheduleAtMidnight cancels instead of
+     * re-arming. So the worst case is one bounded, idle run per day.
+     */
+    private fun shouldRescheduleNextMidnight(result: WorkerGuardResult<Unit>): Boolean = when (result) {
+        is WorkerGuardResult.Success -> true
+        is WorkerGuardResult.Skipped -> result.reason != DISABLED_BY_SPEC_REASON
+        is WorkerGuardResult.Retry -> false
+        is WorkerGuardResult.Failed -> false
+    }
+
     companion object {
         const val TAG = "DailyBriefingWorker"
         private const val BRIEFING_PIPELINE_TIMEOUT_MS =
             AppConfig.Ai.DASHBOARD_BRIEFING_TIMEOUT_SECONDS * 1000L
+
+        /**
+         * Exact [WorkerGuardResult.Skipped.reason] the guard emits when the worker
+         * is disabled by spec/runtime (see [com.yourname.expensetracker.domain.workers.WorkerExecutionGuard]).
+         * The guard durably logs this run as [DiagnosticReasonCode.PROVIDER_DISABLED]
+         * but surfaces this human-readable reason on the result. This is the ONLY
+         * skip reason that must NOT keep the midnight chain alive.
+         */
+        const val DISABLED_BY_SPEC_REASON = "Worker disabled by spec"
     }
 }

@@ -16,6 +16,7 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 | raw_notifications, pending_reviews | `NotificationRepository` | ✅ |
 | raw_notifications, pending_reviews (purge) | `DataRetentionWorker` | ⚠️ migrate to `RetentionCoordinator` |
 | scanned_receipts, receipt_events, email_receipts, receipt_expense_links | `ReceiptLifecycleCoordinator` | ✅ |
+| scanned_receipts (match status), receipt_events (match events) | `ReceiptMatchLifecycleService` | ✅ — match mutations + atomic `claimForAutoMatch`; writes `MATCH_ATTEMPTED`/`MATCH_NOT_FOUND`/`MATCH_SKIPPED_DOCUMENT_TYPE`/`AUTO_MATCH_LINK_FAILED`/`MATCH_SUGGESTED` under barrier + transaction |
 | receipt_expense_links (link/unlink) | `ReceiptLinkService` | ⚠️ must use `DatabaseWriteBarrier` (PR 7) |
 | recurring_expenses | `RecurringRuleLifecycleCoordinator` | ✅ |
 | recurring_lifecycle_events | `RecurringLifecycleEventWriter` (via writeCritical/writeDiagnostic) | ✅ |
@@ -29,6 +30,7 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 | savings_goals, savings_sweep_plans | `SavingsGoalRepository` | ✅ |
 | subscription_candidates, subscription_price_history, subscription_usage | `SubscriptionRepository` | ✅ |
 | warranties, warranty_lifecycle_events | `WarrantyRepository` | ✅ |
+| warranty_reminder_deliveries | `WarrantyExpirationWorker` (via `WarrantyReminderDeliveryDao`: claim-before-notify; `SENT` only on `DELIVERED`) | ✅ — durable replacement for the removed SharedPreferences sent-state |
 | expense_groups, group_members, group_expenses, group_settlements | `GroupLifecycleCoordinator` | ✅ |
 | categories | `CategoryRepository` | ✅ |
 | merchant_categories, merchant_normalizations, merchant_locations | `MerchantCategoryRepository` | ✅ |

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -46,13 +47,13 @@ class LocationBackfillWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.d(TAG, "Backfill worker started")
 
-        val guardResult = executionGuard.runGuarded(
+        val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "location_backfill",
                 requiredCapabilities = listOf(PrivacyCapability.BACKGROUND_LOCATION_BACKFILL),
                 allowDuringBackupExport = false
             )
-        ) {
+        ) { ctx ->
             // Evict stale merchant-location cache entries before geocoding new ones.
             // This prevents the resolver from returning outdated cached coordinates.
             try {
@@ -73,7 +74,7 @@ class LocationBackfillWorker @AssistedInject constructor(
 
             if (unlocated.isEmpty()) {
                 Log.d(TAG, "No unlocated expenses — nothing to do")
-                return@runGuarded
+                return@runGuardedWithContext
             }
 
             Log.d(TAG, "Processing ${unlocated.size} unlocated expenses")
@@ -84,7 +85,8 @@ class LocationBackfillWorker @AssistedInject constructor(
 
             for (expense in unlocated) {
                 if (isStopped) break  // Worker was cancelled
-                executionGuard.checkpoint("location_backfill")
+                ctx.checkpoint("location_backfill")
+                ctx.addRowsScanned()
 
                 val merchantToken = merchantLocationRepository
                     .normalizeKey(expense.merchant)
@@ -97,7 +99,11 @@ class LocationBackfillWorker @AssistedInject constructor(
                     )
                 } catch (e: Exception) {
                     Log.w(TAG, "Resolver threw for expenseId=${expense.id} merchantToken=$merchantToken", e)
-                    expenseRepository.incrementBackfillAttempts(expense.id)
+                    // Transient thrown failure: trigger a retry without consuming the permanent
+                    // attempt budget, consistent with the structured Retryable result path. Unexpected
+                    // exceptions are presumed transient (e.g. geocoder/network outage), so we must not
+                    // permanently abandon the row via incrementBackfillAttempts — only the structured
+                    // Unresolved/NeedsUserSelection paths consume the budget for genuinely ungeocodable rows.
                     shouldRetry = true
                     failed++
                     continue
@@ -117,9 +123,11 @@ class LocationBackfillWorker @AssistedInject constructor(
                         )
                         if (affected > 0) {
                             resolved++
+                            ctx.addRowsUpdated()
                         } else {
                             Log.d(TAG, "Expense ${expense.id} was already located — skipped (user-set location preserved)")
                             skipped++
+                            ctx.addRowsSkipped()
                         }
                     }
                     is LocationResolutionResult.Retryable -> {
@@ -146,7 +154,7 @@ class LocationBackfillWorker @AssistedInject constructor(
 
             Log.d(TAG, "Backfill run complete: resolved=$resolved skipped=$skipped failed=$failed shouldRetry=$shouldRetry")
             if (shouldRetry) {
-                throw RuntimeException("Some backfill resolutions failed, will retry")
+                throw RetryableWorkerException("Some backfill resolutions failed, will retry")
             }
         }
 

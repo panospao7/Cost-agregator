@@ -89,12 +89,10 @@ object WorkerSpecScheduler {
                     "WorkerSpecScheduler",
                     "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing REPLACE"
                 )
+                // A version bump always wins over the spec's oneShotPolicy.
                 ExistingWorkPolicy.REPLACE
             } else {
-                when (spec.existingWorkPolicy) {
-                    ExistingPeriodicWorkPolicy.KEEP -> ExistingWorkPolicy.KEEP
-                    else -> ExistingWorkPolicy.REPLACE
-                }
+                spec.oneShotPolicy
             }
 
             val request = OneTimeWorkRequest
@@ -118,6 +116,10 @@ object WorkerSpecScheduler {
      * (same logic as [scheduleFromSpec]), computes the delay until the next midnight in the
      * system timezone, and enqueues a [OneTimeWorkRequest] with that delay.
      *
+     * If the spec is disabled, any existing scheduled work is cancelled (parity with
+     * [scheduleFromSpec]) and no new work is enqueued. When enabled, the enqueue uses
+     * [WorkerSpec.oneShotPolicy], except a version bump forces [ExistingWorkPolicy.REPLACE].
+     *
      * @param context  Application or activity context.
      * @param workerName  Key into [WorkerSpec.DEFAULTS] (also used as the unique work name).
      * @param workerClass  The exact [ListenableWorker] subclass to schedule.
@@ -132,7 +134,15 @@ object WorkerSpecScheduler {
             return
         }
         if (!spec.enabled) {
-            android.util.Log.d("WorkerSpecScheduler", "Worker '$workerName' is disabled, skipping")
+            android.util.Log.d(
+                "WorkerSpecScheduler",
+                "Worker '$workerName' is disabled — cancelling any existing scheduled work"
+            )
+            try {
+                WorkManager.getInstance(context).cancelUniqueWork(workerName)
+            } catch (e: Exception) {
+                android.util.Log.w("WorkerSpecScheduler", "Failed to cancel disabled worker '$workerName'", e)
+            }
             return
         }
 
@@ -144,9 +154,10 @@ object WorkerSpecScheduler {
                 "WorkerSpecScheduler",
                 "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing REPLACE"
             )
+            // A version bump always wins over the spec's oneShotPolicy.
             ExistingWorkPolicy.REPLACE
         } else {
-            ExistingWorkPolicy.KEEP
+            spec.oneShotPolicy
         }
 
         // Compute next midnight in system timezone.

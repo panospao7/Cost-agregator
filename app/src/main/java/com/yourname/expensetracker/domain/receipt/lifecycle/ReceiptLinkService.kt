@@ -22,6 +22,20 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * S6 (P9-P1-07 / NEW-07): Signals that an auto-match link was abandoned because
+ * a concurrent matching run had already claimed (resolved) the receipt by the
+ * time the atomic compare-and-set ran. This is NOT an error — the receipt was
+ * legitimately handled elsewhere — so callers should skip notifications/side
+ * effects rather than recording an AUTO_MATCH_LINK_FAILED diagnostics event.
+ *
+ * Only produced when [ReceiptLinkService.linkReceiptToExpense] is called with
+ * `requireUnmatchedClaim = true` and the conditional claim affects 0 rows.
+ */
+class ReceiptAlreadyClaimedException(receiptId: Long) : IllegalStateException(
+    "Receipt $receiptId was already claimed/resolved by a concurrent matching run"
+)
+
+/**
  * Central service responsible for linking receipts to expenses and managing
  * the lifecycle of receipt-expense associations.
  *
@@ -116,6 +130,16 @@ class ReceiptLinkService @Inject constructor(
      * @param createdBy Optional identifier of who/what created the link.
      * @param confidence Optional confidence score of the match (0.0 to 1.0).
      * @param allowRelink If true, allows relinking an already-linked non-BANK_STATEMENT receipt.
+     * @param requireUnmatchedClaim S6 (P9-P1-07 / NEW-07): when true, the receipt's
+     *   match-status transition is performed as an atomic compare-and-set
+     *   ([ScannedReceiptDao.claimForAutoMatch]) that only succeeds while the
+     *   receipt is still UNMATCHED or SUGGESTED. If a concurrent matching run has
+     *   already resolved the receipt, the claim affects 0 rows and the whole
+     *   operation is rolled back and returned as
+     *   [Result.failure] wrapping a [ReceiptAlreadyClaimedException]. Intended for
+     *   the AUTO_MATCH path of the matching worker so two overlapping runs cannot
+     *   both auto-link the same receipt. Ignored for BANK_STATEMENT receipts
+     *   (which do not transition match status here).
      * @return [Result.success] with the link on success, [Result.failure] on error.
      */
     suspend fun linkReceiptToExpense(
@@ -127,7 +151,8 @@ class ReceiptLinkService @Inject constructor(
         confidence: Float? = null,
         allowRelink: Boolean = false,
         matchStatus: MatchStatus? = null,
-        writeSourceLink: Boolean = true
+        writeSourceLink: Boolean = true,
+        requireUnmatchedClaim: Boolean = false
     ): Result<ReceiptExpenseLink> {
         // Guard: block writes during restore maintenance mode
         try {
@@ -155,7 +180,12 @@ class ReceiptLinkService @Inject constructor(
 
         // 2. Insert + legacy update + event inside a single database transaction
         //    The existing-links check is inside the transaction to prevent race conditions.
-        return database.withTransaction {
+        //    S6: when requireUnmatchedClaim is set, the receipt status transition is an
+        //    atomic compare-and-set; if a concurrent run already claimed the receipt the
+        //    claim affects 0 rows and we throw ReceiptAlreadyClaimedException to roll back
+        //    the just-inserted link, then convert it to a Result.failure below.
+        return try {
+            database.withTransaction {
             // For non-BANK_STATEMENT receipts: check if already linked (inside transaction)
             if (!isBankStatement && !allowRelink) {
                 val existingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
@@ -197,15 +227,31 @@ class ReceiptLinkService @Inject constructor(
                 else -> MatchStatus.MANUALLY_MATCHED
             }
             if (!isBankStatement) {
-                scannedReceiptDao.update(
-                    receipt.copy(
+                if (requireUnmatchedClaim) {
+                    // S6 (P9-P1-07 / NEW-07): atomic compare-and-set. Only transition
+                    // the receipt while it is still UNMATCHED/SUGGESTED. If a concurrent
+                    // matching run already resolved it, claimed == 0 → throw to roll back
+                    // the link we just inserted (no double auto-link, no stale link row).
+                    val claimed = scannedReceiptDao.claimForAutoMatch(
+                        receiptId = receiptId,
                         expenseId = expenseId,
-                        suggestedExpenseId = null,
-                        matchStatus = resolvedMatchStatus,
-                        matchConfidence = confidence,
-                        updatedAt = now
+                        confidence = confidence,
+                        now = now
                     )
-                )
+                    if (claimed == 0) {
+                        throw ReceiptAlreadyClaimedException(receiptId)
+                    }
+                } else {
+                    scannedReceiptDao.update(
+                        receipt.copy(
+                            expenseId = expenseId,
+                            suggestedExpenseId = null,
+                            matchStatus = resolvedMatchStatus,
+                            matchConfidence = confidence,
+                            updatedAt = now
+                        )
+                    )
+                }
             }
 
             // I1: Propagate expenseId to warranty and return window for this receipt
@@ -283,6 +329,12 @@ class ReceiptLinkService @Inject constructor(
 
             // 6. Return the link with actual DB-generated ID
             Result.success(link.copy(id = linkId))
+            }
+        } catch (e: ReceiptAlreadyClaimedException) {
+            // S6: concurrent run already resolved the receipt; the inserted link
+            // was rolled back with the transaction. Surface as a failure the worker
+            // can recognise (and treat as a no-op) rather than a false success.
+            Result.failure(e)
         }
     }
 

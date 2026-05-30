@@ -29,7 +29,7 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v141 (migrated from v131 through v139–v141 for recurring lifecycle hardening, occurrence status typing, and reminder delivery FK enforcement)
+- Database version: v143 (`APP_DATABASE_SCHEMA_VERSION = 143`). Migration 142→143 adds `warranty_reminder_deliveries` (durable warranty-reminder sent-state; replaces the old SharedPreferences flag). Earlier: v131 through v139–v141 for recurring lifecycle hardening, occurrence status typing, and reminder delivery FK enforcement; 141→142 relaxed `budget_forecasts.budgetId` FK to CASCADE.
 - 926 Kotlin source files (388 domain, 280 data, 164 ui, 31 di, 63 other/util)
 - 62 DAOs (58 in DaoModule + 3 in AiModule + 1 unbound), 64 entities registered in AppDatabase
 - 39 @HiltViewModel (38 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
@@ -43,6 +43,11 @@
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
 - Worker instrumentation: `WorkerRunLogger` (`domain/workers/WorkerRunLogger.kt`) provides per-run success/skipped/retry/failure tracking via `BackgroundJobRunDao`. `WorkerExecutionGuard` (`domain/workers/WorkerExecutionGuard.kt`) provides structured guarded execution with logging, exception handling, and restore-mode gating. Both bound via `WorkerModule` (`di/WorkerModule.kt`).
+- **Worker retry contract (P9-NEW-13):** a worker that wants WorkManager to retry must throw `RetryableWorkerException` (`domain/workers/RetryableWorkerException.kt`). The guard's catch precedence is: `CancellationException` (rethrown) → `RetryableWorkerException` (Retry) → `classifyTransient(...)` (Retry) → otherwise **permanent Failed**. `classifyTransient` only matches the keyword set `timeout` / `interrupted` / `deadlock` / `SQLITE_BUSY` / `database is locked` (case-insensitive) or an `IOException`. A plain `RuntimeException` with a non-transient message is therefore classified as a permanent failure and burns the attempt budget. `LocationBackfillWorker` and `MerchantKeyBackfillWorker` use `RetryableWorkerException` for their no-progress/transient paths.
+- **Worker notification-permission gate (P9-NEW-04):** `WorkerExecutionGuard` enforces `WorkerGuardRequest.requiresNotificationPermission` via an injected `NotificationPermissionChecker` (`AndroidNotificationPermissionChecker`, bound in `WorkerModule`). When notifications are disabled the run is durably skipped with `DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED`. `WarrantyExpirationWorker` sets this flag.
+- **Worker run counts (P9-NEW-03):** 6 of 7 workers run via `runGuardedWithContext` and feed `rowsScanned`/`rowsUpdated`/`notificationsSent` into `BackgroundJobRun` — `BillReminderWorker` (already), plus `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `DataRetentionWorker`, `ReceiptMatchingWorker`, `DailyBriefingWorker` (migrated in S4). `WarrantyExpirationWorker` is the 7th and still uses plain `runGuarded`. **Known limitation:** `WorkerRunContext` also collects `rowsSkipped`/`errors`, but the guard's `run.success()` does not yet persist those two columns (follow-up).
+- **Privacy → worker gating (P9-P1-11 / S7):** `PrivacyRuntimeWorkerPolicy` (`domain/workers/PrivacyRuntimeWorkerPolicy.kt`) maps privacy toggles to the workers they gate; `PrivacySettingsRepositoryImpl.applyPrivacyChange()` is policy-driven (no hardcoded names). Disabling background location does **not** cancel `merchant_key_backfill` (it is local). `data_retention` is **never** cancelled by a privacy toggle. Re-enabling a toggle reschedules its workers.
+- **Worker guard architecture test (P9-P1-02 / S8):** `WorkerGuardArchitectureGuardTest` asserts every `CoroutineWorker` in main source uses `WorkerExecutionGuard`. Allowlist: `NotificationIntakeWorker` only.
 - `DatabaseReadBarrier` (`data/backup/DatabaseReadBarrier.kt`) and `DatabaseWriteBarrier` (`data/backup/DatabaseWriteBarrier.kt`) provide operation-level read/write blocking during restore — throw `IllegalStateException` if writes are attempted in non-NORMAL/BACKUP_EXPORTING modes.
 - WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`). Each worker individually injects `RestoreMaintenanceMode` and calls `isWritesAllowed()` at the start of `doWork()` to self-pause during restore. All workers use `WorkerSpecScheduler` for centralized scheduling with version-change detection.
 - `HybridRouter` (`domain/ai/HybridRouter.kt`) replaces duplicated cloud/on-device/fallback routing logic across 6 hybrid AI services (AID-4).
@@ -391,10 +396,12 @@ domain/
 ├── dto/                         # Data transfer objects
 ├── util/                        # Shared utilities
 └── workers/                     # Worker specifications, run logging, execution guard, and registry
-    ├── WorkerSpec.kt            # Worker default specs (interval, constraints, backoff)
+    ├── WorkerSpec.kt            # Worker default specs (interval, constraints, backoff, oneShotPolicy)
     ├── WorkerSpecScheduler.kt   # Centralized scheduling with version-change detection
     ├── WorkerRunLogger.kt       # Per-run lifecycle tracking (start/success/skipped/retry/failure)
     ├── WorkerExecutionGuard.kt  # Structured guarded execution wrapper
+    ├── RetryableWorkerException.kt  # Typed retry signal (highest non-cancellation precedence in guard)
+    ├── NotificationPermissionChecker.kt  # Guard-enforced notification-permission gate
     └── WorkerRegistry.kt        # Single source-of-truth for all 7 workers (specName + schedule lambda)
 ```
 
@@ -1020,19 +1027,19 @@ Phase 8 introduces a persistent job-run tracking table, a worker-specification m
 |-----------|------|---------|
 | `BackgroundJobRun` (entity) | `data/database/entity/BackgroundJobRun.kt` | Persistent record of each worker execution: workerName, startedAt/finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned/Updated, notificationsSent, retryReason, errorMessage |
 | `BackgroundJobRunDao` | `data/database/dao/BackgroundJobRunDao.kt` | DAO with `insert()`, `update()`, `getRecent(workerName)`, `getStaleRunningRuns()` |
-| `WorkerSpec` | `domain/workers/WorkerSpec.kt` | Data class modeling worker name, version, enabled flag, constraints, repeat interval, backoff policy. Ships `DEFAULTS` map with specs for all 7 workers. |
-| `WorkerSpecScheduler` | `domain/workers/WorkerSpecScheduler.kt` | **Centralized scheduling object** that all workers use instead of duplicating schedule logic. Reads `WorkerSpec.DEFAULTS` by worker name, handles version-change detection (force REPLACE when version bumps), and delegates to `WorkManager.enqueueUniquePeriodicWork` / `enqueueUniqueWork`. Stateless Kotlin `object` — no DI needed. All 7 workers are scheduled via this scheduler in `AppStartupCoordinator`. |
+| `WorkerSpec` | `domain/workers/WorkerSpec.kt` | Data class modeling worker name, version, enabled flag, constraints, repeat interval, backoff policy. Has separate `existingWorkPolicy` (periodic) and `oneShotPolicy: ExistingWorkPolicy` (one-shot); a spec **version bump always forces `REPLACE`** over either. `merchant_key_backfill` uses `REPLACE` (re-enqueue on each schedule); `ai_daily_briefing` uses `KEEP` (protects the midnight self-reschedule chain). Ships `DEFAULTS` map with specs for all 7 workers. |
+| `WorkerSpecScheduler` | `domain/workers/WorkerSpecScheduler.kt` | **Centralized scheduling object** that all workers use instead of duplicating schedule logic. Reads `WorkerSpec.DEFAULTS` by worker name, handles version-change detection (force REPLACE when version bumps), and delegates to `WorkManager.enqueueUniquePeriodicWork` / `enqueueUniqueWork`. `scheduleAtMidnight()` **cancels existing unique work when the spec is disabled** (parity with `scheduleFromSpec`). Stateless Kotlin `object` — no DI needed. All 7 workers are scheduled via this scheduler in `AppStartupCoordinator`. |
 
 #### Workers Summary
 
 | Worker | Location | Schedule | Key Change in Phase 8 |
 |--------|----------|----------|-----------------------|
 | `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | Every 6h, flex 15min | **Disabled by default** (user opt-in); fixed to query `RecurringLifecycleCoordinator` via `WorkerSpec` |
-| `ReceiptMatchingWorker` | `service/receiptmatching/ReceiptMatchingWorker.kt` | Every 2h | Scheduled via `AppStartupCoordinator`; automated receipt↔expense matching |
-| `WarrantyExpirationWorker` | `service/warranty/WarrantyExpirationWorker.kt` | Every 24h | **Idempotency fix:** in-memory `notifiedKeys` set prevents duplicate notifications across 7-day and 30-day windows |
-| `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` | Every 12h, UNMETERED | **Overwrite guard:** skips expenses that already have lat/lon; privacy-gated via `PrivacyCapability.BACKGROUND_LOCATION_BACKFILL` |
-| `DailyBriefingWorker` | `data/ai/worker/DailyBriefingWorker.kt` | Every 24h | **Privacy gate:** checks `CLOUD_AI_DAILY_BRIEFING` at runtime; exits early if denied |
-| `MerchantKeyBackfillWorker` | `data/location/MerchantKeyBackfillWorker.kt` | One-shot | One-time backfill of `merchantKey` for legacy expense rows |
+| `ReceiptMatchingWorker` | `service/receiptmatching/ReceiptMatchingWorker.kt` | Every 2h | Scheduled via `AppStartupCoordinator`; automated receipt↔expense matching. **Concurrency invariant (S6):** double auto-match across concurrent periodic+manual runs is prevented by a per-receipt atomic claim `ScannedReceiptDao.claimForAutoMatch` (conditional `UPDATE ... WHERE matchStatus IN ('UNMATCHED','SUGGESTED')`) — *not* by `WorkerLeaseRegistry`, which is a drain/registry mechanism and is **not** mutually exclusive per worker name. **Durable events (S5):** `MATCH_ATTEMPTED`, `MATCH_NOT_FOUND`, `MATCH_SKIPPED_DOCUMENT_TYPE`, `AUTO_MATCH_LINK_FAILED` (alongside `MATCH_SUGGESTED`) via `ReceiptMatchLifecycleService`. |
+| `WarrantyExpirationWorker` | `service/warranty/WarrantyExpirationWorker.kt` | Every 24h | **Room-backed delivery (S9):** sent-state is now the `WarrantyReminderDelivery` entity (claim-before-notify; `SENT` only on `DELIVERED`; unique key `warrantyId+windowDays+expiryDate`) — the SharedPreferences flag is removed. Sets `requiresNotificationPermission` (guard-enforced). |
+| `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` | Every 12h, UNMETERED | **Overwrite guard:** skips expenses that already have lat/lon; privacy-gated via `PrivacyCapability.BACKGROUND_LOCATION_BACKFILL`. Throws `RetryableWorkerException` on no-progress/transient paths (does not burn the permanent attempt budget). |
+| `DailyBriefingWorker` | `data/ai/worker/DailyBriefingWorker.kt` | Midnight one-shot | **Privacy gate:** checks `CLOUD_AI_DAILY_BRIEFING` at runtime. **Reschedule contract (S3):** reschedules the next midnight run on terminal Success **and** on all incidental Skips (fresh-artifact / no-work / privacy-denied / restore-blocked). Only an explicit spec-disable (reason literal `"Worker disabled by spec"`) stops the chain (`ai_daily_briefing` uses `oneShotPolicy = KEEP`). |
+| `MerchantKeyBackfillWorker` | `data/location/MerchantKeyBackfillWorker.kt` | One-shot | One-time backfill of `merchantKey` for legacy expense rows. Uses `oneShotPolicy = REPLACE` so it can be re-enqueued; throws `RetryableWorkerException` on no-progress paths. |
 | `DataRetentionWorker` | `data/privacy/DataRetentionWorker.kt` | Every 24h | Pre-existing (Phase 6); moved to `WorkerSpec` governance |
 
 **Migration:** 105→106 creates `background_job_runs` table with indices on `(workerName, startedAt)` and `(status)`. All workers now scheduled through `AppStartupCoordinator.scheduleStartupWork()` with specs defined in `WorkerSpec.DEFAULTS`.

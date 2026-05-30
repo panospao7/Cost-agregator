@@ -45,6 +45,9 @@ object ReceiptLifecycleEventTypes {
     const val MATCH_NOT_FOUND = "MATCH_NOT_FOUND"
     const val MATCH_FAILED = "MATCH_FAILED"
     const val MATCH_SKIPPED_ALREADY_LINKED = "MATCH_SKIPPED_ALREADY_LINKED"
+    // P9-P1-08: worker-side match-outcome diagnostics (previously silent)
+    const val MATCH_SKIPPED_DOCUMENT_TYPE = "MATCH_SKIPPED_DOCUMENT_TYPE"
+    const val AUTO_MATCH_LINK_FAILED = "AUTO_MATCH_LINK_FAILED"
     const val MATCH_REJECTED = "MATCH_REJECTED"
     const val MATCH_CLEARED = "MATCH_CLEARED"
     const val MATCH_APPROVED = "MATCH_APPROVED"

@@ -23,6 +23,13 @@ import javax.inject.Singleton
 data class WorkerGuardRequest(
     val workerName: String,
     val requiredCapabilities: List<PrivacyCapability> = emptyList(),
+    /**
+     * When true, the guard verifies notification permission before running the
+     * block. If notifications are disabled, the run is durably recorded as
+     * SKIPPED with statusReason [DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED]
+     * and the block never executes. Enforced by [WorkerExecutionGuard] via
+     * [NotificationPermissionChecker].
+     */
     val requiresNotificationPermission: Boolean = false,
     val requiresDatabaseWrite: Boolean = true,
     val allowDuringBackupExport: Boolean = false
@@ -52,6 +59,7 @@ class WorkerExecutionGuard @Inject constructor(
     private val leaseRegistry: WorkerLeaseRegistry,
     private val diagnosticSink: MaintenanceSafeDiagnosticSink,
     private val backgroundJobRunDao: BackgroundJobRunDao,
+    private val notificationPermissionChecker: NotificationPermissionChecker,
     private val timeProvider: TimeProvider
 ) {
     suspend fun <T> runGuarded(
@@ -126,6 +134,11 @@ class WorkerExecutionGuard @Inject constructor(
                     }
                 }
 
+                if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
+                    withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
+                    return WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+                }
+
                 val result = block()
                 withContext(NonCancellable) { run.success() }
                 return WorkerGuardResult.Success(result)
@@ -135,7 +148,12 @@ class WorkerExecutionGuard @Inject constructor(
                     throw e
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
-                return if (classifyTransient(e)) {
+                // P9-NEW-13: an explicit typed retry signal takes precedence over the
+                // message-based heuristic, so a worker's retry intent is never lost when
+                // its message matches none of the transient keywords. CancellationException
+                // is already rethrown above (highest precedence); classifyTransient remains
+                // the unchanged fallback for every other exception.
+                return if (e is RetryableWorkerException || classifyTransient(e)) {
                     withContext(NonCancellable) { run.retry(e.message ?: "Transient error", e) }
                     WorkerGuardResult.Retry(e.message ?: "Transient error", e)
                 } else {
@@ -230,6 +248,11 @@ class WorkerExecutionGuard @Inject constructor(
                     }
                 }
 
+                if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
+                    withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
+                    return WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+                }
+
                 val result = block(ctx)
                 withContext(NonCancellable) {
                     run.success(
@@ -245,7 +268,12 @@ class WorkerExecutionGuard @Inject constructor(
                     throw e
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
-                return if (classifyTransient(e)) {
+                // P9-NEW-13: an explicit typed retry signal takes precedence over the
+                // message-based heuristic, so a worker's retry intent is never lost when
+                // its message matches none of the transient keywords. CancellationException
+                // is already rethrown above (highest precedence); classifyTransient remains
+                // the unchanged fallback for every other exception.
+                return if (e is RetryableWorkerException || classifyTransient(e)) {
                     withContext(NonCancellable) { run.retry(e.message ?: "Transient error", e) }
                     WorkerGuardResult.Retry(e.message ?: "Transient error", e)
                 } else {

@@ -151,6 +151,29 @@ class WorkerLeaseRegistryTest {
         lease2.close()
         assertTrue(registry.awaitNoActiveWorkers(100))
     }
+
+    // ── S6 (P9-P1-07 / NEW-07): same-name acquisition is NOT mutually exclusive ──
+
+    @Test
+    fun same_name_acquire_is_not_mutually_exclusive() = runTest {
+        // Pins the S6 finding: acquire(name) records the lease in a map and returns
+        // immediately — it does NOT block or serialize. Two acquisitions of the SAME
+        // name (e.g. periodic "receipt_matching" overlapping the manual one-shot) both
+        // return without waiting, and collapse to a single map entry rather than queuing.
+        // Therefore the lease registry CANNOT be relied on to prevent overlapping
+        // receipt-matching runs; overlap safety is provided by the per-receipt atomic
+        // claim (ScannedReceiptDao.claimForAutoMatch) instead.
+        val lease1 = registry.acquire("receipt_matching")
+        // Second acquire of the same name must NOT block (no deadlock here proves it).
+        val lease2 = registry.acquire("receipt_matching")
+
+        // Same key → one active entry, not two serialized leases.
+        assertEquals(1, registry.activeLeaseCount())
+
+        lease1.close()
+        lease2.close()
+        assertEquals(0, registry.activeLeaseCount())
+    }
 }
 
 /** Test helper — exposes active lease count without adding it to the public interface. */

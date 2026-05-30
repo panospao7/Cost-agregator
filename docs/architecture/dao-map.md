@@ -122,6 +122,7 @@
 | `WarrantyDao` | `Warranty` | `WarrantyTrackerRepository`, `ReceiptLinkService` | WarrantyTrackerVM |
 | `ReturnWindowDao` | `ReturnWindow` | `WarrantyTrackerRepository`, `ReceiptLinkService` | WarrantyTrackerVM |
 | `WarrantyLifecycleEventDao` | `WarrantyLifecycleEvent` | `WarrantyTrackerRepository` | WarrantyTrackerVM |
+| `WarrantyReminderDeliveryDao` | `WarrantyReminderDelivery` | `WarrantyExpirationWorker` (claim-before-notify) | Durable reminder sent-state (v143) |
 
 ## Split Domain
 

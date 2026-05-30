@@ -1,11 +1,11 @@
 package com.yourname.expensetracker.service.warranty
 
 import android.content.Context
-import android.content.SharedPreferences
-import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
+import com.yourname.expensetracker.data.database.entity.WarrantyReminderDelivery
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
@@ -22,22 +22,38 @@ import timber.log.Timber
  * Periodic WorkManager worker that checks for expiring warranties and sends
  * reminder notifications.
  *
- * ## Idempotency
- * Uses an in-memory set of already-notified `warrantyId:window` keys within
- * each run to prevent duplicate notifications. The 30-day filtered list uses
- * ID-based exclusion (not object equality) to correctly separate 7-day and
- * 30-day windows.
+ * ## Durable, claim-before-notify sent-state (S9 / P9-P1-09, PR6)
+ * Sent-state is tracked in the [WarrantyReminderDelivery] Room entity, one row per
+ * (warrantyId, windowDays, expiryDate). This replaces the previous in-memory set +
+ * SharedPreferences (`warranty_expiration_worker_prefs`) approach, which only deduped
+ * within a single run and an in-app-storage cooldown that did not survive backup/restore.
  *
- * ## Next step: persistent reminder state
- * The in-memory dedup only prevents duplicates within a single run.
- * A per-warranty last-sent timestamp in persistent storage (e.g. room or
- * DataStore) would prevent re-sending the same reminder across device
- * reboots or worker reschedules. The [notifiedThisRun] set should be
- * replaced or supplemented with persistent tracking.
+ * For every expiring warranty + window the worker:
+ *   1. **Seeds** a SCHEDULED delivery row idempotently via the unique key
+ *      ([WarrantyReminderDeliveryDao.insertOrIgnore]).
+ *   2. **Claims** it atomically ([WarrantyReminderDeliveryDao.claim]); the claim only
+ *      succeeds from SCHEDULED/FAILED, so a row already SENT in a prior run (durable
+ *      cross-reboot dedup) is skipped, and two concurrent runs can never both claim it.
+ *   3. Only if the claim was acquired does it send the notification and inspect the
+ *      [NotificationService.DeliveryResult]:
+ *        - DELIVERED → [WarrantyReminderDeliveryDao.markSentFromClaimed] (persists the
+ *          notificationId; this is the ONLY transition into SENT and only from CLAIMED).
+ *        - NOT_DELIVERED → [WarrantyReminderDeliveryDao.markFailed] (records the reason;
+ *          the row stays re-claimable on a later run).
  *
- * ## Settings gate
- * At the start of [doWork], checks that notifications are enabled. If denied,
- * the worker exits early with [Result.success] (skipped, not retried).
+ * Crash recovery: any CLAIMED row whose claim is older than [STALE_CLAIM_MS] is reset to
+ * SCHEDULED at the start of each run ([WarrantyReminderDeliveryDao.recoverStaleClaimed]),
+ * so a worker that crashed mid-send retries instead of being stuck.
+ *
+ * Because the state lives in the Room DB (which is snapshotted whole during backup), the
+ * sent-state survives backup/restore.
+ *
+ * ## Notification permission gate
+ * Notification permission is enforced by [WorkerExecutionGuard] via
+ * [WorkerGuardRequest.requiresNotificationPermission]. When notifications are
+ * disabled the guard records a durable SKIPPED run
+ * ([com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED])
+ * and the block below never runs.
  */
 @HiltWorker
 class WarrantyExpirationWorker @AssistedInject constructor(
@@ -45,6 +61,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val warrantyRepository: WarrantyTrackerRepository,
     private val notificationService: NotificationService,
+    private val deliveryDao: WarrantyReminderDeliveryDao,
     private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(context, params) {
 
@@ -52,60 +69,44 @@ class WarrantyExpirationWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuarded(
             WorkerGuardRequest(
                 workerName = "warranty_expiration_check",
+                requiresNotificationPermission = true,
                 allowDuringBackupExport = false
             )
         ) {
-            // ── Settings gate: notification permission check ──────────────────
-            if (!NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()) {
-                Timber.w("Warranty notifications disabled by permission — skipping run")
-                return@runGuarded
-            }
-
             try {
                 Timber.d("Checking for expiring warranties...")
+                // WRK-16/N1: observe maintenance drain + write barrier before the DB
+                // reconcile so a backup/restore can stop this worker promptly.
+                executionGuard.checkpoint("warranty_reconcile")
                 val reconciliationResult = warrantyRepository.reconcileExpiredItems(System.currentTimeMillis())
 
-                // ── Persistent reminder state via SharedPreferences ───────────────
-                // Tracks last-notified timestamps per (warrantyId:window) key.
-                // If already notified within the current window, skip to avoid
-                // re-sending the same notification across device reboots.
-                val prefs: SharedPreferences = applicationContext.getSharedPreferences(
-                    PREFS_NAME, Context.MODE_PRIVATE
-                )
                 // TODO: Use TimeProvider instead of System.currentTimeMillis()
                 val now = System.currentTimeMillis()
-                // DAY_IN_MILLIS constant for notification cooldown — acceptable TTL usage (not calendar math)
+                // DAY_IN_MILLIS constant — acceptable TTL usage (not calendar math)
                 val oneDayMs = 86_400_000L
 
-                // Track already-notified (warrantyId:window) keys within this run
-                // to prevent duplicate notifications in the same invocation.
-                val notifiedThisRun = mutableSetOf<String>()
-
-                // Helper: check persistent state before sending
-                fun shouldSend(key: String, lastNotifiedAt: Long?): Boolean {
-                    if (key in notifiedThisRun) return false
-                    if (lastNotifiedAt != null && (now - lastNotifiedAt) < oneDayMs) return false
-                    return true
-                }
+                // Recover deliveries that were claimed but never completed (e.g. the
+                // worker crashed after claiming). Only genuinely-old claims are reset.
+                deliveryDao.recoverStaleClaimed(
+                    staleClaimThreshold = now - STALE_CLAIM_MS,
+                    now = now
+                )
 
                 // Check warranties expiring in 7 days
                 val expiringIn7Days = warrantyRepository.getWarrantiesExpiringSoon(7)
                 expiringIn7Days.forEach { warranty ->
-                    val key = "${warranty.id}:7"
-                    val lastNotified = prefs.getLong(key, -1L).takeIf { it >= 0L }
-                    if (shouldSend(key, lastNotified)) {
-                        notificationService.sendBudgetAlert(
-                            notificationId = NotificationIdGenerator.forWarranty(warranty.id, 7),
-                            title = applicationContext.getString(R.string.warranty_expiring_soon_title),
-                            message = applicationContext.getString(
-                                R.string.warranty_expires_in_7_days_format,
-                                warranty.productName,
-                                warranty.merchantName
-                            )
+                    executionGuard.checkpoint("warranty_notify_7d")
+                    deliverReminder(
+                        warranty = warranty,
+                        windowDays = 7,
+                        now = now,
+                        title = applicationContext.getString(R.string.warranty_expiring_soon_title),
+                        message = applicationContext.getString(
+                            R.string.warranty_expires_in_7_days_format,
+                            warranty.productName,
+                            warranty.merchantName
                         )
-                        notifiedThisRun += key
-                        prefs.edit().putLong(key, now).apply()
-                    }
+                    )
                 }
 
                 // Check warranties expiring in 30 days (less urgent).
@@ -115,30 +116,21 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 val expiringIn30Days = warrantyRepository.getWarrantiesExpiringSoon(30)
                     .filter { it.id !in sevenDayIds }
                 expiringIn30Days.forEach { warranty ->
-                    val key = "${warranty.id}:30"
-                    val lastNotified = prefs.getLong(key, -1L).takeIf { it >= 0L }
-                    if (shouldSend(key, lastNotified)) {
-                        notificationService.sendBudgetAlert(
-                            notificationId = NotificationIdGenerator.forWarranty(warranty.id, 30),
-                            title = applicationContext.getString(R.string.warranty_expiration_reminder_title),
-                            message = applicationContext.getString(
-                                R.string.warranty_expires_in_30_days_format,
-                                warranty.productName
-                            )
+                    executionGuard.checkpoint("warranty_notify_30d")
+                    deliverReminder(
+                        warranty = warranty,
+                        windowDays = 30,
+                        now = now,
+                        title = applicationContext.getString(R.string.warranty_expiration_reminder_title),
+                        message = applicationContext.getString(
+                            R.string.warranty_expires_in_30_days_format,
+                            warranty.productName
                         )
-                        notifiedThisRun += key
-                        prefs.edit().putLong(key, now).apply()
-                    }
+                    )
                 }
 
-                // ── Clean up stale entries older than 90 days ────────────────
-                val cutoff = now - 90L * oneDayMs
-                prefs.all.keys.forEach { k ->
-                    val v = prefs.getLong(k, -1L)
-                    if (v >= 0L && v < cutoff) {
-                        prefs.edit().remove(k).apply()
-                    }
-                }
+                // ── Prune deliveries whose expiry is older than 90 days ───────
+                deliveryDao.deleteOlderThan(now - 90L * oneDayMs)
 
                 Timber.d(
                     "Warranty check complete. Expired ${reconciliationResult.expiredWarrantyCount} warranties, " +
@@ -156,19 +148,80 @@ class WarrantyExpirationWorker @AssistedInject constructor(
         return guardResult.toWorkerResult()
     }
 
+    /**
+     * Seeds (idempotently), atomically claims, and — only if the claim was acquired —
+     * sends the reminder notification, then records the durable outcome.
+     *
+     * - A row already SENT in a previous run is skipped (claim returns 0) — durable dedup.
+     * - DELIVERED → SENT (persists notificationId). NOT_DELIVERED → FAILED (re-claimable).
+     */
+    private suspend fun deliverReminder(
+        warranty: com.yourname.expensetracker.data.database.entity.Warranty,
+        windowDays: Int,
+        now: Long,
+        title: String,
+        message: String
+    ) {
+        val expiryDate = warranty.warrantyEndDate
+
+        // 1. Seed a SCHEDULED row idempotently (no-op if it already exists).
+        deliveryDao.insertOrIgnore(
+            WarrantyReminderDelivery(
+                warrantyId = warranty.id,
+                windowDays = windowDays,
+                expiryDate = expiryDate,
+                status = "SCHEDULED",
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+
+        // 2. Atomically claim. Only SCHEDULED/FAILED rows can be claimed, so an
+        //    already-SENT delivery (durable dedup) or one claimed by a concurrent
+        //    run yields 0 and is skipped.
+        val claimed = deliveryDao.claim(
+            warrantyId = warranty.id,
+            windowDays = windowDays,
+            expiryDate = expiryDate,
+            now = now
+        )
+        if (claimed != 1) return
+
+        val row = deliveryDao.getByKey(warranty.id, windowDays, expiryDate) ?: return
+
+        // 3. Send and record the outcome. Mark SENT only when delivery actually succeeds.
+        val notificationId = NotificationIdGenerator.forWarranty(warranty.id, windowDays)
+        val deliveryResult = notificationService.sendBudgetAlert(
+            notificationId = notificationId,
+            title = title,
+            message = message
+        )
+
+        if (deliveryResult == NotificationService.DeliveryResult.DELIVERED) {
+            deliveryDao.markSentFromClaimed(row.id, notificationId, now)
+        } else {
+            deliveryDao.markFailed(row.id, reason = "notification_not_delivered", now = now)
+        }
+    }
+
     companion object {
         private const val WORK_NAME = "warranty_expiration_check"
-        private const val PREFS_NAME = "warranty_expiration_worker_prefs"
+
+        /**
+         * A CLAIMED delivery whose claim is older than this is considered stale (the
+         * worker likely crashed mid-send) and is reset to SCHEDULED for retry.
+         */
+        private const val STALE_CLAIM_MS = 60L * 60L * 1000L // 1 hour
 
         /**
          * Schedules the warranty expiration worker.
          * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          *
-         * ## Persistent sent-state (WKR-3)
-         * Uses SharedPreferences ([PREFS_NAME]) to track last-notified timestamps per
-         * (warrantyId:window) key, preventing re-sending the same notification across
-         * device reboots or worker reschedules. Stale entries older than 90 days are
-         * cleaned up at the end of each run.
+         * ## Durable sent-state (S9)
+         * Sent-state is tracked in the [WarrantyReminderDelivery] Room table using a
+         * claim-before-notify protocol, preventing re-sending the same notification across
+         * device reboots, worker reschedules, and backup/restore. Deliveries whose expiry is
+         * older than 90 days are pruned at the end of each run.
          */
         fun schedule(context: Context) {
             WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, WarrantyExpirationWorker::class.java)

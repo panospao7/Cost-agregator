@@ -122,6 +122,11 @@ object DaoModule {
 
     @Provides
     @Singleton
+    fun provideWarrantyReminderDeliveryDao(database: AppDatabase): WarrantyReminderDeliveryDao =
+        database.warrantyReminderDeliveryDao()
+
+    @Provides
+    @Singleton
     fun provideSubscriptionPriceHistoryDao(database: AppDatabase): SubscriptionPriceHistoryDao = 
         database.subscriptionPriceHistoryDao()
 

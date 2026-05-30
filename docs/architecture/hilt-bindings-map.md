@@ -27,7 +27,7 @@ Provides (58 DAOs):
   PendingReviewDao, UserCorrectionDao, SourceStatsDao, SourceStatsEventDao, RecurringExpenseDao,
   ManualRecurringExpenseDao, MerchantNormalizationDao, MerchantLocationDao,
   RecommendationDao, ReceiptItemCategorizationDao, WarrantyDao, ReturnWindowDao,
-  WarrantyLifecycleEventDao,
+  WarrantyLifecycleEventDao, WarrantyReminderDeliveryDao,
   SubscriptionPriceHistoryDao, SubscriptionUsageDao, MileageTrackingDao,
   ExchangeRateDao, ExpenseGroupDao, GroupMemberDao, GroupExpenseDao,
   GroupSettlementDao,
@@ -88,7 +88,11 @@ Lifecycle coordinator wiring:
 ```
 Binds:
   WorkerRunLogger                             → WorkerRunLoggerImpl
+  NotificationPermissionChecker               → AndroidNotificationPermissionChecker
 ```
+`NotificationPermissionChecker` is injected into `WorkerExecutionGuard` to enforce
+`WorkerGuardRequest.requiresNotificationPermission` (durable skip with
+`NOTIFICATION_PERMISSION_DENIED` when notifications are disabled).
 
 ### `ServiceModule` — `di/ServiceModule.kt`
 ```

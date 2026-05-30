@@ -8,9 +8,15 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
@@ -20,9 +26,11 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
+import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
@@ -46,6 +54,10 @@ class DailyBriefingWorkerTest {
     private val aiWorkScheduler = mockk<com.yourname.expensetracker.domain.ai.service.AiWorkScheduler>(relaxed = true)
     private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
 
+    // Relaxed run context so behavioral tests can both run the guarded block AND
+    // coVerify the worker's counter calls (e.g. addNotificationsSent on delivery).
+    private lateinit var ctx: WorkerRunContext
+
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
@@ -54,11 +66,15 @@ class DailyBriefingWorkerTest {
         analyticsRepository = mockk(relaxed = true)
         deliverProactiveBriefingNotificationUseCase = mockk(relaxed = true)
         executionGuard = mockk(relaxed = true)
+        ctx = mockk(relaxed = true)
         coEvery {
-            executionGuard.runGuarded(any<WorkerGuardRequest>(), any<suspend () -> Unit>())
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
         } coAnswers {
-            val block = secondArg<suspend () -> Unit>()
-            block.invoke()
+            val block = secondArg<suspend (WorkerRunContext) -> Unit>()
+            block.invoke(ctx)
             WorkerGuardResult.Success(Unit)
         }
     }
@@ -100,6 +116,8 @@ class DailyBriefingWorkerTest {
         coVerify(exactly = 1) {
             deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any())
         }
+        // P9-S4 counts: a delivered briefing must surface a non-zero notificationsSent.
+        verify(exactly = 1) { ctx.addNotificationsSent() }
     }
 
     @Test
@@ -165,6 +183,145 @@ class DailyBriefingWorkerTest {
         } catch (_: CancellationException) {
             // expected — cancellation must not be swallowed
         }
+    }
+
+    // P9-P1-04 / PR3 — one-shot midnight chain must survive incidental skips.
+    // These assert the real worker->scheduler path: reschedule on Success and on
+    // incidental Skipped, but NOT when the guard reports the worker is disabled.
+
+    @Test
+    fun `fresh artifact still reschedules next run`() = runTest {
+        // Guard runs the block; a fresh READY artifact short-circuits generation
+        // via return@runGuarded, which surfaces as Success — the chain must re-arm.
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshBriefingArtifact()
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 0) { generateDashboardBriefingUseCase(any(), any()) }
+        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        // P9-S4 zero-count: a fresh artifact short-circuits before any delivery,
+        // so no notification counter is incremented.
+        verify(exactly = 0) { ctx.addNotificationsSent() }
+    }
+
+    @Test
+    fun `privacy denied still reschedules next run`() = runTest {
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        } returns WorkerGuardResult.Skipped(DiagnosticReasonCode.PRIVACY_DENIED.name)
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+    }
+
+    @Test
+    fun `restore-skip still reschedules next run`() = runTest {
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        } returns WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+    }
+
+    @Test
+    fun `success reschedules next run`() = runTest {
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+    }
+
+    @Test
+    fun `disabled does not reschedule`() = runTest {
+        // The guard surfaces the spec/runtime-disabled skip with this exact reason
+        // (mirrors WorkerExecutionGuard). S2's scheduleAtMidnight already cancels the
+        // unique work when disabled, so the worker must NOT re-arm here.
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        } returns WorkerGuardResult.Skipped(DailyBriefingWorker.DISABLED_BY_SPEC_REASON)
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        verify(exactly = 0) { aiWorkScheduler.scheduleDailyBriefing() }
+    }
+
+    // Drift guard: the `disabled does not reschedule` test above only suppresses
+    // rescheduling when the guard's Skipped.reason equals DISABLED_BY_SPEC_REASON.
+    // That contract is only meaningful if the constant matches the EXACT literal
+    // WorkerExecutionGuard emits (runGuarded/runGuardedWithContext). Asserting
+    // against the literal directly — not the constant on both sides — makes a
+    // future change to either side fail CI instead of passing tautologically.
+    @Test
+    fun `DISABLED_BY_SPEC_REASON matches guard emitted literal`() {
+        assertEquals("Worker disabled by spec", DailyBriefingWorker.DISABLED_BY_SPEC_REASON)
+    }
+
+    @Test
+    fun `retry does not reschedule next run`() = runTest {
+        // Retry is owned by WorkManager backoff; the midnight chain is re-seeded on
+        // the next terminal Success/Skip, so the worker must NOT re-arm here.
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        } returns WorkerGuardResult.Retry("transient error")
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.retry(), result)
+        verify(exactly = 0) { aiWorkScheduler.scheduleDailyBriefing() }
+    }
+
+    @Test
+    fun `failure does not reschedule next run`() = runTest {
+        // A permanent failure must not re-arm the chain; the next terminal
+        // Success/Skip re-seeds the midnight run.
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        } returns WorkerGuardResult.Failed("permanent error")
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.failure(), result)
+        verify(exactly = 0) { aiWorkScheduler.scheduleDailyBriefing() }
+    }
+
+    private fun freshBriefingArtifact(): AiArtifactRecord {
+        return AiArtifactRecord(
+            targetType = AiTargetType.DASHBOARD,
+            targetKey = "dashboard_home:fresh",
+            capability = AiCapability.DASHBOARD_BRIEFING,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L,
+            // null expiresAt => treated as still fresh by the worker's freshness check.
+            expiresAt = null
+        )
     }
 
     private fun sampleProcessedData(): ProcessedDashboardData {

@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 142
+const val APP_DATABASE_SCHEMA_VERSION = 143
 
 @Database(
     entities = [
@@ -100,6 +100,7 @@ const val APP_DATABASE_SCHEMA_VERSION = 142
         BackgroundJobRun::class,
         SourceStatsEvent::class,
         WarrantyLifecycleEvent::class,
+        WarrantyReminderDelivery::class,
         InvestmentTransaction::class,
         GroupSettlementEntity::class,
         GroupLifecycleEventEntity::class,
@@ -174,6 +175,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun pipelineDiagnosticEventDao(): PipelineDiagnosticEventDao
     abstract fun sourceStatsEventDao(): SourceStatsEventDao
     abstract fun warrantyLifecycleEventDao(): WarrantyLifecycleEventDao
+    abstract fun warrantyReminderDeliveryDao(): WarrantyReminderDeliveryDao
     abstract fun investmentTransactionDao(): InvestmentTransactionDao
     abstract fun groupSettlementDao(): GroupSettlementDao
     abstract fun groupLifecycleEventDao(): GroupLifecycleEventDao
@@ -8528,14 +8530,74 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // Migration 142 -> 143: S9 / P9-P1-09 (PR6). Add the durable, claim-before-notify
+        // sent-state table for WarrantyExpirationWorker, replacing the SharedPreferences-based
+        // dedup (warranty_expiration_worker_prefs).
+        //
+        // ADDITIVE ONLY: creates a brand-new table + its indices. No existing table is
+        // dropped or altered, so this is non-destructive and fallbackToDestructiveMigration
+        // stays OFF.
+        //
+        // E6 guidance: the CREATE TABLE uses an EXPLICIT column list (no SELECT *) whose
+        // column names / affinities / NOT NULL / nullability EXACTLY match what Room
+        // generates from [WarrantyReminderDelivery]. Per Room codegen, columns WITHOUT an
+        // @ColumnInfo(defaultValue=...) are emitted with NO SQL DEFAULT clause (a Kotlin
+        // constructor default such as `= 0L` does NOT produce a SQL DEFAULT). The entity
+        // declares no @ColumnInfo defaults, so this CREATE TABLE deliberately omits all
+        // DEFAULT clauses — matching Room's expected schema (a stray DEFAULT would fail
+        // Room's open-time schema validation).
+        //
+        // Column order follows the entity's declaration order exactly. The FK mirrors the
+        // entity: warrantyId -> warranties(id) ON DELETE CASCADE (warranties PK is `id`).
+        // Index names match Room's generated names:
+        //   - UNIQUE index_warranty_reminder_deliveries_warrantyId_windowDays_expiryDate
+        //   - index_warranty_reminder_deliveries_warrantyId  (required FK child index)
+        val MIGRATION_142_143 = object : androidx.room.migration.Migration(142, 143) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS warranty_reminder_deliveries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        warrantyId INTEGER NOT NULL,
+                        windowDays INTEGER NOT NULL,
+                        expiryDate INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        claimedAt INTEGER,
+                        lastAttemptAt INTEGER,
+                        attemptCount INTEGER NOT NULL,
+                        notificationId INTEGER,
+                        failureReason TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(warrantyId) REFERENCES warranties(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+
+                // Idempotency key: one delivery per (warrantyId, windowDays, expiryDate).
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_warranty_reminder_deliveries_warrantyId_windowDays_expiryDate " +
+                        "ON warranty_reminder_deliveries (warrantyId, windowDays, expiryDate)"
+                )
+
+                // Required index on the FK child column (Room enforces this).
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "index_warranty_reminder_deliveries_warrantyId " +
+                        "ON warranty_reminder_deliveries (warrantyId)"
+                )
+            }
+        }
+
         /**
-         * Creates an in-memory [RoomDatabase.Builder] pre-configured with
-         * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
-          *
-          * Every test that needs a fresh `AppDatabase` **must** go through this
-          * factory so that supplementary indexes (Batch 3 through Batch 8) are
-          * present, matching the production fresh-install path.
-          */
+         * Creates a file-backed [RoomDatabase.Builder] pre-configured with
+         * [FRESH_INSTALL_CALLBACK] and the full migration chain.
+         *
+         * Every test that needs a fresh `AppDatabase` **must** go through this
+         * factory so that supplementary indexes (Batch 3 through Batch 8) are
+         * present, matching the production fresh-install path.
+         */
         @JvmStatic
         fun fileBuilder(
             context: android.content.Context,
@@ -8705,7 +8767,8 @@ MIGRATION_91_92,
             MIGRATION_138_139,
             MIGRATION_139_140,
             MIGRATION_140_141,
-            MIGRATION_141_142
+            MIGRATION_141_142,
+            MIGRATION_142_143
     )
 }
 }

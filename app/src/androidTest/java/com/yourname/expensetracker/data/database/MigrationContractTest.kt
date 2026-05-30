@@ -1123,6 +1123,197 @@ class MigrationContractTest {
         }
     }
 
+    // ── S9 / P9-P1-09 (PR6): warranty_reminder_deliveries (142 -> 143) ───────
+
+    /**
+     * Builds the minimal v142 `warranties` parent table (only the columns referenced by
+     * the FK + needed for seeding) and inserts one warranty (id=1). Shared setup for the
+     * 142->143 warranty-reminder-deliveries contract tests.
+     */
+    private fun seedV142WarrantyParent(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS warranties (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                receiptId INTEGER,
+                expenseId INTEGER,
+                productName TEXT NOT NULL,
+                merchantName TEXT NOT NULL,
+                purchaseDate INTEGER NOT NULL,
+                warrantyDurationMonths INTEGER NOT NULL,
+                warrantyEndDate INTEGER NOT NULL,
+                warrantyType TEXT NOT NULL DEFAULT 'MANUFACTURER',
+                supportPhone TEXT,
+                supportEmail TEXT,
+                warrantyDocumentUrl TEXT,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                claimedAt INTEGER,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL,
+                autoDetected INTEGER NOT NULL DEFAULT 0,
+                extractionConfidence REAL NOT NULL DEFAULT 0.0,
+                extractionSource TEXT NOT NULL DEFAULT 'manual',
+                needsReview INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "INSERT INTO warranties (id, productName, merchantName, purchaseDate, " +
+                "warrantyDurationMonths, warrantyEndDate, createdAt, updatedAt) " +
+                "VALUES (1, 'Laptop', 'Tech Store', 1700000000000, 24, 1800000000000, " +
+                "1700000000000, 1700000000000)"
+        )
+    }
+
+    @Test
+    fun migrate_142_to_143_creates_warranty_reminder_deliveries_with_expected_shape() {
+        withTestDb("migration-contract-142-143-shape.db", version = 142) { db ->
+            seedV142WarrantyParent(db)
+
+            AppDatabase.MIGRATION_142_143.migrate(db)
+
+            // Expected columns present.
+            val colCursor = db.query("PRAGMA table_info(warranty_reminder_deliveries)")
+            val columns = mutableSetOf<String>()
+            val notNullColumns = mutableSetOf<String>()
+            while (colCursor.moveToNext()) {
+                val colName = colCursor.getString(colCursor.getColumnIndexOrThrow("name"))
+                columns.add(colName)
+                if (colCursor.getInt(colCursor.getColumnIndexOrThrow("notnull")) == 1) {
+                    notNullColumns.add(colName)
+                }
+            }
+            colCursor.close()
+
+            val expected = setOf(
+                "id", "warrantyId", "windowDays", "expiryDate", "status",
+                "claimedAt", "lastAttemptAt", "attemptCount", "notificationId",
+                "failureReason", "createdAt", "updatedAt"
+            )
+            assertEquals("column set must match the entity exactly", expected, columns)
+
+            // NOT NULL columns must match what Room generates from the entity.
+            assertTrue(notNullColumns.contains("id"))
+            assertTrue(notNullColumns.contains("warrantyId"))
+            assertTrue(notNullColumns.contains("windowDays"))
+            assertTrue(notNullColumns.contains("expiryDate"))
+            assertTrue(notNullColumns.contains("status"))
+            assertTrue(notNullColumns.contains("attemptCount"))
+            assertTrue(notNullColumns.contains("createdAt"))
+            assertTrue(notNullColumns.contains("updatedAt"))
+            // Nullable columns must NOT be NOT NULL.
+            assertFalse(notNullColumns.contains("claimedAt"))
+            assertFalse(notNullColumns.contains("lastAttemptAt"))
+            assertFalse(notNullColumns.contains("notificationId"))
+            assertFalse(notNullColumns.contains("failureReason"))
+
+            // Indices exist with the exact names Room expects.
+            fun indexExists(name: String): Boolean {
+                db.query("SELECT 1 FROM sqlite_master WHERE type='index' AND name='$name'").use {
+                    return it.moveToFirst()
+                }
+            }
+            assertTrue(
+                indexExists("index_warranty_reminder_deliveries_warrantyId_windowDays_expiryDate")
+            )
+            assertTrue(indexExists("index_warranty_reminder_deliveries_warrantyId"))
+
+            // A seed row can be inserted and read back.
+            db.execSQL(
+                "INSERT INTO warranty_reminder_deliveries " +
+                    "(warrantyId, windowDays, expiryDate, status, attemptCount, createdAt, updatedAt) " +
+                    "VALUES (1, 7, 1800000000000, 'SCHEDULED', 0, 1700000000000, 1700000000000)"
+            )
+            db.query("SELECT status FROM warranty_reminder_deliveries WHERE warrantyId = 1").use {
+                assertTrue(it.moveToFirst())
+                assertEquals("SCHEDULED", it.getString(0))
+            }
+        }
+    }
+
+    @Test
+    fun migrate_142_to_143_enforces_unique_key() {
+        withTestDb("migration-contract-142-143-unique.db", version = 142) { db ->
+            seedV142WarrantyParent(db)
+
+            AppDatabase.MIGRATION_142_143.migrate(db)
+
+            db.execSQL(
+                "INSERT INTO warranty_reminder_deliveries " +
+                    "(warrantyId, windowDays, expiryDate, status, attemptCount, createdAt, updatedAt) " +
+                    "VALUES (1, 7, 1800000000000, 'SCHEDULED', 0, 1700000000000, 1700000000000)"
+            )
+
+            // Same (warrantyId, windowDays, expiryDate) must be rejected by the UNIQUE index.
+            var uniqueRejected = false
+            try {
+                db.execSQL(
+                    "INSERT INTO warranty_reminder_deliveries " +
+                        "(warrantyId, windowDays, expiryDate, status, attemptCount, createdAt, updatedAt) " +
+                        "VALUES (1, 7, 1800000000000, 'SENT', 1, 1700000000000, 1700000000000)"
+                )
+            } catch (_: Exception) {
+                uniqueRejected = true
+            }
+            assertTrue("UNIQUE (warrantyId, windowDays, expiryDate) must reject duplicate", uniqueRejected)
+
+            // A different window for the same warranty is allowed.
+            db.execSQL(
+                "INSERT INTO warranty_reminder_deliveries " +
+                    "(warrantyId, windowDays, expiryDate, status, attemptCount, createdAt, updatedAt) " +
+                    "VALUES (1, 30, 1800000000000, 'SCHEDULED', 0, 1700000000000, 1700000000000)"
+            )
+            db.query("SELECT COUNT(*) FROM warranty_reminder_deliveries").use {
+                it.moveToFirst()
+                assertEquals(2, it.getInt(0))
+            }
+        }
+    }
+
+    @Test
+    fun migrate_142_to_143_warranty_fk_cascade_and_rejection() {
+        withTestDb("migration-contract-142-143-fk.db", version = 142) { db ->
+            seedV142WarrantyParent(db)
+
+            AppDatabase.MIGRATION_142_143.migrate(db)
+
+            // Enforce FK constraints for the cascade behavior check.
+            db.execSQL("PRAGMA foreign_keys=ON")
+
+            db.execSQL(
+                "INSERT INTO warranty_reminder_deliveries " +
+                    "(warrantyId, windowDays, expiryDate, status, attemptCount, createdAt, updatedAt) " +
+                    "VALUES (1, 7, 1800000000000, 'SCHEDULED', 0, 1700000000000, 1700000000000)"
+            )
+
+            // Orphan insert (no such warranty) must be rejected by the FK.
+            var fkRejected = false
+            try {
+                db.execSQL(
+                    "INSERT INTO warranty_reminder_deliveries " +
+                        "(warrantyId, windowDays, expiryDate, status, attemptCount, createdAt, updatedAt) " +
+                        "VALUES (999, 7, 1800000000000, 'SCHEDULED', 0, 1700000000000, 1700000000000)"
+                )
+            } catch (_: Exception) {
+                fkRejected = true
+            }
+            assertTrue("FK rejects orphan warranty reference", fkRejected)
+
+            // Deleting the parent warranty must cascade-delete its deliveries.
+            db.execSQL("DELETE FROM warranties WHERE id = 1")
+            db.query("SELECT COUNT(*) FROM warranty_reminder_deliveries WHERE warrantyId = 1").use {
+                it.moveToFirst()
+                assertEquals("delivery must be cascade-deleted with its warranty", 0, it.getInt(0))
+            }
+
+            // No dangling FK references remain.
+            val fkViolations = db.query("PRAGMA foreign_key_check")
+            assertFalse("no FK violations after cascade delete", fkViolations.moveToFirst())
+            fkViolations.close()
+        }
+    }
+
     private inline fun withTestDb(
         name: String,
         version: Int,

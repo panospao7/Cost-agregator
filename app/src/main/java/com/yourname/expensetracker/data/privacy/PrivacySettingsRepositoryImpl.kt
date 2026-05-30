@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.privacy
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
@@ -15,6 +16,8 @@ import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.workers.PrivacyRuntimeWorkerPolicy
+import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
@@ -124,22 +127,43 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         applyPrivacyChange(old, persisted)
     }
 
-    private fun applyPrivacyChange(old: PrivacySettings, updated: PrivacySettings) {
-        if (old.cloudAiEnabled && !updated.cloudAiEnabled) {
-            workManager.cancelUniqueWork("ai_daily_briefing")
-            Timber.i("Cancelled ai_daily_briefing — cloud AI disabled")
+    /**
+     * Drives worker cancel/reschedule from [PrivacyRuntimeWorkerPolicy] (the single
+     * source of truth) instead of hardcoded worker-name strings.
+     *
+     * P9-P1-11 / PR8:
+     *  - Toggles that went `true -> false` cancel their gated workers. The policy
+     *    already excludes [PrivacyRuntimeWorkerPolicy.cancelExemptWorkers] (e.g.
+     *    `data_retention`) so cleanup keeps running, and never gates
+     *    `merchant_key_backfill` on background location (it is local).
+     *  - Toggles that went `false -> true` reschedule their gated workers via
+     *    [WorkerRegistry], so each [WorkerSpec.enabled] flag is still honoured
+     *    (a disabled spec cancels rather than enqueues).
+     */
+    @VisibleForTesting
+    internal fun applyPrivacyChange(old: PrivacySettings, updated: PrivacySettings) {
+        val disabled = PrivacyRuntimeWorkerPolicy.disabledToggles(old, updated)
+        val enabled = PrivacyRuntimeWorkerPolicy.enabledToggles(old, updated)
+
+        // Defensive: cancelExemptWorkers (e.g. data_retention) is excluded by the
+        // policy itself, so it can never appear here even if a toggle maps to it.
+        val toCancel = PrivacyRuntimeWorkerPolicy.workersToCancel(disabled)
+        for (workerName in toCancel) {
+            workManager.cancelUniqueWork(workerName)
+            Timber.i("Cancelled %s — gating privacy toggle disabled", workerName)
         }
-        if (old.backgroundLocationBackfillEnabled && !updated.backgroundLocationBackfillEnabled) {
-            workManager.cancelUniqueWork("location_backfill")
-            workManager.cancelUniqueWork("merchant_key_backfill")
-            Timber.i("Cancelled location workers — background location disabled")
-        }
-        if (old.notificationCaptureEnabled && !updated.notificationCaptureEnabled) {
-            // Do NOT cancel data_retention — it must keep running to purge already-collected data
-            workManager.cancelUniqueWork("receipt_matching")
-            workManager.cancelUniqueWork("warranty_expiration_check")
-            workManager.cancelUniqueWork("bill_reminder_periodic")
-            Timber.i("Cancelled notification-dependent workers (retention kept) — notification capture disabled")
+
+        val toReschedule = PrivacyRuntimeWorkerPolicy.workersToReschedule(enabled)
+        if (toReschedule.isNotEmpty()) {
+            val scheduleBySpec = WorkerRegistry.entries.associateBy({ it.specName }, { it.schedule })
+            for (workerName in toReschedule) {
+                val schedule = scheduleBySpec[workerName] ?: continue
+                // Route through WorkerRegistry so a disabled WorkerSpec is respected
+                // (scheduleAtMidnight / scheduleFromSpec cancel when spec.enabled=false).
+                runCatching { schedule(context) }
+                    .onSuccess { Timber.i("Rescheduled %s — gating privacy toggle enabled", workerName) }
+                    .onFailure { Timber.w(it, "Failed to reschedule %s", workerName) }
+            }
         }
     }
 

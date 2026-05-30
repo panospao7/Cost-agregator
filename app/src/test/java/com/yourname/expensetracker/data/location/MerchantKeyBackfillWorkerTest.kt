@@ -9,11 +9,14 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
+import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -28,14 +31,41 @@ class MerchantKeyBackfillWorkerTest {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var executionGuard: WorkerExecutionGuard
 
+    // Relaxed run context so behavioral tests can run the guarded block AND
+    // coVerify the worker's per-row counter calls (scanned/updated).
+    private lateinit var ctx: WorkerRunContext
+
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
         expenseRepository = mockk(relaxed = true)
         executionGuard = mockk()
-        coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } coAnswers {
-            WorkerGuardResult.Success(secondArg<suspend () -> Any>().invoke())
+        ctx = mockk(relaxed = true)
+        coEvery {
+            executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>())
+        } coAnswers {
+            val block = secondArg<suspend (WorkerRunContext) -> Any>()
+            try {
+                WorkerGuardResult.Success(block.invoke(ctx))
+            } catch (e: CancellationException) {
+                // Mirror the real guard: cancellation has highest precedence and is rethrown.
+                throw e
+            } catch (e: Exception) {
+                // Mirror WorkerExecutionGuard precedence exactly: an explicit typed retry
+                // signal wins over the message-based keyword heuristic; everything else
+                // falls back to classifyTransient, then Failed. The worker's no-progress
+                // retry paths now throw RetryableWorkerException, so they resolve to Retry.
+                val msg = e.message ?: ""
+                val transient = listOf("timeout", "interrupted", "deadlock", "SQLITE_BUSY", "database is locked")
+                    .any { msg.contains(it, ignoreCase = true) } || e is java.io.IOException
+                when {
+                    e is RetryableWorkerException -> WorkerGuardResult.Retry(msg, e)
+                    transient -> WorkerGuardResult.Retry(msg, e)
+                    else -> WorkerGuardResult.Failed(msg, e)
+                }
+            }
         }
+        coEvery { executionGuard.checkpoint(any()) } returns Unit
     }
 
     private fun buildWorker(): MerchantKeyBackfillWorker =
@@ -66,6 +96,9 @@ class MerchantKeyBackfillWorkerTest {
 
         assertEquals(Result.success(), result)
         coVerify(exactly = 1) { expenseRepository.updateMerchantKey(1L, "sklavenitis") }
+        // P9-S4 counts: the one un-keyed row is scanned and updated.
+        coVerify(exactly = 1) { ctx.addRowsScanned() }
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
     }
 
     @Test
@@ -76,6 +109,9 @@ class MerchantKeyBackfillWorkerTest {
 
         assertEquals(Result.success(), result)
         coVerify(exactly = 0) { expenseRepository.updateMerchantKey(any(), any()) }
+        // P9-S4 zero-count: nothing to backfill => no rows scanned/updated.
+        coVerify(exactly = 0) { ctx.addRowsScanned() }
+        coVerify(exactly = 0) { ctx.addRowsUpdated() }
     }
 
     @Test

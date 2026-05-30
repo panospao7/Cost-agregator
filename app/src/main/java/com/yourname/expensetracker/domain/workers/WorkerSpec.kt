@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.workers
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 
 /**
@@ -19,6 +20,10 @@ import androidx.work.NetworkType
  * @property repeatIntervalHours How often the periodic worker runs (null for one-shot).
  * @property flexMinutes Flex interval for periodic work (null if not needed).
  * @property existingWorkPolicy How to handle existing periodic work.
+ * @property oneShotPolicy How to handle existing one-shot work (used only when
+ *   [repeatIntervalHours] is null). Defaults to [ExistingWorkPolicy.KEEP] so a
+ *   one-shot is scheduled at most once unless overridden. A spec version bump
+ *   always forces REPLACE regardless of this value.
  * @property backoffPolicy Retry backoff policy for transient failures.
  * @property backoffDelaySeconds Initial backoff delay in seconds.
  */
@@ -30,6 +35,7 @@ data class WorkerSpec(
     val repeatIntervalHours: Long? = null,
     val flexMinutes: Long? = null,
     val existingWorkPolicy: ExistingPeriodicWorkPolicy = ExistingPeriodicWorkPolicy.KEEP,
+    val oneShotPolicy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP,
     val backoffPolicy: BackoffPolicy = BackoffPolicy.EXPONENTIAL,
     val backoffDelaySeconds: Long = 30
 ) {
@@ -80,6 +86,9 @@ data class WorkerSpec(
             "ai_daily_briefing" to WorkerSpec(
                 name = "ai_daily_briefing",
                 repeatIntervalHours = null, // midnight-aligned one-shot
+                // KEEP is explicit here: the midnight self-rescheduling chain relies on
+                // KEEP so an already-scheduled briefing is not clobbered/duplicated.
+                oneShotPolicy = ExistingWorkPolicy.KEEP,
                 constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.UNMETERED)
                     .setRequiresBatteryNotLow(true)
@@ -94,14 +103,16 @@ data class WorkerSpec(
                     .build(),
                 backoffDelaySeconds = 600
             ),
-            // WRK-N5: Use REPLACE (not KEEP) for one-shot workers.
-            // KEEP would prevent re-scheduling after completion, meaning if the
-            // worker needs to run again (e.g. after new merchants are added), the
-            // existing completed work policy would block it. REPLACE allows the
-            // one-shot to be re-enqueued each time the spec version bumps.
+            // WRK-N5: Use REPLACE (not KEEP) for this one-shot worker via the
+            // explicit oneShotPolicy field. KEEP would prevent re-scheduling after
+            // completion, meaning if the worker needs to run again (e.g. after new
+            // merchants are added), the existing completed work policy would block it.
+            // REPLACE allows the one-shot to be re-enqueued each time it is scheduled,
+            // matching MerchantKeyBackfillWorker's KDoc intent.
             "merchant_key_backfill" to WorkerSpec(
                 name = "merchant_key_backfill",
                 repeatIntervalHours = null, // one-shot
+                oneShotPolicy = ExistingWorkPolicy.REPLACE,
                 constraints = Constraints.NONE,
                 backoffPolicy = BackoffPolicy.EXPONENTIAL,
                 backoffDelaySeconds = 15

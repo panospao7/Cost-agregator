@@ -6,6 +6,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -19,12 +20,13 @@ import kotlinx.coroutines.CancellationException
  * existing row that was created before schema version 32.
  *
  * Design:
- *  - One-time work (not periodic). Enqueued at startup with [ExistingWorkPolicy.KEEP]
- *    so it is only scheduled once per device lifetime.
+ *  - One-time work (not periodic). Enqueued at startup with [ExistingWorkPolicy.REPLACE]
+ *    (via [WorkerSpec.oneShotPolicy]) so it can be re-scheduled when needed (e.g. after
+ *    new merchants are imported).
  *  - Processes all rows in batches of [BATCH_SIZE] until none remain.
  *  - Runs on any network (no network needed — purely local Kotlin computation).
  *  - Safe to interrupt: relies on `isStopped` check and will be re-enqueued on
- *    the next app start if not completed (via [ExistingWorkPolicy.KEEP]).
+ *    the next app start if not completed (via [ExistingWorkPolicy.REPLACE]).
  *
  * Why a worker rather than inline SQL in the migration?
  *  SQLite cannot replicate the diphthong-aware Greek→Latin transliteration in
@@ -42,12 +44,12 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.d(TAG, "Merchant-key backfill started")
 
-        val guardResult = executionGuard.runGuarded(
+        val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "merchant_key_backfill",
                 allowDuringBackupExport = false
             )
-        ) {
+        ) { ctx ->
             var totalUpdated = 0
             var batchesProcessed = 0
             val maxBatches = 25 // WRK-11: Per-run budget — max 25 batches (5000 rows)
@@ -55,6 +57,9 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
 
             while (!isStopped && batchesProcessed < maxBatches) {
                 batchesProcessed++
+                // WRK-15/N1: observe maintenance drain + write barrier between batches so a
+                // backup/restore can stop this worker promptly instead of timing out the drain.
+                ctx.checkpoint("merchant_key_backfill_batch")
                 val batch = try {
                     expenseRepository.getExpensesWithNullMerchantKey(limit = BATCH_SIZE)
                 } catch (e: CancellationException) {
@@ -72,22 +77,27 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
                         TAG,
                         "Merchant-key backfill made no progress; retrying after repeated failures for ${batch.size} rows"
                     )
-                    throw RuntimeException("No progress made")
+                    throw RetryableWorkerException("No progress made")
                 }
 
                 var batchUpdated = 0
 
                 for (expense in pendingBatch) {
                     if (isStopped) break
+                    // WRK-15/N1: stop before mutating if a maintenance drain/restore began.
+                    ctx.checkpoint("merchant_key_backfill_update")
+                    ctx.addRowsScanned()
                     val key = MerchantKeyGenerator.generate(expense.merchant)
                     try {
                         expenseRepository.updateMerchantKey(expense.id, key)
                         totalUpdated++
                         batchUpdated++
+                        ctx.addRowsUpdated()
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         failedExpenseIdsThisRun += expense.id
+                        ctx.addErrors()
                         // Non-fatal: row will be retried in the next batch on the next run.
                         Log.w(TAG, "Failed to update merchantKey for expense ${expense.id}", e)
                     }
@@ -95,7 +105,7 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
 
                 if (!isStopped && batchUpdated == 0) {
                     Log.w(TAG, "Merchant-key backfill made no progress for current batch; retrying")
-                    throw RuntimeException("No progress in current batch")
+                    throw RetryableWorkerException("No progress in current batch")
                 }
             }
 

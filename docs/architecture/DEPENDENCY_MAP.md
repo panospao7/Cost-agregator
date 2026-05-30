@@ -719,7 +719,10 @@ MainApplication (@HiltAndroidApp)
                           └──► ReceiptRepository, ExpenseRepository
 
 WorkerSpec defaults                       [domain/workers/WorkerSpec.kt]
-  └── DEFAULTS map with specs for all 7 workers (interval, constraints, backoff)
+  └── DEFAULTS map with specs for all 7 workers (interval, constraints, backoff).
+      Separate existingWorkPolicy (periodic) + oneShotPolicy (one-shot); a version
+      bump always forces REPLACE. merchant_key_backfill = REPLACE; ai_daily_briefing
+      = KEEP (protects the midnight self-reschedule chain).
 
 WorkerSpecScheduler                       [domain/workers/WorkerSpecScheduler.kt]
   └── Centralized scheduling object — all workers use instead of duplicating
@@ -737,6 +740,15 @@ WorkerExecutionGuard                      [domain/workers/WorkerExecutionGuard.k
       creates WorkerRunLogger handle, wraps work in try-catch, records outcome.
       Used by all 7 workers to replace ad-hoc per-worker logging. Enhanced with
       checkpoints/yield() for cooperative cancellation during long-running work.
+      Enforces requiresNotificationPermission via NotificationPermissionChecker
+      (durable skip with NOTIFICATION_PERMISSION_DENIED). Catch precedence:
+      CancellationException (rethrow) → RetryableWorkerException (Retry) →
+      classifyTransient(message/IOException) (Retry) → permanent Failed.
+
+RetryableWorkerException                  [domain/workers/RetryableWorkerException.kt]
+  └── Typed retry signal. Workers that intend a WorkManager retry must throw this;
+      a plain RuntimeException with a non-transient message is a PERMANENT failure.
+      Used by LocationBackfillWorker + MerchantKeyBackfillWorker no-progress paths.
 
 WorkerRegistry                            [domain/workers/WorkerRegistry.kt]
   └── Kotlin `object`. Centralized single-source-of-truth registry for all 7
@@ -766,7 +778,7 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `DailyBriefingWorker` | AiArtifactDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `LocationBackfillWorker` | ExpenseDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao | RestoreMaintenanceMode, WorkerExecutionGuard |
-| `WarrantyExpirationWorker` | WarrantyDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `WarrantyExpirationWorker` | WarrantyDao, WarrantyReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `DataRetentionWorker` | RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao | RestoreMaintenanceMode, WorkerExecutionGuard |
@@ -868,6 +880,7 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `RecurringReminderDelivery` | `RecurringReminderDeliveryDao` | `RecurringLifecycleCoordinator` | Reminder delivery |
 | `Warranty` | `WarrantyDao` | `WarrantyTrackerRepository` | WarrantyTrackerVM |
 | `ReturnWindow` | `ReturnWindowDao` | `WarrantyTrackerRepository` | WarrantyTrackerVM |
+| `WarrantyReminderDelivery` | `WarrantyReminderDeliveryDao` | `WarrantyExpirationWorker` | Durable reminder sent-state (v143; claim-before-notify) |
 | `SubscriptionCandidate` | `SubscriptionCandidateDao` | `SubscriptionManagementRepository` | SubscriptionVM |
 | `SubscriptionPriceHistory` | `SubscriptionPriceHistoryDao` | `SubscriptionManagementRepository` | SubscriptionVM |
 | `SubscriptionUsage` | `SubscriptionUsageDao` | `SubscriptionManagementRepository` | SubscriptionVM |

@@ -53,6 +53,37 @@ interface ScannedReceiptDao {
     @Query("UPDATE scanned_receipts SET expenseId = :expenseId, matchStatus = 'AUTO_MATCHED' WHERE id = :receiptId")
     suspend fun linkToExpense(receiptId: Long, expenseId: Long)
 
+    /**
+     * S6 (P9-P1-07 / NEW-07): Atomic compare-and-set claim for the automated
+     * matching worker's auto-link path.
+     *
+     * Transitions a receipt to AUTO_MATCHED **only if** it is still UNMATCHED or
+     * SUGGESTED at write time, and returns the number of rows affected. This is a
+     * conditional UPDATE (not a schema change) executed inside the link
+     * transaction so two concurrent matching runs (e.g. the periodic
+     * "receipt_matching" worker overlapping the manual "receipt_matching_run_once"
+     * one-shot) cannot both auto-link the same receipt: the first run claims it
+     * (returns 1), the second run sees the row already resolved and gets 0 rows.
+     *
+     * A caller observing 0 affected rows must treat the receipt as already handled
+     * by a concurrent run — skip notification and side effects rather than failing.
+     *
+     * Mirrors the field set of the previous unconditional link update
+     * (expenseId, matchStatus, matchConfidence, suggestedExpenseId cleared, updatedAt).
+     */
+    @Query(
+        "UPDATE scanned_receipts " +
+            "SET expenseId = :expenseId, matchStatus = 'AUTO_MATCHED', " +
+            "matchConfidence = :confidence, suggestedExpenseId = NULL, updatedAt = :now " +
+            "WHERE id = :receiptId AND matchStatus IN ('UNMATCHED', 'SUGGESTED')"
+    )
+    suspend fun claimForAutoMatch(
+        receiptId: Long,
+        expenseId: Long,
+        confidence: Float?,
+        now: Long
+    ): Int
+
     @Query("UPDATE scanned_receipts SET itemCategorizationStatus = :status WHERE id = :receiptId")
     suspend fun updateCategorizationStatus(receiptId: Long, status: String)
 

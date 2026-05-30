@@ -7,7 +7,7 @@ import timber.log.Timber
 /**
  * Verifies database integrity and table row counts for restore operations.
  *
- * Replaces the old 5-table verification with full 56-entity verification.
+ * Replaces the old 5-table verification with full 57-entity verification.
  *
  * ## Tier definitions
  *
@@ -34,10 +34,10 @@ import timber.log.Timber
  */
 object BackupVerifier {
 
-    // ── Verification tier assignment for all 56 entities ──────────
+    // ── Verification tier assignment for all 57 entities ──────────
 
     /**
-     * All 56 entity table names with their verification tier.
+     * All 57 entity table names with their verification tier.
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
         // ── Tier 1: Exact row count required (30 tables) ──
@@ -72,7 +72,7 @@ object BackupVerifier {
         "budget_adjustment_events"       to VerificationTier.TIER_1_EXACT,
         "spending_challenges"            to VerificationTier.TIER_1_EXACT,
 
-        // ── Tier 2: Validity check (16 tables) ──
+        // ── Tier 2: Validity check (17 tables) ──
         "blocked_packages"               to VerificationTier.TIER_2_VALIDITY,
         "merchant_canonicals"            to VerificationTier.TIER_2_VALIDITY,
         "merchant_aliases"               to VerificationTier.TIER_2_VALIDITY,
@@ -89,6 +89,9 @@ object BackupVerifier {
         "recurring_occurrences"          to VerificationTier.TIER_1_EXACT,
         "recurring_reminder_deliveries"  to VerificationTier.TIER_1_EXACT,
         "recurring_lifecycle_events"     to VerificationTier.TIER_1_EXACT,
+        // S9 / P9-P1-09: durable warranty-reminder sent-state. Modeled on
+        // recurring_reminder_deliveries; exact-count verified so it survives restore.
+        "warranty_reminder_deliveries"   to VerificationTier.TIER_1_EXACT,
 
         // ── Tier 3: Optional (10 tables) ──
         "exchange_rates"                 to VerificationTier.TIER_3_OPTIONAL,
@@ -146,6 +149,83 @@ object BackupVerifier {
 
     class ForeignKeyCheckFailedException(val violationCount: Int) :
         Exception("Foreign key check failed: $violationCount violations")
+
+    /**
+     * P7-CURRENT-014: thrown when a backup manifest is missing required (Tier 1)
+     * table counts, detected BEFORE the destructive live-DB swap.
+     */
+    class IncompleteManifestException(val missingTables: List<String>) :
+        Exception("Backup manifest is missing required Tier 1 table counts: ${missingTables.sorted().joinToString(", ")}")
+
+    /**
+     * P7-CURRENT-015: thrown when a row-count query fails for a required
+     * (Tier 1 / Tier 2) table during backup creation. Required-table counts must
+     * never be silently recorded as zero.
+     */
+    class RequiredTableCountException(val tableName: String, cause: Throwable?) :
+        Exception("Row-count query failed for required table '$tableName'", cause)
+
+    // ── Manifest completeness (P7-CURRENT-014) ───────────────────
+
+    /**
+     * Returns the set of table names that MUST have a manifest count for the
+     * given backup format version. For the current format (v1) this is every
+     * Tier 1 table — they are exact-count verified and a missing entry would let
+     * a malformed manifest pass [verifyQuick] (which skips null counts) and only
+     * fail in full [verify] AFTER the destructive swap.
+     */
+    fun requiredManifestTables(backupFormatVersion: Int = 1): Set<String> =
+        TABLE_TIERS.filterValues { it == VerificationTier.TIER_1_EXACT }.keys
+
+    /**
+     * P7-CURRENT-014: validates that [expectedCounts] (the backup manifest's
+     * table counts) contains every required Tier 1 table for [backupFormatVersion].
+     * Call this BEFORE any destructive swap.
+     *
+     * @throws IncompleteManifestException if any required table count is absent.
+     */
+    fun validateManifestCompleteness(
+        expectedCounts: Map<String, Int>,
+        backupFormatVersion: Int = 1
+    ) {
+        val missing = requiredManifestTables(backupFormatVersion)
+            .filter { it !in expectedCounts }
+        if (missing.isNotEmpty()) {
+            throw IncompleteManifestException(missing)
+        }
+    }
+
+    // ── Strict count collection for backup creation (P7-CURRENT-015) ──
+
+    /**
+     * Collects row counts for ALL known tables from [db], failing fast if a
+     * count query throws for a required (Tier 1 / Tier 2) table.
+     *
+     * Unlike a `catch { 0 }` collector, a query failure on a required table is a
+     * real error: silently writing 0 would produce a misleading manifest and let
+     * a later restore compare against fake zero counts. Optional (Tier 3) tables
+     * that are absent or unqueryable are recorded as 0 (they may legitimately not
+     * exist in the snapshot).
+     *
+     * @throws RequiredTableCountException if a required table's count query fails.
+     */
+    fun collectTableCountsStrict(db: SQLiteDatabase): Map<String, Int> {
+        val counts = mutableMapOf<String, Int>()
+        for ((tableName, tier) in TABLE_TIERS) {
+            val required = tier == VerificationTier.TIER_1_EXACT || tier == VerificationTier.TIER_2_VALIDITY
+            if (required && !tableExists(db, tableName)) {
+                throw RequiredTableCountException(tableName, null)
+            }
+            val actual = countRows(db, tableName)
+            if (actual == -1) {
+                if (required) throw RequiredTableCountException(tableName, null)
+                counts[tableName] = 0 // optional table absent/unqueryable
+            } else {
+                counts[tableName] = actual
+            }
+        }
+        return counts
+    }
 
     // ── Full verification ─────────────────────────────────────────
 
@@ -440,7 +520,7 @@ object BackupVerifier {
     }
 
     /**
-     * Returns the set of all 56 table names for ArchUnit/grep assertions.
+     * Returns the set of all 57 table names for ArchUnit/grep assertions.
      */
     fun allTableNames(): Set<String> = TABLE_TIERS.keys
 
