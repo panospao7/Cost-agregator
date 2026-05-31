@@ -94,8 +94,9 @@ class FinancialStressForecastEngine @Inject constructor(
             val patterns = recurringPatternsProvider.getConfirmedPatterns()
 
             // Normalize purchases and deposits to display currency
-            val ninetyDaysAgo = now - (90 * TimePeriodUtils.DAY_IN_MILLIS)
-            val sixtyDaysAgo = now - (60 * TimePeriodUtils.DAY_IN_MILLIS)
+            // DST-safe calendar arithmetic (U-TIME-02)
+            val ninetyDaysAgo = TimePeriodUtils.addDays(now, -90)
+            val sixtyDaysAgo = TimePeriodUtils.addDays(now, -60)
 
             // Pre-fetch and normalize deposits for income estimation
             val rawDeposits = expenseRepository.getDepositsBetween(ninetyDaysAgo, now)
@@ -209,7 +210,7 @@ class FinancialStressForecastEngine @Inject constructor(
         displayCurrency: String
     ): StressHorizon {
         val horizonStart = TimePeriodUtils.getStartOfDay(now)
-        val horizonEnd = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
+        val horizonEnd = TimePeriodUtils.addDays(now, daysAhead)
         
         // 1. Calculate recurring obligations within this horizon
         val recurringOutflowResult = calculateRecurringOutflows(patterns, horizonStart, horizonEnd, displayCurrency)
@@ -419,8 +420,8 @@ class FinancialStressForecastEngine @Inject constructor(
                     else currencyConverter.convert(pattern.averageAmount, pattern.currency, displayCurrency)?.convertedAmount
                 if (converted != null) total += converted
                 nextDate = when (pattern.frequency) {
-                    RecurrenceFrequency.WEEKLY -> nextDate + (7 * TimePeriodUtils.DAY_IN_MILLIS)
-                    RecurrenceFrequency.BIWEEKLY -> nextDate + (14 * TimePeriodUtils.DAY_IN_MILLIS)
+                    RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(nextDate, 7)
+                    RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(nextDate, 14)
                     RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(nextDate, 1)
                     RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(nextDate, 3)
                     RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(nextDate, 6)
@@ -505,7 +506,7 @@ class FinancialStressForecastEngine @Inject constructor(
             .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
 
         val sixtyDaysAgo = discretionaryPurchases.minOfOrNull { it.date }
-            ?: (timeProvider.now() - (60 * TimePeriodUtils.DAY_IN_MILLIS))
+            ?: TimePeriodUtils.addDays(timeProvider.now(), -60)
         val now = timeProvider.now()
         val sampleStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
@@ -595,7 +596,7 @@ class FinancialStressForecastEngine @Inject constructor(
             ?: horizons.firstOrNull { it.riskLevel >= StressRiskLevel.MODERATE }
         
         return firstHighRisk?.let {
-            now + (it.daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
+            TimePeriodUtils.addDays(now, it.daysAhead)
         }
     }
 
@@ -670,7 +671,7 @@ class FinancialStressForecastEngine @Inject constructor(
 
         // Inline fallback if provider fails
         val now = timeProvider.now()
-        val ninetyDaysAgo = now - 90 * TimePeriodUtils.DAY_IN_MILLIS
+        val ninetyDaysAgo = TimePeriodUtils.addDays(now, -90)
         val recentDeposits = runCatching {
             multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)

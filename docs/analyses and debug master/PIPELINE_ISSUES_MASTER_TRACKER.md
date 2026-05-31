@@ -143,7 +143,7 @@ Full source: `PIPELINE_4_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P4-P1-10 | P1 | Legacy `BillReminderManager.markBillPaid()` creates mixed behavior | Bug | Legacy deprecated, coordinator owns | ✅ FIXED |
 | NEW-P4-001 | P1 | CancellationException swallowed in bulk reconcile | Bug | `catch(e: Exception)` does not rethrow CE | ✅ FIXED (U-PR1) |
 | NEW-P4-003 | P2 | Race in `linkExpenseToOccurrence` — lookup outside transaction | Bug | Occurrence lookup outside DB transaction | 🔴 OPEN |
-| NEW-P4-004 | P2 | `BillReminderWorker` uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | 🔴 OPEN |
+| NEW-P4-004 | P2 | `BillReminderWorker` uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | ✅ FIXED (U-PR7) |
 | NEW-P4-005 | P2 | Notification ID collision risk | Bug | `hashCode()` used for notification ID | 🔴 OPEN |
 | NEW-P4-007 | P2 | CancellationException swallowed in `regenerateReminderDeliveries` | Bug | Catch-all swallows CE | ✅ FIXED (U-PR1) |
 
@@ -199,7 +199,7 @@ Full source: `PIPELINE_6_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P6-004 | P1 | Unbounded rollover loop — O(N) queries for daily budgets | Bug | No batch/limit on period iteration | 🔴 OPEN |
 | NEW-P6-005 | P2 | `BudgetRepository` CRUD swallows CancellationException | Bug | Repository-level catch swallows CE | ✅ FIXED (U-PR1) |
 | NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | Bug | Inclusive bounds cause overlap | 🔴 OPEN |
-| NEW-P6-009 | P2 | DST-unsafe day arithmetic in stress horizon | Bug | Uses naive day addition | 🔴 OPEN |
+| NEW-P6-009 | P2 | DST-unsafe day arithmetic in stress horizon | Bug | Uses naive day addition | ✅ FIXED (U-PR7) |
 
 ## Pipeline 7 — Backup / Restore
 
@@ -273,7 +273,7 @@ Full source: `PIPELINE_9_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P9-002 | P1 | BillReminderWorker bypasses guard for settings/quiet-hours | Bug | Settings/quiet-hours check outside guard | 🔴 OPEN |
 | NEW-P9-003 | P1 | WorkerRunContext counters not thread-safe | Bug | Concurrent counter increments can corrupt stats | 🔴 OPEN |
 | NEW-P9-004 | P1 | WarrantyExpirationWorker uses `runGuarded` (no context) | Bug | Zero counts recorded; should use `runGuardedWithContext` | 🔴 OPEN |
-| NEW-P9-005 | P1 | WarrantyExpirationWorker uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | 🔴 OPEN |
+| NEW-P9-005 | P1 | WarrantyExpirationWorker uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | ✅ FIXED (U-PR7) |
 | NEW-P9-006 | P2 | WorkerSpecScheduler uses deprecated REPLACE | Bug | Should use KEEP or UPDATE for periodic workers | 🔴 OPEN |
 | NEW-P9-007 | P2 | SharedPreferences version write not atomic with enqueue | Bug | Crash between write and enqueue leaves stale version | 🔴 OPEN |
 | NEW-P9-008 | P2 | NotificationIntakeWorker not in guard/registry | Bug | Bypasses shared execution infrastructure | 🔴 OPEN |

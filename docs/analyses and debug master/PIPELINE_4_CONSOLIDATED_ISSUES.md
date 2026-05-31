@@ -32,7 +32,7 @@
 | NEW-P4-001 | P1 | CancellationException swallowed in bulk reconcile | RecurringRuleLifecycleCoordinator.kt | ✅ FIXED (U-PR1) |
 | NEW-P4-002 | P2 | Variable shadowing — `scheduledAt` computed twice | OccurrenceMaterializer.kt | 🔴 OPEN |
 | NEW-P4-003 | P2 | Race in `linkExpenseToOccurrence` — lookup outside transaction | RecurringRuleLifecycleCoordinator.kt | 🔴 OPEN |
-| NEW-P4-004 | P2 | `BillReminderWorker` uses `System.currentTimeMillis` | BillReminderWorker.kt | 🔴 OPEN |
+| NEW-P4-004 | P2 | `BillReminderWorker` uses `System.currentTimeMillis` | BillReminderWorker.kt | ✅ FIXED (U-PR7) |
 | NEW-P4-005 | P2 | Notification ID collision risk | BillReminderWorker.kt | 🔴 OPEN |
 | NEW-P4-006 | P2 | PendingIntent request code collision | BillReminderWorker.kt | 🔴 OPEN |
 | NEW-P4-007 | P2 | CancellationException swallowed in `regenerateReminderDeliveries` | RecurringRuleLifecycleCoordinator.kt | ✅ FIXED (U-PR1) |

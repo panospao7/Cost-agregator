@@ -16,6 +16,8 @@ import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ExpiryReconciliationResult
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
@@ -53,6 +55,7 @@ class WarrantyExpirationWorkerTest {
     private lateinit var warrantyRepository: WarrantyTrackerRepository
     private lateinit var notificationService: NotificationService
     private lateinit var executionGuard: WorkerExecutionGuard
+    private lateinit var timeProvider: FakeTimeProvider
 
     @Before
     fun setup() {
@@ -64,6 +67,7 @@ class WarrantyExpirationWorkerTest {
         warrantyRepository = mockk()
         notificationService = mockk(relaxed = true)
         executionGuard = mockk()
+        timeProvider = FakeTimeProvider(1_750_000_000_000L)
         // Faithful guard stub: mirror WorkerExecutionGuard's catch precedence exactly —
         // CancellationException rethrown (highest), then an explicit RetryableWorkerException
         // maps to Retry, then the classifyTransient keyword heuristic maps to Retry, else
@@ -114,6 +118,7 @@ class WarrantyExpirationWorkerTest {
                         notificationService,
                         deliveryDao = deliveryDao,
                         executionGuard = executionGuard,
+                        timeProvider = timeProvider,
                     )
                 }
             })
@@ -313,5 +318,25 @@ class WarrantyExpirationWorkerTest {
 
         assertEquals(Result.success(), result)
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+    }
+
+    // -------------------------------------------------------------------------
+    // U-TIME-01: TimeProvider usage
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `delivery timestamps use injected TimeProvider not system clock`() = runTest {
+        val fixedNow = 1_800_000_000_000L
+        timeProvider.setTime(fixedNow)
+        val warranty = seedWarranty(endDate = fixedNow + 5 * 86_400_000L)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(warranty)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+
+        buildWorker().doWork()
+
+        val row = deliveryDao.getByKey(warranty.id, 7, warranty.warrantyEndDate)
+        assertThat(row).isNotNull()
+        assertThat(row!!.createdAt).isEqualTo(fixedNow)
+        assertThat(row.updatedAt).isEqualTo(fixedNow)
     }
 }

@@ -4,7 +4,7 @@
 > **Input:** Pipeline reports 1–12 + deep audit NEW issues (59 + 59 + 18 = 136 new issues found)  
 > **Total issues reviewed:** ~250 (121 existing report issues P5-9 + 77 P10-12 + ~50 P1-5 report issues + 136 new)  
 > **Method:** Cross-pipeline root-cause clustering → classification → deduplication → PR organization  
-> **Implementation progress (2026-05-31):** U-PR1 (CancellationException Safety) ✅ FULLY IMPLEMENTED — 146 guards across 38 files, architecture guard test passing. U-PR2 (TOCTOU Race) ✅ IMPLEMENTED. U-PR3 (Money/Currency) ✅ U-MONEY-01/02 IMPLEMENTED. U-PR4 (Barrier/Maintenance) ✅ IMPLEMENTED.
+> **Implementation progress (2026-05-31):** U-PR1 (CancellationException Safety) ✅ FULLY IMPLEMENTED — 146 guards across 38 files, architecture guard test passing. U-PR2 (TOCTOU Race) ✅ IMPLEMENTED. U-PR3 (Money/Currency) ✅ U-MONEY-01/02 IMPLEMENTED. U-PR4 (Barrier/Maintenance) ✅ IMPLEMENTED. U-PR7 (TimeProvider) ✅ IMPLEMENTED — BillReminderWorker, WarrantyExpirationWorker use TimeProvider; FinancialStressForecastEngine uses DST-safe TimePeriodUtils.addDays().
 
 ---
 
@@ -48,8 +48,8 @@
 | U-WORKER-02 | P1 | Cancelled workers leave RUNNING rows with no startup recovery | 9 (affects all workers) | Engine | U-PR6 ✅ |
 | U-WORKER-03 | P1 | Worker run counts always zero / no-work paths logged as SUCCESS | 9 (affects all workers) | Engine | U-PR6 ✅ |
 | U-WORKER-04 | P1 | DailyBriefing KEEP policy breaks one-shot chain | 9 | Engine | U-PR6 ✅ |
-| U-TIME-01 | P2 | System.currentTimeMillis() used instead of TimeProvider | 4,9,10 | Universal | U-PR7 |
-| U-TIME-02 | P2 | DST-unsafe day arithmetic (n * DAY_IN_MILLIS) | 6 | Engine | U-PR7 |
+| U-TIME-01 | P2 | System.currentTimeMillis() used instead of TimeProvider | 4,9,10 | Universal | U-PR7 ✅ |
+| U-TIME-02 | P2 | DST-unsafe day arithmetic (n * DAY_IN_MILLIS) | 6 | Engine | U-PR7 ✅ |
 | U-SIDEEFFECT-01 | P1 | Transaction side effects dispatched twice | 11 | Multi-pipeline | U-PR8 |
 | U-SIDEEFFECT-02 | P2 | Side-effect planner hardcodes EXPENSE_CREATED for update paths | 2 | Engine | U-PR8 |
 | U-EXPORT-01 | P0 | JSON export produces invalid JSON (missing comma) | 12 | Pipeline-local | — |
@@ -344,6 +344,14 @@ Pipeline agents should **PAUSE** on these until the universal PR lands:
 - **Tests:** Deterministic time tests for each affected worker/engine
 - **Risk:** Low — mechanical replacement
 
+**✅ IMPLEMENTATION STATUS (2026-05-31):**
+- BillReminderWorker: TimeProvider injected, `System.currentTimeMillis()` replaced with `timeProvider.now()`
+- WarrantyExpirationWorker: TimeProvider injected, both `System.currentTimeMillis()` calls replaced, TODO removed
+- FinancialStressForecastEngine: All 8 `n * DAY_IN_MILLIS` sites replaced with `TimePeriodUtils.addDays()`
+- BankApiIntegration: Already uses TimeProvider correctly (no change needed — original issue was incorrect)
+- Tests added: `BillReminderWorkerTimeProviderTest` (3 tests), `WarrantyExpirationWorkerTest` TimeProvider test, `FinancialStressForecastEngineTest` DST boundary tests (2 tests)
+- Grep verification: 0 `System.currentTimeMillis()` in worker files, 0 `DAY_IN_MILLIS` in forecast engine
+
 ### U-PR8 — Transaction Side-Effect Semantics
 - **Issues:** U-SIDEEFFECT-01, U-SIDEEFFECT-02
 - **Pipelines:** 2, 11
@@ -385,20 +393,20 @@ U-PR6 (Worker guard contract)
   └── before all Pipeline 9 worker-specific fixes
 
 U-PR7 (TimeProvider)
-  └── independent — can land anytime
+  └── independent — ✅ LANDED
 
 U-PR8 (Side-effect semantics)
   └── before Pipeline 11 email side-effect fixes
 ```
 
 **Recommended landing order:**
-1. U-PR4 (barrier — unblocks everything)
-2. U-PR1 (cancellation — mechanical, low risk)
-3. U-PR7 (time — mechanical, low risk)
+1. U-PR4 (barrier — unblocks everything) ✅ LANDED
+2. U-PR1 (cancellation — mechanical, low risk) ✅ LANDED
+3. U-PR7 (time — mechanical, low risk) ✅ LANDED
 4. U-PR8 (side effects — small scope)
-5. U-PR2 (TOCTOU — medium risk, needs testing)
-6. U-PR6 (worker guard — medium risk)
-7. U-PR3 (money — medium risk, needs golden tests)
+5. U-PR2 (TOCTOU — medium risk, needs testing) ✅ LANDED
+6. U-PR6 (worker guard — medium risk) ✅ LANDED
+7. U-PR3 (money — medium risk, needs golden tests) ✅ LANDED
 8. U-PR5 (privacy — high risk, needs careful review)
 
 ---

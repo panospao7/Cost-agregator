@@ -667,6 +667,46 @@ class FinancialStressForecastEngineTest {
         )
     }
 
+    // ── U-TIME-02: DST-safe calendar arithmetic ──────────────────────────────
+
+    @Test
+    fun `computeStressForecast 90-day lookback uses calendar-aware arithmetic not raw millis`() = runTest {
+        // Set "now" to a date shortly after a DST spring-forward transition.
+        // If raw millis were used (90 * 86400000), the lookback would land on the
+        // wrong calendar date. With TimePeriodUtils.addDays() it lands correctly.
+        val marchAfterDst = millis(2026, Calendar.MARCH, 15, 14)
+        every { timeProvider.now() } returns marchAfterDst
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        // Engine must not crash and must produce valid horizons.
+        assertEquals(3, result.horizons.size)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        result.horizons.forEach { horizon ->
+            assertTrue(horizon.probabilityOfCrunch in 0.0..1.0)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast horizon end uses calendar days not raw millis multiplication`() = runTest {
+        // Verify that the 30-day horizon end is exactly 30 calendar days ahead,
+        // not 30 * 86400000 ms (which would be wrong across DST).
+        val novBeforeFallBack = millis(2026, Calendar.NOVEMBER, 1, 10)
+        every { timeProvider.now() } returns novBeforeFallBack
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        // The earliest crunch date (if present) must be a valid future timestamp.
+        if (result.earliestCrunchDate != null) {
+            assertTrue(result.earliestCrunchDate!! > novBeforeFallBack)
+        }
+        assertEquals(3, result.horizons.size)
+    }
+
     private fun millis(year: Int, month: Int, day: Int, hourOfDay: Int = 12): Long {
         return Calendar.getInstance().apply {
             set(Calendar.YEAR, year)

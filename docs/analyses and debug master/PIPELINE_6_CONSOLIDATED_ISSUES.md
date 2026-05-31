@@ -40,7 +40,7 @@
 | NEW-P6-006 | P2 | `computeAdjustedSpend` swallows CE | BudgetMonitor.kt | 🔴 OPEN |
 | NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | StressForecastEngine.kt | 🔴 OPEN |
 | NEW-P6-008 | P2 | Stale detected patterns silently skipped | StressForecastEngine.kt | 🔴 OPEN |
-| NEW-P6-009 | P2 | DST-unsafe day arithmetic in stress horizon | StressForecastEngine.kt | 🔴 OPEN |
+| NEW-P6-009 | P2 | DST-unsafe day arithmetic in stress horizon | StressForecastEngine.kt | ✅ FIXED (U-PR7) |
 | NEW-P6-010 | P2 | Hardcoded currency-specific risk thresholds | StressForecastEngine.kt | 🔴 OPEN |
 | NEW-P6-011 | P2 | `calculateSeasonalFactor` dead stub | BudgetForecastingEngine.kt | 🔴 OPEN |
 | NEW-P6-012 | P3 | `MIN_HISTORY_MONTHS` unused | BudgetForecastingEngine.kt | 🔴 OPEN |

@@ -12,6 +12,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -33,7 +34,8 @@ class BillReminderWorker @AssistedInject constructor(
     private val coordinator: RecurringLifecycleCoordinator,
     private val executionGuard: WorkerExecutionGuard,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
-    private val reminderSettingsRepository: com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository
+    private val reminderSettingsRepository: com.yourname.expensetracker.domain.reminder.BillReminderSettingsRepository,
+    private val timeProvider: TimeProvider
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -45,7 +47,7 @@ class BillReminderWorker @AssistedInject constructor(
             Log.d(TAG, "Bill reminders disabled by runtime settings — skipping")
             return Result.success()
         }
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         if (settings.isWithinQuietHours(now)) {
             Log.d(TAG, "Bill reminders in quiet hours — skipping")
             return Result.success()

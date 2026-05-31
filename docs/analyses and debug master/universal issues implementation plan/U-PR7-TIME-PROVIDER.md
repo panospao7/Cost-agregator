@@ -227,10 +227,10 @@ fun `horizon end crosses fall DST transition correctly`() {
 
 ## 14. Acceptance Criteria
 
-- [ ] `BillReminderWorker` uses `timeProvider.now()` instead of `System.currentTimeMillis()`
-- [ ] `WarrantyExpirationWorker` uses `timeProvider.now()` instead of `System.currentTimeMillis()`
-- [ ] `WarrantyExpirationWorker` TODO comment is removed
-- [ ] `FinancialStressForecastEngine` uses calendar-aware day arithmetic (no `n * DAY_IN_MILLIS`)
-- [ ] DST boundary tests pass for forecast engine
-- [ ] Existing worker tests pass with fake TimeProvider
-- [ ] No `System.currentTimeMillis()` remains in worker classes (grep verification)
+- [x] `BillReminderWorker` uses `timeProvider.now()` instead of `System.currentTimeMillis()`
+- [x] `WarrantyExpirationWorker` uses `timeProvider.now()` instead of `System.currentTimeMillis()`
+- [x] `WarrantyExpirationWorker` TODO comment is removed
+- [x] `FinancialStressForecastEngine` uses calendar-aware day arithmetic (no `n * DAY_IN_MILLIS`)
+- [x] DST boundary tests pass for forecast engine
+- [x] Existing worker tests pass with fake TimeProvider
+- [x] No `System.currentTimeMillis()` remains in worker classes (grep verification)

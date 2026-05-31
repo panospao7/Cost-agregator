@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.WarrantyReminderDelivery
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -62,7 +63,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
     private val warrantyRepository: WarrantyTrackerRepository,
     private val notificationService: NotificationService,
     private val deliveryDao: WarrantyReminderDeliveryDao,
-    private val executionGuard: WorkerExecutionGuard
+    private val executionGuard: WorkerExecutionGuard,
+    private val timeProvider: TimeProvider
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -78,10 +80,9 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 // WRK-16/N1: observe maintenance drain + write barrier before the DB
                 // reconcile so a backup/restore can stop this worker promptly.
                 executionGuard.checkpoint("warranty_reconcile")
-                val reconciliationResult = warrantyRepository.reconcileExpiredItems(System.currentTimeMillis())
+                val reconciliationResult = warrantyRepository.reconcileExpiredItems(timeProvider.now())
 
-                // TODO: Use TimeProvider instead of System.currentTimeMillis()
-                val now = System.currentTimeMillis()
+                val now = timeProvider.now()
                 // DAY_IN_MILLIS constant — acceptable TTL usage (not calendar math)
                 val oneDayMs = 86_400_000L
 
