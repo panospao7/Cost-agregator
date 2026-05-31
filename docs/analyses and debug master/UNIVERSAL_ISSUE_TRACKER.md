@@ -4,7 +4,7 @@
 > **Input:** Pipeline reports 1–12 + deep audit NEW issues (59 + 59 + 18 = 136 new issues found)  
 > **Total issues reviewed:** ~250 (121 existing report issues P5-9 + 77 P10-12 + ~50 P1-5 report issues + 136 new)  
 > **Method:** Cross-pipeline root-cause clustering → classification → deduplication → PR organization  
-> **Implementation progress (2026-05-31):** U-PR1 (CancellationException Safety) ✅ FULLY IMPLEMENTED — 146 guards across 38 files, architecture guard test passing
+> **Implementation progress (2026-05-31):** U-PR1 (CancellationException Safety) ✅ FULLY IMPLEMENTED — 146 guards across 38 files, architecture guard test passing. U-PR2 (TOCTOU Race) ✅ IMPLEMENTED. U-PR3 (Money/Currency) ✅ U-MONEY-01/02 IMPLEMENTED. U-PR4 (Barrier/Maintenance) ✅ IMPLEMENTED.
 
 ---
 

@@ -27,8 +27,8 @@
 
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
-| NEW-P7-001 | P0 | Encrypted export never exits maintenance mode on success | BackupRestoreRepository.kt | 🔴 OPEN |
-| NEW-P7-002 | P1 | Privacy gate denial / WAL failure leak maintenance mode | BackupRestoreRepository.kt | 🔴 OPEN |
+| NEW-P7-001 | P0 | Encrypted export never exits maintenance mode on success | BackupRestoreRepository.kt | ✅ FIXED (U-PR4) |
+| NEW-P7-002 | P1 | Privacy gate denial / WAL failure leak maintenance mode | BackupRestoreRepository.kt | ✅ FIXED (U-PR4) |
 | NEW-P7-003 | P2 | `enterCriticalRecoveryRequired` non-atomic two-commit | RestoreMaintenanceMode.kt | 🔴 OPEN |
 | NEW-P7-004 | P2 | RestoreJournal `appendEvent` read-modify-write race | RestoreJournal.kt | 🔴 OPEN |
 | NEW-P7-005 | P2 | `CostbackupBundle.extract()` leaks FileInputStream | CostbackupBundle.kt | 🔴 OPEN |
