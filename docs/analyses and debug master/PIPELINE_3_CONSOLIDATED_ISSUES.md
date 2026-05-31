@@ -13,12 +13,12 @@
 | P3-P0-01 | P0 | Scanned receipts saved with `createdAt = 0` | ✅ FIXED | ✅ **FIXED** | All paths set `createdAt` at lifecycle boundary |
 | P3-P1-01 | P1 | Receipt save/update/event not atomic | ✅ FIXED | ✅ **FIXED** | `processReceiptInput()` uses atomic DB transaction |
 | P3-P1-02 | P1 | `ReceiptLinkService` lacks restore guard | ✅ FIXED | ✅ **FIXED** | Write barrier guards on link/unlink |
-| P3-P1-03 | P1 | Matching result computed but not persisted | 📝 TODO ONLY | 📝 **TODO ONLY** | `findBestMatch()` result ignored |
+| P3-P1-03 | P1 | Matching result computed but not persisted | 📝 TODO ONLY | ✅ **FIXED** | NoMatch writes MATCH_NOT_FOUND event; auto-match links; suggested updates receipt |
 | P3-P1-04 | P1 | Receipt-created expense + link not atomic | ⚠ PARTIAL | ⚠ **PARTIAL** | Coordinator is single owner; legacy paths exist with ERROR deprecation |
 | P3-P1-05 | P1 | Direct repository methods bypass lifecycle | ⚠ PARTIAL | ⚠ **PARTIAL** | Write barrier guards exist but some direct DAO paths remain |
-| P3-P1-06 | P1 | `ScannedReceiptDao.insert()` IGNORE conflict not checked | 📝 TODO ONLY | 📝 **TODO ONLY** | Returns 0 on conflict; callers proceed with receiptId = 0 |
-| P3-P1-07 | P1 | Currency fallback hardcoded EUR in OCR parse | 📝 TODO ONLY | 📝 **TODO ONLY** | `ReceiptParser.parse()` defaults to "EUR" |
-| P3-P1-08 | P1 | Parse failures classified as `OCR_COMPLETED` | 📝 TODO ONLY | 📝 **TODO ONLY** | Wrong status on parse throw |
+| P3-P1-06 | P1 | `ScannedReceiptDao.insert()` IGNORE conflict not checked | 📝 TODO ONLY | ✅ **FIXED** | ReceiptInsertResolver handles conflict resolution |
+| P3-P1-07 | P1 | Currency fallback hardcoded EUR in OCR parse | 📝 TODO ONLY | ✅ **FIXED** | ProcessReceiptUseCase injects UserCurrencyProvider (P3-PR1) |
+| P3-P1-08 | P1 | Parse failures classified as `OCR_COMPLETED` | 📝 TODO ONLY | ✅ **FIXED** | PARSE_FAILED correctly set in ReceiptRepository |
 | P3-P1-09 | P1 | Batch receipt import no longer creates pending reviews | 📝 TODO ONLY | 📝 **TODO ONLY** | `autoCreateReview = false` in batch path |
 | P3-P1-10 | P1 | Bank statement lifecycle dedupe weaker than legacy | 📝 TODO ONLY | 📝 **TODO ONLY** | Checks only pending reviews |
 

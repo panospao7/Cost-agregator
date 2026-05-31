@@ -291,6 +291,8 @@ class NotificationProcessingPipeline @Inject constructor(
             )
 
             // Phase 2: DB transaction (DB-only mutations)
+            // P1-PR2: Collect source-link failures for post-commit diagnostic emission
+            val deferredLinkDiagnostics = mutableListOf<DeferredSourceLinkDiagnostic>()
             var parserFailedOutcome: NotificationPipelineOutcome? = null
             database.withTransaction {
                 when (val insertResult = insertRawNotificationIfNotDuplicate(notification, storageNotification)) {
@@ -336,11 +338,15 @@ class NotificationProcessingPipeline @Inject constructor(
                         sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, false)
                         // PR5: Write dedupe source link
-                        writeNotificationDedupeSourceLink(
+                        val linkMatchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate"
+                        val linkResult = writeNotificationDedupeSourceLink(
                             rawId = rawId,
-                            matchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate",
+                            matchType = linkMatchType,
                             correlationId = correlationId
                         )
+                        if (linkResult is SourceLinkWriteResult.Failed) {
+                            deferredLinkDiagnostics += DeferredSourceLinkDiagnostic(rawId, linkMatchType, correlationId, linkResult)
+                        }
                         parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Oversized duplicate")
                         return@withTransaction
                     }
@@ -376,8 +382,18 @@ class NotificationProcessingPipeline @Inject constructor(
                         )
                     )
                     if (linkResult.hasFatalFailure) {
-                        throw IllegalStateException(
-                            "Failed to write source links for oversized review reviewId=$reviewId: ${linkResult.failures.joinToString(", ")}"
+                        // P1-PR2 (NEW-P1-015): Do NOT throw inside transaction — review is still valid
+                        // even if provenance links failed. Collect for post-commit diagnostic.
+                        Timber.w("Source link fatal failure for oversized review reviewId=%d: %s", reviewId, linkResult.failures.joinToString(", "))
+                        deferredLinkDiagnostics += DeferredSourceLinkDiagnostic(
+                            rawId = rawId,
+                            matchType = "review_source_link_fatal",
+                            correlationId = correlationId,
+                            result = SourceLinkWriteResult.Failed(
+                                errorClass = "PendingReviewSourceLinkFatalFailure",
+                                errorMessageHash = linkResult.failures.joinToString(", ").let { Integer.toHexString(it.hashCode()).take(8) },
+                                retryable = false
+                            )
                         )
                     }
                     Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
@@ -420,11 +436,15 @@ class NotificationProcessingPipeline @Inject constructor(
                             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                             dao.markRelevance(rawId, false)
                             // PR5: Write dedupe source link
-                            writeNotificationDedupeSourceLink(
+                            val linkMatchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate"
+                            val linkResult = writeNotificationDedupeSourceLink(
                                 rawId = rawId,
-                                matchType = if (hasExpenseDuplicate) "expense_duplicate" else "pending_review_duplicate",
+                                matchType = linkMatchType,
                                 correlationId = correlationId
                             )
+                            if (linkResult is SourceLinkWriteResult.Failed) {
+                                deferredLinkDiagnostics += DeferredSourceLinkDiagnostic(rawId, linkMatchType, correlationId, linkResult)
+                            }
                             parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Signal duplicate")
                             return@withTransaction
                         }
@@ -460,8 +480,17 @@ class NotificationProcessingPipeline @Inject constructor(
                             )
                         )
                         if (linkResult.hasFatalFailure) {
-                            throw IllegalStateException(
-                                "Failed to write source links for signal review reviewId=$reviewId: ${linkResult.failures.joinToString(", ")}"
+                            // P1-PR2 (NEW-P1-015): Do NOT throw inside transaction — review is still valid
+                            Timber.w("Source link fatal failure for signal review reviewId=%d: %s", reviewId, linkResult.failures.joinToString(", "))
+                            deferredLinkDiagnostics += DeferredSourceLinkDiagnostic(
+                                rawId = rawId,
+                                matchType = "review_source_link_fatal",
+                                correlationId = correlationId,
+                                result = SourceLinkWriteResult.Failed(
+                                    errorClass = "PendingReviewSourceLinkFatalFailure",
+                                    errorMessageHash = linkResult.failures.joinToString(", ").let { Integer.toHexString(it.hashCode()).take(8) },
+                                    retryable = false
+                                )
                             )
                         }
                         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
@@ -480,6 +509,10 @@ class NotificationProcessingPipeline @Inject constructor(
             } // close withTransaction
 
             // Phase 3: Post-commit best-effort actions
+            // P1-PR2: Emit deferred source-link diagnostics now that transaction is committed
+            for (diag in deferredLinkDiagnostics) {
+                emitDeferredSourceLinkDiagnostic(diag.rawId, diag.matchType, diag.correlationId, diag.result)
+            }
             runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
                 confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             }
@@ -489,6 +522,8 @@ class NotificationProcessingPipeline @Inject constructor(
         val preDbContext = buildPreDbContext(notification, parsed, persistenceContext)
 
         // Phase 2: DB transaction (DB-only mutations)
+        // P1-PR2: Collect source-link failures for post-commit diagnostic emission
+        val deferredLinkDiagnosticsParsed = mutableListOf<DeferredSourceLinkDiagnostic>()
         val dbOutcome = database.withTransaction {
             val rawId = when (val insertResult = insertRawNotificationIfNotDuplicate(notification, storageNotification)) {
                 is RawNotificationInsertResult.Duplicate -> return@withTransaction ParsedDbOutcome.RawDuplicate
@@ -508,14 +543,16 @@ class NotificationProcessingPipeline @Inject constructor(
                     rawId = rawId,
                     preDb = preDbContext,
                     sourceStatsTimestamp = sourceStatsTimestamp,
-                    correlationId = correlationId
+                    correlationId = correlationId,
+                    deferredDiagnostics = deferredLinkDiagnosticsParsed
                 )
                 RoutingDecision.NEEDS_REVIEW -> handleNeedsReviewInTransaction(
                     notification = notification,
                     rawId = rawId,
                     preDb = preDbContext,
                     sourceStatsTimestamp = sourceStatsTimestamp,
-                    correlationId = correlationId
+                    correlationId = correlationId,
+                    deferredDiagnostics = deferredLinkDiagnosticsParsed
                 )
                 RoutingDecision.AUTO_REJECT -> {
                     if (notification.packageName in FINANCIAL_PACKAGES) {
@@ -525,7 +562,8 @@ class NotificationProcessingPipeline @Inject constructor(
                             rawId = rawId,
                             preDb = preDbContext,
                             sourceStatsTimestamp = sourceStatsTimestamp,
-                            correlationId = correlationId
+                            correlationId = correlationId,
+                            deferredDiagnostics = deferredLinkDiagnosticsParsed
                         )
                     } else {
                         dao.markRelevance(rawId, false)
@@ -570,6 +608,10 @@ class NotificationProcessingPipeline @Inject constructor(
         if (dbOutcome == ParsedDbOutcome.RawDuplicate) return outcome
 
         // Phase 3: Post-commit best-effort actions
+        // P1-PR2: Emit deferred source-link diagnostics now that transaction is committed
+        for (diag in deferredLinkDiagnosticsParsed) {
+            emitDeferredSourceLinkDiagnostic(diag.rawId, diag.matchType, diag.correlationId, diag.result)
+        }
         runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
             confidenceRouter.invalidateAfterUserAction(
                 notification.packageName,
@@ -586,6 +628,13 @@ class NotificationProcessingPipeline @Inject constructor(
      * PR5 + P1-NEW-18: Writes a dedupe source link for a notification that was identified as a duplicate.
      * The link targets the notification itself, with metadata describing the match type.
      * Returns a typed [SourceLinkWriteResult] instead of silently swallowing errors.
+     *
+     * ## P1-PR2 (NEW-P1-002): Transaction-safe
+     * This method is called inside [database.withTransaction] blocks. The [sourceLinkWriter]
+     * call is a pure DAO write (safe). On failure, diagnostic data is collected but NOT emitted
+     * here — the caller must emit diagnostics post-commit via [emitDeferredSourceLinkDiagnostic].
+     * This avoids the dispatcher switch ([diagnosticEmitter.emit] uses [withContext(ioDispatcher)])
+     * inside a Room transaction, which can cause deadlocks.
      */
     private suspend fun writeNotificationDedupeSourceLink(
         rawId: Long,
@@ -608,7 +657,27 @@ class NotificationProcessingPipeline @Inject constructor(
             )
         } catch (t: Throwable) {
             Timber.w(t, "Failed to write notification dedupe source link: rawId=%d matchType=%s", rawId, matchType)
-            // P1-NEW-18: emit SOURCE_LINK_FAILED diagnostic instead of silently swallowing
+            // P1-PR2: Do NOT call diagnosticEmitter.emit() here — we are inside a Room transaction.
+            // Diagnostic emission is deferred to post-commit by the caller.
+            SourceLinkWriteResult.Failed(
+                errorClass = t.javaClass.name,
+                errorMessageHash = t.message?.let { Integer.toHexString(it.hashCode()) },
+                retryable = true
+            )
+        }
+    }
+
+    /**
+     * P1-PR2: Emit a SOURCE_LINK_FAILED diagnostic event post-commit.
+     * Called after the transaction completes to avoid dispatcher switch inside Room transaction.
+     */
+    private suspend fun emitDeferredSourceLinkDiagnostic(
+        rawId: Long,
+        matchType: String,
+        correlationId: String?,
+        result: SourceLinkWriteResult.Failed
+    ) {
+        runPostCommitSafely("emit source link failed diagnostic rawId=$rawId") {
             diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                 pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
                 stage = "source_link",
@@ -619,14 +688,10 @@ class NotificationProcessingPipeline @Inject constructor(
                 entityId = rawId,
                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                     .put("matchType", matchType)
+                    .put("errorClass", result.errorClass ?: "unknown")
                     .build(),
                 isTerminal = false
             ))
-            SourceLinkWriteResult.Failed(
-                errorClass = t.javaClass.name,
-                errorMessageHash = t.message?.let { Integer.toHexString(it.hashCode()) },
-                retryable = true
-            )
         }
     }
 
@@ -925,6 +990,18 @@ private val AMOUNT_TOKEN_REGEX = Regex(
 
     }
 
+    /**
+     * P1-PR2: Holds source-link failure data collected inside a transaction for
+     * post-commit diagnostic emission. Avoids calling [diagnosticEmitter.emit]
+     * (which switches to [ioDispatcher]) inside a Room transaction.
+     */
+    private data class DeferredSourceLinkDiagnostic(
+        val rawId: Long,
+        val matchType: String,
+        val correlationId: String?,
+        val result: SourceLinkWriteResult.Failed
+    )
+
     private sealed class ParsedDbOutcome {
         object RawDuplicate : ParsedDbOutcome()
         object AutoRejected : ParsedDbOutcome()
@@ -1082,19 +1159,23 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         rawId: Long,
         preDb: PreDbContext,
         sourceStatsTimestamp: Long,
-        correlationId: String? = null
+        correlationId: String? = null,
+        deferredDiagnostics: MutableList<DeferredSourceLinkDiagnostic> = mutableListOf()
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
-            writeNotificationDedupeSourceLink(
+            val linkResult1 = writeNotificationDedupeSourceLink(
                 rawId = rawId,
                 matchType = "canonical_expense_duplicate",
                 correlationId = correlationId,
                 confidence = preDb.routingResult.adjustedConfidence.toDouble()
             )
+            if (linkResult1 is SourceLinkWriteResult.Failed) {
+                deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "canonical_expense_duplicate", correlationId, linkResult1)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1114,12 +1195,15 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
-            writeNotificationDedupeSourceLink(
+            val linkResult2 = writeNotificationDedupeSourceLink(
                 rawId = rawId,
                 matchType = "pending_review_duplicate",
                 correlationId = correlationId,
                 confidence = preDb.routingResult.adjustedConfidence.toDouble()
             )
+            if (linkResult2 is SourceLinkWriteResult.Failed) {
+                deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "pending_review_duplicate", correlationId, linkResult2)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1271,19 +1355,23 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         rawId: Long,
         preDb: PreDbContext,
         sourceStatsTimestamp: Long,
-        correlationId: String? = null
+        correlationId: String? = null,
+        deferredDiagnostics: MutableList<DeferredSourceLinkDiagnostic> = mutableListOf()
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
-            writeNotificationDedupeSourceLink(
+            val linkResult1 = writeNotificationDedupeSourceLink(
                 rawId = rawId,
                 matchType = "canonical_expense_duplicate",
                 correlationId = correlationId,
                 confidence = preDb.routingResult.adjustedConfidence.toDouble()
             )
+            if (linkResult1 is SourceLinkWriteResult.Failed) {
+                deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "canonical_expense_duplicate", correlationId, linkResult1)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1305,12 +1393,15 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
-            writeNotificationDedupeSourceLink(
+            val linkResult2 = writeNotificationDedupeSourceLink(
                 rawId = rawId,
                 matchType = "pending_review_duplicate",
                 correlationId = correlationId,
                 confidence = preDb.routingResult.adjustedConfidence.toDouble()
             )
+            if (linkResult2 is SourceLinkWriteResult.Failed) {
+                deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "pending_review_duplicate", correlationId, linkResult2)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1349,8 +1440,18 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             )
         )
         if (linkResult.hasFatalFailure) {
-            throw IllegalStateException(
-                "Failed to write source links for needs-review reviewId=$reviewId: ${linkResult.failures.joinToString(", ")}"
+            // P1-PR2 (NEW-P1-015): Do NOT throw inside transaction — review is still valid
+            // even if provenance links failed. Log warning; diagnostic emitted post-commit.
+            Timber.w("Source link fatal failure for needs-review reviewId=%d: %s", reviewId, linkResult.failures.joinToString(", "))
+            deferredDiagnostics += DeferredSourceLinkDiagnostic(
+                rawId = rawId,
+                matchType = "review_source_link_fatal",
+                correlationId = correlationId,
+                result = SourceLinkWriteResult.Failed(
+                    errorClass = "PendingReviewSourceLinkFatalFailure",
+                    errorMessageHash = linkResult.failures.joinToString(", ").let { Integer.toHexString(it.hashCode()).take(8) },
+                    retryable = false
+                )
             )
         }
         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)

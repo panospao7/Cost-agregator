@@ -3,6 +3,7 @@
 > **Last validated:** 2026-05-31 against local HEAD code  
 > **Status:** 5 FIXED, 0 PARTIAL, 16 NEW open issues  
 > **Total open items:** 16
+> **Update 2026-05-31:** NEW-P2-001/002/003/004 FIXED by U-PR2; NEW-P2-007/010 FIXED by P2-PR1; NEW-P2-009 FIXED by U-PR8. Remaining open: 9
 
 ---
 
@@ -22,16 +23,16 @@
 
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
-| NEW-P2-001 | P1 | TOCTOU race in `updateExpense` — beforeSnapshot outside transaction | ExpenseWriteStore.kt | 🔴 OPEN |
-| NEW-P2-002 | P1 | Same TOCTOU in 6 other update methods | ExpenseWriteStore.kt | 🔴 OPEN |
-| NEW-P2-003 | P1 | `deleteExpense(Expense)` uses stale caller entity for snapshot | ExpenseWriteStore.kt | 🔴 OPEN |
-| NEW-P2-004 | P2 | Non-atomic duplicate check in `updateExpense` | ExpenseWriteStore.kt | 🔴 OPEN |
+| NEW-P2-001 | P1 | TOCTOU race in `updateExpense` — beforeSnapshot outside transaction | ExpenseWriteStore.kt | ✅ FIXED (U-PR2) |
+| NEW-P2-002 | P1 | Same TOCTOU in 6 other update methods | ExpenseWriteStore.kt | ✅ FIXED (U-PR2) |
+| NEW-P2-003 | P1 | `deleteExpense(Expense)` uses stale caller entity for snapshot | ExpenseWriteStore.kt | ✅ FIXED (U-PR2) |
+| NEW-P2-004 | P2 | Non-atomic duplicate check in `updateExpense` | ExpenseWriteStore.kt | ✅ FIXED (U-PR2 — already inside transaction) |
 | NEW-P2-005 | P2 | `DefaultExpenseCategoryAssignmentService` bypasses lifecycle | DefaultExpenseCategoryAssignmentService.kt | 🔴 OPEN |
 | NEW-P2-006 | P2 | `NotificationRepository.deleteAll()` bypasses audit trail | NotificationRepository.kt | 🔴 OPEN |
-| NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | ExpenseWriteStore.kt | 🔴 OPEN |
+| NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | ExpenseWriteStore.kt | ✅ FIXED (P2-PR1) |
 | NEW-P2-008 | P2 | DAO exposes `updateMerchantForMerchant` that nulls dedupeKey | ExpenseDao.kt | 🔴 OPEN |
 | NEW-P2-009 | P2 | Planner hardcodes `EXPENSE_CREATED` trigger for update paths | SideEffectPlanner.kt | ✅ FIXED (U-PR8) |
-| NEW-P2-010 | P2 | Inconsistent event-write guard between `bulkUpdateCategory` overloads | ExpenseWriteStore.kt | 🔴 OPEN |
+| NEW-P2-010 | P2 | Inconsistent event-write guard between `bulkUpdateCategory` overloads | ExpenseWriteStore.kt | ✅ FIXED (P2-PR1) |
 | NEW-P2-011 | P3 | `updateLocation` missing correlationId | ExpenseWriteStore.kt | 🔴 OPEN |
 | NEW-P2-012 | P3 | `updateMerchant` missing correlationId in event | ExpenseWriteStore.kt | 🔴 OPEN |
 | NEW-P2-013 | P3 | `updateType` missing correlationId in event | ExpenseWriteStore.kt | 🔴 OPEN |

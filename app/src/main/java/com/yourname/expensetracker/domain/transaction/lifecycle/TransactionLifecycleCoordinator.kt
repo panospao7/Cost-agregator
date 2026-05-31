@@ -958,7 +958,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     exchangeRateUsed = 1.0
                 )
             } else {
-                updatedExpense
+                // P2-PR1 (NEW-P2-007): Conversion failed and currency differs from home.
+                // Clear stale baseAmount/baseCurrency/exchangeRateUsed to sentinel values
+                // so downstream consumers fall back to raw effectiveAmount (baseAmount <= 0.0
+                // triggers fallback — see Expense.normalizedAmount).
+                updatedExpense.copy(
+                    baseAmount = 0.0,
+                    baseCurrency = "",
+                    exchangeRateUsed = 0.0
+                )
             }
 
             // Validate final expense state
@@ -1807,21 +1815,25 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         database.withTransaction {
             affectedCount = expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
-            transactionEventDao.insert(TransactionEvent(
-                expenseId = null,
-                eventType = LifecycleEventType.BULK_UPDATED.name,
-                source = source, actor = null, occurredAt = now,
-                dedupeKey = null, duplicateExpenseId = null,
-                beforeSnapshot = null, afterSnapshot = null,
-                metadata = JSONObject().apply {
-                    put("merchant", merchant)
-                    put("merchantKey", merchantKey)
-                    put("newCategoryId", newCategoryId)
-                    put("affectedCount", affectedCount)
-                }.toString(),
-                reason = reason,
-                correlationId = correlationId  // DDL-C67-10
-            ))
+            // P2-PR1 (NEW-P2-010): Only write event if rows were actually affected,
+            // consistent with the categoryId-based overload.
+            if (affectedCount > 0) {
+                transactionEventDao.insert(TransactionEvent(
+                    expenseId = null,
+                    eventType = LifecycleEventType.BULK_UPDATED.name,
+                    source = source, actor = null, occurredAt = now,
+                    dedupeKey = null, duplicateExpenseId = null,
+                    beforeSnapshot = null, afterSnapshot = null,
+                    metadata = JSONObject().apply {
+                        put("merchant", merchant)
+                        put("merchantKey", merchantKey)
+                        put("newCategoryId", newCategoryId)
+                        put("affectedCount", affectedCount)
+                    }.toString(),
+                    reason = reason,
+                    correlationId = correlationId  // DDL-C67-10
+                ))
+            }
         }
 
         // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.

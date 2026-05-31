@@ -54,8 +54,11 @@ class DashboardContractsAdapter @Inject constructor(
     override fun observeDashboardExpenses(): Flow<List<DashboardExpense>> {
         return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { now ->
             val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
+            // P5-PR1 (NEW-P5-001): Include previous month expenses so dashboard can
+            // compute previousMonthAggregate for month-over-month comparison.
+            val previousMonthStart = TimePeriodUtils.getStartOfMonth(monthStart - 1L)
             expenseRepository
-                .getExpensesWithCategoryInPeriod(monthStart, monthEnd)
+                .getExpensesWithCategoryInPeriod(previousMonthStart, monthEnd)
                 .map { list -> list.map { it.expense.toDomainDashboard() } }
         }
     }

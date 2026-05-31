@@ -223,7 +223,8 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                     val existingDelivery =
                         reminderDeliveryDao.getByOccurrenceAndWindow(occurrenceId, window)
                     if (existingDelivery == null) {
-                        val scheduledAt = computeScheduledAt(r.candidate.dueDate, window)
+                        // P4-PR1 (NEW-P4-002): Removed redundant scheduledAt computation
+                        // that shadowed the outer variable (same value).
                         // P4-CURRENT-015: Check insert return value before counting
                         val deliveryId = reminderDeliveryDao.insert(
                             RecurringReminderDelivery(

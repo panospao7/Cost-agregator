@@ -29,8 +29,8 @@
 
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
-| NEW-P5-001 | P0 | `previousMonthAggregate` always null — dead feature | DashboardSynthesisEngine.kt | 🔴 OPEN |
-| NEW-P5-002 | P1 | Division by zero risk in `projectedTotal` | DashboardSynthesisEngine.kt | 🔴 OPEN |
+| NEW-P5-001 | P0 | `previousMonthAggregate` always null — dead feature | DashboardSynthesisEngine.kt | ✅ FIXED (P5-PR1) |
+| NEW-P5-002 | P1 | Division by zero risk in `projectedTotal` | DashboardSynthesisEngine.kt | ✅ FIXED (P5-PR1) |
 | NEW-P5-003 | P1 | Deposit filter includes not-mine items | MultiCurrencyRepository.kt | 🔴 OPEN |
 | NEW-P5-004 | P1 | `getAverageForPeriodType(DAY)` wrong denominator | TotalsAggregationEngine.kt | 🔴 OPEN |
 | NEW-P5-005 | P1 | `SynthesisEngine` sums planned expenses across currencies | DashboardSynthesisEngine.kt | ✅ FIXED (U-PR3) |
@@ -39,7 +39,7 @@
 | NEW-P5-008 | P2 | Category aggregates ALL_TYPES vs PURCHASE-only mismatch | TotalsAggregationEngine.kt | 🔴 OPEN |
 | NEW-P5-009 | P2 | `MoneyAggregateBuilder` silently drops counts on size mismatch | MoneyAggregateBuilder.kt | 🔴 OPEN |
 | NEW-P5-010 | P2 | `computeFromNormalized` per-expense average not per-day | AnalyticsComputeEngine.kt | 🔴 OPEN |
-| NEW-P5-011 | P1 | `FinancialRunway` always shows 0 days | DashboardSynthesisEngine.kt | 🔴 OPEN |
+| NEW-P5-011 | P1 | `FinancialRunway` always shows 0 days | DashboardSynthesisEngine.kt | ✅ FIXED (P5-PR1) |
 | NEW-P5-012 | P3 | Stale-rate detection fixed 7-day threshold | AnalyticsCurrencyNormalizer.kt | 🔴 OPEN |
 | NEW-P5-013 | P3 | `aggregateCurrencyTotals` returns empty on unknown type | MultiCurrencyRepository.kt | 🔴 OPEN |
 | NEW-P5-014 | P3 | `buildTrendFromNormalizedInput` timezone edge case | TrendBuilder.kt | 🔴 OPEN |

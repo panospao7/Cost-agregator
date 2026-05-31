@@ -566,7 +566,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             currentMonthSpent = normalized.monthAggregate.displayAmount,
             daysElapsed = daysElapsed,
             daysInMonth = daysInMonth,
-            projectedTotal = normalized.monthAggregate.displayAmount / daysElapsed * daysInMonth,
+            projectedTotal = if (daysElapsed > 0) normalized.monthAggregate.displayAmount / daysElapsed * daysInMonth else normalized.monthAggregate.displayAmount,
             previousMonthTotal = normalized.previousMonthAggregate?.displayAmount,
             averageMonthlyTotal = normalized.monthAggregate.displayAmount.takeIf { it > 0 },
             pacePercentage = 100f,
@@ -599,8 +599,15 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val averageDailyBurn = if (ctx.dayOfMonth > 0) ctx.monthSpent / ctx.dayOfMonth else 0.0
         // CURR-587-05: Use normalized deposit aggregate only — no latest-rate fallback
         val monthlyIncome = normalized.depositAggregate?.displayAmount ?: 0.0
-        // CURR-587-05: No weather.discretionaryBudget — use 0.0 when budget remaining is not normalized
-        val totalRemaining = 0.0
+        // P5-PR1 (NEW-P5-011): Compute totalRemaining from budget or income minus spent.
+        // Uses monthly income as proxy when no explicit budget exists.
+        val totalRemaining = if (ctx.totalBudgetAmount > 0) {
+            (ctx.totalBudgetAmount - ctx.monthSpent).coerceAtLeast(0.0)
+        } else if (monthlyIncome > 0) {
+            (monthlyIncome - ctx.monthSpent).coerceAtLeast(0.0)
+        } else {
+            0.0
+        }
 
         val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
             (totalRemaining / averageDailyBurn).toInt().coerceAtLeast(0)

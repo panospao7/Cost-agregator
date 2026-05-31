@@ -16,14 +16,17 @@ class ProcessReceiptUseCase @Inject constructor(
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
     private val merchantNormalizer: MerchantNormalizer,
-    private val categorizationEngine: CategorizationEngine
+    private val categorizationEngine: CategorizationEngine,
+    private val userCurrencyProvider: com.yourname.expensetracker.domain.currency.UserCurrencyProvider
 ) {
     suspend operator fun invoke(source: ReceiptSource): Result<ProcessedReceipt> {
         return try {
+            // P3-PR1 (P3-P1-07): Use actual home currency instead of hardcoded EUR default
+            val homeCurrency = userCurrencyProvider.getHomeCurrency()
             val processedSource = when (source) {
                 is ReceiptSource.UriRef -> {
                     val ocrResult = ocrService.processUri(source.value)
-                    val parsed = receiptParser.parse(ocrResult.fullText)
+                    val parsed = receiptParser.parse(ocrResult.fullText, homeCurrency = homeCurrency)
                     SourceProcessingResult(
                         merchant = parsed.merchantName,
                         amount = parsed.total,
@@ -34,7 +37,7 @@ class ProcessReceiptUseCase @Inject constructor(
                 }
 
                 is ReceiptSource.ParsedContent -> {
-                    val parsed = receiptParser.parse(source.rawText)
+                    val parsed = receiptParser.parse(source.rawText, homeCurrency = homeCurrency)
                     SourceProcessingResult(
                         merchant = source.merchant ?: parsed.merchantName,
                         amount = source.amount ?: parsed.total,

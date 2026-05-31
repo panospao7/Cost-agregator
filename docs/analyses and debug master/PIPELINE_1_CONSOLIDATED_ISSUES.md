@@ -3,6 +3,7 @@
 > **Last validated:** 2026-05-31 against local HEAD code  
 > **Status:** 5 FIXED, 1 PARTIAL, 17 NEW open issues  
 > **Total open items:** 18
+> **Update 2026-05-31:** NEW-P1-002 and NEW-P1-015 FIXED by P1-PR2 (deferred diagnostic emission, no IllegalStateException in transaction)
 
 ---
 
@@ -24,7 +25,7 @@
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
 | NEW-P1-001 | P1 | CancellationException swallowed in `captureNotification` outer catch | NotificationCaptureService.kt ~line 578 | ✅ FIXED (U-PR1) |
-| NEW-P1-002 | P1 | `writeNotificationDedupeSourceLink` inside transaction performs I/O side effect | NotificationProcessingPipeline.kt | 🔴 OPEN |
+| NEW-P1-002 | P1 | `writeNotificationDedupeSourceLink` inside transaction performs I/O side effect | NotificationProcessingPipeline.kt | ✅ FIXED (P1-PR2) |
 | NEW-P1-003 | P2 | `workTracker.acceptingNewWork` never set to false — dead code | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-004 | P2 | `emitOrderedNotificationEvents` silently drops events when launch returns null | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-005 | P2 | Filter blocks ALL "deposit" notifications unconditionally | NotificationFilter.kt | 🔴 OPEN |
@@ -37,7 +38,7 @@
 | NEW-P1-012 | P3 | Unused `postTime` parameter in computeDedupeKey | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-013 | P2 | Filter receives combinedBody as bigText — over-inclusive matching | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-014 | P3 | Deduper `cleanupExpired` never called | NotificationCaptureDeduper.kt | 🔴 OPEN |
-| NEW-P1-015 | P1 | `IllegalStateException` in transaction creates orphaned diagnostic | NotificationProcessingPipeline.kt | 🔴 OPEN |
+| NEW-P1-015 | P1 | `IllegalStateException` in transaction creates orphaned diagnostic | NotificationProcessingPipeline.kt | ✅ FIXED (P1-PR2) |
 | NEW-P1-016 | P3 | Sensitive key filtering uses exact match (misses camelCase) | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-017 | P2 | Settings observer dies permanently on exception — privacy regression risk | NotificationCaptureGate.kt | 🔴 OPEN |
 
