@@ -80,9 +80,11 @@ class SynthesisEngine @Inject constructor(
      * Converts an amount from [fromCurrency] to [toCurrency].
      * Returns null if conversion fails (caller should exclude and track).
      */
-    private suspend fun convertAmount(amount: Double, fromCurrency: String, toCurrency: String): Double? {
+    private fun convertAmount(amount: Double, fromCurrency: String, toCurrency: String): Double? {
         if (fromCurrency.equals(toCurrency, ignoreCase = true)) return amount
-        return currencyConverter.convert(amount, fromCurrency, toCurrency)?.convertedAmount
+        return kotlinx.coroutines.runBlocking {
+            currencyConverter.convert(amount, fromCurrency, toCurrency)?.convertedAmount
+        }
     }
 
     /**
@@ -98,7 +100,7 @@ class SynthesisEngine @Inject constructor(
      * The [ForecastInputAssembler.mapPlannedExpenses] also filters at the
      * mapping boundary as an additional safety net.
      */
-    suspend fun synthesize(
+    fun synthesize(
         input: ForecastInputAssembler.ForecastInput
     ): FinancialForecast {
         val forecast = synthesize(
@@ -128,7 +130,7 @@ class SynthesisEngine @Inject constructor(
         )
     }
 
-    suspend fun synthesize(
+    fun synthesize(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
@@ -165,7 +167,7 @@ class SynthesisEngine @Inject constructor(
         }
     }
 
-    private suspend fun synthesizeInternal(
+    private fun synthesizeInternal(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
@@ -202,12 +204,15 @@ class SynthesisEngine @Inject constructor(
         // carries the exact per-occurrence amount and due date.
         // When confirmedOccurrences is empty (e.g. DAO unavailable or no
         // manual rules), fall back to simple single-date filtering.
+        var recurringConversionFailures = 0
+
         val committedUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
             confirmedOccurrences
                 .filter { it.dueDate >= startOfToday && it.dueDate < endOfMonthExclusive }
                 .mapNotNull { occ ->
                     if (displayCurrency.isBlank()) occ.expectedAmount
                     else convertAmount(occ.expectedAmount, occ.expectedCurrency, displayCurrency)
+                        ?: run { recurringConversionFailures++; null }
                 }
                 .sum()
         } else {
@@ -216,6 +221,7 @@ class SynthesisEngine @Inject constructor(
             }.mapNotNull { p ->
                 if (displayCurrency.isBlank()) p.averageAmount
                 else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                    ?: run { recurringConversionFailures++; null }
             }.sum()
         }
         
@@ -245,6 +251,7 @@ class SynthesisEngine @Inject constructor(
             }.mapNotNull { p ->
                 if (displayCurrency.isBlank()) p.averageAmount
                 else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                    ?: run { recurringConversionFailures++; null }
             }.sum()
         } else {
             recurringPatterns.filter {
@@ -254,6 +261,7 @@ class SynthesisEngine @Inject constructor(
             }.mapNotNull { p ->
                 if (displayCurrency.isBlank()) p.averageAmount
                 else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                    ?: run { recurringConversionFailures++; null }
             }.sum()
         }
         
@@ -396,6 +404,10 @@ class SynthesisEngine @Inject constructor(
         if (spendingPace.averageMonthlyTotal == null) forecastConfidence -= 0.10
         if (recurringPatterns.isEmpty()) forecastConfidence -= 0.05
         
+        if (recurringConversionFailures > 0) {
+            Timber.w("$TAG: %d recurring pattern(s) excluded due to currency conversion failure", recurringConversionFailures)
+        }
+
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
             generatedAt = Instant.ofEpochMilli(now),
@@ -413,7 +425,9 @@ class SynthesisEngine @Inject constructor(
                 riskLevel = riskLevel,
                 confirmedOccurrences = confirmedOccurrences
             ),
-            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals)
+            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals),
+            excludedCount = recurringConversionFailures,
+            isPartial = recurringConversionFailures > 0
         )
     }
 

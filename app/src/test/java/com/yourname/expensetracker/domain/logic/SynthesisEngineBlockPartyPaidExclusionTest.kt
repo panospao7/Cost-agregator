@@ -84,7 +84,7 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
             occurrence(ruleId = 2L, dueDate = paidDue, status = "PAID")
         )
 
-        val engine = SynthesisEngine(timeProvider, occurrenceDao)
+        val engine = SynthesisEngine(timeProvider, occurrenceDao, currencyConverter = mockk(relaxed = true))
 
         // Two manual patterns (id != null) so the occurrence path is taken for both rules.
         val patterns = listOf(
@@ -147,7 +147,7 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
             occurrence(ruleId = 1L, dueDate = skippedDue, status = "SKIPPED")
         )
 
-        val engine = SynthesisEngine(timeProvider, occurrenceDao)
+        val engine = SynthesisEngine(timeProvider, occurrenceDao, currencyConverter = mockk(relaxed = true))
 
         // Manual pattern (id != null) whose MONTHLY anchor is day 10 — exactly the day the
         // legacy matcher would otherwise re-add it.
@@ -196,7 +196,7 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
             occurrence(ruleId = 1L, dueDate = cancelledDue, status = "CANCELLED")
         )
 
-        val engine = SynthesisEngine(timeProvider, occurrenceDao)
+        val engine = SynthesisEngine(timeProvider, occurrenceDao, currencyConverter = mockk(relaxed = true))
 
         val patterns = listOf(
             com.yourname.expensetracker.domain.model.RecurringPattern(

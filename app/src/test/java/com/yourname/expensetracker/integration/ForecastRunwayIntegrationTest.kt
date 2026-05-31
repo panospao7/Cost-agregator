@@ -93,7 +93,7 @@ class ForecastRunwayIntegrationTest {
 
     @Test
     fun `synthesis engine handles normalized forecast input`() = runTest {
-        val synthesisEngine = SynthesisEngine(timeProvider)
+        val synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
         val forecastInput = ForecastInputAssembler.ForecastInput(
             pastSumDaily = listOf(100.0, 200.0, 300.0),
@@ -121,7 +121,7 @@ class ForecastRunwayIntegrationTest {
 
     @Test
     fun `synthesis engine handles empty past spending gracefully`() = runTest {
-        val synthesisEngine = SynthesisEngine(timeProvider)
+        val synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
         val forecastInput = ForecastInputAssembler.ForecastInput(
             pastSumDaily = emptyList(),

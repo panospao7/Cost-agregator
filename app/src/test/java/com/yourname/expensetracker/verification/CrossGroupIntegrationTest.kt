@@ -218,7 +218,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider
         )
 
-        val synthesisEngine = SynthesisEngine(timeProvider)
+        val synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
         val weatherRepository = FinancialWeatherRepository(
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,

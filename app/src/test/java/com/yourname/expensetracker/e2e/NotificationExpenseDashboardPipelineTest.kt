@@ -418,7 +418,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
         )
 
-        val synthesisEngine = SynthesisEngine(timeProvider)
+        val synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
         val stressForecastEngine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,

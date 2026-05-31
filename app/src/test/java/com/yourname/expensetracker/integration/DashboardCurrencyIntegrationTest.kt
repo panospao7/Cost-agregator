@@ -96,7 +96,7 @@ class DashboardCurrencyIntegrationTest {
     @Before
     fun setup() {
         val insightsEngine = mockk<InsightsEngine>(relaxed = true)
-        val synthesisEngine = SynthesisEngine(timeProvider)
+        val synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
         val monteCarloSimulator = mockk<MonteCarloSpendingSimulator>(relaxed = true)
         val healthCalculator = mockk<FinancialHealthCalculator>(relaxed = true)
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)

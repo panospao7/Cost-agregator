@@ -417,8 +417,7 @@ class FinancialStressForecastEngine @Inject constructor(
             while (nextDate in startDate..endDate) {
                 val converted = if (displayCurrency.isBlank()) pattern.averageAmount
                     else currencyConverter.convert(pattern.averageAmount, pattern.currency, displayCurrency)?.convertedAmount
-                        ?: pattern.averageAmount
-                total += converted
+                if (converted != null) total += converted
                 nextDate = when (pattern.frequency) {
                     RecurrenceFrequency.WEEKLY -> nextDate + (7 * TimePeriodUtils.DAY_IN_MILLIS)
                     RecurrenceFrequency.BIWEEKLY -> nextDate + (14 * TimePeriodUtils.DAY_IN_MILLIS)

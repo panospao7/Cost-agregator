@@ -125,7 +125,7 @@ class DashboardWidgetConsistencyTest {
 
         computeUseCase = ComputeDashboardWidgetsUseCase(
             insightsEngine = insightsEngine,
-            synthesisEngine = SynthesisEngine(timeProvider),
+            synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true)),
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
             healthCalculator = healthCalculator,

@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
@@ -25,7 +26,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        engine = SynthesisEngine(timeProvider)
+        engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
     }
 
     @Test

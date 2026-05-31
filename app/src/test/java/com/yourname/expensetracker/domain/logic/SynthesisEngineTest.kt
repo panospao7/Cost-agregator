@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -41,7 +42,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         super.setUp()
         // Fix time to Jan 15, 2024 (Leap year, 31 days)
         every { timeProvider.now() } returns 1705320000000L
-        engine = SynthesisEngine(timeProvider)
+        engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
     }
 
     @Test
@@ -239,7 +240,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `synthesize on last day projects zero discretionary days`() {
         every { timeProvider.now() } returns millis(2024, Calendar.JANUARY, 31)
-        val engine = SynthesisEngine(timeProvider)
+        val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
         val pace = SpendingPace(
             currentMonthSpent = 1000.0,
@@ -268,7 +269,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `calculateBlockPartyData BIWEEKLY rejects weekly plus seven and matches plus fourteen`() {
         every { timeProvider.now() } returns millis(2024, Calendar.JANUARY, 1)
-        val engine = SynthesisEngine(timeProvider)
+        val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
         val biweekly = createRecurringPattern(
             amount = 100.0,
@@ -315,7 +316,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `calculateBlockPartyData BIWEEKLY matches across month boundary`() {
         every { timeProvider.now() } returns millis(2024, Calendar.FEBRUARY, 1)
-        val engine = SynthesisEngine(timeProvider)
+        val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
         val biweekly = createRecurringPattern(
             amount = 75.0,
