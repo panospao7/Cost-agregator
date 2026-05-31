@@ -594,11 +594,12 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"exchangeRateUsed\":").append(tx.exchangeRateUsed).append(',')
                 append("\"isBusinessExpense\":").append(if (tx.isBusinessExpense) "true" else "false").append(',')
                 append("\"businessPurpose\":")
-                if (tx.businessPurpose == null) append("null")
+                if (tx.businessPurpose == null) append("null,")
                 else append("\"").append(escapeJson(tx.businessPurpose)).append("\",")
                 append("\"sourceLinks\":")
+                // P12-PR1 (NEW-P12-002): sourceLinksJson is already valid JSON — append raw, don't escape
                 if (tx.sourceLinksJson == null) append("null")
-                else append(escapeJson(tx.sourceLinksJson))
+                else append(tx.sourceLinksJson)
                 append("}")
             }
             writer.append(row)

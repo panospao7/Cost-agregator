@@ -86,16 +86,10 @@ class UberReceiptParser : BaseEmailParser() {
     }
 
     override fun canParse(sender: String, subject: String, body: String): Boolean {
+        // P11-PR3 (NEW-P11-003): Require Uber sender domain — subject/body match was too broad
         val isUberSender = UBER_SENDERS.any { sender.contains(it, ignoreCase = true) }
-        val isUberSubject = subject.contains("uber", ignoreCase = true) ||
-                           subject.contains("trip", ignoreCase = true) ||
-                           subject.contains("ride", ignoreCase = true) ||
-                           subject.contains("eats", ignoreCase = true) ||
-                           subject.contains("order", ignoreCase = true)
-        val isUberBody = body.contains("uber", ignoreCase = true) ||
-                        body.contains("uber.com", ignoreCase = true)
-        
-        return isUberSender || (isUberSubject && isUberBody)
+            || sender.contains("@uber.com", ignoreCase = true)
+        return isUberSender
     }
 
     override fun parse(emailBody: String, receivedAt: Long): ParsedEmailReceipt? {

@@ -28,13 +28,13 @@
 
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
-| NEW-P12-001 | P0 | JSON export produces invalid JSON (missing comma on null) | JsonExporter.kt | 🔴 OPEN |
-| NEW-P12-002 | P1 | `sourceLinksJson` double-escaped | ExportDataRepository.kt | 🔴 OPEN |
-| NEW-P12-003 | P1 | CsvCellSanitizer corrupts negative amounts in accounting | CsvCellSanitizer.kt | 🔴 OPEN |
+| NEW-P12-001 | P0 | JSON export produces invalid JSON (missing comma on null) | JsonExporter.kt | ✅ FIXED (P12-PR1) |
+| NEW-P12-002 | P1 | `sourceLinksJson` double-escaped | ExportDataRepository.kt | ✅ FIXED (P12-PR1) |
+| NEW-P12-003 | P1 | CsvCellSanitizer corrupts negative amounts in accounting | CsvCellSanitizer.kt | ✅ FIXED (P12-PR1) |
 | NEW-P12-004 | P2 | `createExportFile` path traversal risk | ExportFileManager.kt | 🔴 OPEN |
 | NEW-P12-005 | P2 | Accounting validation loads ALL expenses (OOM) | AccountingValidation.kt | 🔴 OPEN |
 | NEW-P12-006 | P3 | `loadExpenseCount` generic error during restore | ExportDataRepository.kt | 🔴 OPEN |
-| NEW-P12-007 | P2 | `sanitizeIif` corrupts merchant names starting with `-` | IifExporter.kt | 🔴 OPEN |
+| NEW-P12-007 | P2 | `sanitizeIif` corrupts merchant names starting with `-` | IifExporter.kt | ✅ FIXED (P12-PR1) |
 
 ---
 

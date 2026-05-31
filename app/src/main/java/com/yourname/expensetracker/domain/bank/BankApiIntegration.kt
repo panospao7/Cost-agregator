@@ -410,22 +410,23 @@ class BankApiIntegration @Inject constructor(
         val now = timeProvider.now()
         val startTime = since ?: (now - (7 * 24 * 60 * 60 * 1000L)) // Last 7 days if no since
         
-        // Generate 5-10 mock transactions
-        val count = (5..10).random()
+        // P10-PR1 (NEW-P10-004): Seeded random for reproducible test data
+        val rng = kotlin.random.Random(bankId.hashCode().toLong() + (since ?: 0L))
+        val count = rng.nextInt(5, 11)
         val merchants = listOf("Supermarket", "Gas Station", "Restaurant", "Coffee Shop", "Online Store")
         
         for (i in 0 until count) {
             val date = startTime + ((now - startTime) * i / count)
-            val merchant = merchants.random()
+            val merchant = merchants[rng.nextInt(merchants.size)]
             transactions.add(
                 BankTransaction(
                     id = "${bankId}_tx_${i}_${date}",
                     date = date,
-                    amount = -(10..200).random().toDouble(),
-                    currency = "EUR", // STUB: currency defaults to EUR; real implementation should use home currency from settings
+                    amount = -(rng.nextInt(10, 201)).toDouble(),
+                    currency = "EUR",
                     merchant = merchant,
                     description = "Purchase from $merchant",
-                    reference = "REF${(1000..9999).random()}",
+                    reference = "REF${rng.nextInt(1000, 10000)}",
                     movementType = BankMovementType.PURCHASE
                 )
             )

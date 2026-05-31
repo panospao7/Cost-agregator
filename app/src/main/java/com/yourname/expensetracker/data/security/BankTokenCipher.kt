@@ -30,12 +30,36 @@ object BankTokenCipher {
         return encrypt(value)
     }
 
+    /**
+     * Result of a token decryption attempt.
+     * P10-PR1 (NEW-P10-002): Callers can distinguish key invalidation from other failures.
+     */
+    sealed interface DecryptResult {
+        data class Success(val plaintext: String) : DecryptResult
+        data object KeyInvalidated : DecryptResult
+        data class Failed(val reason: String) : DecryptResult
+    }
+
     fun decryptIfNeeded(value: String?): String? {
         if (value == null) return null
         if (!isEncrypted(value)) return value
+        return when (val result = decryptWithResult(value)) {
+            is DecryptResult.Success -> result.plaintext
+            is DecryptResult.KeyInvalidated -> null
+            is DecryptResult.Failed -> null
+        }
+    }
+
+    /**
+     * P10-PR1 (NEW-P10-002): Typed decryption that surfaces key invalidation.
+     * Callers should check for [DecryptResult.KeyInvalidated] and prompt re-authentication.
+     */
+    fun decryptWithResult(value: String?): DecryptResult {
+        if (value == null) return DecryptResult.Failed("null input")
+        if (!isEncrypted(value)) return DecryptResult.Success(value)
 
         val parts = value.removePrefix(PREFIX).split(':')
-        if (parts.size != 2) return null
+        if (parts.size != 2) return DecryptResult.Failed("invalid format")
 
         return try {
             val iv = Base64.getDecoder().decode(parts[0])
@@ -49,9 +73,11 @@ object BankTokenCipher {
             )
 
             val plaintext = cipher.doFinal(ciphertext)
-            String(plaintext, Charsets.UTF_8)
-        } catch (_: Exception) {
-            null
+            DecryptResult.Success(String(plaintext, Charsets.UTF_8))
+        } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
+            DecryptResult.KeyInvalidated
+        } catch (e: Exception) {
+            DecryptResult.Failed(e.javaClass.simpleName)
         }
     }
 

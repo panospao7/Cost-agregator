@@ -32,11 +32,14 @@ object CsvCellSanitizer {
         val stripped = field.replace("\u0000", "").replace("\u000B", "")
 
         // 2. Formula injection: prefix with single-quote if leading char is dangerous.
+        // P12-PR1 (NEW-P12-003): Don't trigger for "-" followed by digit (negative number)
+        // or "-" followed by letter (merchant name like "-Pizza").
         val formulaFixed = if (formulaSafe) {
             val trimmed = stripped.trimStart()
-            if (trimmed.startsWith("=") || trimmed.startsWith("+") ||
-                trimmed.startsWith("-") || trimmed.startsWith("@")
-            ) {
+            val isDangerousFormula = trimmed.startsWith("=") || trimmed.startsWith("+") ||
+                trimmed.startsWith("@") ||
+                (trimmed.startsWith("-") && trimmed.length > 1 && !trimmed[1].isLetterOrDigit() && trimmed[1] != '.')
+            if (isDangerousFormula) {
                 "'$stripped"
             } else {
                 stripped
@@ -70,9 +73,11 @@ object CsvCellSanitizer {
             .replace("\r", "")
             .trim()
         val trimmed = stripped.trimStart()
-        return if (trimmed.startsWith("=") || trimmed.startsWith("+") ||
-            trimmed.startsWith("-") || trimmed.startsWith("@")
-        ) {
+        // P12-PR1 (NEW-P12-007): Don't corrupt merchant names starting with "-"
+        val isDangerousFormula = trimmed.startsWith("=") || trimmed.startsWith("+") ||
+            trimmed.startsWith("@") ||
+            (trimmed.startsWith("-") && trimmed.length > 1 && !trimmed[1].isLetterOrDigit() && trimmed[1] != '.')
+        return if (isDangerousFormula) {
             "'$stripped"
         } else {
             stripped

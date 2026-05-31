@@ -30,8 +30,9 @@ class AmazonReceiptParser : BaseEmailParser() {
         )
 
         private val ORDER_NUMBER_PATTERNS = listOf(
-            Pattern.compile("""Order #?\\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Order Number:\\s*#?([0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            // P11-PR3 (NEW-P11-005): Fixed double-escaped \s in raw strings
+            Pattern.compile("""Order #?\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Order Number:\s*#?([0-9-]+)""", Pattern.CASE_INSENSITIVE),
             Pattern.compile("""order-number[^>]*>#?([0-9-]+)""", Pattern.CASE_INSENSITIVE)
         )
 
@@ -43,7 +44,7 @@ class AmazonReceiptParser : BaseEmailParser() {
         )
 
         private val ITEM_PATTERN = Pattern.compile(
-            """([^\\n]{10,100})\\s+(?:Qty:\\s*)?(\\d+)\\s+[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""",
+            """([^\n]{10,100})\s+(?:Qty:\s*)?(\d+)\s+[€$£]?\s*([0-9,]+\.[0-9]{2})""",
             Pattern.MULTILINE
         )
 
@@ -56,13 +57,10 @@ class AmazonReceiptParser : BaseEmailParser() {
     }
 
     override fun canParse(sender: String, subject: String, body: String): Boolean {
+        // P11-PR3 (NEW-P11-002): Require Amazon sender domain — body-only match was too broad
         val isAmazonSender = AMAZON_SENDERS.any { sender.contains(it, ignoreCase = true) }
-        val isOrderEmail = subject.contains("order", ignoreCase = true) ||
-                          subject.contains("your amazon", ignoreCase = true) ||
-                          body.contains("amazon.com", ignoreCase = true) ||
-                          body.contains("amazon.co.uk", ignoreCase = true) ||
-                          body.contains("amazon.de", ignoreCase = true)
-        return isAmazonSender || isOrderEmail
+            || sender.contains("@amazon.", ignoreCase = true)
+        return isAmazonSender
     }
 
     override fun parse(emailBody: String, receivedAt: Long): ParsedEmailReceipt? {

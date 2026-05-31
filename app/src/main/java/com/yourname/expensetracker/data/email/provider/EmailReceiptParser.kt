@@ -99,6 +99,15 @@ abstract class BaseEmailParser : EmailReceiptParser {
             Locale("el")
         )
 
+        // P11-PR3 (NEW-P11-004): Pre-built formatter cache — avoids 176 allocations per parse call
+        private val formatterCache: List<java.time.format.DateTimeFormatter> by lazy {
+            supportedDateLocales.flatMap { locale ->
+                datePatterns.map { pattern ->
+                    java.time.format.DateTimeFormatter.ofPattern(pattern, locale)
+                }
+            }
+        }
+
         private val htmlEntities = mapOf(
             "amp" to "&",
             "lt" to "<",
@@ -159,16 +168,13 @@ abstract class BaseEmailParser : EmailReceiptParser {
             return null
         }
 
-        for (locale in supportedDateLocales) {
-            for (pattern in datePatterns) {
-                try {
-                    val formatter = DateTimeFormatter.ofPattern(pattern, locale)
-                    val parsed = formatter.parse(normalized)
-                    val localDate = LocalDate.from(parsed)
-                    return localDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                } catch (_: Exception) {
-                    continue
-                }
+        for (formatter in formatterCache) {
+            try {
+                val parsed = formatter.parse(normalized)
+                val localDate = LocalDate.from(parsed)
+                return localDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            } catch (_: Exception) {
+                continue
             }
         }
 

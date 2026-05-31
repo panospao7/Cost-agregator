@@ -3,11 +3,11 @@ package com.yourname.expensetracker.domain.bank
 /**
  * Configuration for bank API integration rollout.
  *
- * Stub mode stays enabled by default until real provider integrations are implemented.
+ * P10-PR1 (NEW-P10-001): isStubMode is now immutable — derived from BuildConfig.DEBUG.
+ * No runtime mutation possible; testability via DI override, not mutable global.
  */
 object BankApiConfig {
-    @Volatile
-    var isStubMode: Boolean = true
+    val isStubMode: Boolean = com.yourname.expensetracker.BuildConfig.DEBUG
 
     val isProduction: Boolean
         get() = !isStubMode

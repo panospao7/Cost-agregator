@@ -26,10 +26,10 @@
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
 | NEW-P11-001 | P1 | `ingestionMutex` blocks all concurrent processing during batch | EmailReceiptIngestionCoordinator.kt | 🔴 OPEN |
-| NEW-P11-002 | P2 | `AmazonReceiptParser.canParse()` overly broad | AmazonReceiptParser.kt | 🔴 OPEN |
-| NEW-P11-003 | P2 | `UberReceiptParser.canParse()` overly broad | UberReceiptParser.kt | 🔴 OPEN |
-| NEW-P11-004 | P3 | `parseLocalizedDate()` 176 formatter instances per date | EmailDateParser.kt | 🔴 OPEN |
-| NEW-P11-005 | P2 | Amazon parser regex double-escaped in raw strings | AmazonReceiptParser.kt | 🔴 OPEN |
+| NEW-P11-002 | P2 | `AmazonReceiptParser.canParse()` overly broad | AmazonReceiptParser.kt | ✅ FIXED (P11-PR3) |
+| NEW-P11-003 | P2 | `UberReceiptParser.canParse()` overly broad | UberReceiptParser.kt | ✅ FIXED (P11-PR3) |
+| NEW-P11-004 | P3 | `parseLocalizedDate()` 176 formatter instances per date | EmailDateParser.kt | ✅ FIXED (P11-PR3) |
+| NEW-P11-005 | P2 | Amazon parser regex double-escaped in raw strings | AmazonReceiptParser.kt | ✅ FIXED (P11-PR3) |
 
 ---
 
