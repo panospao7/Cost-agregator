@@ -1,13 +1,15 @@
 # U-PR6 — WorkerExecutionGuard Contract
 
+> **Status:** ✅ RESOLVED — commit `74c2e5b8` on `master-refactor` (2026-05-31)
+
 ## 1. Issue Summary
 
-| ID | Priority | Title |
-|----|----------|-------|
-| U-WORKER-01 | P1 | Guard writes `BackgroundJobRun` before checking write barrier |
-| U-WORKER-02 | P1 | Cancelled workers leave RUNNING rows with no startup recovery |
-| U-WORKER-03 | P1 | Worker run counts always zero / no-work paths logged as SUCCESS |
-| U-WORKER-04 | P1 | DailyBriefing KEEP policy breaks one-shot chain |
+| ID | Priority | Title | Status |
+|----|----------|-------|--------|
+| U-WORKER-01 | P1 | Guard writes `BackgroundJobRun` before checking write barrier | ✅ Fixed |
+| U-WORKER-02 | P1 | Cancelled workers leave RUNNING rows with no startup recovery | ✅ Fixed |
+| U-WORKER-03 | P1 | Worker run counts always zero / no-work paths logged as SUCCESS | ✅ Fixed |
+| U-WORKER-04 | P1 | DailyBriefing KEEP policy breaks one-shot chain | ✅ Fixed |
 
 **Affected Pipelines:** 9 (all 7 workers)
 
@@ -265,10 +267,10 @@ if (shouldRescheduleNextMidnight(guardResult)) {
 
 ## 14. Acceptance Criteria
 
-- [ ] `startRunSafely()` checks write barrier before `dao.insert()`
-- [ ] Startup recovery uses 15-minute threshold (not 4 hours)
-- [ ] Zero-count SUCCESS runs include "NO_WORK" message in `BackgroundJobRun`
-- [ ] `DailyBriefingWorker` reschedule uses REPLACE policy
-- [ ] Reschedule failure is logged (not silently swallowed)
-- [ ] All existing worker tests pass
-- [ ] New tests cover each fix scenario
+- [x] `startRunSafely()` checks write barrier before `dao.insert()` ✅ 74c2e5b8
+- [x] Startup recovery uses 15-minute threshold (not 4 hours) ✅ 74c2e5b8
+- [x] Zero-count SUCCESS runs include "NO_WORK" message in `BackgroundJobRun` ✅ 74c2e5b8
+- [x] `DailyBriefingWorker` reschedule uses REPLACE policy ✅ 74c2e5b8
+- [x] Reschedule failure is logged (not silently swallowed) ✅ 74c2e5b8
+- [x] All existing worker tests pass ✅ compileDebugUnitTestKotlin green
+- [x] New tests cover each fix scenario ✅ 3 new tests in WorkerExecutionGuardTest
