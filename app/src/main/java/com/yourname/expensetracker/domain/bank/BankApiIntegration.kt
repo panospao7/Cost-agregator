@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -248,6 +249,11 @@ class BankApiIntegration @Inject constructor(
                         }
                     }
                 } catch (e: Exception) {
+                    // P10-CURRENT-018: never swallow coroutine/worker cancellation. Rethrow so the
+                    // sync stops promptly and does not keep importing, and so restore/backup
+                    // cancellation semantics hold once this runs inside a worker. CancellationException
+                    // is NOT a per-transaction failure and must not be recorded as one.
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     // DDL-81-19: generic per-transaction exception needs a TRANSACTION_FAILED event
                     val hashId = transaction.id.sha256Prefix(8)
                     errors.add("Transaction import failed [hash=$hashId, reason=EXCEPTION]")
@@ -321,7 +327,8 @@ class BankApiIntegration @Inject constructor(
      * through [TransactionLifecycleCoordinator.createExpense] for full lifecycle
      * handling (validate → normalize → dedupe → insert atomic → event).
      */
-    private suspend fun mapTransactionToExpense(
+    @VisibleForTesting
+    internal suspend fun mapTransactionToExpense(
         transaction: BankTransaction,
         connection: BankConnection,
         syncRunId: Long
@@ -371,7 +378,15 @@ class BankApiIntegration @Inject constructor(
             notes = notes,
             bankSyncRunId = syncRunId,
             bankProviderTransactionIdHash = providerTxHash,
-            bankAccountIdHash = accountHash
+            bankAccountIdHash = accountHash,
+            // P10-CURRENT-006: bank API imports must dedupe on the provider transaction
+            // identity, not the fuzzy STANDARD merchant/amount/date window. This persists a
+            // canonical "idem:BANK_API_SYNC:<providerTxHash>" dedupeKey so a re-sync of the
+            // same provider transaction resolves to the existing expense even if the
+            // merchant/description/amount text changes outside the standard window/tolerance.
+            // idempotencyKey is always set above (providerTxHash ?: transaction.id), so the
+            // STRICT_EXTERNAL_ID "missing key" validation branch is never hit.
+            deduplicationMode = DeduplicationMode.STRICT_EXTERNAL_ID
         )
     }
 
