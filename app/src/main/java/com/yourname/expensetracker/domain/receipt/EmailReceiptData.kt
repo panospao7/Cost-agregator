@@ -3,10 +3,10 @@ package com.yourname.expensetracker.domain.receipt
 /**
  * Structured data extracted from an email receipt.
  *
- * This is a richer representation compared to the batch-processing data class
- * in [com.yourname.expensetracker.data.email.EmailReceiptData]; it carries
- * parsed financial fields so the [ReceiptLifecycleCoordinator] can work with
- * fully-extracted receipt information without re-parsing.
+ * This is the single canonical model consumed by [ReceiptLifecycleCoordinator]
+ * and used by the email ingestion batch path; it carries parsed financial
+ * fields so the coordinator can work with fully-extracted receipt information
+ * without re-parsing.
  *
  * @property messageId   Unique email message ID (for deduplication).
  * @property from        Sender email address.

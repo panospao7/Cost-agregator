@@ -876,11 +876,15 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         var receiptPlan: PostCommitActionBatch? = null
         val transactionActionBatches = mutableListOf<PostCommitActionBatch>()
 
+        // P11-CURRENT-020: resolve the home currency BEFORE opening the DB transaction so the
+        // Room write lock is not held while awaiting DataStore/Flow I/O (reduces lock-hold
+        // duration and deadlock/flakiness risk). The resolved value is read-only inside the
+        // transaction below, so moving it out is behavior-preserving.
+        val homeResolution = currencySettingsRepository.resolveHomeCurrency()
+        val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
+
         try {
         database.withTransaction {
-            val homeResolution = currencySettingsRepository.resolveHomeCurrency()
-            val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
-
             val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                 imagePath = null,
                 rawOcrText = effectiveOcrText,

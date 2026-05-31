@@ -275,6 +275,21 @@ These remain HELD pending the other session committing `ExportAnonymizer` (avoid
 - New test references existing public APIs only (`RestoreJournal`, `RestoreMaintenanceMode`,
   `RestoreDatabaseOpener`, `WorkManagerTestInitHelper`, MockK). No new constructor params.
 
+### Independent adversarial review (this session) — 2 parallel static reviewers
+Two independent reviewers (lifecycle/startup boundary + data-integrity/IO boundary) verified all
+eight production fixes (003, 019, 016, 014, 015, 017, 022, 023) as **correct and complete** with
+file:line evidence. Both converged on a **single blocking defect** and two low-severity findings,
+all now fixed:
+- BLOCKER (fixed): `BackupRestoreViewModelTest.kt` used `assertThrows` without importing it →
+  would fail `compileDebugUnitTestKotlin` for the WHOLE test source set (blocking all 5 P7 test
+  classes). Added `import org.junit.Assert.assertThrows`.
+- Low (fixed): restore `onFailure` now maps `CostbackupBundle.BackupTooLargeException` to a clear
+  "too large / too many entries" message (was generic "Restore failed"); +1 ViewModel test.
+- Low (fixed): corrected stale `BackupVerifier` tier-count comments (37 Tier-1 / 10 Tier-2 / 10
+  Tier-3 = 57). Comment-only — map left intact to avoid a key-dup risk I can't compile-check.
+- Verified directly: only `ui/screens/debug/**` calls `exportDatabase()` → 021 guard will pass.
+Post-fix verdict: both boundaries GREEN pending the human compile/test run.
+
 ### Open / deferred (NOT done — need decision; held for discussion)
 - P7-CURRENT-010: BackupPrivacyMode "redacted DB + images" semantics + manifest
   requested-vs-actual image fields (not covered by in-flight ExportAnonymizer work).
@@ -287,10 +302,6 @@ These remain HELD pending the other session committing `ExportAnonymizer` (avoid
   caller-contract change; held as a separate slice (crash-safety half already verified done).
 - P7-CURRENT-021 (source-set): physically moving raw export to a debug-only source set —
   low value over the static guard now in place; not planned.
-- P7-CURRENT-013: semantic restore-equivalence golden suite (large instrumentation-test effort).
-- P7-CURRENT-016: restore diagnostics ledger import — HELD (see dedicated section above). NO
-  migration required, but needs startup + DI wiring (revive dead success importer, add failure
-  importer, inject into `AppStartupCoordinator`). Held for a focused, reviewed follow-up.
 - P7-CURRENT-020: journaled/maintenance-guarded `resetDatabase()` with typed-confirmation token
   (behavioral change to a destructive path; touches lifecycle coordinator).
 - P7-CURRENT-021: move raw `exportDatabase()` to a debug-only source set (**build-config / source-set change**).
@@ -446,3 +457,274 @@ P9-P1-01/02/03/05/06 (run logging, shared guard, lease/drain via `MaintenanceOpe
 
 ### Working-tree note
 Pipeline 9 edits sit alongside UNRELATED uncommitted Pipeline 5/6/7/8 changes already in the working tree. Commit the Pipeline 9 files separately to keep attribution clean. The 142→143 schema bump must be sequenced after the sibling Pipeline-6 141→142 migration (it already is).
+
+---
+
+## Pipeline 10 — Bank Integration / Bank API Sync / Bank Statement Imports
+
+Audit: `pipeline_10_bank_integration_imports_debug_report.yaml` (verdict
+`PROTOTYPE_SHELL_NOT_CLEAN`, written against OLD commit `4113e38f`). **Reconciled against
+current HEAD `3e426f11` before any implementation** — the audit is heavily stale, matching the
+pattern of every prior pipeline. Mode: static only — agent did NOT compile/build/run Gradle or
+tests. Implementation: 1 slice (Slice A), code-only, no schema/migration change.
+Self-review verdict: **GREEN** (static tester + adversarial reviewer both passed).
+
+Validation (human must run — NOT run by agent):
+- assembleDebug: pending
+- testDebugUnitTest: pending (esp. `BankApiIntegrationTest`)
+- check: pending
+- connectedDebugAndroidTest: **NOT required** (no schema/migration change in this batch)
+
+### Reconciliation finding (important — most of the 30 audit issues are already FIXED at HEAD)
+The audit's 30 `P10-CURRENT-*` issues were classified against the live code at HEAD. The audit
+was authored before large bank-pipeline work landed. Verified **already implemented** at HEAD
+(NOT re-touched; evidence by file:line):
+| Audit ID | Audit status | ACTUAL at HEAD | Evidence |
+|----------|--------------|----------------|----------|
+| P10-CURRENT-007 / 008 | OPEN (no ledger / status never updated) | ALREADY-FIXED | `BankApiIntegration.syncTransactions` runs inside `OperationRunRecorder.runOperation("BANK_SYNC")` with durable SYNC_STARTED / PAGE_FETCHED / TOKEN_* / TRANSACTION_IMPORTED / TRANSACTION_DUPLICATE_SKIPPED / TRANSACTION_FAILED events + `run.increment(...)` counters; terminal status via `partialSuccess`/`failedFinal`/`success`. |
+| P10-CURRENT-012 | OPEN (no bank metadata on expenses) | ALREADY-FIXED | `CreateExpenseRequest` has `bankSyncRunId` / `bankProviderTransactionIdHash` / `bankAccountIdHash` (`CreateExpenseRequest.kt:109-113`); populated in `mapTransactionToExpense` (`:357-374`). |
+| P10-CURRENT-013 | OPEN (raw description/reference in notes) | ALREADY-FIXED | `mapTransactionToExpense` gates `safeDescription`/`safeReference`/`safeTransferAccountName` on `rawOcrStorageMode` (STORE_RAW / STORE_REDACTED / else→null) (`:335-354`). |
+| P10-CURRENT-017 | OPEN (fragile sign-only typing) | ALREADY-FIXED | `BankTransaction.movementType` + `toTransactionType()` maps structured provider movement first; `inferTransactionType` is a fallback only. |
+| P10-CURRENT-019 | OPEN (raw IDs/messages in errors) | ALREADY-FIXED | sync errors use `transaction.id.sha256Prefix(8)` hashes and fixed reason codes; no raw description/message. |
+| P10-CURRENT-020 / 023 | PARTIAL (statement not atomic/resumable) | ALREADY-FIXED | `BankStatementLifecycleProcessor` writes a `BankStatementImportRun` + per-item `BankStatementImportItem` ledger; each review+item pair wrapped in `database.withTransaction`; resumable item states (CREATED_REVIEW / DUPLICATE_* / FAILED); cancellation finalizes the run with real counts and rethrows. |
+| P10-CURRENT-021 | OPEN (PendingReview createdAt=0) | ALREADY-FIXED | statement `PendingReview(... createdAt = timeProvider.now())` (`BankStatementLifecycleProcessor.kt:488`). |
+| P10-CURRENT-022 | OPEN (insert result ignored) | ALREADY-FIXED | `require(revId > 0) { "PendingReview insert failed" }` before incrementing (`:496`). |
+| P10-CURRENT-024 | OPEN (raw OCR stored) | ALREADY-FIXED | `rawOcrText = RawContentSanitizer.sanitizeRawOcr(ocrResult.fullText, settings.rawOcrStorageMode)` (`:269-272`); `debugData = null` by default (`:608`). |
+| P10-CURRENT-001 (safety half) | SAFETY_GUARD_FIXED | ALREADY-FIXED | `requireStubMode()` errors in `!BuildConfig.DEBUG` and requires `BankApiConfig.isStubMode` (`:430-434`). |
+
+### Issues actually fixed this slice (Slice A — genuine, OPEN, code-only, pipeline-local)
+| ID | Title | Status after change |
+|----|-------|---------------------|
+| P10-CURRENT-018 | `CancellationException` swallowed by API sync | FIXED — the per-transaction `catch (e: Exception)` in `BankApiIntegration.syncTransactions` now `if (e is CancellationException) throw e` BEFORE recording a `TRANSACTION_FAILED` event. Cancellation propagates out of the loop → out of `runOperation` (which finalizes the run CANCELLED via its own dedicated `CancellationException` catch) → out of `syncTransactions`, instead of being converted into a `SyncResult` error with continued processing. The sibling `BankStatementLifecycleProcessor` already did this (`:622-641`); this closes the API-sync gap. |
+| P10-CURRENT-006 | Provider idempotency key passed but `deduplicationMode` stays STANDARD | FIXED — `mapTransactionToExpense` now sets `deduplicationMode = DeduplicationMode.STRICT_EXTERNAL_ID`. The coordinator then persists the canonical `idem:BANK_API_SYNC:<providerTxHash>` dedupeKey (via `strictExternalDedupeKey`), so a re-sync of the same provider transaction id resolves to the existing expense even if merchant/description/amount text drifts outside the STANDARD window/tolerance. `idempotencyKey` is always non-blank (`providerTxHash ?: transaction.id`), so the STRICT_EXTERNAL_ID "missing key" validation branch is unreachable. |
+| (test debt) | `BankApiIntegrationTest` stale & non-compiling at HEAD | FIXED — the committed test reflected a 2-arg `mapTransactionToExpense` (real signature is 3-arg `+syncRunId` and `suspend`) via `getDeclaredMethod`, so it threw `NoSuchMethodException`; it also asserted `amount == -24.5` while the code returns `abs(amount)`. Rewritten: `mapTransactionToExpense` made `@VisibleForTesting internal`, called directly in `runTest`; assertions corrected to abs(); added STRICT_EXTERNAL_ID + stable-hash-identity coverage (006) and a real cancellation-propagation test (018). |
+
+### Files changed (this slice)
+Main source:
+- `domain/bank/BankApiIntegration.kt` — (1) rethrow `CancellationException` in per-transaction catch (018); (2) `deduplicationMode = STRICT_EXTERNAL_ID` on the bank import request + `import DeduplicationMode` (006); (3) `mapTransactionToExpense` visibility `private` → `@VisibleForTesting internal` (testability).
+Test source:
+- `domain/bank/BankApiIntegrationTest.kt` — full repair/rewrite (see above). New in-test `BlockInvokingRecorder` (invokes the operation block with `NoOpOperationRunHandle` so the real sync loop runs); pins `BankApiConfig.isStubMode = true` in setUp to avoid global-state test-order flake.
+
+### Tests added/updated
+- `BankApiIntegrationTest` (rewritten): debit→PURCHASE abs(); credit→DEPOSIT abs(); transfer keeps direction + abs(); **STRICT_EXTERNAL_ID + hashed provider identity** (006); **same provider id → stable strict dedupe identity** (006 re-sync contract); **bank sync rethrows cancellation and does not continue importing** (018). No `@Ignore`, no weakened assertions. Uses the real `mapTransactionToExpense`/`syncTransactions` paths (not a DAO bypass) and real `DefaultSensitiveHashingService` (pure JCA, JVM-safe).
+
+### Known compile-risk areas (agent could not compile)
+- `mapTransactionToExpense` is now `internal` — the only callers are the prod loop (same class, `:193`) and the same-module test; no other module references it, so `internal` holds.
+- New test constructs `BankApiIntegration` with the CURRENT 6-arg constructor; verified it is the only construction site in `app/src`.
+- Test relies on `DefaultSensitiveHashingService` being pure JCA (`MessageDigest`/`Mac`) — confirmed; no Android Keystore, deterministic, JVM-unit-test-safe.
+- `coordinator.createExpenseStandaloneV2` is `suspend` returning `CreateExpenseResult` — test uses `coEvery { ... } throws`; signature confirmed (`TransactionLifecycleCoordinator.kt:800`).
+
+### HELD — major feature scope, NOT done (needs human decision per orchestrator stop-rules)
+These require net-new cross-module / schema / security feature development for a feature that is
+**intentionally release-blocked demo-only** (`BankConnectionsViewModel.isDemoMode = true`,
+`requireStubMode()`). Building real banking is beyond autonomous pipeline-local fix scope:
+- P10-CURRENT-001 (real `BankProvider` port + provider registry), 002/003/004 (`BankConnectionRepository` / `BankConnectionLifecycleCoordinator` — wire the demo VM to real DB-backed connections), 005 (OAuth state/PKCE/`BankAuthSession` entity — **schema**), 009 (durable token refresh + reauth-required state), 010 (DAO mutator allowlist guard once a coordinator exists), 011 (`BankTransactionClassifier` low-confidence→PendingReview for API sync), 014 (multi-account model — **schema redesign**), 015 (`BankSyncWorker` in `WorkerRegistry`), 016 (deterministic demo fixtures), 025/026/027/028/029/030 (cloud-payload purpose for statement AI, token restore-decryptability policy, richer authStatus enum, payment-method mapping, currency-assumption-not-silent-EUR, dedicated bank event taxonomy).
+- These should be scoped as a real feature epic (likely `@planner-advanced` + schema migration + instrumentation tests), not folded into a pipeline-local fix batch.
+
+### Validation (human must run — NOT run by agent)
+- `:app:assembleDebug --stacktrace` — verifies Kotlin compile + the `internal`/`@VisibleForTesting` change.
+- `:app:testDebugUnitTest --stacktrace` — esp. `BankApiIntegrationTest` (6 tests).
+- `:app:check --stacktrace` — includes `verifyDbAccessBoundaries`.
+- `:app:connectedDebugAndroidTest` — NOT required (no schema/migration change this batch).
+
+### Working-tree note
+Pipeline 10 edits (`BankApiIntegration.kt`, `BankApiIntegrationTest.kt`) sit alongside UNRELATED
+uncommitted Pipeline 5/6/7/8/9 changes already in the working tree. Commit the Pipeline 10 files
+separately to keep attribution clean.
+
+---
+
+## Pipeline 11 — Email Receipt Ingestion
+
+Audit: `pipeline_11_email_receipt_ingestion_debug_report.yaml` (verdict `IMPROVED_BUT_NOT_CLEAN`,
+written against OLD commit `4113e38f`). **Reconciled against current HEAD `3e426f11` before any
+implementation** — the audit is heavily stale, matching the pattern of every prior pipeline.
+Mode: static only — agent did NOT compile/build/run Gradle or tests. Implementation: 1 slice,
+code-only, no schema/migration change. Self-review verdict: **GREEN** (static tester + adversarial
+reviewer).
+
+Validation (human must run — NOT run by agent):
+- assembleDebug: pending
+- testDebugUnitTest: pending (esp. `EmailReceiptIngestionServiceTest`, `ReceiptLifecycleCoordinatorTest`)
+- check: pending
+- connectedDebugAndroidTest: **NOT required** (no schema/migration change in this batch)
+
+### Reconciliation finding (most of the 22 audit issues are already FIXED at HEAD)
+The audit's `P11-CURRENT-*` issues were classified against the live code at HEAD. The email
+pipeline was substantially hardened after the audit commit. Verified **already implemented** at
+HEAD (NOT re-touched; evidence by file:line):
+| Audit ID | Audit status | ACTUAL at HEAD | Evidence |
+|----------|--------------|----------------|----------|
+| P11-CURRENT-002 | OPEN (P0: raw subject in `Expense.notes`) | ALREADY-FIXED | `ReceiptLifecycleCoordinator.processEmailReceipt` sets `notes = "Email receipt from ${provider}"` (`:1005`) — never the raw subject. |
+| P11-CURRENT-003 | OPEN (P0: body/sender/subject use `rawOcrStorageMode`) | ALREADY-FIXED | `emailStorageMode = settings.emailReceiptStorageMode` (`:829`) governs body (`sanitizeRawOcr(rawEmailBody, emailStorageMode)` `:872`), sender (`sanitizeEmailSender(..., emailStorageMode)` `:914`), subject (`:915`), parsedItems (`:891-895`), and messageId (`:923-926`). |
+| P11-CURRENT-004 | OPEN (message-ID dedupe broken under sanitized storage) | ALREADY-FIXED | ingestion HMAC-hashes messageId once (`EmailReceiptIngestionService:208`); coordinator dedupes by that hash in ALL modes (`:827,:832`) and stores it as `sourceFingerprint` (`:904`). |
+| P11-CURRENT-005 | OPEN (source insert conflict leaves receipt without source) | ALREADY-FIXED | `insertOrIgnore == -1L` resolves by fingerprint/messageId/messageIdHash/contentFingerprintHash, else **throws to roll back** — never continues with `sourceId <= 0` (`:934-960`). |
+| P11-CURRENT-006 | OPEN (double-dispatch of transaction side effects) | ALREADY-FIXED | service does NOT re-dispatch (`EmailReceiptIngestionService:248` comment + no dispatch call); coordinator is the single owner via `postCommitActionRunner.runBestEffortAfterCommit` (`:1085`) with one combined batch. |
+| P11-CURRENT-008 | OPEN (text/semantic fingerprints not persisted) | ALREADY-FIXED | `ScannedReceipt(... textFingerprint = emailTextFingerprint, semanticFingerprint = emailSemanticFingerprint)` (`:905-906`). |
+| P11-CURRENT-010 | OPEN (P1: DB diagnostic written while restore blocks writes) | ALREADY-FIXED | production `DiagnosticEventWriter` is `CompositeDiagnosticEventWriter`: routes to `MaintenanceSafeDiagnosticSink` when mode != NORMAL and checks `DatabaseWriteBarrier` before any Room write (`CompositeDiagnosticEventWriter:30-44`). No DB write during restore-block. |
+| P11-CURRENT-012 | OPEN (CancellationException swallowed) | ALREADY-FIXED | `EmailReceiptIngestionService:295` `if (e is CancellationException) throw e`; `emitEmailReceiptDiagnostic` rethrows too (`ReceiptLifecycleCoordinator:1124`). |
+| P11-CURRENT-013 | OPEN (P1-privacy: raw sender logged) | ALREADY-FIXED | sender only via `.putHashed("sender", sender)` (`:136`); logs emit `$provider`/correlationId/exception only — no raw sender. |
+| P11-CURRENT-001 (collision) | NEEDS_VERIFICATION (P0 compile risk) | FIXED THIS SLICE — see below | |
+
+### Issues actually fixed this slice (genuine, code-only, pipeline-local)
+| ID | Title | Status after change |
+|----|-------|---------------------|
+| P11-CURRENT-001 | `EmailReceiptData` name collision in `EmailReceiptIngestionService` | FIXED — the file imported the canonical 10-field `domain.receipt.EmailReceiptData` (`:13`) AND declared a shadowed 5-field `data.email.EmailReceiptData` at the bottom. The local class had **zero construction sites anywhere** and its only "consumer", `processBatch`, has **zero callers** and accesses `email.from` (a domain-only field), so the file only ever bound to the domain type — the local class was dead, shadowing code. Removed it; `processBatch` now explicitly consumes the domain `EmailReceiptData`. Zero behavior change; eliminates the fragile/ambiguous declaration. |
+| P11-CURRENT-020 | Home-currency DataStore read happens inside `database.withTransaction` | FIXED — `currencySettingsRepository.resolveHomeCurrency()` (+ `homeCurrency` derivation) moved to BEFORE `database.withTransaction` in `processEmailReceipt`. The value is read-only inside the transaction, so the move is behavior-preserving; it stops the Room write lock from being held during DataStore/Flow I/O (lower lock-hold duration + deadlock/flakiness risk). |
+| (doc debt) | Domain `EmailReceiptData` KDoc referenced the now-deleted batch class | FIXED — KDoc updated to describe it as the single canonical model. |
+
+### Files changed (this slice)
+Main source:
+- `data/email/EmailReceiptIngestionService.kt` — removed the dead shadowing `EmailReceiptData` (5-field) declaration; `processBatch` doc clarified to consume the domain model (001).
+- `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` — hoisted `resolveHomeCurrency()`/`homeCurrency` out of the email `withTransaction` (020).
+- `domain/receipt/EmailReceiptData.kt` — KDoc fix (no longer references the deleted class).
+Test source: none changed (existing `ReceiptLifecycleCoordinatorTest` already uses the 10-field domain `EmailReceiptData`; both email-service tests have zero refs to the removed class / `processBatch`).
+
+### Static checks performed
+- Grep: the removed local `EmailReceiptData` had no construction sites; `processBatch` has no callers in `app/src`.
+- Grep: `ReceiptLifecycleCoordinatorTest` constructs the 10-field domain `EmailReceiptData` (`messageId/from/subject/body/receivedAt/amount/merchant/currency/date/items`) — unaffected.
+- Verified `CompositeDiagnosticEventWriter` (the wired impl) is restore-safe, closing P11-CURRENT-010 without code change.
+
+### Known compile-risk areas (agent could not compile)
+- `EmailReceiptIngestionService.kt`: after removing the local class, `EmailReceiptData` in `processBatch(emails: List<EmailReceiptData>)` binds to the imported domain type (`:13`); `email.body/from/subject/receivedAt/messageId` all exist on the domain model. No other module declares/expects the removed type.
+- `ReceiptLifecycleCoordinator.kt`: `homeCurrency` is now declared before the `try`/`withTransaction` and captured by the lambda (used at `~:897` and `~:1001`). No signature change.
+
+### HELD — feature scope / larger work, NOT done (needs human decision)
+Genuinely-open enhancement items beyond a pipeline-local fix slice (most are net-new infra for a
+mailbox-sync feature that does not yet exist):
+- P11-CURRENT-007 (richer content fingerprint incl. provider/orderNumber/currency), 009/011 (low-confidence/validation-failed → `PendingReview` routing + structured non-success result instead of `Success([])`), 014 (Hilt multibinding parser registry), 015 (full `EmailIngestionEvent` ledger taxonomy), 016 (batch summary/checkpoint/backpressure), 017 (`EmailAccountConnection`/`EmailSyncRun`/`EmailMessageImport` mailbox-sync — **schema**), 018 (orderNumber/emailSource provenance on `TransactionEvent`), 019 (shared money/currency parser + ambiguous-currency review), 021 (email-artifact retention/redacted-export coverage), 022 (remove remaining unused service deps).
+- These should be scoped as a feature epic (`@planner-advanced` + likely schema + instrumentation), not folded into a pipeline-local fix batch.
+
+### Validation (human must run — NOT run by agent)
+- `:app:assembleDebug --stacktrace` — verifies the removed-class resolution + Hilt graph unchanged.
+- `:app:testDebugUnitTest --stacktrace` — esp. `EmailReceiptIngestionServiceTest`, `EmailReceiptIngestionServiceTransactionTest`, `ReceiptLifecycleCoordinatorTest`.
+- `:app:check --stacktrace`.
+- `:app:connectedDebugAndroidTest` — NOT required (no schema/migration change this batch).
+
+### Working-tree note
+Pipeline 11 edits sit alongside UNRELATED uncommitted Pipeline 5/6/7/8/9/10/12 changes already in
+the working tree. Commit the Pipeline 11 files separately to keep attribution clean.
+
+---
+
+## Pipeline 12 — Import / Export / Accounting
+
+Audit basis: `pipeline_12_import_export_accounting_debug_report.yaml` (stale, pinned `4113e38f`) +
+`docs/analyses and debug master/new debugging session/pipeline 12/pipeline12_recheck_4227cee2.md`
+(recheck, pinned `4227cee2`). **Reconciled against actual HEAD `3e426f11`** (Pipeline 9 landed
+after both docs). Mode: static only — agent did NOT compile/build/run Gradle or tests.
+Reconciled PR order: **PR-REG → PR-RT → PR-IMP → PR-FIELDS → PR-ACCT → PR-SNAP → PR-TZ**.
+
+### Scope finding (reconciliation)
+- The headline finding **P12-REG-01** (export feature dead) is **CONFIRMED LIVE at HEAD** by code
+  inspection: `ExportOptionsViewModel.generateExport()` requested `RAWBACKUP_EXPORT`;
+  `ExportPrivacyGate.check(RAWBACKUP_EXPORT)` returns `Denied` on BOTH branches; `CompositePrivacyGate`
+  breaks on first `Denied` → every normal export from the production screen fails with
+  "Export denied by privacy settings". The dedicated `EXPENSE_EXPORT` capability already exists and
+  returns `Allowed`, so the fix is a capability switch, not new infra.
+- The import engine genuinely exists (`util/ImportCoordinator`, `CsvExpenseImporter`,
+  `JsonExpenseImporter`) and routes through `TransactionLifecycleCoordinator` (no DAO bypass). The
+  stale YAML's "no import pipeline" claim was wrong (classes live in `util/`, not `domain/import`).
+  Production import UI + a real roundtrip test remain OPEN (PR-IMP / PR-RT).
+
+### Batch PR-REG (this session) — UNBLOCKS THE EXPORT FEATURE
+Self-review: GREEN (coder + static-tester + adversarial reviewer; one test-fix loop applied).
+Branch: `master-refactor` at HEAD `3e426f11`. **No schema/migration change → no `connectedDebugAndroidTest` required this batch.**
+
+| ID | Title | Status after change |
+|----|-------|---------------------|
+| P12-REG-01 | Normal (unencrypted) export unconditionally denied by gate chain | FIXED — `generateExport()` now requests `PrivacyCapability.EXPENSE_EXPORT` (plain) / `EXPENSE_EXPORT_ENCRYPTED` (encrypted) instead of `RAWBACKUP_EXPORT`/`ENCRYPTED_BACKUP`. `ExportPrivacyGate` ALLOWS `EXPENSE_EXPORT`, so the production Export button works again in release + debug. `RAWBACKUP_EXPORT` stays owned solely by `ExportPrivacyGate` (raw-DB-backup flows) — no gate-ownership conflict introduced. |
+| P12-NEW-01 | Hardcoded `"default"` encryption password + plaintext-on-failure | FIXED — removed the `"default"` literal entirely. `generateExport(encryptExport, passphrase)` fails closed if encryption is requested with a null/blank passphrase (before touching the repo). Encryption now writes the hidden temp file **directly into the final `.enc` path** (plaintext never lands at a shareable path), and a single `finally` always deletes the plaintext temp (success, encryption failure, or any throw). `encryptExportFile` no longer deletes its input — the caller owns plaintext lifecycle. |
+| (test debt) | `ExportOptionsViewModelTest` was `@Ignore`d AND mocked the gate as blanket-`Allowed` | FIXED — un-`@Ignore`d; injects the test dispatcher (VM now takes `@IoDispatcher CoroutineDispatcher`); added regression guards driving the **real** `CompositePrivacyGate(ExportPrivacyGate(...))` (not a relaxed mock) so a future capability regression is caught. |
+
+### Files changed (PR-REG)
+Main source:
+- `ui/screens/export/ExportOptionsViewModel.kt` — capability switch (`EXPENSE_EXPORT`/`EXPENSE_EXPORT_ENCRYPTED`); `@IoDispatcher private val ioDispatcher: CoroutineDispatcher` ctor param (replaced all 4 `Dispatchers.IO`); `generateExport(encryptExport, passphrase)` fail-closed encryption (no `"default"`); encrypt-into-`.enc` + `finally` plaintext cleanup; KDoc updated.
+- `data/repository/ExportDataRepository.kt` — `encryptExportFile(plaintextFile, encryptedFile, password)` (3-arg; explicit dest; no longer deletes input); stale "planned encryption" KDoc replaced with the wired contract.
+Test source:
+- `ui/screens/export/ExportOptionsViewModelTest.kt` — un-`@Ignore`d; injects dispatcher; +`realCompositeGate()` helper; +`export succeeds through real composite gate with EXPENSE_EXPORT capability`; +`...even when raw backup is denied` (encryptedBackupEnabled=false); +`encrypted export with blank passphrase fails closed and writes no file`; +`encrypted export uses non-default passphrase and never leaves plaintext at final path`; +`encrypted export deletes plaintext when encryption fails`.
+Docs:
+- `docs/architecture/PRIVACY_UI_ARCHITECTURE.md` — Export Options capability row corrected `RAWBACKUP_EXPORT` → `EXPENSE_EXPORT`/`EXPENSE_EXPORT_ENCRYPTED`; added a P12-REG-01 note.
+
+### Static checks performed
+- Grep confirmed the ONLY `ExportOptionsViewModel(...)` construction site is the test (updated to the 9-arg ctor); the production `ExportOptionsScreen` uses `hiltViewModel()` (Hilt resolves `@IoDispatcher` via existing `DispatchersModule`).
+- Grep confirmed `encryptExportFile` has NO other caller besides the VM (signature change is safe).
+- Grep confirmed no stray `Dispatchers` symbol remains in the VM after the import removal.
+- `ExportPrivacyPolicyTest` (existing) already asserts `EXPENSE_EXPORT` is Allowed and `RAWBACKUP_EXPORT` is Denied — the VM change is consistent with it (not contradicted).
+
+### Known compile-risk areas (agent could not compile)
+- VM ctor gained `@IoDispatcher CoroutineDispatcher` — Hilt resolves it via the existing `DispatchersModule.providesIoDispatcher()`; verify `:app:assembleDebug` (KSP/Hilt), not just Kotlin compile. The sole non-Hilt construction site (the test) is updated.
+- `encryptExportFile` arity 2 → 3 + return type `File` → `Unit`. Only caller is the VM (updated). No interface/other-module reference.
+- Test uses MockK `slot`/`capture` and the real `CompositePrivacyGate` (suspend `check`/`logDecision` resolved via relaxed `PrivacyAuditLogger` mock + `runBlocking`).
+
+### Validation (human must run — NOT run by agent)
+- `:app:assembleDebug --stacktrace` — REQUIRED (Hilt graph: new `@IoDispatcher` ctor param).
+- `:app:testDebugUnitTest --tests "com.yourname.expensetracker.ui.screens.export.*" --tests "com.yourname.expensetracker.domain.privacy.ExportPrivacyPolicyTest" --stacktrace`
+- `:app:check --stacktrace`
+- `:app:connectedDebugAndroidTest` — NOT required (no schema/migration change this batch).
+
+### Open / not-yet-done (subsequent reconciled PRs — NOT in this batch)
+- PR-RT: real `export-writer → file → import → fresh-DB` roundtrip golden; rename the misleading
+  `CsvExportImportRoundtripGoldenTest` (only tests `CsvCellSanitizer`). (P12-P0-01 test half, P12-NEW-10)
+- PR-IMP: production Import UI (CSV + JSON) wired to `ImportCoordinator` (import is debug-only/CSV-only today). (P12-P0-01 UI half)
+- PR-FIELDS: schema v3 field coverage (business category/project/requiresReceipt, receipt links, ownership) + accounting effective-vs-gross amount + manifest. (P12-P1-06/07/08, P12-NEW-06)
+- PR-ACCT: SQL-aggregate accounting validation (stop full in-memory load) + close direct-exporter bypass. (P12-P1-02/NEW-04, P12-NEW-05)
+- PR-SNAP: true export snapshot (`export_snapshot_rows`) + manifest checksum — **migration + migration test** (GATED). (P12-P1-04)
+- PR-TZ: deterministic timezone policy. (P12-NEW-08, P12-P1-09 cosmetic)
+
+### Working-tree note
+Pipeline 12 PR-REG edits sit alongside UNRELATED uncommitted Pipeline 5/6/7/8/9/10 changes already
+in the working tree. Commit the Pipeline 12 files separately to keep attribution clean.
+
+### Batch PR-ACCT (partial — this session) — IIF formula-injection hardening (P12-CURRENT-015)
+Self-review: GREEN (coder + static-tester + reviewer). **No schema change → no `connectedDebugAndroidTest`.**
+Scope note: only the **formula-neutralization** half of PR-ACCT was done this session. The
+**SQL-aggregate accounting validation** half (P12-P1-02 / P12-NEW-04) and the **close-direct-exporter-bypass**
+half (P12-NEW-05) are deliberately HELD — they need DAO query changes whose WHERE clause must
+byte-match the streamed export rows (`isNotMine = 0`), which is too risky to land statically without
+a compile. Flagged for a focused follow-up.
+
+| ID | Title | Status after change |
+|----|-------|---------------------|
+| P12-CURRENT-015 | QuickBooks IIF formula hardening inconsistent | FIXED — `QuickBooksIIFExporter.writeExpense` now routes ALL IIF string fields (date, accounts, currency, memo, name) through the shared `CsvCellSanitizer.sanitizeIif()`, which neutralizes formula-leading characters (`=`,`+`,`-`,`@`) in addition to stripping tab/newline/CR. The private `escapeIifField()` (which stripped delimiters but left `=cmd|...` formula prefixes intact) is removed. Closes the formula-injection gap into QuickBooks/spreadsheet tools. |
+
+**Files changed (PR-ACCT):**
+- `domain/export/AccountingExporters.kt` — `QuickBooksIIFExporter.writeExpense` uses `CsvCellSanitizer.sanitizeIif` for every string field; removed private `escapeIifField`. (Xero/FreshBooks already used `CsvCellSanitizer.sanitize`.)
+- `domain/export/CsvEscapingTest.kt` — (a) **corrected pre-existing STALE assertions** that predated the Currency + conversion columns now emitted by the exporters: Xero/QuickBooks/FreshBooks header rows, the `csv export handles empty string` row (now `,,99.99,EUR,...`), the delimiter-injection field/tab counts (Xero 10 fields; TRNS 7 tabs). These were failing at HEAD before this change — NOT weakened, re-aligned to the real contract. (b) +3 new tests: `quickbooks iif neutralizes formula-leading merchant` / `...memo` / `...at-sign and minus formula prefixes`.
+
+**PR-ACCT compile-risk notes:**
+- `CsvCellSanitizer.sanitizeIif` is in the same package (`domain.export`) as `AccountingExporters` — no new import. `sanitizeIif` strips tab/newline/CR identically to the removed `escapeIifField`, so the existing IIF behavior tests (tab→space, newline→space, CR-removed, trim) still hold; only formula neutralization is added.
+- The `AccountingExportRepositoryTest` already asserts the NEW schema headers (e.g. the FreshBooks header at line 573), independently confirming the `CsvEscapingTest` header corrections were genuine stale-assertion fixes, not behavior changes.
+
+### Batch PR-DOCS (this session) — stale-contract / false-claim comment fixes (zero compile risk)
+Self-review: GREEN. KDoc/comment-only; no behavior change, no signature change.
+
+| ID | Title | Status after change |
+|----|-------|---------------------|
+| P12-CURRENT-003 | `ExportDataRepository` KDoc falsely claims stable snapshot consistency | FIXED — the `BAK-13` KDoc claimed the pager "anchors on a fixed set of expense IDs … preventing phantom reads", contradicting `DeterministicExpenseExportPager` (which is honest: "NOT a true atomic snapshot"). Rewritten to state the real keyset (date,id) ordering guarantees AND that it is NOT point-in-time snapshot-consistent (count vs streamed rows can diverge under concurrent writes), pointing to PR-SNAP as the not-yet-implemented fix. Prevents a future agent marking P12-P1-04 fixed incorrectly. |
+| P12-CURRENT-025 (timezone comment) | `AccountingExporters` header comment claims "UTC for dates" but code uses `ZoneId.systemDefault()` | FIXED (comment only) — replaced the misleading "UTC for dates" line with an explicit note that date columns are currently device-local (NOT UTC), non-deterministic across timezones, and that the deterministic timezone policy is the planned PR-TZ change (not yet applied). The actual behavior change remains PR-TZ. |
+
+**Files changed (PR-DOCS):**
+- `data/repository/ExportDataRepository.kt` — corrected the class-level `BAK-13` snapshot KDoc (now truthful about keyset-vs-snapshot).
+- `domain/export/AccountingExporters.kt` — corrected the top-of-file timezone policy comment (no longer claims UTC).
+- `docs/architecture/PRIVACY_UI_ARCHITECTURE.md` — (from PR-REG) Export Options capability row corrected.
+
+**PR-DOCS note:** P12-NEW-10 (rename the misleading `CsvExportImportRoundtripGoldenTest`, which
+only tests `CsvCellSanitizer`) was **NOT** done — a file rename means deleting a test file, which
+the orchestrator stop-rules reserve for explicit human approval, and the rename only delivers value
+paired with the real Robolectric roundtrip test in PR-RT (which needs a compile to author safely).
+Deferred to PR-RT.
+
+### Validation (human must run — NOT run by agent) — covers PR-REG + PR-ACCT
+- `:app:assembleDebug --stacktrace` — REQUIRED (Hilt graph: new `@IoDispatcher` ctor param on `ExportOptionsViewModel`).
+- `:app:testDebugUnitTest --tests "com.yourname.expensetracker.ui.screens.export.*" --tests "com.yourname.expensetracker.domain.export.*" --tests "com.yourname.expensetracker.domain.privacy.ExportPrivacyPolicyTest" --tests "com.yourname.expensetracker.data.repository.AccountingExportRepositoryTest" --stacktrace`
+- `:app:check --stacktrace`
+- `:app:connectedDebugAndroidTest` — NOT required (no schema/migration change in PR-REG or PR-ACCT).
+
+### Remaining Pipeline 12 work (reconciled order — NOT done; flagged for next session)
+- PR-RT (real export→import→fresh-DB roundtrip golden + rename misleading `CsvExportImportRoundtripGoldenTest`) — P12-P0-01 test half, P12-NEW-10.
+- PR-IMP (production Import UI for CSV + JSON via `ImportCoordinator`) — P12-P0-01 UI half.
+- PR-FIELDS (schema v3 field coverage: business category/project/requiresReceipt, receipt links, ownership; accounting effective-vs-gross amount; manifest) — P12-P1-06/07/08, P12-NEW-06.
+- PR-ACCT remainder (SQL-aggregate validation + close direct-exporter bypass) — P12-P1-02/NEW-04, P12-NEW-05. **HELD: DAO WHERE-clause must match streamed rows; needs a compile.**
+- PR-SNAP (true `export_snapshot_rows` + manifest checksum) — P12-P1-04. **GATED: Room migration + migration test.**
+- PR-TZ (deterministic timezone policy) — P12-NEW-08, P12-P1-09 (cosmetic).

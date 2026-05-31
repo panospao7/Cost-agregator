@@ -379,6 +379,10 @@ class EmailReceiptIngestionService(
     /**
      * Batch process multiple email receipts.
      * Useful for initial import or backfill.
+     *
+     * Accepts the canonical domain [EmailReceiptData] (the same model the
+     * coordinator consumes). Only the transport fields (body/from/subject/
+     * receivedAt/messageId) are read here; financial fields are re-parsed.
      */
     suspend fun processBatch(
         emails: List<EmailReceiptData>
@@ -394,14 +398,3 @@ class EmailReceiptIngestionService(
         }
     }
 }
-
-/**
- * Data class for batch email processing.
- */
-data class EmailReceiptData(
-    val body: String,
-    val sender: String,
-    val subject: String,
-    val receivedAt: Long,
-    val messageId: String
-)
