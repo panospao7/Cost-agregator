@@ -11,8 +11,8 @@ import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import timber.log.Timber
 import java.util.Locale
 import javax.inject.Inject
@@ -73,7 +73,8 @@ class EmailReceiptIngestionService @Inject constructor(
         hashingService = com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService()
     )
 
-    private val ingestionMutex = Mutex()
+    // P11-PR1 (NEW-P11-001): Semaphore allows bounded concurrency instead of full serialization
+    private val ingestionSemaphore = Semaphore(3)
 
     // Provider parsers
     private val amazonParser = AmazonReceiptParser()
@@ -100,7 +101,7 @@ class EmailReceiptIngestionService @Inject constructor(
         subject: String,
         receivedAt: Long,
         messageId: String
-    ): EmailReceiptResult = ingestionMutex.withLock {
+    ): EmailReceiptResult = ingestionSemaphore.withPermit {
         val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
         try {
             diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
@@ -128,7 +129,7 @@ class EmailReceiptIngestionService @Inject constructor(
                     isTerminal = true
                 ))
             } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
-            return@withLock EmailReceiptResult.ParseError(e.message ?: "Database writes blocked during restore")
+            return@withPermit EmailReceiptResult.ParseError(e.message ?: "Database writes blocked during restore")
         }
         try {
             // Step 1: Detect provider
@@ -191,7 +192,7 @@ class EmailReceiptIngestionService @Inject constructor(
             )
             // PRIV-FB58-01: fail closed if HMAC fails — never fall back to plaintext messageId
             val messageIdHash = hashingService.hmacSha256Prefix(messageId, "emailMessageId")
-                ?: return@withLock EmailReceiptResult.ParseError("Failed to hash messageId — cannot proceed safely")
+                ?: return@withPermit EmailReceiptResult.ParseError("Failed to hash messageId — cannot proceed safely")
 
             val coordinatorEmailData = EmailReceiptData(
                 messageId = messageIdHash,   // pass HMAC hash, not plaintext

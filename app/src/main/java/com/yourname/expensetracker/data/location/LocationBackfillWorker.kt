@@ -156,6 +156,10 @@ class LocationBackfillWorker @AssistedInject constructor(
             }
 
             Log.d(TAG, "Backfill run complete: resolved=$resolved skipped=$skipped failed=$failed shouldRetry=$shouldRetry")
+            // P9-PR2 (NEW-P9-009): If stopped mid-loop, signal retry instead of misleading SUCCESS
+            if (isStopped) {
+                throw RetryableWorkerException("Worker stopped mid-backfill, will retry remaining")
+            }
             if (shouldRetry) {
                 throw RetryableWorkerException("Some backfill resolutions failed, will retry")
             }

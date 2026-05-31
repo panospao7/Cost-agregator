@@ -446,7 +446,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchases = expenses.filter {
             it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine
         }
-        val deposits = expenses.filter { it.transactionType == DashboardTransactionType.DEPOSIT }
+        // P5-PR2 (NEW-P5-003): Exclude not-mine shared expenses from deposit totals
+        val deposits = expenses.filter { it.transactionType == DashboardTransactionType.DEPOSIT && !it.isNotMine }
 
         val todayPurchases = purchases.filter { it.date >= todayStart }
         val calendar = java.util.Calendar.getInstance().apply { timeInMillis = now }

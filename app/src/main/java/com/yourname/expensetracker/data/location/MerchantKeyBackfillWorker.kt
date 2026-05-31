@@ -110,6 +110,10 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
             }
 
             Log.d(TAG, "Merchant-key backfill complete: updated $totalUpdated rows")
+            // P9-PR2 (NEW-P9-010): If stopped mid-loop, signal retry instead of misleading SUCCESS
+            if (isStopped) {
+                throw RetryableWorkerException("Worker stopped mid-backfill, will retry remaining")
+            }
         }
 
         return guardResult.toWorkerResult()

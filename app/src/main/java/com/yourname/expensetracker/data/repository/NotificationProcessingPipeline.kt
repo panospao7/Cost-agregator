@@ -56,9 +56,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
@@ -165,7 +163,9 @@ class NotificationProcessingPipeline @Inject constructor(
     private val moneySignalDetector: com.yourname.expensetracker.domain.notification.money.NotificationMoneySignalDetector,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
-    private val processMutex = Mutex()
+    // P1-PR5 (NEW-P1-008): Semaphore allows bounded concurrency instead of full serialization.
+    // classifier.initialize() is idempotent and thread-safe (uses internal synchronization).
+    private val processSemaphore = Semaphore(4)
     /**
      * App-scoped background enrichment for recommendations.
      * Ownership is the application lifecycle (not per-screen/request).
@@ -182,7 +182,7 @@ class NotificationProcessingPipeline @Inject constructor(
                         correlationId: String? = null,
                         persistenceContext: NotificationPersistenceContext? = null): NotificationPipelineOutcome {
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.process")
-        processMutex.withLock {
+        processSemaphore.withPermit {
             // DDL-F876-08: generate cid OUTSIDE try so the exception catch path reuses it
             val cid = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
             return try {
@@ -210,7 +210,7 @@ class NotificationProcessingPipeline @Inject constructor(
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.processBatch")
         if (notifications.isEmpty()) return emptyList()
         val results = mutableListOf<NotificationPipelineOutcome>()
-        processMutex.withLock {
+        processSemaphore.withPermit {
             classifier.initialize()
             notifications.forEach { notification ->
                 try {
