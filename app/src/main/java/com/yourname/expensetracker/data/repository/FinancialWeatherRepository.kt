@@ -109,7 +109,10 @@ class FinancialWeatherRepository @Inject constructor(
                 forecast.components.confirmedOccurrences
             ),
             totalRecurringCount = assembledInput.recurringPatterns.size,
-            details = narrative.details
+            details = narrative.details,
+            isPartial = forecast.isPartial,
+            qualityWarnings = forecast.qualityWarnings,
+            excludedCount = forecast.excludedCount
         )
     }.catch { e ->
         Timber.e(e, "Error generating weather")

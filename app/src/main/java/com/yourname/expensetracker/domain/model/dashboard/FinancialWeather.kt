@@ -27,5 +27,8 @@ data class FinancialWeather(
     val projectedSpendingPoints: List<Double> = emptyList(),
     val upcomingItems: List<UpcomingItem> = emptyList(),
     val totalRecurringCount: Int = 0,
-    val details: List<NarrativeSection> = emptyList()
+    val details: List<NarrativeSection> = emptyList(),
+    val isPartial: Boolean = false,
+    val qualityWarnings: List<String> = emptyList(),
+    val excludedCount: Int = 0
 )

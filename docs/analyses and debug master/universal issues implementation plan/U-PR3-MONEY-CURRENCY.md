@@ -5,6 +5,7 @@
 **Issues:** U-MONEY-01 (P1), U-MONEY-02 (P1), U-MONEY-03 (P2)  
 **Affected Pipelines:** 5 (Forecast/Weather), 6 (Stress Forecast), 12 (Cash Flow)  
 **Date:** 2026-05-31  
+**Status:** ⚠ PARTIAL (U-MONEY-01 ✅, U-MONEY-02 ✅, U-MONEY-03 deferred P2)
 
 ---
 

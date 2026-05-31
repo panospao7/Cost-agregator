@@ -35,9 +35,9 @@
 |----|-----|-------|-----------|-------|-----|
 | U-CANCEL-01 | P1 | CancellationException swallowed in broad catch blocks | 1,3,4,6,7,8,9,10,11 | Universal | U-PR1 ✅ |
 | U-TOCTOU-01 | P1 | beforeSnapshot captured outside DB transaction in all update methods | 2 (consumed by all) | Engine | U-PR2 ✅ |
-| U-MONEY-01 | P1 | Mixed-currency arithmetic without conversion | 5,6,12 | Universal | U-PR3 |
-| U-MONEY-02 | P1 | MoneyAggregate quality/warnings dropped by consumers | 5,6,12 | Universal | U-PR3 |
-| U-MONEY-03 | P2 | Silent EUR fallback on homeCurrency resolution failure | 5,6,12 | Universal | U-PR3 |
+| U-MONEY-01 | P1 | Mixed-currency arithmetic without conversion | 5,6,12 | Universal | U-PR3 ✅ |
+| U-MONEY-02 | P1 | MoneyAggregate quality/warnings dropped by consumers | 5,6,12 | Universal | U-PR3 ✅ |
+| U-MONEY-03 | P2 | Silent EUR fallback on homeCurrency resolution failure | 5,6,12 | Universal | U-PR3 ⏭ |
 | U-BARRIER-01 | P0 | Maintenance mode not exited on early-return/failure paths | 7 (affects all) | Universal | U-PR4 |
 | U-BARRIER-02 | P1 | DatabaseWriteBarrier not enforced consistently across all writers | 1,2,3,4,6,7,9,10 | Universal | U-PR4 |
 | U-BARRIER-03 | P1 | Restore-blocked operations classified as FAILED not SKIPPED | 9 (affects all workers) | Universal | U-PR4 |

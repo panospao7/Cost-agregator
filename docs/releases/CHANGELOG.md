@@ -16,6 +16,17 @@
   - Audit trail now guaranteed consistent: `beforeSnapshot[N+1] == afterSnapshot[N]`
   - No API signature changes; all existing callers unaffected
 
+### Bug Fixes — Multi-Currency Arithmetic (U-PR3)
+
+- **U-MONEY-01:** SynthesisEngine and FinancialStressForecastEngine now convert recurring pattern amounts to displayCurrency before summing
+  - CurrencyConverter injected into SynthesisEngine
+  - confirmedOccurrences, recurringPatterns (committed + likely + monthly) all converted
+  - expandDetectedPatterns in stress forecast now converts each pattern
+- **U-MONEY-02:** Quality metadata (isPartial, qualityWarnings, excludedCount) surfaced on FinancialWeather and StressForecastResult
+  - FinancialWeatherRepository maps forecast quality to FinancialWeather
+  - StressForecastResult populated from normalizer quality
+- **U-MONEY-03:** EUR fallback elimination — deferred (P2, callers already pass explicit currency)
+
 ## [2.1.0] - 2026-04-04
 ### UI/UX Improvements
 

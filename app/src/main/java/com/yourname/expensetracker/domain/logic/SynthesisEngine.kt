@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimeProvider
 
 import timber.log.Timber
@@ -65,13 +66,23 @@ import javax.inject.Singleton
 class SynthesisEngine @Inject constructor(
     private val timeProvider: TimeProvider,
     /** @suppress Optional — when present, occurrences replace ad-hoc recurrence expansion in block-party calendar. */
-    private val recurringOccurrenceDao: RecurringOccurrenceDao? = null
+    private val recurringOccurrenceDao: RecurringOccurrenceDao? = null,
+    private val currencyConverter: CurrencyConverter
 ) {
     companion object {
         private const val TAG = "SynthesisEngine"
         private const val LIKELY_EXPENSE_WEIGHT = 0.7 // 70% weight for LIKELY planned expenses - middle ground
         private const val BIWEEKLY_CYCLE_DAYS = 14
         private const val BIWEEKLY_TOLERANCE_DAYS = 2
+    }
+
+    /**
+     * Converts an amount from [fromCurrency] to [toCurrency].
+     * Returns null if conversion fails (caller should exclude and track).
+     */
+    private suspend fun convertAmount(amount: Double, fromCurrency: String, toCurrency: String): Double? {
+        if (fromCurrency.equals(toCurrency, ignoreCase = true)) return amount
+        return currencyConverter.convert(amount, fromCurrency, toCurrency)?.convertedAmount
     }
 
     /**
@@ -87,7 +98,7 @@ class SynthesisEngine @Inject constructor(
      * The [ForecastInputAssembler.mapPlannedExpenses] also filters at the
      * mapping boundary as an additional safety net.
      */
-    fun synthesize(
+    suspend fun synthesize(
         input: ForecastInputAssembler.ForecastInput
     ): FinancialForecast {
         val forecast = synthesize(
@@ -97,7 +108,8 @@ class SynthesisEngine @Inject constructor(
             savingsGoals = input.savingsGoals,
             budgetStatuses = input.budgetStatuses,
             spendingPace = input.spendingPace,
-            confirmedOccurrences = input.confirmedOccurrences
+            confirmedOccurrences = input.confirmedOccurrences,
+            displayCurrency = input.displayCurrency
         )
         val finalConfidence = (forecast.confidence - input.dataQuality.confidencePenalty).coerceIn(0.0, 1.0)
         // P6-CURRENT-015: Surface input data-quality on the domain model so the UI/agents can
@@ -116,17 +128,18 @@ class SynthesisEngine @Inject constructor(
         )
     }
 
-    fun synthesize(
+    suspend fun synthesize(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
         savingsGoals: List<SavingsGoal>,
         budgetStatuses: List<BudgetStatusSnapshot>,
         spendingPace: SpendingPace,
-        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList()
+        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList(),
+        displayCurrency: String = ""
     ): FinancialForecast {
         return try {
-            synthesizeInternal(pastSumDaily, recurringPatterns, plannedExpenses, savingsGoals, budgetStatuses, spendingPace, confirmedOccurrences)
+            synthesizeInternal(pastSumDaily, recurringPatterns, plannedExpenses, savingsGoals, budgetStatuses, spendingPace, confirmedOccurrences, displayCurrency)
         } catch (e: Exception) {
             val fallbackNow = timeProvider.now()
             Timber.e(e, "Error in synthesize")
@@ -152,14 +165,15 @@ class SynthesisEngine @Inject constructor(
         }
     }
 
-    private fun synthesizeInternal(
+    private suspend fun synthesizeInternal(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
         savingsGoals: List<SavingsGoal>,
         budgetStatuses: List<BudgetStatusSnapshot>,
         spendingPace: SpendingPace,
-        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList()
+        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList(),
+        displayCurrency: String = ""
     ): FinancialForecast {
         val now = timeProvider.now()
         val sanitizedPastSumDaily = sanitizePastSumDaily(pastSumDaily)
@@ -191,14 +205,18 @@ class SynthesisEngine @Inject constructor(
         val committedUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
             confirmedOccurrences
                 .filter { it.dueDate >= startOfToday && it.dueDate < endOfMonthExclusive }
-                .sumOf { it.expectedAmount }
+                .mapNotNull { occ ->
+                    if (displayCurrency.isBlank()) occ.expectedAmount
+                    else convertAmount(occ.expectedAmount, occ.expectedCurrency, displayCurrency)
+                }
+                .sum()
         } else {
-            // Fallback: single-date pattern for committed recurring expenses.
-            // Without confirmed occurrences we cannot estimate WEEKLY/BIWEEKLY
-            // counts, so each matching pattern contributes once.
             recurringPatterns.filter {
                 it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive
-            }.sumOf { it.averageAmount }
+            }.mapNotNull { p ->
+                if (displayCurrency.isBlank()) p.averageAmount
+                else convertAmount(p.averageAmount, p.currency, displayCurrency)
+            }.sum()
         }
         
         // Group by currency to avoid mixing different currencies in the sum
@@ -220,19 +238,23 @@ class SynthesisEngine @Inject constructor(
         // truth for multiple-in-month repetitions).
         val detectedPatterns = recurringPatterns.filter { it.id == null }
         val likelyUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
-            // Manual rules already counted via confirmed occurrences above
             detectedPatterns.filter {
                 it.confidence >= 0.70f && it.confidence < 0.90f &&
                     it.nextExpectedDate >= startOfToday &&
                     it.nextExpectedDate < endOfMonthExclusive
-            }.sumOf { it.averageAmount }
+            }.mapNotNull { p ->
+                if (displayCurrency.isBlank()) p.averageAmount
+                else convertAmount(p.averageAmount, p.currency, displayCurrency)
+            }.sum()
         } else {
-            // No occurrences available — fall back to ALL patterns
             recurringPatterns.filter {
                 it.confidence >= 0.70f && it.confidence < 0.90f &&
                     it.nextExpectedDate >= startOfToday &&
                     it.nextExpectedDate < endOfMonthExclusive
-            }.sumOf { it.averageAmount }
+            }.mapNotNull { p ->
+                if (displayCurrency.isBlank()) p.averageAmount
+                else convertAmount(p.averageAmount, p.currency, displayCurrency)
+            }.sum()
         }
         
         // Group by currency to avoid mixing different currencies in the sum
@@ -244,12 +266,16 @@ class SynthesisEngine @Inject constructor(
         }
         val likelyPlanned = likelyPlannedByCurrency.values.sum() * LIKELY_EXPENSE_WEIGHT
         
-        val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
+        val monthlyRecurringTotal = recurringPatterns.mapNotNull { pattern ->
             when (pattern.frequency) {
-                RecurrenceFrequency.IRREGULAR -> 0.0
-                else -> RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
+                RecurrenceFrequency.IRREGULAR -> null
+                else -> {
+                    val monthly = RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
+                    if (displayCurrency.isBlank()) monthly
+                    else convertAmount(monthly, pattern.currency, displayCurrency)
+                }
             }
-        }
+        }.sum()
 
         val typicalDailyDiscretionary = spendingPace.averageMonthlyTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth } 
             ?: (spendingPace.previousMonthTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth })

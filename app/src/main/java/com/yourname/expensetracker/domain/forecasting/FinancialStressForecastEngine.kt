@@ -158,7 +158,10 @@ class FinancialStressForecastEngine @Inject constructor(
                 earliestCrunchDate = earliestCrunchDate,
                 recommendations = recommendations,
                 displayCurrency = resolvedDisplayCurrency,
-                mode = StressForecastMode.NET_CASHFLOW_ESTIMATE
+                mode = StressForecastMode.NET_CASHFLOW_ESTIMATE,
+                isPartial = normExpenses.hasWarnings || normDeposits.hasWarnings,
+                qualityWarnings = (normExpenses.warnings + normDeposits.warnings).map { it.message },
+                excludedCount = normExpenses.excludedCount + normDeposits.excludedCount
             )
             
         } catch (e: Exception) {
@@ -383,14 +386,14 @@ class FinancialStressForecastEngine @Inject constructor(
                 val failedPatterns = manualPatterns.filter { it.id in failedRuleIds }
                 if (failedPatterns.isNotEmpty()) {
                     Timber.w("$TAG: Falling back to ad-hoc expansion for %d failed rule(s)", failedRuleIds.size)
-                    totalOutflows += expandDetectedPatterns(failedPatterns, startDate, endDate)
+                    totalOutflows += expandDetectedPatterns(failedPatterns, startDate, endDate, displayCurrency)
                 }
             }
         }
 
         // ── Part 2: Detected-only patterns — simplified ad-hoc fallback ──────
         if (detectedPatterns.isNotEmpty()) {
-            totalOutflows += expandDetectedPatterns(detectedPatterns, startDate, endDate)
+            totalOutflows += expandDetectedPatterns(detectedPatterns, startDate, endDate, displayCurrency)
         }
 
         return RecurringOutflowResult(total = totalOutflows, materializedReadBlocked = materializedReadBlocked)
@@ -401,17 +404,21 @@ class FinancialStressForecastEngine @Inject constructor(
      * do not have a corresponding manual rule and therefore cannot use the
      * [RecurringLifecycleCoordinator].
      */
-    private fun expandDetectedPatterns(
+    private suspend fun expandDetectedPatterns(
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
         startDate: Long,
-        endDate: Long
+        endDate: Long,
+        displayCurrency: String = ""
     ): Double {
         var total = 0.0
         for (pattern in patterns) {
             var nextDate = pattern.nextExpectedDate
             if (nextDate > endDate) continue
             while (nextDate in startDate..endDate) {
-                total += pattern.averageAmount
+                val converted = if (displayCurrency.isBlank()) pattern.averageAmount
+                    else currencyConverter.convert(pattern.averageAmount, pattern.currency, displayCurrency)?.convertedAmount
+                        ?: pattern.averageAmount
+                total += converted
                 nextDate = when (pattern.frequency) {
                     RecurrenceFrequency.WEEKLY -> nextDate + (7 * TimePeriodUtils.DAY_IN_MILLIS)
                     RecurrenceFrequency.BIWEEKLY -> nextDate + (14 * TimePeriodUtils.DAY_IN_MILLIS)
@@ -765,7 +772,10 @@ data class StressForecastResult(
     val earliestCrunchDate: Long?,
     val recommendations: List<String>,
     val displayCurrency: String = "",
-    val mode: StressForecastMode = StressForecastMode.NET_CASHFLOW_ESTIMATE
+    val mode: StressForecastMode = StressForecastMode.NET_CASHFLOW_ESTIMATE,
+    val isPartial: Boolean = false,
+    val qualityWarnings: List<String> = emptyList(),
+    val excludedCount: Int = 0
 )
 
 /**
