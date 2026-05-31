@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.provenance
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -35,7 +36,8 @@ class SourceLinkBackfillWorker @Inject constructor(
     private val rawNotificationDao: RawNotificationDao,
     private val emailReceiptDao: EmailReceiptDao,
     private val receiptExpenseLinkDao: ReceiptExpenseLinkDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
 
     data class BackfillProgress(
@@ -52,6 +54,7 @@ class SourceLinkBackfillWorker @Inject constructor(
     suspend fun runBackfill(
         onProgress: (BackfillProgress) -> Unit = {}
     ): BackfillProgress {
+        writeBarrier.checkWritesAllowed("SourceLinkBackfillWorker.runBackfill")
         var linksCreated = 0
         var linksSkipped = 0
         var errors = 0

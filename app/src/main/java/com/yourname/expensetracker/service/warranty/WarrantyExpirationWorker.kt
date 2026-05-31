@@ -68,26 +68,22 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val guardResult = executionGuard.runGuarded(
+        val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "warranty_expiration_check",
                 requiresNotificationPermission = true,
                 allowDuringBackupExport = false
             )
-        ) {
+        ) { ctx ->
             try {
                 Timber.d("Checking for expiring warranties...")
-                // WRK-16/N1: observe maintenance drain + write barrier before the DB
-                // reconcile so a backup/restore can stop this worker promptly.
-                executionGuard.checkpoint("warranty_reconcile")
+                ctx.checkpoint("warranty_reconcile")
                 val reconciliationResult = warrantyRepository.reconcileExpiredItems(timeProvider.now())
+                ctx.addRowsUpdated(reconciliationResult.expiredWarrantyCount + reconciliationResult.expiredReturnWindowCount)
 
                 val now = timeProvider.now()
-                // DAY_IN_MILLIS constant — acceptable TTL usage (not calendar math)
                 val oneDayMs = 86_400_000L
 
-                // Recover deliveries that were claimed but never completed (e.g. the
-                // worker crashed after claiming). Only genuinely-old claims are reset.
                 deliveryDao.recoverStaleClaimed(
                     staleClaimThreshold = now - STALE_CLAIM_MS,
                     now = now
@@ -95,9 +91,10 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 
                 // Check warranties expiring in 7 days
                 val expiringIn7Days = warrantyRepository.getWarrantiesExpiringSoon(7)
+                ctx.addRowsScanned(expiringIn7Days.size)
                 expiringIn7Days.forEach { warranty ->
-                    executionGuard.checkpoint("warranty_notify_7d")
-                    deliverReminder(
+                    ctx.checkpoint("warranty_notify_7d")
+                    val sent = deliverReminder(
                         warranty = warranty,
                         windowDays = 7,
                         now = now,
@@ -108,17 +105,17 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                             warranty.merchantName
                         )
                     )
+                    if (sent) ctx.addNotificationsSent()
                 }
 
-                // Check warranties expiring in 30 days (less urgent).
-                // Use ID-based filtering to correctly exclude warranties already
-                // covered by the 7-day window (fixes fragile object-equality check).
+                // Check warranties expiring in 30 days
                 val sevenDayIds = expiringIn7Days.map { it.id }.toSet()
                 val expiringIn30Days = warrantyRepository.getWarrantiesExpiringSoon(30)
                     .filter { it.id !in sevenDayIds }
+                ctx.addRowsScanned(expiringIn30Days.size)
                 expiringIn30Days.forEach { warranty ->
-                    executionGuard.checkpoint("warranty_notify_30d")
-                    deliverReminder(
+                    ctx.checkpoint("warranty_notify_30d")
+                    val sent = deliverReminder(
                         warranty = warranty,
                         windowDays = 30,
                         now = now,
@@ -128,9 +125,10 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                             warranty.productName
                         )
                     )
+                    if (sent) ctx.addNotificationsSent()
                 }
 
-                // ── Prune deliveries whose expiry is older than 90 days ───────
+                // Prune deliveries whose expiry is older than 90 days
                 deliveryDao.deleteOlderThan(now - 90L * oneDayMs)
 
                 Timber.d(
@@ -162,7 +160,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
         now: Long,
         title: String,
         message: String
-    ) {
+    ): Boolean {
         val expiryDate = warranty.warrantyEndDate
 
         // 1. Seed a SCHEDULED row idempotently (no-op if it already exists).
@@ -186,9 +184,9 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             expiryDate = expiryDate,
             now = now
         )
-        if (claimed != 1) return
+        if (claimed != 1) return false
 
-        val row = deliveryDao.getByKey(warranty.id, windowDays, expiryDate) ?: return
+        val row = deliveryDao.getByKey(warranty.id, windowDays, expiryDate) ?: return false
 
         // 3. Send and record the outcome. Mark SENT only when delivery actually succeeds.
         val notificationId = NotificationIdGenerator.forWarranty(warranty.id, windowDays)
@@ -200,8 +198,10 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 
         if (deliveryResult == NotificationService.DeliveryResult.DELIVERED) {
             deliveryDao.markSentFromClaimed(row.id, notificationId, now)
+            return true
         } else {
             deliveryDao.markFailed(row.id, reason = "notification_not_delivered", now = now)
+            return false
         }
     }
 

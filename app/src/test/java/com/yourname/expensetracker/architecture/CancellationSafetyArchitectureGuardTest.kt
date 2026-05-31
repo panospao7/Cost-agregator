@@ -155,7 +155,6 @@ class CancellationSafetyArchitectureGuardTest {
             "MutationState.kt",
             "DismissReminderReceiver.kt",
             "SnoozeReminderReceiver.kt",
-            "BudgetMonitor.kt",
             "InsightsEngine.kt",
             "TransactionLifecycleCoordinator.kt",
         )
@@ -251,9 +250,48 @@ class CancellationSafetyArchitectureGuardTest {
     /** Matches coroutine launch patterns: `scope.launch {`, `launch {`, `async {`. */
     private val coroutineLaunchPattern = Regex("""\b(launch|async)\s*(\([^)]*\))?\s*\{""")
 
-    // NOTE: Coroutine launch/async block scanning is deferred to a follow-up PR.
-    // ~120 ViewModel/UI catches need fixing first. The suspend-fun guard above
-    // covers all critical pipeline code.
+    /**
+     * Pipeline-critical files that must NOT have unguarded catches in launch blocks.
+     * ViewModel/UI files are excluded (viewModelScope auto-cancels).
+     */
+    private val LAUNCH_CRITICAL_FILES = setOf(
+        "BudgetMonitor.kt",
+        "TransactionLifecycleCoordinator.kt",
+        "ReceiptLifecycleCoordinator.kt",
+        "NotificationCaptureService.kt",
+        "WorkerExecutionGuard.kt"
+    )
+
+    @Test
+    fun `launch blocks in pipeline-critical files rethrow CancellationException`() {
+        val violations = mutableListOf<String>()
+
+        for (fileName in LAUNCH_CRITICAL_FILES) {
+            val file = sourceRoot.walkTopDown()
+                .filter { it.isFile && it.name == fileName }
+                .firstOrNull() ?: continue
+
+            val content = file.readText()
+            val launchRanges = findCoroutineLaunchBodyRanges(content)
+            if (launchRanges.isEmpty()) continue
+
+            for (match in broadCatchPattern.findAll(content)) {
+                val catchPos = match.range.first
+                if (launchRanges.none { catchPos in it }) continue
+
+                val catchBody = extractCatchBlockBody(content, match.range.last) ?: continue
+                if (!ceGuardEvidence.containsMatchIn(catchBody)) {
+                    val lineNum = content.substring(0, catchPos).count { it == '\n' } + 1
+                    violations.add("$fileName:$lineNum — broad catch in launch/async without CE guard")
+                }
+            }
+        }
+
+        assertTrue(
+            "CANCEL-01 launch-block violations:\n${violations.joinToString("\n")}",
+            violations.isEmpty()
+        )
+    }
 
     /**
      * Returns character ranges of coroutine launch/async block bodies.

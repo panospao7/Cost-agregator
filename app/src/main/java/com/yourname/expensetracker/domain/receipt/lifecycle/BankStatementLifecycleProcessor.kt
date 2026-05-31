@@ -273,7 +273,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 imagePath = ocrResult.savedImagePath,
                 rawOcrText = RawContentSanitizer.sanitizeRawOcr(
                     ocrResult.fullText,
-                    privacySettingsRepository.getSettings().rawOcrStorageMode
+                    privacySettingsRepository.getSettings().rawBankStatementStorageMode
                 ),
                 parsedTotal = null, // varies per transaction
                 parsedMerchant = "Bank Statement",

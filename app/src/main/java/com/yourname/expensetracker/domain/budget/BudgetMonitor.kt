@@ -167,6 +167,7 @@ class BudgetMonitor @Inject constructor(
                         exception = lastException
                     ))
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "Failed to write CHECK_FAILED diagnostic event")
                 }
             }
@@ -378,6 +379,7 @@ class BudgetMonitor @Inject constructor(
                         .build()
                 ))
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "Failed to write budget-monitor diagnostic event (stage=%s)", stage)
             }
         }
