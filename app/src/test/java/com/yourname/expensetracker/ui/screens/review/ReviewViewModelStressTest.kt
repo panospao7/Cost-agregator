@@ -118,7 +118,8 @@ class ReviewViewModelStressTest {
             aiArtifactRepository,
             aiSettingsRepository,
             aiRuntimeDiagnostics,
-            receiptLifecycleCoordinator
+            receiptLifecycleCoordinator,
+            receiptDebugExporter = mockk(relaxed = true)
         )
     }
 
@@ -424,6 +425,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 10L)
@@ -482,6 +484,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 11L)
@@ -520,6 +523,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 20L)
@@ -556,6 +560,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 30L)
@@ -605,6 +610,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         // Two rapid calls before any coroutine advancement
@@ -680,6 +686,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -742,6 +749,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -811,6 +819,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -873,6 +882,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -912,6 +922,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -973,6 +984,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -1052,6 +1064,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -1157,6 +1170,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -1210,6 +1224,7 @@ class ReviewViewModelStressTest {
             aiSettingsRepository,
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")

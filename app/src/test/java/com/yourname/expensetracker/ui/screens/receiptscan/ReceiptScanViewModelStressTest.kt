@@ -16,6 +16,8 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
@@ -91,6 +93,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns System.currentTimeMillis()
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { aiSettingsRepository.settings() } returns settingsFlow
         every { receiptRepository.createTempPhotoUri() } returns Uri.parse("content://test/photo.jpg")
 

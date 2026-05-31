@@ -87,6 +87,9 @@ class BudgetViewModel @Inject constructor(
             .flatMapLatest { budgetRepository.getBudgetStatuses() }
             .mapLatest { statuses ->
                 statuses.map { status ->
+                    // P6-CURRENT-002: BudgetRepository now populates adjustedSpendBreakdown so the
+                    // monitor and UI agree. Reuse it when present; only compute as a fallback.
+                    status.adjustedSpendBreakdown?.let { return@map status }
                     status.copy(adjustedSpendBreakdown = calculateAdjustedSpend(status))
                 }
             }

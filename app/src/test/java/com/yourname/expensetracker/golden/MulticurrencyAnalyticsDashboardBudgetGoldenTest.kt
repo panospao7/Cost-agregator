@@ -8,7 +8,10 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.testfixtures.golden.GoldenScenarioVerifier
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -49,6 +52,7 @@ class MulticurrencyAnalyticsDashboardBudgetGoldenTest : GoldenTestBase() {
 
         currencySettings = mockk<CurrencySettingsRepository>().also {
             every { it.homeCurrency() } returns flowOf("EUR")
+            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
 
         val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())

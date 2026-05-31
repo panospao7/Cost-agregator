@@ -5,7 +5,11 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
@@ -16,6 +20,9 @@ import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -67,11 +74,32 @@ class BudgetAutopilotEngineTest {
         // Default: no spending data for any category
         coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(any(), any(), any()) } returns emptyList()
         coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns emptyList()
+        // Default stubs for the overall-budget path (uses real MultiCurrencyRepository)
+        coEvery { expenseDao.getAllMonthlyTotalsBetweenByCurrency(any(), any()) } returns emptyList()
+
+        val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
+        coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
+            val amounts: List<Pair<Double, String>> = firstArg()
+            val target: String = secondArg()
+            MultiConversionAggregate(amounts.sumOf { it.first }, target, emptyList())
+        }
+
+        val sharedCurrencySettingsRepo = mockk<CurrencySettingsRepository>(relaxed = true).also {
+            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+            every { it.homeCurrency() } returns flowOf("EUR")
+        }
+
+        val multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = sharedCurrencySettingsRepo
+        )
 
         engine = BudgetAutopilotEngine(
             budgetRepository = budgetRepository,
-            multiCurrencyRepository = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository,
+            currencySettingsRepository = sharedCurrencySettingsRepo,
             categoryRepository = categoryRepository,
             insightsEngine = insightsEngine,
             spendingPaceCalculator = spendingPaceCalculator,
@@ -184,11 +212,13 @@ class BudgetAutopilotEngineTest {
             budget(id = 2L, categoryId = 1L, amount = 200.0)
         )
 
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 1000.0, 10),
-            MonthlySpendingTotal("2026-02", 1000.0, 10),
-            MonthlySpendingTotal("2026-03", 1000.0, 10)
+        // Overall budget (categoryId=null) goes through MultiCurrencyRepository → getAllMonthlyTotalsBetweenByCurrency
+        coEvery { expenseDao.getAllMonthlyTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            MonthlyCurrencyTotal("2026-01", "EUR", 1000.0, 10),
+            MonthlyCurrencyTotal("2026-02", "EUR", 1000.0, 10),
+            MonthlyCurrencyTotal("2026-03", "EUR", 1000.0, 10)
         )
+        // Category budget uses reflection to access expenseDao directly
         coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
             MonthlySpendingTotal("2026-01", 200.0, 2),
             MonthlySpendingTotal("2026-02", 200.0, 2),
@@ -336,7 +366,10 @@ class BudgetAutopilotEngineTest {
             ioDispatcher = Dispatchers.Unconfined,
             analyticsCurrencyNormalizer = mockk(relaxed = true),
             expenseRepository = mockk(relaxed = true),
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = mockk<CurrencySettingsRepository>().also {
+                every { it.homeCurrency() } returns flowOf("EUR")
+                coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+            },
             currencyConverter = mockk(relaxed = true),
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
         )
@@ -372,11 +405,12 @@ class BudgetAutopilotEngineTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = null, amount = 100.0)
         )
-        // Overall budget (categoryId=null) uses getMonthlySpendingTotalsBetween
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 3),
-            MonthlySpendingTotal("2026-02", 100.0, 3),
-            MonthlySpendingTotal("2026-03", 100.0, 3)
+        // Overall budget (categoryId=null) uses MultiCurrencyRepository.getMonthlyTotalsInHomeCurrency
+        // which internally calls ExpenseDao.getAllMonthlyTotalsBetweenByCurrency
+        coEvery { expenseDao.getAllMonthlyTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            MonthlyCurrencyTotal("2026-01", "EUR", 100.0, 3),
+            MonthlyCurrencyTotal("2026-02", "EUR", 100.0, 3),
+            MonthlyCurrencyTotal("2026-03", "EUR", 100.0, 3)
         )
 
         val rec = engine.generateRecommendations().categoryRecommendations.single()

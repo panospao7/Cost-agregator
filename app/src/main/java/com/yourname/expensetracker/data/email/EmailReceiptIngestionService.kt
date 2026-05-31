@@ -1,8 +1,6 @@
 package com.yourname.expensetracker.data.email
 
-import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
-import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
 import com.yourname.expensetracker.data.email.provider.AppleReceiptParser
 import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
@@ -26,6 +24,7 @@ import javax.inject.Singleton
 sealed class EmailReceiptResult {
     data class Success(val receiptId: Long, val expenseIds: List<Long>) : EmailReceiptResult()
     data class Duplicate(val existingReceiptId: Long) : EmailReceiptResult()
+    data class NeedsReview(val receiptId: Long, val reason: String, val confidence: Double? = null) : EmailReceiptResult()
     data class ParseError(val reason: String) : EmailReceiptResult()
 }
 
@@ -50,34 +49,14 @@ sealed class EmailReceiptResult {
  * fallback path and NO independent dispatch ability.
  */
 @Singleton
-class EmailReceiptIngestionService(
+class EmailReceiptIngestionService @Inject constructor(
     private val receiptParser: ReceiptParser,
     private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
     private val merchantNormalizer: MerchantNormalizer,
     private val writeBarrier: DatabaseWriteBarrier,
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
-    private val hashingService: SensitiveHashingService,
-    private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
+    private val hashingService: SensitiveHashingService
 ) {
-    @Inject
-    constructor(
-        receiptParser: ReceiptParser,
-        receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
-        merchantNormalizer: MerchantNormalizer,
-        writeBarrier: DatabaseWriteBarrier,
-        diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
-        hashingService: SensitiveHashingService,
-        database: AppDatabase
-    ) : this(
-        receiptParser = receiptParser,
-        receiptLifecycleCoordinator = receiptLifecycleCoordinator,
-        merchantNormalizer = merchantNormalizer,
-        writeBarrier = writeBarrier,
-        diagnosticEventWriter = diagnosticEventWriter,
-        hashingService = hashingService,
-        transactionRunner = { block -> database.withTransaction { block() } }
-    )
-
     constructor(
         receiptParser: ReceiptParser,
         receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
@@ -91,8 +70,7 @@ class EmailReceiptIngestionService(
         diagnosticEventWriter = object : com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter {
             override suspend fun emit(event: com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent) {}
         },
-        hashingService = com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService(),
-        transactionRunner = { block -> block() }
+        hashingService = com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService()
     )
 
     private val ingestionMutex = Mutex()
@@ -203,7 +181,14 @@ class EmailReceiptIngestionService(
                 parsedReceipt.merchant
             ).canonical.normalizedName
 
-            val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date, messageId)
+            val fingerprint = createFingerprint(
+                provider = provider,
+                merchant = normalizedMerchant,
+                amount = parsedReceipt.amount,
+                currency = parsedReceipt.currency,
+                date = parsedReceipt.date,
+                orderNumber = parsedReceipt.orderNumber
+            )
             // PRIV-FB58-01: fail closed if HMAC fails — never fall back to plaintext messageId
             val messageIdHash = hashingService.hmacSha256Prefix(messageId, "emailMessageId")
                 ?: return@withLock EmailReceiptResult.ParseError("Failed to hash messageId — cannot proceed safely")
@@ -229,7 +214,8 @@ class EmailReceiptIngestionService(
                             )
                         }
                     )
-                } else null
+                } else null,
+                confidence = parsedReceipt.confidence
             )
 
             val coordinatorResult = receiptLifecycleCoordinator.processEmailReceipt(
@@ -289,6 +275,20 @@ class EmailReceiptIngestionService(
                         ))
                     } catch (_: Exception) {}
                     EmailReceiptResult.ParseError(coordinatorResult.message)
+                }
+                is EmailReceiptProcessResult.NeedsReview -> {
+                    try {
+                        diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,
+                            stage = "outcome",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.NEEDS_REVIEW,
+                            correlationId = correlationId,
+                            entityType = "receipt",
+                            entityId = coordinatorResult.receiptId,
+                            isTerminal = true
+                        ))
+                    } catch (_: Exception) {}
+                    EmailReceiptResult.NeedsReview(coordinatorResult.receiptId, coordinatorResult.reason, coordinatorResult.confidence)
                 }
             }
         } catch (e: Exception) {
@@ -365,14 +365,37 @@ class EmailReceiptIngestionService(
     }
 
     /**
-     * Create a hashed fingerprint for deduplication.
-     * Hash of: normalized_merchant_amount_date_bucket
-     * PR4: Never stores plaintext merchant/amount/date as fingerprint.
+     * Create a hashed fingerprint for content-based deduplication.
+     *
+     * Composition (all normalized, then hashed — never stored as plaintext):
+     *   provider + normalized_merchant + rounded_amount + currency + 5-minute date bucket + orderNumber
+     *
+     * P11-CURRENT-007: The previous fingerprint used only merchant + amount + date
+     * bucket, which collapsed two DISTINCT orders from the same merchant for the
+     * same amount on the same day into a single false-positive duplicate, and made
+     * different currencies with the same numeric amount collide. Incorporating
+     * [provider], [currency], and [orderNumber] makes the fingerprint strictly more
+     * specific: when [orderNumber] is present it is the strongest distinguishing
+     * token (different order numbers → different fingerprints); when absent the
+     * fingerprint degrades gracefully to provider + merchant + amount + currency +
+     * date bucket, which is still more specific than the old scheme, so it cannot
+     * introduce NEW false-positive collapses — it can only split previously-collapsed
+     * distinct receipts apart, which is the intended fix.
      */
-    private fun createFingerprint(merchant: String, amount: Double, date: Long, messageId: String = ""): String {
+    private fun createFingerprint(
+        provider: String,
+        merchant: String,
+        amount: Double,
+        currency: String,
+        date: Long,
+        orderNumber: String?
+    ): String {
         val roundedAmount = String.format(Locale.US, "%.2f", amount)
         val dateBucket = date / 300_000L
-        val raw = "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
+        val normalizedCurrency = currency.trim().uppercase(Locale.US)
+        val normalizedProvider = provider.trim().lowercase(Locale.US)
+        val normalizedOrder = orderNumber?.trim()?.lowercase(Locale.US).orEmpty()
+        val raw = "${normalizedProvider}_${merchant.lowercase(Locale.US)}_${roundedAmount}_${normalizedCurrency}_${dateBucket}_${normalizedOrder}"
         return hashingService.sha256Prefix(raw, 32) ?: ""
     }
 

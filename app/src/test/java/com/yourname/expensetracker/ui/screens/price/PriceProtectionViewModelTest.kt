@@ -3,6 +3,8 @@ package com.yourname.expensetracker.ui.screens.price
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import android.content.Context
 import io.mockk.*
@@ -37,6 +39,7 @@ class PriceProtectionViewModelTest {
         
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         viewModel = PriceProtectionViewModel(priceTracker, currencySettingsRepository = currencyRepo, context = mockk<Context>(relaxed = true))
     }
 

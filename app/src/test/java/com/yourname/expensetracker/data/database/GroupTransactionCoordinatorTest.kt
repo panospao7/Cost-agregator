@@ -30,6 +30,7 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
+import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.sideeffect.SideEffectCategory
 import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
@@ -111,6 +112,7 @@ class GroupTransactionCoordinatorTest {
         val transactionEventDao = database.transactionEventDao()
         val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
         every { restoreMode.isWritesAllowed() } returns true
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         val tlcWriteBarrier = DatabaseWriteBarrier(restoreMode)
         transactionLifecycleCoordinator = TransactionLifecycleCoordinator(
             database, expenseDao, transactionEventDao, timeProvider,
@@ -733,13 +735,15 @@ class GroupTransactionCoordinatorTest {
             paidById = bobId,
             currency = "EUR",
             splitType = SplitType.CUSTOM_AMOUNT,
-            customSplitsJson = members.joinToString(",") { member ->
-                when (member.name) {
-                    "Alice" -> "${member.id}:15.0"
-                    "Bob" -> "${member.id}:45.0"
-                    else -> "${member.id}:30.0"
+            customSplitsJson = CustomSplitJsonCodec.toCanonicalJson(
+                members.associate { member ->
+                    when (member.name) {
+                        "Alice" -> member.id to 15.0
+                        "Bob" -> member.id to 45.0
+                        else -> member.id to 30.0
+                    }
                 }
-            },
+            ),
             date = TEST_DATE
         )
 

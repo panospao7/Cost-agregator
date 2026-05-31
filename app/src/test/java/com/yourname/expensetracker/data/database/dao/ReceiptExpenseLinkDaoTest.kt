@@ -2,7 +2,11 @@ package com.yourname.expensetracker.data.database.dao
 
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -25,6 +29,8 @@ class ReceiptExpenseLinkDaoTest {
 
     private lateinit var database: AppDatabase
     private lateinit var dao: ReceiptExpenseLinkDao
+    private lateinit var scannedReceiptDao: ScannedReceiptDao
+    private lateinit var expenseDao: ExpenseDao
 
     @Before
     fun setup() {
@@ -32,6 +38,41 @@ class ReceiptExpenseLinkDaoTest {
             ApplicationProvider.getApplicationContext()
         ).build()
         dao = database.receiptExpenseLinkDao()
+        scannedReceiptDao = database.scannedReceiptDao()
+        expenseDao = database.expenseDao()
+
+        // Pre-insert minimal parent rows so that link inserts (which have FK
+        // constraints to scanned_receipts and expenses) do not fail.
+        runBlocking {
+            for (id in listOf(1L, 2L, 42L)) {
+                scannedReceiptDao.insert(
+                    ScannedReceipt(
+                        id = id,
+                        imagePath = null,
+                        rawOcrText = "",
+                        parsedTotal = null,
+                        parsedMerchant = null,
+                        parsedDate = null,
+                        parsedItems = null,
+                        parsedTaxAmount = null,
+                        confidence = 0.0f,
+                        createdAt = FIXED_NOW
+                    )
+                )
+            }
+            for (id in listOf(10L, 20L, 100L)) {
+                expenseDao.insert(
+                    Expense(
+                        id = id,
+                        amount = 0.0,
+                        merchant = "",
+                        transactionType = TransactionType.UNKNOWN,
+                        date = FIXED_NOW,
+                        createdAt = FIXED_NOW
+                    )
+                )
+            }
+        }
     }
 
     @After

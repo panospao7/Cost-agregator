@@ -18,6 +18,7 @@ package com.yourname.expensetracker.domain.receipt
  * @property currency    Extracted currency code (e.g. "EUR", "USD"), if available.
  * @property date        Extracted transaction date (epoch millis), if available.
  * @property items       JSON string of extracted line items, if available.
+ * @property confidence Parser confidence in [0,1]; defaults to 1.0 when unknown.
  */
 data class EmailReceiptData(
     val messageId: String,
@@ -29,5 +30,6 @@ data class EmailReceiptData(
     val merchant: String?,
     val currency: String?,
     val date: Long?,
-    val items: String? // JSON
+    val items: String?, // JSON
+    val confidence: Double = 1.0
 )

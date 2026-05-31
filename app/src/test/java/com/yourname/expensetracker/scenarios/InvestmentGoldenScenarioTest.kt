@@ -14,6 +14,8 @@ import com.yourname.expensetracker.data.database.entity.InvestmentType
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.investment.InvestmentTracker
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.model.Result
@@ -136,6 +138,7 @@ class InvestmentGoldenScenarioTest {
 
         // Mock home currency and converter behavior
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
         // Make converter return a successful conversion for USD→EUR
         coEvery { currencyConverter.convertMultiple(any(), any()) } answers {

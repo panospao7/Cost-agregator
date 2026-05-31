@@ -14,6 +14,8 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.service.NotificationService
@@ -90,6 +92,7 @@ class AnomalyAlertOrchestratorTest {
         )
 
         every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } answers {
             val expenses = firstArg<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>()
             AnalyticsNormalizationResult(

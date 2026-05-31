@@ -20,6 +20,8 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -62,6 +64,7 @@ class BudgetRepositoryStressTest {
     @Before
     fun setup() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         coEvery { budgetDao.insert(any()) } returns 1L
         coEvery { budgetDao.insertAndActivateOverall(any()) } returns 1L
         coEvery { budgetDao.insertAndActivateCategory(any()) } returns 1L

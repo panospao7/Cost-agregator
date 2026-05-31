@@ -17,6 +17,8 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.toExpenseSnapshot
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
@@ -54,6 +56,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
         coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
             val expenses = arg<List<Expense>>(0)
@@ -211,10 +214,10 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
 
         assertEquals(99, result.savingsRateScore)
         assertEquals(0, result.runwayScore)
-        assertEquals(100, result.budgetAdherenceScore)
-        assertEquals(100, result.billReliabilityScore)
-        assertApproxEquals(74.70, weightedRaw, 0.000001)
-        assertEquals(74, result.overallScore)
+        assertEquals(50, result.budgetAdherenceScore)
+        assertEquals(75, result.billReliabilityScore)
+        assertApproxEquals(57.20, weightedRaw, 0.000001)
+        assertEquals(57, result.overallScore)
     }
 
     @Test

@@ -616,6 +616,64 @@ mailbox-sync feature that does not yet exist):
 - `:app:check --stacktrace`.
 - `:app:connectedDebugAndroidTest` — NOT required (no schema/migration change this batch).
 
+### Batch 2 (this session) — fingerprint specificity + confidence/review routing + dead-code removal
+Self-review: **GREEN** (adversarial reviewer + static tester + fresh debugger regression pass; one
+test-assertion blocker found and fixed in the loop). Mode: static only — agent did NOT compile/build/
+run Gradle or tests. **No schema/migration change → no `connectedDebugAndroidTest` required this batch.**
+
+> Reconciliation correction to Batch 1: when Batch 2 started, the dead local `data.email.EmailReceiptData`
+> class AND the unused `transactionRunner`/`database` ctor plumbing were STILL PRESENT at HEAD (Batch 1's
+> dead-class removal was not in this working tree). Batch 2's S1 actually removed them — this closes
+> **P11-CURRENT-022** (and re-confirms **P11-CURRENT-001**'s collision is gone). The home-currency hoist
+> (**P11-CURRENT-020**) was already committed (`1a33a3ac`) and is unchanged.
+
+| Slice | ID(s) | Status after change — evidence |
+|-------|-------|--------------------------------|
+| S1 | P11-CURRENT-022 (+001) | FIXED — removed the never-invoked `transactionRunner` + the `database: AppDatabase` ctor param (the coordinator owns the transaction) and the dead shadowing local `EmailReceiptData` (5-field) class. Service now has ONE `@Inject` primary ctor (6 deps, all used) + the 4-arg test ctor. `processBatch` binds the domain `EmailReceiptData` (`EmailReceiptIngestionService.kt:52-73,364-376`). |
+| S3 | P11-CURRENT-007 | FIXED — `createFingerprint` is now `sha256(provider_merchant_amount_currency_dateBucket_orderNumber)` (was merchant+amount+dateBucket only). Distinct orders (different `orderNumber`) and cross-currency same-amount receipts no longer collapse into false-positive duplicates; strictly MORE specific, so it can only split previously-collapsed distinct receipts, never introduce new collapses. messageId-hash dedup path (the primary cross-send dedup) is unchanged (`EmailReceiptIngestionService.kt:183-190,369-384`). |
+| S4a | P11-CURRENT-009 (persist) | FIXED — added `EmailReceiptData.confidence: Double = 1.0` (trailing default); service passes `parsedReceipt.confidence`; coordinator persists it clamped instead of hardcoded `0.7f`/`1.0` (`ScannedReceipt.confidence = emailData.confidence.coerceIn(0,1).toFloat()`; `EmailReceiptSource.confidence = ...coerceIn(0,1)`) (`ReceiptLifecycleCoordinator.kt:902-903,936-937`). |
+| S4b | P11-CURRENT-009/011 (route) | FIXED — added `EmailReceiptProcessResult.NeedsReview(receiptId, reason, confidence?)` + `EmailReceiptResult.NeedsReview`. Low-confidence parses and `ValidationFailed`/`InsertConflict`/`Error`/incomplete-parse outcomes now save the receipt but route to `NeedsReview` instead of a misleading `Success([])`. The `CreateExpenseResult` `when` is now EXHAUSTIVE (all 5 variants, no catch-all `else`). `NeedsReview` fires only when no expense was created/linked (a `DuplicateSkipped` link still yields `Success`) (`ReceiptLifecycleCoordinator.kt:1009-1089,1156-1163`; service arm `EmailReceiptIngestionService.kt:279-292`). |
+| S5 (fix-loop) | P11-CURRENT-009 (effectiveness) | FIXED — reviewer found the gate was DEAD: parsers floor at base `0.5` + amount bonus (`+0.2` Amazon / `+0.25` Uber+Apple), and `validateParsedReceipt` requires `amount>0`, so every real receipt arrives at **≥0.70/0.75** — the old `≤0.5` gate could never fire. Raised `EMAIL_AUTO_EXPENSE_MIN_CONFIDENCE` `0.5 → 0.75` (with the existing `<=`), so amount-only / weakly-corroborated parses route to `NeedsReview` while order-number (`+0.15`) or distinct-date (`+0.1`) corroborated receipts auto-create (`ReceiptLifecycleCoordinator.kt:153`). |
+
+### Regression found and fixed in the review loop (the only blocker)
+- **Pre-existing wrong test assertion (present at HEAD, surfaced by S5):** `ReceiptLifecycleCoordinatorTest.kt:303` and `:335` asserted `coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }`, but the coordinator NEVER calls `scannedReceiptDao.insert` directly — every persistence path goes through `receiptInsertResolver.insertOrResolve(...)` (grep: 0 matches for `scannedReceiptDao.insert(` in the coordinator). The assertions were always wrong; S5's promotion of `receiptInsertResolver` to a stubbed field (`Inserted(1L)`) made them reachable and deterministically failing. **Fixed:** retargeted both to `coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }`. (The `Inserted(1L)` field stub also incidentally repaired the scan happy-path test, which previously threw `NoWhenBranchMatchedException` against a relaxed mock.)
+- **Diagnostic-honesty polish (non-blocking, applied):** `NeedsReview.confidence` is now only carried when the reason IS `low_confidence` (`...takeIf { needsReviewReason == "low_confidence" }`); for `validation_failed`/`insert_conflict`/`create_error`/`incomplete_parse` it is `null` to avoid misleading diagnostics (`ReceiptLifecycleCoordinator.kt:1161`).
+
+### Files changed (Batch 2)
+Main source:
+- `data/email/EmailReceiptIngestionService.kt` — S1 ctor/dead-class removal; S3 fingerprint; S4a confidence pass-through; S4b `EmailReceiptResult.NeedsReview` + `when` arm.
+- `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` — S4a clamped-confidence persist; S4b low-confidence gate + exhaustive `CreateExpenseResult when` + `NeedsReview` terminal return; S5 threshold `0.75`; confidence-honesty polish.
+- `domain/receipt/lifecycle/EmailReceiptProcessResult.kt` — `+NeedsReview` variant.
+- `domain/receipt/EmailReceiptData.kt` — `+confidence: Double = 1.0` (trailing default).
+Test source:
+- `data/email/EmailReceiptIngestionServiceTest.kt` — +3 fingerprint-specificity tests (distinct order / distinct currency / identical→identical), +confidence-threading capture test, +2 NeedsReview-mapping tests.
+- `data/email/EmailReceiptIngestionServiceTransactionTest.kt` — REWRITTEN: was a vacuous count-0 test against a relaxed-mock coordinator; now asserts the real delegate-once contract (`coVerify(exactly = 1)` + coordinator-`Error`→`ParseError`).
+- `domain/receipt/lifecycle/ReceiptLifecycleCoordinatorTest.kt` — +low-confidence→`NeedsReview` (no auto-expense), +incomplete-parse→`NeedsReview`, renamed the 020 test to match what it asserts, promoted `receiptInsertResolver` to a stubbed field, fixed the two `coVerify` assertions.
+
+### Static checks performed (Batch 2)
+- Grep confirmed the only exhaustive `when (coordinatorResult)` over `EmailReceiptProcessResult` is in the service (4 arms incl. `NeedsReview`); `EmailReceiptResult` is only `is`-checked elsewhere; `ManualExpenseRepository:164` is a different (`CreateExpenseResult`) `when` — untouched.
+- Confirmed `CreateExpenseResult` has exactly 5 variants → the `else`-less `when` is exhaustive; `EventOutcome.NEEDS_REVIEW` is a real enum constant.
+- Confirmed `EmailReceiptIngestionService(` has only 2 construction sites (both tests, 4-arg ctor); `@Inject` primary resolves via Hilt with no module change.
+- Verified parser confidence math (Amazon/Uber/Apple `calculateConfidence`) vs `validateParsedReceipt` to size the `0.75` threshold.
+- Confirmed CancellationException still rethrown (service `:295`); the coordinator `CreateExpenseResult.Error` branch only logs because `createExpenseDbOnlyV2` returns `Error` as a value and rethrows real cancellation upstream.
+
+### Known compile-risk areas (Batch 2 — agent could not compile)
+- Hilt: `EmailReceiptIngestionService` lost the `database`/`transactionRunner` plumbing on its `@Inject` ctor — verify `:app:assembleDebug` (KSP/Hilt) resolves the trimmed 6-dep graph, not just Kotlin compile.
+- `EmailReceiptData.confidence` is a trailing-defaulted param — all construction sites (service + 2 coordinator-test sites) compile via the default; no positional caller exists.
+- Coordinator-test NeedsReview/incomplete tests rely on Room `database.withTransaction{}` executing its block against a relaxed `AppDatabase` mock (established harness pattern in that file). The two `coVerify` fixes are independent of that assumption.
+
+### Still HELD — feature scope / larger work, NOT done (needs human decision)
+(Updated from Batch 1: **007, 009, 011, 022 are now FIXED above** and removed from this list.)
+- P11-CURRENT-014 (Hilt multibinding parser registry), 015 (full `EmailIngestionEvent` ledger taxonomy beyond the current stage diagnostics), 016 (batch summary/checkpoint/backpressure), 017 (`EmailAccountConnection`/`EmailSyncRun`/`EmailMessageImport` mailbox-sync — **schema**), 018 (orderNumber/emailSource provenance on `TransactionEvent` metadata — partial: `emailReceiptSourceId` + source link already written), 019 (shared money/currency parser + ambiguous-currency-not-silent-default review), 021 (email-artifact retention/redacted-export coverage — cross-pipeline P8).
+- These should be scoped as a feature epic (`@planner-advanced` + likely schema + instrumentation), not folded into a pipeline-local fix batch.
+- **Verify-only:** Uber/Apple amount-only parses land at exactly `0.75` and are gated only because the comparison is `<=` — keep `<=` (a `<` would let them auto-create). A boundary test pinning `0.75 → NeedsReview` is recommended.
+
+### Validation (human must run — NOT run by agent) — Batch 2
+- `:app:assembleDebug --stacktrace` — REQUIRED (verifies trimmed Hilt ctor graph for `EmailReceiptIngestionService`).
+- `:app:testDebugUnitTest --tests "com.yourname.expensetracker.data.email.*" --tests "com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinatorTest" --stacktrace`
+- `:app:check --stacktrace`
+- `:app:connectedDebugAndroidTest` — NOT required (no schema/migration change this batch).
+
 ### Working-tree note
 Pipeline 11 edits sit alongside UNRELATED uncommitted Pipeline 5/6/7/8/9/10/12 changes already in
 the working tree. Commit the Pipeline 11 files separately to keep attribution clean.

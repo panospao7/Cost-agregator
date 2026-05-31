@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.screens.savings
 
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
@@ -270,6 +272,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     private fun createViewModel(): SavingsGoalsViewModel {
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         return SavingsGoalsViewModel(
             savingsGoalRepository = savingsGoalRepository,
             savingsContributionHistoryRepository = savingsContributionHistoryRepository,

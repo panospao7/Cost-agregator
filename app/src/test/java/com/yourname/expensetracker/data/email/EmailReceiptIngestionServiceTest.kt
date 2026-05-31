@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.email.provider.UberReceiptParser
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MerchantMatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
@@ -16,6 +17,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -86,7 +88,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Success(receiptId = 501L, expenseIds = listOf(901L))
 
         val result = service.processEmailReceipt(
@@ -124,7 +126,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Success(receiptId = 601L, expenseIds = listOf(1001L))
 
         val uberResult = service.processEmailReceipt(
@@ -158,7 +160,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Duplicate(existingReceiptId = 333L)
 
         val result = service.processEmailReceipt(
@@ -185,7 +187,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Duplicate(existingReceiptId = 444L)
 
         val result = service.processEmailReceipt(
@@ -249,7 +251,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Duplicate(existingReceiptId = 200L)
 
         val result = service.processEmailReceipt(
@@ -276,7 +278,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Success(receiptId = 700L, expenseIds = listOf(800L))
 
         val result = service.processEmailReceipt(
@@ -302,7 +304,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Success(receiptId = 701L, expenseIds = listOf(801L))
 
         val result = service.processEmailReceipt(
@@ -328,7 +330,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Success(receiptId = 750L, expenseIds = listOf(850L))
 
         val result = service.processEmailReceipt(
@@ -355,7 +357,7 @@ class EmailReceiptIngestionServiceTest {
         )
 
         // First ingestion — should succeed.
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returnsMany
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
             listOf(
                 EmailReceiptProcessResult.Success(receiptId = 600L, expenseIds = listOf(900L)),
                 EmailReceiptProcessResult.Duplicate(existingReceiptId = 600L)
@@ -396,7 +398,7 @@ class EmailReceiptIngestionServiceTest {
         )
 
         // Coordinator returns Error → service maps to ParseError
-        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
             EmailReceiptProcessResult.Error("Expense creation failed")
 
         val result = service.processEmailReceipt(
@@ -408,6 +410,262 @@ class EmailReceiptIngestionServiceTest {
         )
 
         assertTrue("Expected ParseError when expense creation fails but got $result", result is EmailReceiptResult.ParseError)
+    }
+
+    // -------------------------------------------------------------------------
+    // P11-CURRENT-007: content dedup fingerprint must distinguish distinct orders
+    // and currencies. The fingerprint is private and surfaced as the 2nd positional
+    // argument (fingerprint) passed to coordinator.processEmailReceipt.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `same_merchant_same_amount_same_day_different_order_number_not_duplicate`() = runTest {
+        val fingerprints = mutableListOf<String>()
+        every { amazonParser.parse(any(), any()) } returnsMany listOf(
+            ParsedEmailReceipt(
+                merchant = "Amazon",
+                amount = 50.00,
+                currency = "USD",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "ORDER-A",
+                confidence = 0.9
+            ),
+            ParsedEmailReceipt(
+                merchant = "Amazon",
+                amount = 50.00,
+                currency = "USD",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "ORDER-B",
+                confidence = 0.9
+            )
+        )
+
+        coEvery {
+            receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            fingerprints.add(secondArg())
+            EmailReceiptProcessResult.Success(1L, emptyList())
+        }
+
+        service.processEmailReceipt(
+            emailBody = "Order Total: \$50.00 Order # ORDER-A",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-order-a"
+        )
+        service.processEmailReceipt(
+            emailBody = "Order Total: \$50.00 Order # ORDER-B",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-order-b"
+        )
+
+        assertEquals(2, fingerprints.size)
+        assertNotEquals(
+            "Distinct order numbers must produce distinct fingerprints",
+            fingerprints[0],
+            fingerprints[1]
+        )
+    }
+
+    @Test
+    fun `same_merchant_same_amount_different_currency_not_duplicate`() = runTest {
+        val fingerprints = mutableListOf<String>()
+        every { amazonParser.parse(any(), any()) } returnsMany listOf(
+            ParsedEmailReceipt(
+                merchant = "Amazon",
+                amount = 50.00,
+                currency = "USD",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "ORDER-SAME",
+                confidence = 0.9
+            ),
+            ParsedEmailReceipt(
+                merchant = "Amazon",
+                amount = 50.00,
+                currency = "EUR",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "ORDER-SAME",
+                confidence = 0.9
+            )
+        )
+
+        coEvery {
+            receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            fingerprints.add(secondArg())
+            EmailReceiptProcessResult.Success(1L, emptyList())
+        }
+
+        service.processEmailReceipt(
+            emailBody = "Order Total: \$50.00 Order # ORDER-SAME",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-usd"
+        )
+        service.processEmailReceipt(
+            emailBody = "Order Total: €50.00 Order # ORDER-SAME",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-eur"
+        )
+
+        assertEquals(2, fingerprints.size)
+        assertNotEquals(
+            "Different currencies with the same numeric amount must produce distinct fingerprints",
+            fingerprints[0],
+            fingerprints[1]
+        )
+    }
+
+    @Test
+    fun `same_merchant_same_amount_same_day_same_order_number_same_fingerprint`() = runTest {
+        val fingerprints = mutableListOf<String>()
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 50.00,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORDER-DUP",
+            confidence = 0.9
+        )
+
+        coEvery {
+            receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            fingerprints.add(secondArg())
+            EmailReceiptProcessResult.Success(1L, emptyList())
+        }
+
+        service.processEmailReceipt(
+            emailBody = "Order Total: \$50.00 Order # ORDER-DUP",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-dup-1"
+        )
+        service.processEmailReceipt(
+            emailBody = "Order Total: \$50.00 Order # ORDER-DUP",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-dup-2"
+        )
+
+        assertEquals(2, fingerprints.size)
+        assertEquals(
+            "Identical merchant/amount/currency/date/order must produce identical fingerprints",
+            fingerprints[0],
+            fingerprints[1]
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // P11-CURRENT-009: the parser confidence must be threaded to the coordinator
+    // via EmailReceiptData (1st positional arg) instead of being discarded.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `processEmailReceipt threads parser confidence into coordinator emailData`() = runTest {
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 1234.50,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "123-456",
+            confidence = 0.42
+        )
+
+        var capturedEmailData: EmailReceiptData? = null
+        coEvery {
+            receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            capturedEmailData = firstArg()
+            EmailReceiptProcessResult.Success(receiptId = 1L, expenseIds = emptyList())
+        }
+
+        service.processEmailReceipt(
+            emailBody = "Order Total: \$1234.50 Order Date: March 03, 2026 Order # 123-456",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-confidence-1"
+        )
+
+        assertEquals(0.42, capturedEmailData!!.confidence, 0.0)
+    }
+
+    // -------------------------------------------------------------------------
+    // P11-CURRENT-009 / P11-CURRENT-011: a NeedsReview coordinator outcome must be
+    // surfaced honestly through the service instead of a misleading Success.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `low_confidence_coordinator_result_surfaces_NeedsReview`() = runTest {
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 1234.50,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "123-456",
+            confidence = 0.3
+        )
+
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.NeedsReview(receiptId = 55L, reason = "low_confidence", confidence = 0.3)
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$1234.50 Order Date: March 03, 2026 Order # 123-456",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-low-confidence-1"
+        )
+
+        assertTrue("Expected NeedsReview but got $result", result is EmailReceiptResult.NeedsReview)
+        val needsReview = result as EmailReceiptResult.NeedsReview
+        assertEquals(55L, needsReview.receiptId)
+        assertEquals("low_confidence", needsReview.reason)
+    }
+
+    @Test
+    fun `validation_failed_coordinator_result_surfaces_NeedsReview`() = runTest {
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 1234.50,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "123-456",
+            confidence = 0.9
+        )
+
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.NeedsReview(receiptId = 56L, reason = "validation_failed", confidence = 0.9)
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$1234.50 Order Date: March 03, 2026 Order # 123-456",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-validation-failed-1"
+        )
+
+        assertTrue("Expected NeedsReview but got $result", result is EmailReceiptResult.NeedsReview)
+        val needsReview = result as EmailReceiptResult.NeedsReview
+        assertEquals(56L, needsReview.receiptId)
+        assertEquals("validation_failed", needsReview.reason)
     }
 
     companion object {

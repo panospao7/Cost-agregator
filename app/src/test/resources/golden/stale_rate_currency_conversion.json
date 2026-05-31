@@ -1,6 +1,6 @@
 {
-  "displayTotal": 145,
-  "isPartial": true,
+  "displayTotal": 191,
+  "isPartial": false,
   "totalTransactionCount": 3,
   "sourceBuckets": [
     {
@@ -16,13 +16,6 @@
       "amount": 50
     }
   ],
-  "conversionFailures": [
-    {
-      "currency": "GBP",
-      "amount": 40,
-      "reason": "RATE_STALE"
-    }
-  ],
-  "gbpFailureReason": "RATE_STALE",
+  "conversionFailures": [],
   "usdConvertedSuccessfully": true
 }

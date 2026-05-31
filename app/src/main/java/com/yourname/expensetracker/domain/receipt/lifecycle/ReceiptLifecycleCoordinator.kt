@@ -123,6 +123,36 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         private const val FALLBACK_CURRENCY = "XXX"  // ISO 4217 unknown currency — no longer "EUR"
 
         /**
+         * P11-CURRENT-009: parsed email receipts at or below this confidence are
+         * NOT auto-converted into an approved expense; the receipt is saved and
+         * the result is [EmailReceiptProcessResult.NeedsReview] so the user can
+         * confirm.
+         *
+         * Rationale for the 0.75 value (must stay aligned with the parser scoring
+         * and the upstream [validateParsedReceipt] gate):
+         *
+         * All email parsers start at a base confidence of 0.5 and add an
+         * amount bonus when a total > 0 is extracted: +0.2 (Amazon) or +0.25
+         * (Uber / Apple). [validateParsedReceipt] in EmailReceiptIngestionService
+         * already requires amount > 0, so the MINIMUM confidence that can reach
+         * this gate is the amount-only floor: 0.70 (Amazon) or 0.75 (Uber / Apple).
+         *
+         * With the existing `<=` comparison, a 0.75 threshold therefore routes
+         * weakly-corroborated receipts to [EmailReceiptProcessResult.NeedsReview]:
+         *   - amount-only parses (0.70 / 0.75), and
+         *   - amount + items but no order number and no distinctly-extracted
+         *     transaction date (e.g. Amazon 0.5 + 0.2 + 0.05 items = 0.75).
+         * Receipts that gain stronger corroboration clear the bar and auto-create:
+         *   - an extracted order number (+0.15) pushes the floor to ≥ 0.85, or
+         *   - a distinctly-extracted transaction date (+0.1) pushes it to ≥ 0.80.
+         *
+         * Keep this in sync with the parser bonuses; do NOT relax the `<=`
+         * comparison at the call site, which would let the 0.75 amount-only floor
+         * silently auto-approve.
+         */
+        private const val EMAIL_AUTO_EXPENSE_MIN_CONFIDENCE = 0.75
+
+        /**
          * Resolves an email sender address to a known provider name for
          * [EmailReceiptSource.provider]. Returns "unknown" if no provider
          * can be identified.
@@ -871,6 +901,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         val now = timeProvider.now()
         val effectiveOcrText = RawContentSanitizer.sanitizeRawOcr(rawEmailBody, emailStorageMode)
         var savedId = 0L
+        var needsReviewReason: String? = null
         val createdExpenseIds = mutableListOf<Long>()
         val linkedExistingExpenseIds = mutableListOf<Long>()
         var receiptPlan: PostCommitActionBatch? = null
@@ -899,7 +930,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 },
                 parsedTaxAmount = null,
                 currency = emailData.currency ?: homeCurrency,
-                confidence = 0.7f,
+                // P11-CURRENT-009: persist real parser confidence (was hardcoded)
+                confidence = emailData.confidence.coerceIn(0.0, 1.0).toFloat(),
                 sourceType = ReceiptSourceType.EMAIL.name,
                 documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
                 processingStatus = if (emailData.merchant != null) ReceiptProcessingStatus.PARSED.name
@@ -932,7 +964,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 contentFingerprintHash = fingerprint.ifBlank { null },
                 parsedAt = now,
                 provider = provider,
-                confidence = 1.0,
+                // P11-CURRENT-009: persist real parser confidence (was hardcoded)
+                confidence = emailData.confidence.coerceIn(0.0, 1.0),
                 fingerprint = fingerprint
             )
             val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
@@ -999,54 +1032,82 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 !emailData.merchant.isNullOrBlank() &&
                 emailData.date != null && emailData.date > 0
             ) {
-                val request = CreateExpenseRequest(
-                    merchant = emailData.merchant!!,
-                    amount = emailData.amount,
-                    currency = emailData.currency ?: homeCurrency,
-                    date = emailData.date,
-                    transactionType = TransactionType.PURCHASE,
-                    source = ExpenseSource.EMAIL_RECEIPT,
-                    notes = "Email receipt from ${provider.ifBlank { "unknown" }}",
-                    scannedReceiptId = savedId,
-                    emailReceiptSourceId = sourceId,
-                    deduplicationMode = DeduplicationMode.STANDARD,
-                    correlationId = correlationId  // PRIV-441-11: propagate email correlation
-                )
-                val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
-                when (mutation.value) {
-                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
-                        val created = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created
-                        createdExpenseIds.add(created.expenseId)
-                        transactionActionBatches.add(mutation.postCommitActions)
-                        val linkResult = receiptLinkService.linkReceiptToExpense(
-                            savedId, created.expenseId, "EMAIL_RECEIPT",
-                            source = ExpenseSource.EMAIL_RECEIPT.name,
-                            writeSourceLink = false
-                        )
-                        if (linkResult.isFailure) {
-                            throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
+                if (emailData.confidence <= EMAIL_AUTO_EXPENSE_MIN_CONFIDENCE) {
+                    // P11-CURRENT-009: low-confidence parse — do NOT auto-create an
+                    // approved expense. The receipt, email source, and RECEIPT_SAVED
+                    // event are already persisted above; flag the outcome for review
+                    // so the user can confirm rather than silently auto-approving.
+                    Timber.w(
+                        "Email receipt %d below auto-expense confidence threshold (%.2f <= %.2f); needs review",
+                        savedId, emailData.confidence, EMAIL_AUTO_EXPENSE_MIN_CONFIDENCE
+                    )
+                    needsReviewReason = "low_confidence"
+                } else {
+                    val request = CreateExpenseRequest(
+                        merchant = emailData.merchant!!,
+                        amount = emailData.amount,
+                        currency = emailData.currency ?: homeCurrency,
+                        date = emailData.date,
+                        transactionType = TransactionType.PURCHASE,
+                        source = ExpenseSource.EMAIL_RECEIPT,
+                        notes = "Email receipt from ${provider.ifBlank { "unknown" }}",
+                        scannedReceiptId = savedId,
+                        emailReceiptSourceId = sourceId,
+                        deduplicationMode = DeduplicationMode.STANDARD,
+                        correlationId = correlationId  // PRIV-441-11: propagate email correlation
+                    )
+                    val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
+                    when (mutation.value) {
+                        is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
+                            val created = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created
+                            createdExpenseIds.add(created.expenseId)
+                            transactionActionBatches.add(mutation.postCommitActions)
+                            val linkResult = receiptLinkService.linkReceiptToExpense(
+                                savedId, created.expenseId, "EMAIL_RECEIPT",
+                                source = ExpenseSource.EMAIL_RECEIPT.name,
+                                writeSourceLink = false
+                            )
+                            if (linkResult.isFailure) {
+                                throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
+                            }
+                        }
+                        is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped -> {
+                            val dupSkipped = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped
+                            Timber.d("Email receipt %d matched existing expense %d", savedId, dupSkipped.existingExpenseId)
+                            linkedExistingExpenseIds.add(dupSkipped.existingExpenseId)
+                            // No transaction action batch collected for duplicates — only reporting/linking
+                            val linkResult = receiptLinkService.linkReceiptToExpense(
+                                savedId, dupSkipped.existingExpenseId, "EMAIL_RECEIPT",
+                                source = ExpenseSource.EMAIL_RECEIPT.name,
+                                writeSourceLink = false
+                            )
+                            if (linkResult.isFailure) {
+                                throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
+                            }
+                        }
+                        is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
+                            val vf = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed
+                            Timber.w("Email receipt %d validation failed: %s", savedId, vf.errors)
+                            needsReviewReason = "validation_failed"
+                        }
+                        is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.InsertConflict -> {
+                            val ic = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.InsertConflict
+                            Timber.w("Email receipt %d insert conflict: %s", savedId, ic.dedupeKey)
+                            needsReviewReason = "insert_conflict"
+                        }
+                        is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Error -> {
+                            val err = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Error
+                            // createExpenseDbOnlyV2 returns the failure as a value (does not throw);
+                            // a CancellationException would have propagated already, so just log.
+                            Timber.w(err.exception, "Email receipt %d create error", savedId)
+                            needsReviewReason = "create_error"
                         }
                     }
-                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped -> {
-                        val dupSkipped = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped
-                        Timber.d("Email receipt %d matched existing expense %d", savedId, dupSkipped.existingExpenseId)
-                        linkedExistingExpenseIds.add(dupSkipped.existingExpenseId)
-                        // No transaction action batch collected for duplicates — only reporting/linking
-                        val linkResult = receiptLinkService.linkReceiptToExpense(
-                            savedId, dupSkipped.existingExpenseId, "EMAIL_RECEIPT",
-                            source = ExpenseSource.EMAIL_RECEIPT.name,
-                            writeSourceLink = false
-                        )
-                        if (linkResult.isFailure) {
-                            throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
-                        }
-                    }
-                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
-                        val vf = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed
-                        Timber.w("Email receipt %d validation failed: %s", savedId, vf.errors)
-                    }
-                    else -> {}
                 }
+            } else {
+                // P11-CURRENT-011: receipt saved but not enough parsed data to create an
+                // expense at all — report honestly instead of a misleading empty Success.
+                needsReviewReason = "incomplete_parse"
             }
 
             // Plan receipt side-effects AFTER expense creation and linking so the
@@ -1091,6 +1152,18 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             logMessage = "Email receipt post-commit side effects failed",
             targetId = savedId
         )
+
+        if (createdExpenseIds.isEmpty() && linkedExistingExpenseIds.isEmpty() && needsReviewReason != null) {
+            emitEmailReceiptDiagnostic("outcome", "NEEDS_REVIEW", needsReviewReason!!, "ScannedReceipt", savedId, correlationId)
+            return EmailReceiptProcessResult.NeedsReview(
+                receiptId = savedId,
+                reason = needsReviewReason!!,
+                // Only carry the confidence value when it is the REASON for review;
+                // for validation_failed/insert_conflict/create_error/incomplete_parse the
+                // parser confidence is irrelevant and would be misleading diagnostics.
+                confidence = emailData.confidence.takeIf { needsReviewReason == "low_confidence" }
+            )
+        }
 
         return EmailReceiptProcessResult.Success(
             receiptId = savedId,

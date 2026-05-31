@@ -15,9 +15,12 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.golden.GoldenTestBase
 import com.yourname.expensetracker.testfixtures.golden.GoldenScenarioVerifier
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -53,6 +56,7 @@ class BackupRestoreIntegrityE2ETest : GoldenTestBase() {
 
         val currencySettings = mockk<CurrencySettingsRepository>().also {
             every { it.homeCurrency() } returns flowOf("EUR")
+            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
         val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())
         val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)

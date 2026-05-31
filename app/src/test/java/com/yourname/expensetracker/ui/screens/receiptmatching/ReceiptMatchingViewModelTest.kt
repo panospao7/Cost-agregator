@@ -35,7 +35,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         super.setup()
         coEvery { receiptRepository.getUnmatchedReceipts() } returns emptyList()
         coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk())
+        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
     }
 
     @Test
@@ -56,7 +56,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         coEvery { receiptRepository.getReceiptsWithSuggestions() } returns listOf(suggested)
         coEvery { receiptRepository.getExpenseById(100L) } returns expense
 
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk())
+        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -80,7 +80,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         )
         coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
 
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk())
+        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -112,7 +112,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         )
         coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
 
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk())
+        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -150,7 +150,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
         coEvery { matcher.findBestMatch(receiptA) } returns MatchResult.AutoMatch(txA, 0.98)
         coEvery { matcher.findBestMatch(receiptB) } returns MatchResult.Suggested(txB, 0.86)
 
-        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk())
+        viewModel = ReceiptMatchingViewModel(receiptRepository, matcher, receiptLinkService = mockk(), matchService = mockk())
         advanceUntilIdle()
 
         viewModel.state.test {

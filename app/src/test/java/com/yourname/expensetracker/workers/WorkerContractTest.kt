@@ -71,4 +71,19 @@ class WorkerContractTest {
         // the DEFAULTS map (or vice versa), this test catches the mismatch.
         assertEquals(7, WorkerSpec.DEFAULTS.size)
     }
+
+    @Test
+    fun `WorkerRegistry entries match WorkerSpec DEFAULTS keys`() {
+        // P9-CURRENT-021: the pause side (RestoreMaintenanceMode.pauseAllWorkers)
+        // derives from WorkerSpec.DEFAULTS.keys while the schedule/resume side
+        // (AppStartupCoordinator + RestoreMaintenanceMode) derives from
+        // WorkerRegistry.entries. If these diverge, a worker can be paused but
+        // never resumed (or scheduled but never paused). Enforce parity here.
+        val registrySpecNames = com.yourname.expensetracker.domain.workers.WorkerRegistry
+            .entries.map { it.specName }.toSet()
+        assertEquals(
+            "WorkerRegistry.entries must match WorkerSpec.DEFAULTS.keys exactly",
+            WorkerSpec.DEFAULTS.keys, registrySpecNames
+        )
+    }
 }

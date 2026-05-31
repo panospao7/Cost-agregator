@@ -8,8 +8,12 @@ import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.repository.ReceiptInsertResolver
+import com.yourname.expensetracker.data.repository.ReceiptInsertResult
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -58,6 +62,7 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
     private lateinit var postCommitActionRunner: PostCommitActionRunner
     private lateinit var receiptSideEffectPlanner: ReceiptSideEffectPlanner
+    private lateinit var receiptInsertResolver: ReceiptInsertResolver
     private lateinit var coordinator: ReceiptLifecycleCoordinator
 
     private val now = 1_712_000_000_000L
@@ -81,10 +86,16 @@ class ReceiptLifecycleCoordinatorTest {
         restoreMaintenanceMode = mockk(relaxed = true)
         postCommitActionRunner = mockk(relaxed = true)
         receiptSideEffectPlanner = mockk(relaxed = true)
+        receiptInsertResolver = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
         every { restoreMaintenanceMode.isWritesAllowed() } returns true
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        // Default happy-path insert: every existing test expects the receipt to be
+        // persisted with id=1L (the create / save / cancellation paths all rely on
+        // this). Tests that need a different outcome override this stub locally.
+        coEvery { receiptInsertResolver.insertOrResolve(any()) } returns ReceiptInsertResult.Inserted(1L)
 
         coordinator = ReceiptLifecycleCoordinator(
             database = database,
@@ -113,7 +124,7 @@ class ReceiptLifecycleCoordinatorTest {
             receiptSideEffectPlanner = receiptSideEffectPlanner,
             pendingReviewDao = mockk(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
-            receiptInsertResolver = mockk(relaxed = true)
+            receiptInsertResolver = receiptInsertResolver
         )
     }
 
@@ -289,7 +300,7 @@ class ReceiptLifecycleCoordinatorTest {
         val result = coordinator.processReceiptInput(uri)
 
         assertTrue("Expected success despite runner failure, got $result", result.isSuccess)
-        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
+        coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
     }
 
     @Test
@@ -321,6 +332,122 @@ class ReceiptLifecycleCoordinatorTest {
         )
 
         assertTrue("Expected Success despite runner failure, got $result", result is EmailReceiptProcessResult.Success)
-        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
+        coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
+    }
+
+    // P11-CURRENT-020: home-currency DataStore read must happen BEFORE the Room transaction is
+    // opened so the DB write lock is never held while awaiting DataStore/Flow I/O. The read is now
+    // hoisted out of database.withTransaction, so it runs unconditionally on the email path. We
+    // assert it is invoked exactly once during processEmailReceipt (database.withTransaction is a
+    // Room extension on a relaxed mock and cannot be reliably ordered-against without static mocks).
+    @Test
+    fun `processEmailReceipt invokes resolveHomeCurrency once on the email path`() = runTest {
+        val emailData = EmailReceiptData(
+            messageId = "", from = "sender@example.com", subject = "Receipt",
+            body = "Your receipt", receivedAt = now,
+            amount = 25.0, merchant = "Test Shop", currency = "EUR",
+            date = now, items = null
+        )
+        coEvery { scannedReceiptDao.insert(any()) } returns 1L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { scannedReceiptDao.getById(1L) } returns ScannedReceipt(
+            id = 1L, imagePath = null, rawOcrText = "Your receipt",
+            parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 0.7f
+        )
+
+        coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your receipt",
+            sender = "sender@example.com",
+            subject = "Receipt",
+            messageId = "",
+            provider = "unknown"
+        )
+
+        // The BEFORE-transaction ordering (resolveHomeCurrency is called before
+        // database.withTransaction at the call site) is guaranteed structurally by the
+        // source and is covered by static review, not by this unit test.
+        coVerify(exactly = 1) { currencySettingsRepository.resolveHomeCurrency() }
+    }
+
+    // P11-CURRENT-009: a low-confidence email parse (all of amount/merchant/date present, but
+    // confidence at/below the auto-expense threshold) must NOT silently auto-create an approved
+    // expense. The receipt is still saved, and the outcome is surfaced as NeedsReview so the user
+    // can confirm. Note: transactionLifecycleCoordinator is an inline relaxed mock (not a field),
+    // so createExpenseDbOnlyV2 invocation cannot be coVerify-asserted here; the NeedsReview result
+    // (which is only reached because the create path was skipped) is the assertable contract.
+    @Test
+    fun `processEmailReceipt low confidence yields NeedsReview without auto-creating expense`() = runTest {
+        val emailData = EmailReceiptData(
+            messageId = "", from = "sender@example.com", subject = "Receipt",
+            body = "Your receipt", receivedAt = now,
+            amount = 25.0, merchant = "Test Shop", currency = "EUR",
+            date = now, items = null,
+            confidence = 0.2
+        )
+        coEvery { scannedReceiptDao.insert(any()) } returns 1L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { scannedReceiptDao.getById(1L) } returns ScannedReceipt(
+            id = 1L, imagePath = null, rawOcrText = "Your receipt",
+            parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 0.2f
+        )
+
+        val result = coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your receipt",
+            sender = "sender@example.com",
+            subject = "Receipt",
+            messageId = "",
+            provider = "unknown"
+        )
+
+        assertTrue("Expected NeedsReview for low-confidence parse, got $result", result is EmailReceiptProcessResult.NeedsReview)
+        val needsReview = result as EmailReceiptProcessResult.NeedsReview
+        kotlin.test.assertEquals("low_confidence", needsReview.reason)
+        // receiptInsertResolver is a class-level field stubbed to Inserted(1L), so the
+        // receipt IS persisted and its id is surfaced even though no expense was created.
+        kotlin.test.assertEquals(1L, needsReview.receiptId)
+        kotlin.test.assertEquals(0.2, needsReview.confidence!!, 1e-9)
+    }
+
+    // P11-CURRENT-011: when the parse is incomplete (here, amount is null so the outer
+    // create guard `amount != null && amount > 0 && merchant present && date > 0` is FALSE),
+    // the receipt is still saved but NO expense is created. The outcome must be surfaced as
+    // NeedsReview(reason = "incomplete_parse") instead of a misleading empty Success. The
+    // incomplete guard fires regardless of confidence, so the default confidence (1.0) is used.
+    @Test
+    fun `processEmailReceipt incomplete parse yields NeedsReview without creating expense`() = runTest {
+        val emailData = EmailReceiptData(
+            messageId = "", from = "sender@example.com", subject = "Receipt",
+            body = "Your receipt", receivedAt = now,
+            amount = null, merchant = "Test Shop", currency = "EUR",
+            date = now, items = null
+        )
+        coEvery { scannedReceiptDao.insert(any()) } returns 1L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { scannedReceiptDao.getById(1L) } returns ScannedReceipt(
+            id = 1L, imagePath = null, rawOcrText = "Your receipt",
+            parsedTotal = null, parsedMerchant = "Test Shop", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 1.0f
+        )
+
+        val result = coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your receipt",
+            sender = "sender@example.com",
+            subject = "Receipt",
+            messageId = "",
+            provider = "unknown"
+        )
+
+        assertTrue("Expected NeedsReview for incomplete parse, got $result", result is EmailReceiptProcessResult.NeedsReview)
+        val needsReview = result as EmailReceiptProcessResult.NeedsReview
+        kotlin.test.assertEquals("incomplete_parse", needsReview.reason)
+        kotlin.test.assertEquals(1L, needsReview.receiptId)
     }
 }

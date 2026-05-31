@@ -7,8 +7,10 @@ import com.yourname.expensetracker.data.database.dao.MerchantCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyBucketInput
 import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.core.money.TransactionTypeFilter
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -751,6 +753,60 @@ class MultiCurrencyRepository @Inject constructor(
             result[categoryId] = aggregateCurrencyTotalsToMoneyAggregate(buckets, homeCurrency)
         }
         return result
+    }
+
+    /**
+     * **AS-OF / BOUNDED:** Get total PURCHASE spending in home currency, converting each
+     * per-currency bucket at the rate as-of [asOfMillis] (period-end basis).
+     *
+     * P6-CURRENT-001: This is the bounded counterpart to [getHomeCurrencyPurchaseTotal].
+     * It uses the same grouped-by-currency DAO query (O(currencies), no uncapped row scan,
+     * preserving the truncation-safety contract) but converts at [RateBasis.PERIOD_END]
+     * so budget actuals share the same FX basis as the budget limit. A closed period's
+     * total is therefore stable when today's rate changes.
+     */
+    suspend fun getHomeCurrencyPurchaseTotalAsOf(
+        startDate: Long,
+        endDate: Long,
+        asOfMillis: Long
+    ): MoneyAggregate {
+        val homeCurrency = CurrencyCode(requireHomeCurrencyForMoneyMath().code)
+        val currencyTotals = expenseDao.getTotalSpentBetweenByCurrency(startDate, endDate)
+        return MoneyAggregateBuilder.fromBuckets(
+            buckets = currencyTotals.map {
+                MoneyBucketInput(it.total, CurrencyCode(it.currency.uppercase()), it.txCount)
+            },
+            homeCurrency = homeCurrency,
+            converter = currencyConverter,
+            rateBasis = RateBasis.PERIOD_END,
+            bucketDatePolicy = BucketDatePolicy.FixedDate(asOfMillis)
+        )
+    }
+
+    /**
+     * **AS-OF / BOUNDED:** Get PURCHASE category totals in home currency, converting each
+     * per-currency bucket at the rate as-of [asOfMillis] (period-end basis).
+     *
+     * P6-CURRENT-001: bounded counterpart to [getHomeCurrencyPurchaseCategoryTotals].
+     */
+    suspend fun getHomeCurrencyPurchaseCategoryTotalsAsOf(
+        startDate: Long,
+        endDate: Long,
+        asOfMillis: Long
+    ): Map<Long?, MoneyAggregate> {
+        val homeCurrency = CurrencyCode(requireHomeCurrencyForMoneyMath().code)
+        val grouped = expenseDao.getCategoryTotalsBetweenByCurrency(startDate, endDate)
+        return grouped.groupBy { it.categoryId }.mapValues { (_, buckets) ->
+            MoneyAggregateBuilder.fromBuckets(
+                buckets = buckets.map {
+                    MoneyBucketInput(it.total, CurrencyCode(it.currency.uppercase()), it.txCount)
+                },
+                homeCurrency = homeCurrency,
+                converter = currencyConverter,
+                rateBasis = RateBasis.PERIOD_END,
+                bucketDatePolicy = BucketDatePolicy.FixedDate(asOfMillis)
+            )
+        }
     }
 
     /**

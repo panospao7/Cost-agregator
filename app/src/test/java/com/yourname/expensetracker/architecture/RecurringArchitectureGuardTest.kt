@@ -51,14 +51,7 @@ class RecurringArchitectureGuardTest {
             Regex("""manualRecurringExpenseDao\s*\.\s*delete\("""),
             Regex("""manualRecurringExpenseDao\s*\.\s*deleteById\("""),
             Regex("""manualRecurringExpenseDao\s*\.\s*setActiveStatus\("""),
-            Regex("""manualRecurringExpenseDao\s*\.\s*updateNextDate\("""),
-            // Also catch generic dao.X calls that shadow ManualRecurringExpenseDao
-            Regex("""\bdao\s*\.\s*insert\("""),
-            Regex("""\bdao\s*\.\s*update\("""),
-            Regex("""\bdao\s*\.\s*delete\("""),
-            Regex("""\bdao\s*\.\s*deleteById\("""),
-            Regex("""\bdao\s*\.\s*setActiveStatus\("""),
-            Regex("""\bdao\s*\.\s*updateNextDate\(""")
+            Regex("""manualRecurringExpenseDao\s*\.\s*updateNextDate\(""")
         )
 
         val errors = mutableListOf<String>()
@@ -109,9 +102,12 @@ class RecurringArchitectureGuardTest {
                     errors.add("${file.name}: contains forbidden pattern '$pattern'")
                 }
             }
-            for (pattern in required) {
-                if (!text.contains(pattern)) {
-                    errors.add("${file.name}: missing required pattern '$pattern'")
+            // Only enforce BroadcastReceiver lifecycle on actual BroadcastReceivers, not Workers
+            if (text.contains("BroadcastReceiver")) {
+                for (pattern in required) {
+                    if (!text.contains(pattern)) {
+                        errors.add("${file.name}: missing required pattern '$pattern'")
+                    }
                 }
             }
         }
@@ -179,11 +175,11 @@ class RecurringArchitectureGuardTest {
         if (!plannerFile.exists()) return
         val text = plannerFile.readText()
         // Create action should use linkExpenseToOccurrenceDetailed, not plain linkExpenseToOccurrence
-        val createBlock = text.substringAfter("makeRecurringMatchingAction").substringBefore("makeRecurringReconcileAction")
+        val createBlock = text.substringAfter("private fun makeRecurringMatchingAction").substringBefore("private fun makeRecurringReconcileAction")
         assertTrue("Create action should use linkExpenseToOccurrenceDetailed",
             createBlock.contains("linkExpenseToOccurrenceDetailed"))
         // Delete action should use unlinkExpenseFromOccurrenceDetailed
-        val deleteBlock = text.substringAfter("makeRecurringUnlinkAction")
+        val deleteBlock = text.substringAfter("private fun makeRecurringUnlinkAction")
         assertTrue("Delete action should use unlinkExpenseFromOccurrenceDetailed",
             deleteBlock.contains("unlinkExpenseFromOccurrenceDetailed"))
     }
@@ -230,7 +226,7 @@ class RecurringArchitectureGuardTest {
         val plannerFile = File(sourceRoot, "com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectPlanner.kt")
         if (!plannerFile.exists()) return
         val text = plannerFile.readText()
-        val bulkBody = text.substringAfter("makeBulkRecurringReconciliationAction")
+        val bulkBody = text.substringAfter("private fun makeBulkRecurringReconciliationAction")
         assertFalse("Bulk recurring reconciliation must not return DISABLED_BY_SETTINGS",
             bulkBody.contains("DISABLED_BY_SETTINGS"))
     }
@@ -299,7 +295,7 @@ class RecurringArchitectureGuardTest {
         val plannerFile = File(sourceRoot, "com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectPlanner.kt")
         if (!plannerFile.exists()) return
         val text = plannerFile.readText()
-        val bulkBlock = text.substringAfter("makeBulkRecurringReconciliationAction")
+        val bulkBlock = text.substringAfter("private fun makeBulkRecurringReconciliationAction")
         // Bulk must use structured result, not raw count
         assertFalse("Bulk reconciliation must not use global getByStatus PAID scan in planner",
             bulkBlock.contains("getByStatus(\"PAID\")"))

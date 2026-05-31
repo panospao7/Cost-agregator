@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -37,6 +39,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
         super.setup()
 
         every { settingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { settingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { settingsRepository.lastRateUpdate() } returns flowOf(1_700_000_000_000L)
         coEvery { settingsRepository.areRatesStale(any()) } returns false
         every { currencyDataRepository.getRatesToCurrency("EUR") } returns flowOf(emptyList())

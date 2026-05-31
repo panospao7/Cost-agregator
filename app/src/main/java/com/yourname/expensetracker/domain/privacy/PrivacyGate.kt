@@ -41,8 +41,9 @@ package com.yourname.expensetracker.domain.privacy
  *   BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, and OVERPASS_API.
  * - [CloudAiPrivacyGate] — guards all CLOUD_AI_* capabilities plus
  *   RECEIPT_IMAGE_CLOUD_UPLOAD.
- * - [BackupPrivacyGate] — guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP.
- * - [ExportPrivacyGate] — guards EXPENSE_EXPORT_* and DEBUG/RAW export capabilities.
+ * - [BackupPrivacyGate] — guards ENCRYPTED_BACKUP.
+ * - [ExportPrivacyGate] — guards EXPENSE_EXPORT_* and DEBUG/RAW export capabilities,
+ *   and is the sole owner of RAWBACKUP_EXPORT.
  *
  * Gates are composed via [CompositePrivacyGate], which iterates through the
  * chain and returns the first [PrivacyDecision.Denied] or [PrivacyDecision.FailClosed]

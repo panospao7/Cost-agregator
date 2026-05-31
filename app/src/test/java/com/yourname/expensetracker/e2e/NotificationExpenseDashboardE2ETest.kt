@@ -6,6 +6,8 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.GenericTransactionParser
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
@@ -17,6 +19,7 @@ import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.golden.GoldenTestBase
 import com.yourname.expensetracker.testfixtures.golden.GoldenScenarioVerifier
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -75,6 +78,7 @@ class NotificationExpenseDashboardE2ETest : GoldenTestBase() {
         // Real multi-currency repository
         val currencySettings = mockk<CurrencySettingsRepository>().also {
             every { it.homeCurrency() } returns flowOf("EUR")
+            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
         val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())
         val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)

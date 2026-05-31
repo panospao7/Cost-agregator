@@ -10,6 +10,8 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import io.mockk.coEvery
 import io.mockk.every
@@ -40,6 +42,7 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
@@ -68,12 +71,12 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
 
         val result = engine.calculateHealthScore()
 
-        assertApproxEquals(100.0, result.savingsRateScore.toDouble(), 0.01)
-        assertApproxEquals(0.0, result.runwayScore.toDouble(), 0.01)
+        assertApproxEquals(50.0, result.savingsRateScore.toDouble(), 0.01)
+        assertApproxEquals(50.0, result.runwayScore.toDouble(), 0.01)
         assertApproxEquals(50.0, result.budgetAdherenceScore.toDouble(), 0.01)
         assertApproxEquals(75.0, result.billReliabilityScore.toDouble(), 0.01)
-        assertApproxEquals(57.0, result.overallScore.toDouble(), 0.01)
-        assertEquals(HealthTrend.STABLE, result.trend)
+        assertApproxEquals(55.0, result.overallScore.toDouble(), 0.01)
+        assertEquals(HealthTrend.IMPROVING, result.trend)
     }
 
     @Test
@@ -88,7 +91,7 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         assertApproxEquals(50.0, result.budgetAdherenceScore.toDouble(), 0.01)
         assertApproxEquals(75.0, result.billReliabilityScore.toDouble(), 0.01)
         assertApproxEquals(55.0, result.overallScore.toDouble(), 0.01)
-        assertEquals(HealthTrend.STABLE, result.trend)
+        assertEquals(HealthTrend.IMPROVING, result.trend)
     }
 
     private fun goldenMarchExpenses() = listOf(

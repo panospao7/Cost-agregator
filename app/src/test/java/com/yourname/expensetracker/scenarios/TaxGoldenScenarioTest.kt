@@ -16,6 +16,8 @@ import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.tax.TaxConfiguration
 import com.yourname.expensetracker.domain.tax.TaxConfigurationFactory
 import com.yourname.expensetracker.domain.tax.TaxEstimator
@@ -63,6 +65,7 @@ class TaxGoldenScenarioTest {
         every { taxSettings.getFiscalYearStartMonth() } returns 1
         every { taxSettings.getFiscalYearStartDay() } returns 1
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { timeProvider.now() } returns TEST_DATE
 
         // Mock business expense DAO to return per-currency totals

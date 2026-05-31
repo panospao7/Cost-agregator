@@ -20,6 +20,8 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
@@ -92,6 +94,7 @@ class BudgetRolloverTest {
         coEvery { expenseDao.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns emptyList()
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
 
         coEvery { currencyConverter.convertMultiple(any(), any()) } answers {

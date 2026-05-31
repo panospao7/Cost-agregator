@@ -7,9 +7,15 @@ import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -28,6 +34,14 @@ import java.time.ZoneId
  * - Score weights, thresholds, streak math, and time-boundary behavior are preserved
  */
 class FinancialHealthCalculatorTransactionTypeTest {
+
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>()
+
+    @Before
+    fun setUpCurrencyMocks() {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+    }
 
     // ========================================================================
     // Helpers
@@ -87,7 +101,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `DEPOSIT today does not affect today spending control score`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val purchaseOnly = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
@@ -109,7 +123,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `TRANSFER today does not affect today spending control score`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val purchaseOnly = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
@@ -131,7 +145,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `WITHDRAWAL today does not affect today spending control score`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val purchaseOnly = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
@@ -158,7 +172,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     fun `non-spend rows this week do not affect weekly spending control`() {
         // Wednesday April 15, 2026
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val purchases = listOf(
             expense(1L, toEpochMs(2026, 4, 13, 10, 0), 50.0, TransactionType.PURCHASE),
@@ -187,7 +201,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `non-spend rows this month do not affect monthly spending control`() {
         val now = toEpochMs(2026, 4, 20, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val purchases = listOf(
             expense(1L, toEpochMs(2026, 4, 5, 10, 0), 100.0, TransactionType.PURCHASE),
@@ -217,7 +231,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `mixed non-spend types across all periods do not change composite score`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val purchases = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 20.0, TransactionType.PURCHASE),  // today
@@ -262,7 +276,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `only non-spend rows produces same result as empty expense list`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val nonSpendOnly = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 1000.0, TransactionType.DEPOSIT),
@@ -297,7 +311,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `UNKNOWN transaction type does not affect spending control`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         val purchaseOnly = listOf(
             expense(1L, toEpochMs(2026, 4, 15, 9, 0), 10.0, TransactionType.PURCHASE)
@@ -323,7 +337,7 @@ class FinancialHealthCalculatorTransactionTypeTest {
     @Test
     fun `score weights thresholds and streaks remain unchanged after filtering`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), currencySettingsRepository)
 
         // Use only PURCHASE rows so filtering doesn't change anything —
         // this verifies the core math is untouched by the refactoring.

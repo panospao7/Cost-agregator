@@ -16,13 +16,16 @@ import javax.inject.Singleton
  * corresponding setting is disabled. Capabilities not handled by this gate
  * default to [PrivacyDecision.Allowed].
  *
- * TODO (P8-P1-10): Location gate coverage is not statically guaranteed — new
- * geocoding call sites (e.g. in CompositeGeocodingService, OverpassNearbyService)
- * can bypass the gate if the developer forgets to call it. Fix path: make all
- * geocoding services require a [PrivacyDecision.Allowed] token parameter (a
- * sealed class instance) that can only be obtained from this gate, enforcing
- * the check at compile time. Alternatively, wrap all geocoding services behind
- * a PrivacyAwareGeocodingService that checks the gate internally.
+ * ## Provider coverage (P8-P1-10)
+ * Every external location/geocoding provider self-checks the relevant capability
+ * before making a network call:
+ * - `CompositeGeocodingService`, `NominatimGeocodingService`, `GeoapifyGeocodingService`,
+ *   `GooglePlacesGeocodingService`, `PhotonGeocodingService` → [PrivacyCapability.EXTERNAL_GEOCODING]
+ * - `OverpassNearbyService` → [PrivacyCapability.OVERPASS_API]
+ *
+ * This is statically enforced by guard rule **G14** in
+ * `scripts/verify_privacy_boundaries.py`: any `*GeocodingService`/`*NearbyService`
+ * that declares a [PrivacyGate] dependency MUST call `privacyGate.check(...)`.
  */
 @Singleton
 class LocationPrivacyGate @Inject constructor(

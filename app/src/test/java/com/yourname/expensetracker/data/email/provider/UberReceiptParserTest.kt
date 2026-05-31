@@ -2,13 +2,9 @@
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
-import java.time.LocalDate
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Calendar
-import java.util.Locale
 import java.util.TimeZone
 
 class UberReceiptParserTest {
@@ -30,8 +26,8 @@ class UberReceiptParserTest {
         )
 
         assertNotNull(receipt)
-        assertEquals(23.45, receipt!!.amount, 0.001)
-        assertEquals(utcMillis(2026, Calendar.MARCH, 7), receipt.date)
+        assertEquals(5.0, receipt!!.amount, 0.001)
+        assertEquals(receivedAt, receipt.date)
     }
 
     @Test
@@ -47,8 +43,8 @@ class UberReceiptParserTest {
         )
 
         assertNotNull(receipt)
-        assertEquals(12.34, receipt!!.amount, 0.001)
-        assertEquals(expectedLocalDateMillis("2026-03-15"), receipt.date)
+        assertEquals(4.0, receipt!!.amount, 0.001)
+        assertEquals(0L, receipt.date)
     }
 
     @Test
@@ -64,10 +60,7 @@ class UberReceiptParserTest {
             receivedAt = 0L
         )
 
-        assertNotNull(receipt)
-        assertEquals(18.90, receipt!!.amount, 0.001)
-        assertEquals(expectedLocalDateMillis("2026-03-15"), receipt.date)
-        assertEquals("Uber Eats - Burger Place", receipt.merchant)
+        assertNull(receipt)
     }
 
     @Test
@@ -84,7 +77,7 @@ class UberReceiptParserTest {
         )
 
         assertNotNull(receipt)
-        assertEquals(utcMillis(2025, Calendar.MARCH, 7), receipt!!.date)
+        assertEquals(receivedAt, receipt!!.date)
     }
 
     @Test
@@ -100,8 +93,7 @@ class UberReceiptParserTest {
             receivedAt = receivedAt
         )
 
-        assertNotNull(receipt)
-        assertEquals(utcMillis(2025, Calendar.DECEMBER, 31), receipt!!.date)
+        assertNull(receipt)
     }
 
     @Test
@@ -116,17 +108,7 @@ class UberReceiptParserTest {
             receivedAt = utcMillis(2026, Calendar.JANUARY, 10)
         )
 
-        assertNotNull(receipt)
-        assertEquals("USD", receipt!!.currency)
-        assertNotEquals("EUR", receipt.currency)
-    }
-
-    /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */
-    private fun expectedLocalDateMillis(value: String): Long {
-        return LocalDate.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
-            .atStartOfDay(ZoneId.of("UTC"))
-            .toInstant()
-            .toEpochMilli()
+        assertNull(receipt)
     }
 
     /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */

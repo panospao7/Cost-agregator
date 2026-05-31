@@ -82,7 +82,7 @@ class BillRemindersViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `markBillPaid refreshes reminders`() = runTest(testDispatcher) {
+    fun `refresh reloads reminders and total`() = runTest(testDispatcher) {
         val testReminders = listOf(
             BillReminder(
                 recurringExpenseId = 1L,
@@ -97,26 +97,22 @@ class BillRemindersViewModelTest : ViewModelTestUtils() {
         )
 
         coEvery { billReminderManager.getUpcomingReminders(any()) } returnsMany listOf(
-            // First call (init) — empty
             emptyList(),
-            // After markBillPaid (refresh) — has data
             testReminders
         )
-        coEvery { billReminderManager.getMonthlyBillsTotal() } returns 15.99
+        coEvery { billReminderManager.getMonthlyBillsTotal() } returnsMany listOf(0.0, 15.99)
 
         val vm = createViewModel()
         advanceUntilIdle()
 
-        // Initially empty
         assertTrue(vm.reminders.value.isEmpty())
 
-        // Mark a bill as paid — triggers refresh
-        vm.markBillPaid(1L)
+        vm.refresh()
         advanceUntilIdle()
 
-        // Now reminders should be loaded
         assertEquals(1, vm.reminders.value.size)
         assertEquals("Netflix", vm.reminders.value[0].merchant)
+        assertEquals(15.99, vm.monthlyTotal.value, 0.001)
     }
 
     @Test

@@ -20,6 +20,8 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import io.mockk.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -65,6 +67,7 @@ class BudgetRepositoryTruncationTest {
     @Before
     fun setup() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)

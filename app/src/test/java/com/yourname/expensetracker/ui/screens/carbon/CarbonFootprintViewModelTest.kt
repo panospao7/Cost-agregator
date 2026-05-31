@@ -3,6 +3,8 @@ package com.yourname.expensetracker.ui.screens.carbon
 import app.cash.turbine.test
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -44,6 +46,7 @@ class CarbonFootprintViewModelTest : ViewModelTestUtils() {
         coEvery { calculator.calculateCarbonFootprint(any(), any()) } returns carbonReport()
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         viewModel = CarbonFootprintViewModel(calculator, timeProvider, currencySettingsRepository = currencyRepo)
     }
 

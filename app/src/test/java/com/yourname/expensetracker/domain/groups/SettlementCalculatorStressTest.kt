@@ -2,6 +2,9 @@ package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -16,6 +19,7 @@ class SettlementCalculatorStressTest {
 
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).apply {
         every { homeCurrency() } returns flowOf("EUR")
+        coEvery { resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
     }
     private val calculator = SettlementCalculator(currencySettingsRepository = currencySettingsRepository, writeBarrier = mockk(relaxed = true))
 

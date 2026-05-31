@@ -6,6 +6,8 @@ import com.yourname.expensetracker.data.database.dao.BusinessCategoryTotal
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -44,6 +46,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         every { taxSettingsRepo.getFiscalYearStartMonth() } returns 1
         every { taxSettingsRepo.getFiscalYearStartDay() } returns 1
         every { currencySettingsRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         coEvery { expenseDao.getBusinessExpensesBetweenByCurrency(any(), any()) } returns emptyList()
         coEvery { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) } returns emptyList()
 

@@ -83,11 +83,30 @@ Do NOT use `String.hashCode()` for any of these. See `SensitiveHashingService`.
 `encryptedBackupEnabled = false` does NOT imply raw export is allowed.
 See `ExportPrivacyGate` and `ExportPrivacyPolicy` for explicit capability requirements.
 
+`ExportPrivacyGate` is the **sole owner** of `RAWBACKUP_EXPORT` (it denies plaintext
+raw export unless explicit debug consent in a debug build). `BackupPrivacyGate` owns
+only `ENCRYPTED_BACKUP`. The two gates never issue conflicting decisions for the same
+capability.
+
+`ExportAnonymizer` redacts every PII-bearing table in the export copy (single
+transaction): `scanned_receipts.rawOcrText`, `raw_notifications` raw content,
+`ai_artifacts` (summary/explanation/payload/error), `ai_chat_messages` (text/payload),
+`merchant_locations` (display name/address/osmId + lat/lon zeroed), and
+`email_receipt_sources` (sender/subject/messageId; dedup hashes preserved).
+
 ## Static guard script
 
 Run `python3 scripts/verify_privacy_boundaries.py` before submitting PRs touching any privacy-sensitive code path.
 
-Rules G1-G10 are enforced. G9 verifies the corruption sentinel. G10 verifies value-level sanitization in `SafePrivacyMetadata`.
+Rules G1–G14 are enforced. Notable rules:
+- G9 verifies the corruption sentinel.
+- G10 verifies value-level sanitization in `SafePrivacyMetadata`.
+- G14 verifies every `*GeocodingService`/`*NearbyService` that depends on `PrivacyGate`
+  calls `privacyGate.check(...)` (statically guarantees location gating).
+
+The guard exempts allow-all `PrivacyGate` objects inside `@VisibleForTesting`/secondary
+(test-only) constructors, matching the Kotlin `PrivacyGuardTest` carve-out, because DI
+provides the real gate in production.
 
 > Canonical reference for allowed raw persistence in ExpenseTracker.
 > Every persisted target must have an entry in this table.

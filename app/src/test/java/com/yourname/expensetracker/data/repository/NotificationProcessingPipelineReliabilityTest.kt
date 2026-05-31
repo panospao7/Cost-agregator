@@ -38,9 +38,12 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.ParseOutcome
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import com.yourname.expensetracker.domain.sideeffect.MutationResult
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.subscription.SubscriptionCandidateResult
@@ -150,7 +153,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
     @Test
     fun `process swallows parser exceptions`() = runBlocking {
-        coEvery { parserRegistry.parseWithAiFallback(any(), any(), any(), any(), any()) } throws RuntimeException("boom")
+        coEvery { parserRegistry.parseWithProvenance(any(), any(), any(), any(), any()) } throws RuntimeException("boom")
 
         pipeline.process(testNotification("com.test.app"))
 
@@ -159,7 +162,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
     @Test
     fun `processBatch initializes classifier once and continues on per-item failures`() = runBlocking {
-        coEvery { parserRegistry.parseWithAiFallback(any(), any(), any(), any(), any()) } throws RuntimeException("parse failure")
+        coEvery { parserRegistry.parseWithProvenance(any(), any(), any(), any(), any()) } throws RuntimeException("parse failure")
 
         val notifications = listOf(
             testNotification("com.test.a"),
@@ -178,14 +181,14 @@ class NotificationProcessingPipelineReliabilityTest {
         val notification = testNotification("com.test.app")
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification.title,
                 notification.text,
                 notification.bigText,
                 notification.subText,
                 notification.packageName
             )
-        } returns null
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         coEvery { rawDao.findIdByDedupeFingerprint(any()) } returns 123L
 
         val result = pipeline.process(notification)
@@ -205,14 +208,14 @@ class NotificationProcessingPipelineReliabilityTest {
         )
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification.title,
                 notification.text,
                 notification.bigText,
                 notification.subText,
                 notification.packageName
             )
-        } returns null
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         coEvery { rawDao.insertOrIgnore(any()) } returns 42L
 
         val result = pipeline.process(notification)
@@ -348,14 +351,14 @@ class NotificationProcessingPipelineReliabilityTest {
         )
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification.title,
                 notification.text,
                 notification.bigText,
                 notification.subText,
                 notification.packageName
             )
-        } returns parsed
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
         coEvery {
             confidenceRouter.route(parsed, notification.packageName, any())
         } returns RoutingResult(
@@ -390,18 +393,21 @@ class NotificationProcessingPipelineReliabilityTest {
                 dedupeKey = any()
             )
         } returns false
-        coEvery { coordinator.createExpense(any(), any()) } returns com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(456L)
+        coEvery { coordinator.createExpenseDbOnlyV2(any()) } returns MutationResult(
+            com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(456L),
+            PostCommitActionBatch.empty("test")
+        )
 
         val result = pipeline.process(notification)
 
         assertTrue("Expected AutoAccepted outcome, got $result", result is NotificationPipelineOutcome.AutoAccepted)
         coVerify {
-            coordinator.createExpense(match {
+            coordinator.createExpenseDbOnlyV2(match {
                 it.amount == 50.0 &&
                     it.currency == "EUR" &&
                     it.merchant == "Shop" &&
                     it.transactionType == TransactionType.PURCHASE
-            }, any())
+            })
         }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, any()) }
     }
@@ -445,23 +451,23 @@ class NotificationProcessingPipelineReliabilityTest {
         val finalCheckBarrier = CompletableDeferred<Unit>()
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification1.title,
                 notification1.text,
                 notification1.bigText,
                 notification1.subText,
                 notification1.packageName
             )
-        } returns parsed1
+        } returns ParseOutcome.Parsed(parsed1, mockk(relaxed = true))
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification2.title,
                 notification2.text,
                 notification2.bigText,
                 notification2.subText,
                 notification2.packageName
             )
-        } returns parsed2
+        } returns ParseOutcome.Parsed(parsed2, mockk(relaxed = true))
         coEvery { confidenceRouter.route(any(), any(), any()) } returns RoutingResult(
             decision = RoutingDecision.AUTO_ACCEPT,
             adjustedConfidence = 0.95f,
@@ -495,9 +501,15 @@ class NotificationProcessingPipelineReliabilityTest {
                 dedupeKey = any()
             )
         } returns false
-        coEvery { coordinator.createExpense(any(), any()) } returnsMany listOf(
-            com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(101L),
-            com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(102L)
+        coEvery { coordinator.createExpenseDbOnlyV2(any()) } returnsMany listOf(
+            MutationResult(
+                com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(101L),
+                PostCommitActionBatch.empty("test")
+            ),
+            MutationResult(
+                com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(102L),
+                PostCommitActionBatch.empty("test")
+            )
         )
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = false))
         coEvery { expenseDao.getRecentExpensesWithCategoryForMerchant(merchant, any()) } returns recentExpenses
@@ -544,14 +556,14 @@ class NotificationProcessingPipelineReliabilityTest {
         val reviewSlot = slot<PendingReview>()
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification.title,
                 notification.text,
                 notification.bigText,
                 notification.subText,
                 notification.packageName
             )
-        } returns null
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         coEvery {
             rawDao.exists(
                 packageName = notification.packageName,
@@ -605,14 +617,14 @@ class NotificationProcessingPipelineReliabilityTest {
         )
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification.title,
                 notification.text,
                 notification.bigText,
                 notification.subText,
                 notification.packageName
             )
-        } returns null
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         coEvery {
             rawDao.exists(
                 packageName = notification.packageName,
@@ -644,14 +656,14 @@ class NotificationProcessingPipelineReliabilityTest {
         )
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification.title,
                 notification.text,
                 notification.bigText,
                 notification.subText,
                 notification.packageName
             )
-        } returns parsed
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
         coEvery {
             confidenceRouter.route(parsed, notification.packageName, any())
         } returns RoutingResult(
@@ -730,14 +742,14 @@ class NotificationProcessingPipelineReliabilityTest {
         )
 
         coEvery {
-            parserRegistry.parseWithAiFallback(
+            parserRegistry.parseWithProvenance(
                 notification.title,
                 notification.text,
                 notification.bigText,
                 notification.subText,
                 notification.packageName
             )
-        } returns parsed
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
         coEvery {
             confidenceRouter.route(parsed, notification.packageName, any())
         } returns RoutingResult(

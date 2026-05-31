@@ -5,6 +5,8 @@ import com.yourname.expensetracker.domain.challenge.NoSpendStatus
 import com.yourname.expensetracker.domain.challenge.SpendingChallenge
 import com.yourname.expensetracker.domain.challenge.SpendingChallengeManager
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.challenge.ChallengeType
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -92,6 +94,7 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
     private fun mockCurrencyRepo(): CurrencySettingsRepository {
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { repo.homeCurrency() } returns flowOf("EUR")
+        coEvery { repo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         return repo
     }
 

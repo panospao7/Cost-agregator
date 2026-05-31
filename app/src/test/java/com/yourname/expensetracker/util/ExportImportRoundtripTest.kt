@@ -6,6 +6,8 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -80,6 +82,7 @@ class ExportImportRoundtripTest {
         val cat = Category(id = 3, name = "Coffee", icon = "C", color = "#FF0000")
         coEvery { categoryDao.getByName("Coffee") } returns cat
         coEvery { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
         val requestSlot = slot<CreateExpenseRequest>()
         coEvery { coordinator.createExpense(capture(requestSlot)) } returns CreateExpenseResult.Created(1L)
@@ -144,6 +147,7 @@ class ExportImportRoundtripTest {
         val cat = Category(id = 5, name = "Food", icon = "F", color = "#00FF00")
         coEvery { categoryDao.getByName("Food") } returns cat
         coEvery { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencyRepo.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
         val requestSlot = slot<CreateExpenseRequest>()
         coEvery { coordinator.createExpense(capture(requestSlot)) } returns CreateExpenseResult.Created(10L)

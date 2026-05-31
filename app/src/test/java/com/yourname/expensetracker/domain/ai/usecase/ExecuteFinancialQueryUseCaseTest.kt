@@ -18,9 +18,13 @@ import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -46,7 +50,10 @@ class ExecuteFinancialQueryUseCaseTest {
                 originalAmount = 0.0, originalCurrency = "EUR", convertedAmount = 0.0,
                 targetCurrency = "EUR", rateUsed = 1.0, timestamp = 0L
             )
-        }, currencySettingsRepository = mockk())
+        }, currencySettingsRepository = mockk<CurrencySettingsRepository>().also {
+            every { it.homeCurrency() } returns flowOf("EUR")
+            coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        })
     }
 
     @Test

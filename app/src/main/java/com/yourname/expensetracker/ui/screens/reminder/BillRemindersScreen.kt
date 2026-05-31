@@ -80,8 +80,7 @@ fun BillRemindersScreen(
             items(reminders) { reminder ->
                 BillReminderCard(
                     reminder = reminder,
-                    homeCurrency = homeCurrency,
-                    onMarkPaid = { viewModel.markBillPaid(reminder.recurringExpenseId) }
+                    homeCurrency = homeCurrency
                 )
             }
         }
@@ -129,8 +128,7 @@ private fun MonthlyBillsCard(total: Double, homeCurrency: String) {
 @Composable
 private fun BillReminderCard(
     reminder: BillReminder,
-    homeCurrency: String,
-    onMarkPaid: () -> Unit
+    homeCurrency: String
 ) {
     val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     
@@ -200,35 +198,13 @@ private fun BillReminderCard(
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = stringResource(R.string.bill_reminders_due_format, dateFormat.format(Instant.ofEpochMilli(reminder.dueDate).atZone(ZoneId.systemDefault()))),
                     style = MaterialTheme.typography.bodySmall
                 )
-                
-                if (!reminder.isOverdue) {
-                    Button(
-                        onClick = onMarkPaid,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.tertiary
-                        )
-                    ) {
-                        Text(stringResource(R.string.bill_reminders_mark_paid))
-                    }
-                } else {
-                    Button(
-                        onClick = onMarkPaid,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(Icons.Default.Warning, contentDescription = null)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.bill_reminders_pay_now))
-                    }
-                }
             }
         }
     }

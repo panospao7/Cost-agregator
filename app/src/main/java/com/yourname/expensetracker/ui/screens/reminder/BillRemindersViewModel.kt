@@ -54,15 +54,6 @@ class BillRemindersViewModel @Inject constructor(
         }
     }
     
-    fun markBillPaid(recurringExpenseId: Long) {
-        // TODO: P4-P1-10 — Migrate to actual-expense-based payment flow.
-        // Legacy markBillPaid is now hard-removed (DeprecationLevel.ERROR).
-        // The correct path is:
-        //   1. Create an actual expense via TransactionLifecycleCoordinator
-        //   2. Link it to the recurring occurrence via linkExpenseToOccurrence(expenseId)
-        // Until then, the "Mark Paid" button in the UI silently no-ops.
-    }
-    
     fun refresh() {
         loadReminders()
         calculateMonthlyTotal()

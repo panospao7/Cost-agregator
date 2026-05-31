@@ -7,15 +7,15 @@ import javax.inject.Singleton
 /**
  * Privacy gate that guards backup-related capabilities.
  *
- * Checks:
- * 1. [PrivacySettings.encryptedBackupEnabled] — if enabled, plaintext raw
- *    backup export is denied in favour of encrypted backup.
- * 2. [PrivacyCapability.RAWBACKUP_EXPORT] — allowed only when
- *    [encryptedBackupEnabled] is **false**.
- * 3. [PrivacyCapability.ENCRYPTED_BACKUP] — allowed only when
- *    [encryptedBackupEnabled] is **true**.
+ * Sole owner of [PrivacyCapability.ENCRYPTED_BACKUP]:
+ * - allowed only when [PrivacySettings.encryptedBackupEnabled] is **true**.
  *
- * Capabilities not handled by this gate default to [PrivacyDecision.Allowed].
+ * [PrivacyCapability.RAWBACKUP_EXPORT] is **not** handled here — it is owned
+ * exclusively by [ExportPrivacyGate] (which denies it unless explicit debug
+ * consent in debug builds). Returning [PrivacyDecision.NotApplicable] for it
+ * avoids two gates issuing conflicting decisions for the same capability.
+ *
+ * Capabilities not handled by this gate return [PrivacyDecision.NotApplicable].
  */
 @Singleton
 class BackupPrivacyGate @Inject constructor(
@@ -30,16 +30,6 @@ class BackupPrivacyGate @Inject constructor(
         val settings = settingsRepository.getSettings()
 
         val decision = when (capability) {
-            PrivacyCapability.RAWBACKUP_EXPORT -> {
-                if (settings.encryptedBackupEnabled) {
-                    PrivacyDecision.Denied(
-                        "Raw (plaintext) backup export is disabled because encrypted backup is enabled in privacy settings"
-                    )
-                } else {
-                    PrivacyDecision.Allowed
-                }
-            }
-
             PrivacyCapability.ENCRYPTED_BACKUP -> {
                 if (!settings.encryptedBackupEnabled) {
                     PrivacyDecision.Denied(
@@ -51,6 +41,7 @@ class BackupPrivacyGate @Inject constructor(
             }
 
             else -> {
+                // RAWBACKUP_EXPORT is owned solely by ExportPrivacyGate.
                 PrivacyDecision.NotApplicable
             }
         }
