@@ -882,49 +882,57 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        // 1. Load existing expense for beforeSnapshot
-        val existing = expenseDao.getById(expense.id)
-            ?: throw IllegalArgumentException("Expense not found: ${expense.id}")
-        val beforeSnapshot = expenseToSnapshot(existing)
+        // ── Currency conversion snapshot (may do network I/O — stays outside txn) ──
+        val homeCurrencyUpdate = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            CurrencyConverter.DEFAULT_BASE_CURRENCY
+        }
+        val preComputedConversion = if (expense.currency != homeCurrencyUpdate) {
+            runCatching {
+                currencyConverter.convertAsOf(
+                    amount = expense.amount,
+                    fromCurrency = expense.currency,
+                    toCurrency = homeCurrencyUpdate,
+                    atMillis = expense.date
+                )
+            }.getOrNull()
+        } else null
 
-        // 2. Recompute dedupeKey if merchant/date/amount/currency/transactionType changed
-        val keyFieldsChanged = existing.merchant != expense.merchant ||
-            existing.date != expense.date ||
-            kotlin.math.abs(existing.amount - expense.amount) > 0.001 ||
-            existing.currency != expense.currency ||
-            existing.transactionType != expense.transactionType
+        // 3. Persist inside a single transaction (TOCTOU-safe: read + write atomic)
+        database.withTransaction {
+            val existing = expenseDao.getById(expense.id)
+                ?: throw IllegalArgumentException("Expense not found: ${expense.id}")
+            val beforeSnapshot = expenseToSnapshot(existing)
 
-        val updatedExpense = if (keyFieldsChanged) {
-            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                amount = expense.amount,
-                merchant = expense.merchant,
-                date = expense.date,
-                currency = expense.currency,
-                transactionType = expense.transactionType
-            )
-            val newMerchantKey = if (existing.merchant != expense.merchant) {
-                MerchantKeyGenerator.generate(expense.merchant)
-            } else {
-                expense.merchantKey
-            }
-            val expenseWithNewKey = expense.copy(
-                dedupeKey = newDedupeKey,
-                merchantKey = newMerchantKey
-            )
+            // Recompute dedupeKey if key fields changed
+            val keyFieldsChanged = existing.merchant != expense.merchant ||
+                existing.date != expense.date ||
+                kotlin.math.abs(existing.amount - expense.amount) > 0.001 ||
+                existing.currency != expense.currency ||
+                existing.transactionType != expense.transactionType
 
-            // Check for duplicate excluding the current expense
-            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-                amount = expenseWithNewKey.amount,
-                merchant = expenseWithNewKey.merchant,
-                date = expenseWithNewKey.date,
-                currency = expenseWithNewKey.currency,
-                transactionType = expenseWithNewKey.transactionType.name,
-                merchantKey = expenseWithNewKey.merchantKey,
-                dedupeKey = expenseWithNewKey.dedupeKey
-            )
-            if (isDuplicate) {
-                // Verify the duplicate is not the current expense being updated
-                val dupId = expenseDao.findDuplicateIdCurrencyAware(
+            val updatedExpense = if (keyFieldsChanged) {
+                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    amount = expense.amount,
+                    merchant = expense.merchant,
+                    date = expense.date,
+                    currency = expense.currency,
+                    transactionType = expense.transactionType
+                )
+                val newMerchantKey = if (existing.merchant != expense.merchant) {
+                    MerchantKeyGenerator.generate(expense.merchant)
+                } else {
+                    expense.merchantKey
+                }
+                val expenseWithNewKey = expense.copy(
+                    dedupeKey = newDedupeKey,
+                    merchantKey = newMerchantKey
+                )
+
+                // Duplicate check inside transaction
+                val isDuplicate = expenseDao.isDuplicateCurrencyAware(
                     amount = expenseWithNewKey.amount,
                     merchant = expenseWithNewKey.merchant,
                     date = expenseWithNewKey.date,
@@ -933,88 +941,65 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     merchantKey = expenseWithNewKey.merchantKey,
                     dedupeKey = expenseWithNewKey.dedupeKey
                 )
-                if (dupId != null && dupId != expense.id) {
-                    throw DuplicateUpdateException(
-                        "Update would create duplicate with expense $dupId"
+                if (isDuplicate) {
+                    val dupId = expenseDao.findDuplicateIdCurrencyAware(
+                        amount = expenseWithNewKey.amount,
+                        merchant = expenseWithNewKey.merchant,
+                        date = expenseWithNewKey.date,
+                        currency = expenseWithNewKey.currency,
+                        transactionType = expenseWithNewKey.transactionType.name,
+                        merchantKey = expenseWithNewKey.merchantKey,
+                        dedupeKey = expenseWithNewKey.dedupeKey
                     )
+                    if (dupId != null && dupId != expense.id) {
+                        throw DuplicateUpdateException(
+                            "Update would create duplicate with expense $dupId"
+                        )
+                    }
                 }
+
+                expenseWithNewKey
+            } else {
+                expense
             }
 
-            expenseWithNewKey
-        } else {
-            expense
-        }
-
-        // ── Currency conversion snapshot ──────────────────────────────────
-        val homeCurrencyUpdate = try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            CurrencyConverter.DEFAULT_BASE_CURRENCY
-        }
-        val finalExpense = if (updatedExpense.currency != homeCurrencyUpdate) {
-            val conversion = runCatching {
-                currencyConverter.convertAsOf(
-                    amount = updatedExpense.amount,
-                    fromCurrency = updatedExpense.currency,
-                    toCurrency = homeCurrencyUpdate,
-                    atMillis = updatedExpense.date
-                )
-            }.getOrNull()
-            if (conversion != null) {
+            // Apply currency conversion (pre-computed outside txn)
+            val finalExpense = if (expense.currency != homeCurrencyUpdate && preComputedConversion != null) {
                 updatedExpense.copy(
-                    baseAmount = conversion.convertedAmount,
+                    baseAmount = preComputedConversion.convertedAmount,
                     baseCurrency = homeCurrencyUpdate,
-                    exchangeRateUsed = conversion.rateUsed
+                    exchangeRateUsed = preComputedConversion.rateUsed
+                )
+            } else if (expense.currency == homeCurrencyUpdate) {
+                updatedExpense.copy(
+                    baseAmount = updatedExpense.amount,
+                    baseCurrency = updatedExpense.currency,
+                    exchangeRateUsed = 1.0
                 )
             } else {
-                Timber.w(
-                    "Cannot convert %s %.2f to %s for expense update (as of %d); " +
-                    "baseAmount/baseCurrency/exchangeRateUsed left at defaults",
-                    updatedExpense.currency, updatedExpense.amount, homeCurrencyUpdate,
-                    updatedExpense.date
-                )
                 updatedExpense
             }
-        } else {
-            // Identity values when expense currency matches home currency
-            updatedExpense.copy(
-                baseAmount = updatedExpense.amount,
-                baseCurrency = updatedExpense.currency,
-                exchangeRateUsed = 1.0
-            )
-        }
 
-        // 2b. Validate final expense state — must not be weaker than create validation
-        val finalValidationErrors = transactionValidator.validateFinalExpenseState(
-            amount = finalExpense.amount,
-            merchant = finalExpense.merchant,
-            currency = finalExpense.currency,
-            date = finalExpense.date,
-            transactionType = finalExpense.transactionType,
-            transferDirectionPresent = finalExpense.transferDirection != null,
-            transferAccountName = finalExpense.transferAccountName,
-            isNotMine = finalExpense.isNotMine,
-            isSharedExpense = finalExpense.isSharedExpense,
-            latitude = finalExpense.latitude,
-            longitude = finalExpense.longitude
-        )
-        if (finalValidationErrors.isNotEmpty()) {
-            writeUpdateValidationFailedEventBestEffort(
-                expenseId = expense.id,
-                source = source,
-                reason = reason,
-                correlationId = correlationId,
-                errors = finalValidationErrors
+            // Validate final expense state
+            val finalValidationErrors = transactionValidator.validateFinalExpenseState(
+                amount = finalExpense.amount,
+                merchant = finalExpense.merchant,
+                currency = finalExpense.currency,
+                date = finalExpense.date,
+                transactionType = finalExpense.transactionType,
+                transferDirectionPresent = finalExpense.transferDirection != null,
+                transferAccountName = finalExpense.transferAccountName,
+                isNotMine = finalExpense.isNotMine,
+                isSharedExpense = finalExpense.isSharedExpense,
+                latitude = finalExpense.latitude,
+                longitude = finalExpense.longitude
             )
-            throw TransactionValidationException(finalValidationErrors)
-        }
+            if (finalValidationErrors.isNotEmpty()) {
+                throw TransactionValidationException(finalValidationErrors)
+            }
 
-        // 3. Persist the updated row + write event inside a single transaction
-        database.withTransaction {
             expenseDao.update(finalExpense)
 
-            // 4. Write lifecycle event with before/after snapshots
             val afterSnapshot = expenseToSnapshot(finalExpense)
             transactionEventDao.insert(
                 TransactionEvent(
@@ -1029,7 +1014,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     afterSnapshot = afterSnapshot,
                     metadata = null,
                     reason = reason,
-                    correlationId = correlationId  // DDL-F876-10
+                    correlationId = correlationId
                 )
             )
         }
@@ -1063,14 +1048,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // Guard: block writes during restore maintenance mode
         checkWritesAllowed("updateCategory")
 
-        val existing = expenseDao.getById(expenseId) ?: return
-        if (existing.categoryId == newCategoryId) return  // handles null==null correctly
-
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
-        val updated = existing.copy(categoryId = newCategoryId)
 
         database.withTransaction {
+            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            if (existing.categoryId == newCategoryId) return@withTransaction
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+            val updated = existing.copy(categoryId = newCategoryId)
+
             expenseDao.updateCategoryNullable(expenseId, newCategoryId)
             transactionEventDao.insert(
                 TransactionEvent(
@@ -1125,18 +1111,19 @@ class TransactionLifecycleCoordinator @Inject constructor(
         require(latitude in -90.0..90.0) { "Latitude out of range" }
         require(longitude in -180.0..180.0) { "Longitude out of range" }
 
-        val existing = expenseDao.getById(expenseId) ?: return
-        if (existing.latitude == latitude && existing.longitude == longitude &&
-            existing.placeId == placeId && existing.resolvedAddress == resolvedAddress) return
-
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
-        val updated = existing.copy(
-            latitude = latitude, longitude = longitude,
-            locationSource = source, placeId = placeId, resolvedAddress = resolvedAddress,
-            backfillAttempts = 0
-        )
+
         database.withTransaction {
+            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            if (existing.latitude == latitude && existing.longitude == longitude &&
+                existing.placeId == placeId && existing.resolvedAddress == resolvedAddress) return@withTransaction
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+            val updated = existing.copy(
+                latitude = latitude, longitude = longitude,
+                locationSource = source, placeId = placeId, resolvedAddress = resolvedAddress,
+                backfillAttempts = 0
+            )
             expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, resolvedAddress)
             transactionEventDao.insert(TransactionEvent(
                 expenseId = expenseId,
@@ -1211,35 +1198,40 @@ class TransactionLifecycleCoordinator @Inject constructor(
             return BusinessExpenseUpdateResult.UnsupportedFields(unsupported)
         }
 
-        val existing = expenseDao.getById(expenseId)
-            ?: return BusinessExpenseUpdateResult.NotFound
-
-        val updated = existing.copy(
-            isBusinessExpense = patch.isBusinessExpense ?: existing.isBusinessExpense,
-            requiresReceipt = patch.requiresReceipt ?: existing.requiresReceipt,
-            businessPurpose = patch.businessPurpose ?: existing.businessPurpose,
-            businessCategory = patch.businessCategory ?: existing.businessCategory,
-            businessProject = patch.businessProject ?: existing.businessProject
-        )
-
-        val changedFields = buildSet {
-            if (updated.isBusinessExpense != existing.isBusinessExpense) add("isBusinessExpense")
-            if (updated.requiresReceipt != existing.requiresReceipt) add("requiresReceipt")
-            if (updated.businessPurpose != existing.businessPurpose) add("businessPurpose")
-            if (updated.businessCategory != existing.businessCategory) add("businessCategory")
-            if (updated.businessProject != existing.businessProject) add("businessProject")
-        }
-
-        if (changedFields.isEmpty()) {
-            return BusinessExpenseUpdateResult.NoChange
-        }
-
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
+        var updateResult: BusinessExpenseUpdateResult = BusinessExpenseUpdateResult.NoChange
 
         database.withTransaction {
-            expenseDao.update(updated)
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                updateResult = BusinessExpenseUpdateResult.NotFound
+                return@withTransaction
+            }
 
+            val updated = existing.copy(
+                isBusinessExpense = patch.isBusinessExpense ?: existing.isBusinessExpense,
+                requiresReceipt = patch.requiresReceipt ?: existing.requiresReceipt,
+                businessPurpose = patch.businessPurpose ?: existing.businessPurpose,
+                businessCategory = patch.businessCategory ?: existing.businessCategory,
+                businessProject = patch.businessProject ?: existing.businessProject
+            )
+
+            val changedFields = buildSet {
+                if (updated.isBusinessExpense != existing.isBusinessExpense) add("isBusinessExpense")
+                if (updated.requiresReceipt != existing.requiresReceipt) add("requiresReceipt")
+                if (updated.businessPurpose != existing.businessPurpose) add("businessPurpose")
+                if (updated.businessCategory != existing.businessCategory) add("businessCategory")
+                if (updated.businessProject != existing.businessProject) add("businessProject")
+            }
+
+            if (changedFields.isEmpty()) {
+                updateResult = BusinessExpenseUpdateResult.NoChange
+                return@withTransaction
+            }
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+
+            expenseDao.update(updated)
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = expenseId,
@@ -1259,6 +1251,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId
                 )
             )
+
+            updateResult = BusinessExpenseUpdateResult.Updated(
+                expenseId = expenseId,
+                changedFields = changedFields
+            )
+        }
+
+        if (updateResult !is BusinessExpenseUpdateResult.Updated) {
+            return updateResult
         }
 
         val batch = planner.planUpdated(
@@ -1274,10 +1275,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             targetId = expenseId
         )
 
-        return BusinessExpenseUpdateResult.Updated(
-            expenseId = expenseId,
-            changedFields = changedFields
-        )
+        return updateResult
     }
 
     /**
@@ -1329,39 +1327,40 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ) {
         checkWritesAllowed("updateMerchant")
 
-        val existing = expenseDao.getById(expenseId) ?: return
-        if (existing.merchant == newMerchant) return
-
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-            existing.amount, newMerchant, existing.date, existing.currency, existing.transactionType
-        )
-
-        // Pre-check: ensure the new dedupeKey doesn't collide with another expense
-        val collidingId = expenseDao.findDuplicateIdCurrencyAware(
-            amount = existing.amount,
-            merchant = newMerchant,
-            date = existing.date,
-            currency = existing.currency,
-            transactionType = existing.transactionType.name,
-            merchantKey = newMerchantKey,
-            dedupeKey = newDedupeKey
-        )
-        if (collidingId != null && collidingId != expenseId) {
-            throw DuplicateUpdateException(
-                "Cannot update merchant: would create duplicate of expense $collidingId"
-            )
-        }
-
-        val updated = existing.copy(
-            merchant = newMerchant,
-            merchantKey = newMerchantKey,
-            dedupeKey = newDedupeKey
-        )
 
         database.withTransaction {
+            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            if (existing.merchant == newMerchant) return@withTransaction
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                existing.amount, newMerchant, existing.date, existing.currency, existing.transactionType
+            )
+
+            // Collision check inside transaction for TOCTOU safety
+            val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+                amount = existing.amount,
+                merchant = newMerchant,
+                date = existing.date,
+                currency = existing.currency,
+                transactionType = existing.transactionType.name,
+                merchantKey = newMerchantKey,
+                dedupeKey = newDedupeKey
+            )
+            if (collidingId != null && collidingId != expenseId) {
+                throw DuplicateUpdateException(
+                    "Cannot update merchant: would create duplicate of expense $collidingId"
+                )
+            }
+
+            val updated = existing.copy(
+                merchant = newMerchant,
+                merchantKey = newMerchantKey,
+                dedupeKey = newDedupeKey
+            )
+
             expenseDao.updateMerchantAndKey(expenseId, newMerchant, newMerchantKey, newDedupeKey)
             transactionEventDao.insert(
                 TransactionEvent(
@@ -1408,37 +1407,38 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ) {
         checkWritesAllowed("updateType")
 
-        val existing = expenseDao.getById(expenseId) ?: return
-        if (existing.transactionType == newType) return
-
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
-        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-            existing.amount, existing.merchant, existing.date, existing.currency, newType
-        )
-
-        // Pre-check: ensure the new dedupeKey doesn't collide with another expense
-        val collidingId = expenseDao.findDuplicateIdCurrencyAware(
-            amount = existing.amount,
-            merchant = existing.merchant,
-            date = existing.date,
-            currency = existing.currency,
-            transactionType = newType.name,
-            merchantKey = existing.merchantKey,
-            dedupeKey = newDedupeKey
-        )
-        if (collidingId != null && collidingId != expenseId) {
-            throw DuplicateUpdateException(
-                "Cannot update type: would create duplicate of expense $collidingId"
-            )
-        }
-
-        val updated = existing.copy(
-            transactionType = newType,
-            dedupeKey = newDedupeKey
-        )
 
         database.withTransaction {
+            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            if (existing.transactionType == newType) return@withTransaction
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                existing.amount, existing.merchant, existing.date, existing.currency, newType
+            )
+
+            // Collision check inside transaction for TOCTOU safety
+            val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+                amount = existing.amount,
+                merchant = existing.merchant,
+                date = existing.date,
+                currency = existing.currency,
+                transactionType = newType.name,
+                merchantKey = existing.merchantKey,
+                dedupeKey = newDedupeKey
+            )
+            if (collidingId != null && collidingId != expenseId) {
+                throw DuplicateUpdateException(
+                    "Cannot update type: would create duplicate of expense $collidingId"
+                )
+            }
+
+            val updated = existing.copy(
+                transactionType = newType,
+                dedupeKey = newDedupeKey
+            )
+
             expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
             transactionEventDao.insert(
                 TransactionEvent(
@@ -1486,42 +1486,36 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ) {
         checkWritesAllowed("updateTransferDetails")
 
-        val existing = expenseDao.getById(expenseId) ?: return
-        if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) return
-
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
-        val updated = existing.copy(
-            transferDirection = transferDirection,
-            transferAccountName = transferAccountName
-        )
-
-        // Validate final expense state — prevent clearing transfer metadata on TRANSFER
-        val transferErrors = transactionValidator.validateFinalExpenseState(
-            amount = updated.amount,
-            merchant = updated.merchant,
-            currency = updated.currency,
-            date = updated.date,
-            transactionType = updated.transactionType,
-            transferDirectionPresent = updated.transferDirection != null,
-            transferAccountName = updated.transferAccountName,
-            isNotMine = updated.isNotMine,
-            isSharedExpense = updated.isSharedExpense,
-            latitude = updated.latitude,
-            longitude = updated.longitude
-        )
-        if (transferErrors.isNotEmpty()) {
-            writeUpdateValidationFailedEventBestEffort(
-                expenseId = expenseId,
-                source = source,
-                reason = reason,
-                correlationId = null,
-                errors = transferErrors
-            )
-            throw TransactionValidationException(transferErrors)
-        }
 
         database.withTransaction {
+            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) return@withTransaction
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+            val updated = existing.copy(
+                transferDirection = transferDirection,
+                transferAccountName = transferAccountName
+            )
+
+            // Validate final expense state — prevent clearing transfer metadata on TRANSFER
+            val transferErrors = transactionValidator.validateFinalExpenseState(
+                amount = updated.amount,
+                merchant = updated.merchant,
+                currency = updated.currency,
+                date = updated.date,
+                transactionType = updated.transactionType,
+                transferDirectionPresent = updated.transferDirection != null,
+                transferAccountName = updated.transferAccountName,
+                isNotMine = updated.isNotMine,
+                isSharedExpense = updated.isSharedExpense,
+                latitude = updated.latitude,
+                longitude = updated.longitude
+            )
+            if (transferErrors.isNotEmpty()) {
+                throw TransactionValidationException(transferErrors)
+            }
+
             expenseDao.updateTransferDirection(expenseId, transferDirection?.name)
             expenseDao.updateTransferAccountName(expenseId, transferAccountName)
             transactionEventDao.insert(
@@ -1565,65 +1559,59 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ) {
         checkWritesAllowed("updateTypeAndTransferDetails")
 
-        val existing = expenseDao.getById(expenseId) ?: return
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
-
-        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-            existing.amount, existing.merchant, existing.date, existing.currency, newType
-        )
-
-        // Pre-check for duplicate collision only when type changes
-        if (existing.transactionType != newType) {
-            val collidingId = expenseDao.findDuplicateIdCurrencyAware(
-                amount = existing.amount,
-                merchant = existing.merchant,
-                date = existing.date,
-                currency = existing.currency,
-                transactionType = newType.name,
-                merchantKey = existing.merchantKey,
-                dedupeKey = newDedupeKey
-            )
-            if (collidingId != null && collidingId != expenseId) {
-                throw DuplicateUpdateException(
-                    "Cannot update type: would create duplicate of expense $collidingId"
-                )
-            }
-        }
-
-        val updated = existing.copy(
-            transactionType = newType,
-            dedupeKey = newDedupeKey,
-            transferDirection = transferDirection,
-            transferAccountName = transferAccountName
-        )
-
-        // Validate final expense state (shared create/update rules)
-        val typeTransferErrors = transactionValidator.validateFinalExpenseState(
-            amount = updated.amount,
-            merchant = updated.merchant,
-            currency = updated.currency,
-            date = updated.date,
-            transactionType = updated.transactionType,
-            transferDirectionPresent = updated.transferDirection != null,
-            transferAccountName = updated.transferAccountName,
-            isNotMine = updated.isNotMine,
-            isSharedExpense = updated.isSharedExpense,
-            latitude = updated.latitude,
-            longitude = updated.longitude
-        )
-        if (typeTransferErrors.isNotEmpty()) {
-            writeUpdateValidationFailedEventBestEffort(
-                expenseId = expenseId,
-                source = source,
-                reason = "Type/transfer update validation failed",
-                correlationId = null,
-                errors = typeTransferErrors
-            )
-            throw TransactionValidationException(typeTransferErrors)
-        }
 
         database.withTransaction {
+            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+            val beforeSnapshot = expenseToSnapshot(existing)
+
+            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                existing.amount, existing.merchant, existing.date, existing.currency, newType
+            )
+
+            // Collision check inside transaction for TOCTOU safety
+            if (existing.transactionType != newType) {
+                val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+                    amount = existing.amount,
+                    merchant = existing.merchant,
+                    date = existing.date,
+                    currency = existing.currency,
+                    transactionType = newType.name,
+                    merchantKey = existing.merchantKey,
+                    dedupeKey = newDedupeKey
+                )
+                if (collidingId != null && collidingId != expenseId) {
+                    throw DuplicateUpdateException(
+                        "Cannot update type: would create duplicate of expense $collidingId"
+                    )
+                }
+            }
+
+            val updated = existing.copy(
+                transactionType = newType,
+                dedupeKey = newDedupeKey,
+                transferDirection = transferDirection,
+                transferAccountName = transferAccountName
+            )
+
+            // Validate final expense state (shared create/update rules)
+            val typeTransferErrors = transactionValidator.validateFinalExpenseState(
+                amount = updated.amount,
+                merchant = updated.merchant,
+                currency = updated.currency,
+                date = updated.date,
+                transactionType = updated.transactionType,
+                transferDirectionPresent = updated.transferDirection != null,
+                transferAccountName = updated.transferAccountName,
+                isNotMine = updated.isNotMine,
+                isSharedExpense = updated.isSharedExpense,
+                latitude = updated.latitude,
+                longitude = updated.longitude
+            )
+            if (typeTransferErrors.isNotEmpty()) {
+                throw TransactionValidationException(typeTransferErrors)
+            }
+
             expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
             expenseDao.updateTransferDirection(expenseId, transferDirection?.name)
             expenseDao.updateTransferAccountName(expenseId, transferAccountName)
@@ -1743,41 +1731,47 @@ class TransactionLifecycleCoordinator @Inject constructor(
         checkWritesAllowed("updateOwnershipDbOnlyV2")
 
         val corrId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
-
-        val existing = expenseDao.getById(expenseId)
-            ?: return MutationResult(
-                OwnershipUpdateResult.NotFound,
-                PostCommitActionBatch.empty(corrId)
-            )
-
-        // Apply normalizeOwnership to enforce mutual exclusivity
-        val normalized = existing.copy(
-            isNotMine = isNotMine,
-            ownerName = ownerName,
-            isSharedExpense = isSharedExpense,
-            sharedWithName = sharedWithName,
-            mySharePercentage = mySharePercentage,
-            myShareAmount = myShareAmount
-        ).normalizeOwnership()
-
-        // Check if anything actually changed
-        if (existing.isNotMine == normalized.isNotMine &&
-            existing.ownerName == normalized.ownerName &&
-            existing.isSharedExpense == normalized.isSharedExpense &&
-            existing.sharedWithName == normalized.sharedWithName &&
-            existing.mySharePercentage == normalized.mySharePercentage &&
-            existing.myShareAmount == normalized.myShareAmount
-        ) {
-            return MutationResult(
-                OwnershipUpdateResult.NoOp,
-                PostCommitActionBatch.empty(corrId)
-            )
-        }
-
         val now = timeProvider.now()
-        val beforeSnapshot = expenseToSnapshot(existing)
+
+        var result: MutationResult<OwnershipUpdateResult>? = null
 
         database.withTransaction {
+            val existing = expenseDao.getById(expenseId)
+            if (existing == null) {
+                result = MutationResult(
+                    OwnershipUpdateResult.NotFound,
+                    PostCommitActionBatch.empty(corrId)
+                )
+                return@withTransaction
+            }
+
+            // Apply normalizeOwnership to enforce mutual exclusivity
+            val normalized = existing.copy(
+                isNotMine = isNotMine,
+                ownerName = ownerName,
+                isSharedExpense = isSharedExpense,
+                sharedWithName = sharedWithName,
+                mySharePercentage = mySharePercentage,
+                myShareAmount = myShareAmount
+            ).normalizeOwnership()
+
+            // Check if anything actually changed
+            if (existing.isNotMine == normalized.isNotMine &&
+                existing.ownerName == normalized.ownerName &&
+                existing.isSharedExpense == normalized.isSharedExpense &&
+                existing.sharedWithName == normalized.sharedWithName &&
+                existing.mySharePercentage == normalized.mySharePercentage &&
+                existing.myShareAmount == normalized.myShareAmount
+            ) {
+                result = MutationResult(
+                    OwnershipUpdateResult.NoOp,
+                    PostCommitActionBatch.empty(corrId)
+                )
+                return@withTransaction
+            }
+
+            val beforeSnapshot = expenseToSnapshot(existing)
+
             expenseDao.updateIsNotMine(expenseId, normalized.isNotMine)
             expenseDao.updateOwnerName(expenseId, normalized.ownerName)
             expenseDao.updateIsSharedExpense(expenseId, normalized.isSharedExpense)
@@ -1801,6 +1795,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             )
         }
+
+        if (result != null) return result!!
 
         val batch = planner.planUpdated(expenseId, source, corrId, TransactionUpdateKind.FULL)
         return MutationResult(OwnershipUpdateResult.Updated(expenseId), batch)
@@ -2114,10 +2110,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
         return try {
             val now = timeProvider.now()
-            val snapshot = expenseToSnapshot(expense)
 
             // Write lifecycle event + delete inside a single transaction
+            // P2-08: Re-read inside transaction for TOCTOU-safe snapshot
             database.withTransaction {
+                val fresh = expenseDao.getById(expense.id) ?: return@withTransaction
+                val snapshot = expenseToSnapshot(fresh)
+
                 transactionEventDao.insert(
                     TransactionEvent(
                         expenseId = expense.id,
@@ -2125,17 +2124,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         source = source,
                         actor = actor,
                         occurredAt = now,
-                        dedupeKey = expense.dedupeKey,
+                        dedupeKey = fresh.dedupeKey,
                         duplicateExpenseId = null,
                         beforeSnapshot = snapshot,
                         afterSnapshot = null,
                         metadata = null,
                         reason = reason,
-                        correlationId = correlationId  // DDL-C67-10
+                        correlationId = correlationId
                     )
                 )
 
-                expenseDao.delete(expense)
+                expenseDao.delete(fresh)
             }
 
             // Post-delete side effects via planner + runner (best-effort)

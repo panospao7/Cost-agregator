@@ -9,6 +9,13 @@
 - **Architecture guard:** CancellationSafetyArchitectureGuardTest prevents future regressions via source scanning
 - **Contract test:** CancellationPropagationContractTest verifies 12 critical entry points
 
+### Bug Fixes — TOCTOU Race Elimination (U-PR2)
+
+- **TOCTOU-01:** Moved all `getById` + `beforeSnapshot` reads inside `database.withTransaction` in TransactionLifecycleCoordinator
+  - 10 methods fixed: updateExpense, updateCategory, updateLocation, updateBusinessExpensePatch, updateMerchant, updateType, updateTransferDetails, updateTypeAndTransferDetails, updateOwnershipDbOnlyV2, deleteExpense(Expense)
+  - Audit trail now guaranteed consistent: `beforeSnapshot[N+1] == afterSnapshot[N]`
+  - No API signature changes; all existing callers unaffected
+
 ## [2.1.0] - 2026-04-04
 ### UI/UX Improvements
 

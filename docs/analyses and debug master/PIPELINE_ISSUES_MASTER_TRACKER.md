@@ -90,9 +90,9 @@ Full source: `PIPELINE_2_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P2-P1-03 | P1 | `STRICT_EXTERNAL_ID` returns weak `InsertConflict` | Bug | Resolves to DuplicateSkipped with existing ID | ✅ FIXED |
 | P2-P1-04 | P1 | Debug/restore methods bypass lifecycle | Bug | Guarded by `BuildConfig.DEBUG` | ✅ FIXED |
 | P2-P1-05 | P1 | Public DAO mutation surface enables lifecycle bypass | Enhancement | `@RestrictedExpenseDaoMutation` + CI architecture test | ✅ FIXED |
-| NEW-P2-001 | P1 | TOCTOU race in `updateExpense` — beforeSnapshot outside transaction | Bug | Snapshot read outside DB transaction | 🔴 OPEN |
-| NEW-P2-002 | P1 | Same TOCTOU in 6 other update methods | Bug | Same pattern in updateLocation/Merchant/Type/etc. | 🔴 OPEN |
-| NEW-P2-003 | P1 | `deleteExpense(Expense)` uses stale caller entity for snapshot | Bug | Caller-provided entity may be stale | 🔴 OPEN |
+| NEW-P2-001 | P1 | TOCTOU race in `updateExpense` — beforeSnapshot outside transaction | Bug | Snapshot read outside DB transaction | ✅ FIXED (U-PR2) |
+| NEW-P2-002 | P1 | Same TOCTOU in 6 other update methods | Bug | Same pattern in updateLocation/Merchant/Type/etc. | ✅ FIXED (U-PR2) |
+| NEW-P2-003 | P1 | `deleteExpense(Expense)` uses stale caller entity for snapshot | Bug | Caller-provided entity may be stale | ✅ FIXED (U-PR2) |
 | NEW-P2-004 | P2 | Non-atomic duplicate check in `updateExpense` | Bug | Duplicate check outside transaction | 🔴 OPEN |
 | NEW-P2-005 | P2 | `DefaultExpenseCategoryAssignmentService` bypasses lifecycle | Bug | Direct DAO mutation without events | 🔴 OPEN |
 | NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | Bug | Failed conversion doesn't clear old value | 🔴 OPEN |
