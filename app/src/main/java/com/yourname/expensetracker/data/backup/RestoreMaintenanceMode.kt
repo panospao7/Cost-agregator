@@ -110,11 +110,15 @@ class RestoreMaintenanceMode @Inject constructor(
      */
     fun enterCriticalRecoveryRequired(reason: String) {
         Timber.e("Maintenance mode: entering CRITICAL_RECOVERY_REQUIRED — %s", reason)
+        // P7-PR4 (NEW-P7-003): Single atomic commit for mode + reason + timestamp.
+        // Previously two separate commits; crash between them left inconsistent state.
         prefs.edit()
             .putString(KEY_CRITICAL_REASON, reason)
             .putLong(KEY_CRITICAL_TIMESTAMP, System.currentTimeMillis())
+            .putString(KEY_MAINTENANCE_MODE, Mode.CRITICAL_RECOVERY_REQUIRED.name)
             .commit()
-        writeMode(Mode.CRITICAL_RECOVERY_REQUIRED)
+        _modeFlow.value = Mode.CRITICAL_RECOVERY_REQUIRED
+        _operationalStateFlow.value = toOperationalState(Mode.CRITICAL_RECOVERY_REQUIRED)
         pauseAllWorkers()
     }
 

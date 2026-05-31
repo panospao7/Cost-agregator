@@ -218,6 +218,8 @@ class RestoreJournal @Inject constructor(
         )
     }
 
+    private val journalLock = Any()
+
     private fun appendEventToFile(
         targetFile: File,
         correlationId: String,
@@ -230,6 +232,8 @@ class RestoreJournal @Inject constructor(
         exceptionMessageSafe: String?,
         isTerminal: Boolean
     ) {
+        // P7-PR4 (NEW-P7-004): Synchronized to prevent concurrent read-modify-write race.
+        synchronized(journalLock) {
         try {
             if (!targetFile.exists()) return
             val json = runCatching { JSONObject(targetFile.readText()) }.getOrNull() ?: return
@@ -254,6 +258,7 @@ class RestoreJournal @Inject constructor(
         } catch (e: Exception) {
             Timber.w(e, "RestoreJournal: failed to append event to ${targetFile.name} stage=$stage")
         }
+        } // synchronized
     }
 
     /** Read all events from the diagnostics journal at [correlationId]. */

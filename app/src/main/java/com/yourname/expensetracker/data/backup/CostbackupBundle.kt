@@ -312,7 +312,9 @@ object CostbackupBundle {
         limits: ExtractionLimits = ExtractionLimits()
     ): Result<ExtractionResult> = runCatching {
         // 1. Open bundle and read/validate header via streaming
+        // P7-PR4 (NEW-P7-005): Wrap fis in try so it's closed on exception paths.
         val fis = FileInputStream(bundleFile)
+        try {
         readHeaderFromStream(fis)
         // fis is now positioned at start of ciphertext (salt + IV + encrypted ZIP)
 
@@ -322,7 +324,6 @@ object CostbackupBundle {
         val cipherStream = try {
             encryptionService.decryptStream(fis, password)
         } catch (e: javax.crypto.AEADBadTagException) {
-            fis.close()
             throw WrongBackupPasswordException("Incorrect password or corrupted data")
         }
 
@@ -460,6 +461,10 @@ object CostbackupBundle {
             warnings = warnings,
             extractedFiles = extractedFiles
         )
+        } finally {
+            // P7-PR4 (NEW-P7-005): Ensure FileInputStream is always closed
+            runCatching { fis.close() }
+        }
     }
 
     // ── Internal helpers ──────────────────────────────────────────

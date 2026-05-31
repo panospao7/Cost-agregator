@@ -90,6 +90,9 @@ class BudgetRepository @Inject constructor(
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter? = null,
     private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink? = null
 ) {
+    /** P6-PR1 (NEW-P6-004): Max rollover periods to prevent unbounded O(N) queries. */
+    private val MAX_ROLLOVER_PERIODS = 365
+
     data class DebugBudgetSnapshot(
         val budgets: List<Budget>
     )
@@ -254,7 +257,9 @@ class BudgetRepository @Inject constructor(
             var currentWindow = budgetCalculator.calculatePeriodWindowForTime(
                 budget.period, budgetFirstStart, budgetFirstStart
             )
-            while (currentWindow.end <= window.start) {
+            // P6-PR1 (NEW-P6-004): Bound rollover loop to prevent O(N) queries for
+            // daily budgets with years of history. Beyond this limit, older surplus is lost.
+            while (currentWindow.end <= window.start && periods.size < MAX_ROLLOVER_PERIODS) {
                 periods.add(currentWindow)
                 currentWindow = budgetCalculator.calculatePeriodWindowForTime(
                     budget.period, budgetFirstStart, currentWindow.end

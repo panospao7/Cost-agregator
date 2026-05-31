@@ -18,6 +18,16 @@ data class EffectiveCloudAiPolicy(
         if (!cloudAllowed) {
             throw SecurityException("Cloud AI blocked by privacy policy: $reason")
         }
+        // P8-PR1 (NEW-P8-005): Check specific capability, not just global cloud flag
+        val capabilityAllowed = when (capability) {
+            PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD -> receiptImageUploadAllowed
+            PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
+            PrivacyCapability.AI_BANK_STATEMENT_PARSING -> bankStatementCloudAllowed
+            else -> true // Other capabilities only need global cloud gate
+        }
+        if (!capabilityAllowed) {
+            throw SecurityException("Capability $capability blocked by privacy policy")
+        }
     }
 }
 

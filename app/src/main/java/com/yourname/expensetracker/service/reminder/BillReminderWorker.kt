@@ -41,24 +41,25 @@ class BillReminderWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.d(TAG, "BillReminderWorker started — checking for due reminders")
 
-        // Check runtime settings before querying or claiming any rows
-        val settings = reminderSettingsRepository.getSnapshot()
-        if (!settings.billRemindersEnabled) {
-            Log.d(TAG, "Bill reminders disabled by runtime settings — skipping")
-            return Result.success()
-        }
-        val now = timeProvider.now()
-        if (settings.isWithinQuietHours(now)) {
-            Log.d(TAG, "Bill reminders in quiet hours — skipping")
-            return Result.success()
-        }
-
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "bill_reminder_periodic",
                 allowDuringBackupExport = false
             )
         ) { ctx ->
+            // P9-PR1 (NEW-P9-002): Settings/quiet-hours check moved INSIDE guard
+            // so the run is properly logged even when skipped.
+            val settings = reminderSettingsRepository.getSnapshot()
+            if (!settings.billRemindersEnabled) {
+                Log.d(TAG, "Bill reminders disabled by runtime settings — skipping")
+                return@runGuardedWithContext
+            }
+            val now = timeProvider.now()
+            if (settings.isWithinQuietHours(now)) {
+                Log.d(TAG, "Bill reminders in quiet hours — skipping")
+                return@runGuardedWithContext
+            }
+
             try {
                 val dueReminders = coordinator.getDueReminders()
                 if (dueReminders.isEmpty()) {

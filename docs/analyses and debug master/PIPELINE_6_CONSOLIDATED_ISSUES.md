@@ -35,7 +35,7 @@
 | NEW-P6-001 | P1 | `computeStressForecast` swallows CancellationException | StressForecastEngine.kt | ✅ FIXED (U-PR1) |
 | NEW-P6-002 | P1 | `BudgetMonitor` writeAlertDiagnostic swallows CE | BudgetMonitor.kt | ✅ FIXED (pre-existing) |
 | NEW-P6-003 | P1 | `BudgetMonitor` CHECK_FAILED diagnostic swallows CE | BudgetMonitor.kt | ✅ FIXED (pre-existing) |
-| NEW-P6-004 | P1 | Unbounded rollover loop — O(N) queries for daily budgets | BudgetRepository.kt | 🔴 OPEN |
+| NEW-P6-004 | P1 | Unbounded rollover loop — O(N) queries for daily budgets | BudgetRepository.kt | ✅ FIXED (P6-PR1) |
 | NEW-P6-005 | P2 | `BudgetRepository` CRUD swallows CancellationException | BudgetRepository.kt | ✅ FIXED (U-PR1) |
 | NEW-P6-006 | P2 | `computeAdjustedSpend` swallows CE | BudgetMonitor.kt | 🔴 OPEN |
 | NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | StressForecastEngine.kt | 🔴 OPEN |

@@ -29,10 +29,10 @@
 
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
-| NEW-P9-001 | P1 | TimeoutCancellationException misclassified as system cancellation | WorkerExecutionGuard.kt | 🔴 OPEN |
-| NEW-P9-002 | P1 | BillReminderWorker bypasses guard for settings/quiet-hours | BillReminderWorker.kt | 🔴 OPEN |
-| NEW-P9-003 | P1 | WorkerRunContext counters not thread-safe | WorkerRunContext.kt | 🔴 OPEN |
-| NEW-P9-004 | P1 | WarrantyExpirationWorker uses `runGuarded` (no context) | WarrantyExpirationWorker.kt | 🔴 OPEN |
+| NEW-P9-001 | P1 | TimeoutCancellationException misclassified as system cancellation | WorkerExecutionGuard.kt | ✅ FIXED (P9-PR1) |
+| NEW-P9-002 | P1 | BillReminderWorker bypasses guard for settings/quiet-hours | BillReminderWorker.kt | ✅ FIXED (P9-PR1) |
+| NEW-P9-003 | P1 | WorkerRunContext counters not thread-safe | WorkerRunContext.kt | ✅ FIXED (P9-PR1) |
+| NEW-P9-004 | P1 | WarrantyExpirationWorker uses `runGuarded` (no context) | WarrantyExpirationWorker.kt | ✅ FIXED (already uses runGuardedWithContext) |
 | NEW-P9-005 | P1 | WarrantyExpirationWorker uses `System.currentTimeMillis` | WarrantyExpirationWorker.kt | ✅ FIXED (U-PR7) |
 | NEW-P9-006 | P2 | WorkerSpecScheduler uses deprecated REPLACE | WorkerSpecScheduler.kt | 🔴 OPEN |
 | NEW-P9-007 | P2 | SharedPreferences version write not atomic with enqueue | WorkerSpecScheduler.kt | 🔴 OPEN |
