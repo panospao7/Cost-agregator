@@ -35,7 +35,7 @@
 | NEW-P5-004 | P1 | `getAverageForPeriodType(DAY)` wrong denominator | TotalsAggregationEngine.kt | 🔴 OPEN |
 | NEW-P5-005 | P1 | `SynthesisEngine` sums planned expenses across currencies | DashboardSynthesisEngine.kt | ✅ FIXED (U-PR3) |
 | NEW-P5-006 | P2 | `homeCurrency().first()` cold Flow on every call | MultiCurrencyRepository.kt | 🔴 OPEN |
-| NEW-P5-007 | P2 | `NormalizedAnalyticsInput.homeCurrency` defaults to EUR | NormalizedAnalyticsInput.kt | 🔴 OPEN |
+| NEW-P5-007 | P2 | `NormalizedAnalyticsInput.homeCurrency` defaults to EUR | NormalizedAnalyticsInput.kt | ✅ FIXED (P5-PR2) |
 | NEW-P5-008 | P2 | Category aggregates ALL_TYPES vs PURCHASE-only mismatch | TotalsAggregationEngine.kt | 🔴 OPEN |
 | NEW-P5-009 | P2 | `MoneyAggregateBuilder` silently drops counts on size mismatch | MoneyAggregateBuilder.kt | 🔴 OPEN |
 | NEW-P5-010 | P2 | `computeFromNormalized` per-expense average not per-day | AnalyticsComputeEngine.kt | 🔴 OPEN |

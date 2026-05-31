@@ -80,8 +80,10 @@ class ExportDataRepository @Inject constructor(
      * could otherwise expose unencrypted exports — hence the encrypted option.
      */
     fun createExportFile(extension: String, timestampMs: Long): File {
+        // P12-PR2 (NEW-P12-004): Sanitize extension to prevent path traversal
+        val safeExtension = extension.replace(Regex("[^a-zA-Z0-9]"), "").take(10).ifEmpty { "txt" }
         val exportDir = File(context.filesDir, "exports").apply { mkdirs() }
-        return File(exportDir, "expenses_${timestampMs}.$extension")
+        return File(exportDir, "expenses_${timestampMs}.$safeExtension")
     }
 
     /**

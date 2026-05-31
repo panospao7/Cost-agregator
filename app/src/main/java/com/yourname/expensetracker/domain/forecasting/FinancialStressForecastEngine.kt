@@ -414,8 +414,9 @@ class FinancialStressForecastEngine @Inject constructor(
         var total = 0.0
         for (pattern in patterns) {
             var nextDate = pattern.nextExpectedDate
-            if (nextDate > endDate) continue
-            while (nextDate in startDate..endDate) {
+            if (nextDate >= endDate) continue
+            // P6-PR2 (NEW-P6-007): Half-open interval [start, end) prevents double-counting at boundaries
+            while (nextDate >= startDate && nextDate < endDate) {
                 val converted = if (displayCurrency.isBlank()) pattern.averageAmount
                     else currencyConverter.convert(pattern.averageAmount, pattern.currency, displayCurrency)?.convertedAmount
                 if (converted != null) total += converted

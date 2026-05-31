@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.privacy
 
 object RawContentSanitizer {
+    // P8-PR3 (NEW-P8-007): STORE_RAW preserves null as empty string (field is non-nullable).
+    // Callers should check rawOcrText.isEmpty() to detect "no data" vs rawOcrTextPurgedAt for "purged".
     fun sanitizeRawOcr(text: String?, mode: RawStorageMode): String = when (mode) {
         RawStorageMode.STORE_RAW -> text ?: ""
         RawStorageMode.STORE_REDACTED -> "[REDACTED]"

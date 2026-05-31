@@ -38,7 +38,7 @@
 | NEW-P6-004 | P1 | Unbounded rollover loop — O(N) queries for daily budgets | BudgetRepository.kt | ✅ FIXED (P6-PR1) |
 | NEW-P6-005 | P2 | `BudgetRepository` CRUD swallows CancellationException | BudgetRepository.kt | ✅ FIXED (U-PR1) |
 | NEW-P6-006 | P2 | `computeAdjustedSpend` swallows CE | BudgetMonitor.kt | 🔴 OPEN |
-| NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | StressForecastEngine.kt | 🔴 OPEN |
+| NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | StressForecastEngine.kt | ✅ FIXED (P6-PR2) |
 | NEW-P6-008 | P2 | Stale detected patterns silently skipped | StressForecastEngine.kt | 🔴 OPEN |
 | NEW-P6-009 | P2 | DST-unsafe day arithmetic in stress horizon | StressForecastEngine.kt | ✅ FIXED (U-PR7) |
 | NEW-P6-010 | P2 | Hardcoded currency-specific risk thresholds | StressForecastEngine.kt | 🔴 OPEN |
