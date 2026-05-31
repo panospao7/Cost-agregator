@@ -246,12 +246,12 @@ Full source: `pipeline-12-import-export-accounting-debug-report.md`
 | P12-P1-02 | P1 | Accounting validation is per-page, not global | Bug | Full-dataset validation before streaming (from prior session) | ✅ FIXED |
 | P12-P1-03 | P1 | Multi-currency export fields incomplete | Bug | Extended `ExportTransaction` with all audit fields (from prior session) | ✅ FIXED |
 | P12-P1-04 | P1 | Export snapshot consistency is not real | Bug | No snapshot anchoring; concurrent writes cause missing/duplicate rows | 📝 TODO ONLY |
-| P12-P1-05 | P1 | Normal exports plaintext and not privacy-gated | Bug | `encryptExportFile()` not called; no privacy gate checked | 📝 TODO ONLY |
+| P12-P1-05 | P1 | Normal exports plaintext and not privacy-gated | Bug | FIXED (privacy gate + encryption wiring): `ExportOptionsViewModel.generateExport()` now checks the dedicated `EXPENSE_EXPORT`/`EXPENSE_EXPORT_ENCRYPTED` capability (was the broken `RAWBACKUP_EXPORT`, P12-REG-01), and `encryptExportFile()` is wired fail-closed with a real passphrase (no hardcoded `"default"`, no plaintext-on-failure, P12-NEW-01). Redacted/metadata-only export *modes* remain a separate enhancement. | ✅ FIXED |
 | P12-P1-06 | P1 | Export silently drops many app fields | Bug | Generic export only includes 8 fields; drops business/location/base fields | 📝 TODO ONLY |
 | P12-P1-07 | P1 | Receipt links not represented in exports | Bug | No `receiptId` or link metadata in export rows | 📝 TODO ONLY |
 | P12-P1-08 | P1 | Business/tax fields not exported | Bug | `isBusinessExpense`/`businessPurpose`/etc. now included in `ExportTransaction` DTO | ✅ FIXED |
 | P12-P1-09 | P1 | Accountant PDF has raw mixed-currency combined total | Bug | Raw-sums `effectiveAmount` across currencies; no conversion | 📝 TODO ONLY |
-| P12-P1-10 | P1 | Export can run during restore/restart-required state | Bug | `ExportOptionsViewModel` now checks restore mode; `DatabaseReadBarrier` exists | ⚠ PARTIAL |
+| P12-P1-10 | P1 | Export can run during restore/restart-required state | Bug | `ExportOptionsViewModel` checks restore mode; `ExportDataRepository` enforces `DatabaseReadBarrier` on all read methods. Export-loop source-link read now also goes through the barrier-guarded `getSourceLinksForExpenses()` (was a raw-DAO bypass — P12-CURRENT-020). Remaining: no app-wide export operation lock. | ⚠ PARTIAL |
 
 ---
 
