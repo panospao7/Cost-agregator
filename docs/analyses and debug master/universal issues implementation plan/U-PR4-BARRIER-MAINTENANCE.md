@@ -8,6 +8,8 @@
 | U-BARRIER-02 | P1 | `DatabaseWriteBarrier` not enforced consistently — some paths use `RestoreMaintenanceMode` directly, some don't check at all |
 | U-BARRIER-03 | P1 | Restore-blocked workers classified as FAILED not SKIPPED in `WorkerExecutionGuard` |
 
+**Status:** ✅ U-BARRIER-01 FIXED, ✅ U-BARRIER-02 FIXED, ⚠ U-BARRIER-03 no code change needed (already correct)
+
 **Affected Pipelines:** 7 (affects all), 1, 2, 3, 4, 6, 9, 10
 
 ## 2. Root Cause Analysis

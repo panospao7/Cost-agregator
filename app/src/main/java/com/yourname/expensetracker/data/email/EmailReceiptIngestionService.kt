@@ -117,7 +117,7 @@ class EmailReceiptIngestionService @Inject constructor(
         } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
         try {
             writeBarrier.checkWritesAllowed("EmailReceiptIngestionService.processEmailReceipt")
-        } catch (e: IllegalStateException) {
+        } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
             try {
                 diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.EMAIL,

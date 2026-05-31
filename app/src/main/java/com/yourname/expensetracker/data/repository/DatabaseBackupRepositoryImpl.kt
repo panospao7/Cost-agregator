@@ -367,6 +367,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     mapOf("operation" to "export")
                 )
                 if (encryptedDecision.blocksExecution()) {
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     return@withContext Result.failure(
                         Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason()}")
                     )
@@ -378,6 +379,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     mapOf("operation" to "export")
                 )
                 if (rawDecision.blocksExecution()) {
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     return@withContext Result.failure(
                         Exception("Plaintext backup denied by privacy gate: ${rawDecision.reason()}")
                     )
@@ -386,6 +388,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             val checkpointResult = checkpointWal()
             if (checkpointResult.isFailure) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
                     checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
                 )
@@ -421,6 +424,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
 
                     Timber.d("Database encrypted and exported successfully to: ${backupFile.absolutePath}")
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     Result.success(backupFile)
                 } finally {
                     tempCopy.delete()
