@@ -86,9 +86,12 @@ data class WorkerSpec(
             "ai_daily_briefing" to WorkerSpec(
                 name = "ai_daily_briefing",
                 repeatIntervalHours = null, // midnight-aligned one-shot
-                // KEEP is explicit here: the midnight self-rescheduling chain relies on
-                // KEEP so an already-scheduled briefing is not clobbered/duplicated.
-                oneShotPolicy = ExistingWorkPolicy.KEEP,
+                // U-WORKER-04: REPLACE ensures the midnight self-rescheduling chain is
+                // always re-armed. KEEP caused silent chain death when a stale pending
+                // request (from a previous schedule that hadn't fired yet) blocked the
+                // new enqueue. REPLACE is safe because the worker's artifact freshness
+                // check prevents duplicate generation.
+                oneShotPolicy = ExistingWorkPolicy.REPLACE,
                 constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.UNMETERED)
                     .setRequiresBatteryNotLow(true)

@@ -43,9 +43,7 @@ class AppStartupCoordinator @Inject constructor(
         }
     }
 
-    companion object {
-        // Kept for reference; SharedPreferences restart flag removed — operationalStateFlow drives the lock.
-    }
+    // SharedPreferences restart flag removed — operationalStateFlow drives the lock.
 
     /**
      * Checks for a pending restore journal on startup and handles crash recovery.
@@ -321,12 +319,25 @@ class AppStartupCoordinator @Inject constructor(
      * process death (no CancellationException is thrown when the OS kills the
      * process, so the guard's in-run finalizer never executes). Marks runs older
      * than the stale threshold as STALE_ABORTED so the run ledger is accurate.
+     *
+     * U-WORKER-02: Uses a 15-minute threshold at startup instead of the default
+     * 4 hours. Any RUNNING row with startedAt before (now - 15 min) is definitely
+     * stale because the previous process is dead. The shorter window ensures recent
+     * crash-orphaned rows are recovered immediately rather than lingering for hours.
      */
     private fun recoverStaleWorkerRuns() {
         ProcessLifecycleOwner.get().lifecycleScope.launch {
-            runCatching { workerExecutionGuard.recoverStaleRunningJobs() }
-                .onFailure { Timber.w(it, "Startup: stale worker-run recovery failed") }
+            runCatching {
+                workerExecutionGuard.recoverStaleRunningJobs(
+                    staleThresholdMs = System.currentTimeMillis() - STARTUP_STALE_THRESHOLD_MS
+                )
+            }.onFailure { Timber.w(it, "Startup: stale worker-run recovery failed") }
         }
+    }
+
+    companion object {
+        /** 15-minute threshold for startup stale-run recovery (U-WORKER-02). */
+        private const val STARTUP_STALE_THRESHOLD_MS = 15 * 60 * 1000L
     }
 
     /**

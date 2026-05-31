@@ -112,6 +112,7 @@ class DailyBriefingWorker @AssistedInject constructor(
 
         if (shouldRescheduleNextMidnight(guardResult)) {
             runCatching { aiWorkScheduler.scheduleDailyBriefing() }
+                .onFailure { Timber.e(it, "DailyBriefingWorker: failed to reschedule next midnight") }
         }
 
         return guardResult.toWorkerResult()

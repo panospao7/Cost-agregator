@@ -55,7 +55,7 @@ class WorkerRunLoggerImpl @Inject constructor(
     ) : WorkerRunHandle {
 
         override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?) {
-            update("SUCCESS", rowsScanned = rowsScanned, rowsUpdated = rowsUpdated, notificationsSent = notificationsSent)
+            update("SUCCESS", rowsScanned = rowsScanned, rowsUpdated = rowsUpdated, notificationsSent = notificationsSent, statusReason = message)
         }
 
         override suspend fun skipped(reason: String) {

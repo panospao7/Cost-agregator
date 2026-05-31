@@ -93,18 +93,19 @@ class WorkerIdempotencyTest {
     }
 
     @Test
-    fun `oneShotPolicy defaults to KEEP and merchant_key overrides to REPLACE`() {
+    fun `oneShotPolicy defaults to KEEP and one-shot workers override to REPLACE`() {
         // The data class default for oneShotPolicy is KEEP so a one-shot is
         // scheduled at most once unless a spec explicitly opts into REPLACE.
         val defaultSpec = WorkerSpec(name = "default_one_shot")
         assertEquals("oneShotPolicy should default to KEEP",
             ExistingWorkPolicy.KEEP, defaultSpec.oneShotPolicy)
 
-        // ai_daily_briefing keeps the default KEEP (its midnight chain relies on it).
+        // ai_daily_briefing uses REPLACE (U-WORKER-04) so the midnight chain is
+        // always re-armed even if a stale pending request exists.
         val briefing = WorkerSpec.DEFAULTS["ai_daily_briefing"]
         assertNotNull("ai_daily_briefing spec must exist", briefing)
-        assertEquals("ai_daily_briefing should keep KEEP one-shot policy",
-            ExistingWorkPolicy.KEEP, briefing!!.oneShotPolicy)
+        assertEquals("ai_daily_briefing should use REPLACE one-shot policy",
+            ExistingWorkPolicy.REPLACE, briefing!!.oneShotPolicy)
 
         // merchant_key_backfill overrides to REPLACE.
         val merchantKey = WorkerSpec.DEFAULTS["merchant_key_backfill"]

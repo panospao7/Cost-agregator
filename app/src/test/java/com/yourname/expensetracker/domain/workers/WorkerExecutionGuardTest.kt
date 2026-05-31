@@ -188,6 +188,42 @@ class WorkerExecutionGuardTest {
     }
 
     // -------------------------------------------------------------------------
+    // U-WORKER-01: write barrier before run logging
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `startRunSafely returns Skipped when write barrier denies before dao insert`() = runTest {
+        // Simulate mode transitioning to non-NORMAL between the top-level check and
+        // startRunSafely's internal barrier check (TOCTOU race).
+        // First call (top-level check) passes; second call (inside startRunSafely) throws.
+        var callCount = 0
+        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+            callCount++
+            if (callCount > 1) {
+                throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                    accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                    operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("WorkerRunLogger.start:test_worker"),
+                    mode = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+                )
+            }
+        }
+        var blockRan = false
+
+        val result = guard.runGuarded(
+            WorkerGuardRequest(workerName = "test_worker", requiresNotificationPermission = false)
+        ) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertEquals(
+            DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,
+            (result as WorkerGuardResult.Skipped).reason
+        )
+        assertFalse("block must not run when barrier denies at startRunSafely", blockRan)
+        // workerRunLogger.start() must never be called if barrier throws first
+        coVerify(exactly = 0) { workerRunLogger.start(any()) }
+    }
+
+    // -------------------------------------------------------------------------
     // P9-NEW-13: typed retry signal + message-based classification precedence
     // -------------------------------------------------------------------------
 
@@ -249,5 +285,35 @@ class WorkerExecutionGuardTest {
         coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
         coVerify(exactly = 0) { runHandle.retry(any(), any()) }
         coVerify(exactly = 0) { runHandle.failure(any(), any()) }
+    }
+
+    // -------------------------------------------------------------------------
+    // U-WORKER-03: NO_WORK message for zero-count success runs
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `runGuardedWithContext passes NO_WORK message when all counters are zero`() = runTest {
+        permissionChecker.enabled = true
+        val req = WorkerGuardRequest(workerName = "test_worker", requiresNotificationPermission = false)
+
+        val result = guard.runGuardedWithContext(req) { /* no counter increments */ }
+
+        assertTrue(result is WorkerGuardResult.Success)
+        coVerify(exactly = 1) {
+            runHandle.success(rowsScanned = 0, rowsUpdated = 0, notificationsSent = 0, message = "NO_WORK")
+        }
+    }
+
+    @Test
+    fun `runGuardedWithContext passes null message when counters are non-zero`() = runTest {
+        permissionChecker.enabled = true
+        val req = WorkerGuardRequest(workerName = "test_worker", requiresNotificationPermission = false)
+
+        val result = guard.runGuardedWithContext(req) { ctx -> ctx.addRowsUpdated(3) }
+
+        assertTrue(result is WorkerGuardResult.Success)
+        coVerify(exactly = 1) {
+            runHandle.success(rowsScanned = 0, rowsUpdated = 3, notificationsSent = 0, message = null)
+        }
     }
 }

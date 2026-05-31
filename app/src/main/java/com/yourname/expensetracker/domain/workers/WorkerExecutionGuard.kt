@@ -255,10 +255,12 @@ class WorkerExecutionGuard @Inject constructor(
 
                 val result = block(ctx)
                 withContext(NonCancellable) {
+                    val noWork = ctx.rowsScanned == 0 && ctx.rowsUpdated == 0 && ctx.notificationsSent == 0
                     run.success(
                         rowsScanned = ctx.rowsScanned,
                         rowsUpdated = ctx.rowsUpdated,
-                        notificationsSent = ctx.notificationsSent
+                        notificationsSent = ctx.notificationsSent,
+                        message = if (noWork) "NO_WORK" else null
                     )
                 }
                 return WorkerGuardResult.Success(result)
@@ -292,9 +294,16 @@ class WorkerExecutionGuard @Inject constructor(
         data class Retry(val reason: String) : StartRunResult
     }
 
-    /** DDL-81-04: wraps workerRunLogger.start() so failures are classified, not raw exceptions. */
+    /**
+     * DDL-81-04: wraps workerRunLogger.start() so failures are classified, not raw exceptions.
+     * U-WORKER-01: explicit write barrier check closes the TOCTOU race between the
+     * mode pre-check at the top of runGuarded/runGuardedWithContext and the dao.insert()
+     * inside workerRunLogger.start(). Without this, a mode transition between the two
+     * could allow a write against a database about to be swapped.
+     */
     private suspend fun startRunSafely(request: WorkerGuardRequest): StartRunResult {
         return try {
+            writeBarrier.checkWritesAllowed("WorkerRunLogger.start:${request.workerName}")
             StartRunResult.Started(workerRunLogger.start(request.workerName))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
