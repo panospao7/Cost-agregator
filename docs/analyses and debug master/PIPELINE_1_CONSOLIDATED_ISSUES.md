@@ -28,19 +28,19 @@
 | NEW-P1-002 | P1 | `writeNotificationDedupeSourceLink` inside transaction performs I/O side effect | NotificationProcessingPipeline.kt | ✅ FIXED (P1-PR2) |
 | NEW-P1-003 | P2 | `workTracker.acceptingNewWork` never set to false — dead code | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-004 | P2 | `emitOrderedNotificationEvents` silently drops events when launch returns null | NotificationCaptureService.kt | 🔴 OPEN |
-| NEW-P1-005 | P2 | Filter blocks ALL "deposit" notifications unconditionally | NotificationFilter.kt | 🔴 OPEN |
-| NEW-P1-006 | P2 | "failed" keyword deny is overly broad (matches merchant names) | NotificationFilter.kt | 🔴 OPEN |
+| NEW-P1-005 | P2 | Filter blocks ALL "deposit" notifications unconditionally | NotificationFilter.kt | ✅ FIXED (P1-PR3) |
+| NEW-P1-006 | P2 | "failed" keyword deny is overly broad (matches merchant names) | NotificationFilter.kt | ✅ FIXED (P1-PR3) |
 | NEW-P1-007 | P2 | Race between `captureGate.warmUp()` (async) and first notification | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-008 | P2 | `processMutex` serializes ALL processing — bottleneck | NotificationProcessingPipeline.kt | 🔴 OPEN |
 | NEW-P1-009 | P2 | Double privacy settings fetch — TOCTOU race | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-010 | P2 | `processAndSave` marks processed OUTSIDE pipeline transaction | NotificationRepository.kt | 🔴 OPEN |
 | NEW-P1-011 | P3 | Redundant SHA-256 implementations | NotificationCaptureService.kt | 🔴 OPEN |
-| NEW-P1-012 | P3 | Unused `postTime` parameter in computeDedupeKey | NotificationCaptureService.kt | 🔴 OPEN |
-| NEW-P1-013 | P2 | Filter receives combinedBody as bigText — over-inclusive matching | NotificationCaptureService.kt | 🔴 OPEN |
-| NEW-P1-014 | P3 | Deduper `cleanupExpired` never called | NotificationCaptureDeduper.kt | 🔴 OPEN |
+| NEW-P1-012 | P3 | Unused `postTime` parameter in computeDedupeKey | NotificationCaptureService.kt | ✅ FIXED (P1-PR6) |
+| NEW-P1-013 | P2 | Filter receives combinedBody as bigText — over-inclusive matching | NotificationCaptureService.kt | ✅ FIXED (P1-PR3) |
+| NEW-P1-014 | P3 | Deduper `cleanupExpired` never called | NotificationCaptureDeduper.kt | ✅ FIXED (P1-PR6) |
 | NEW-P1-015 | P1 | `IllegalStateException` in transaction creates orphaned diagnostic | NotificationProcessingPipeline.kt | ✅ FIXED (P1-PR2) |
 | NEW-P1-016 | P3 | Sensitive key filtering uses exact match (misses camelCase) | NotificationCaptureService.kt | 🔴 OPEN |
-| NEW-P1-017 | P2 | Settings observer dies permanently on exception — privacy regression risk | NotificationCaptureGate.kt | 🔴 OPEN |
+| NEW-P1-017 | P2 | Settings observer dies permanently on exception — privacy regression risk | NotificationCaptureGate.kt | ✅ FIXED (P1-PR4) |
 
 ---
 

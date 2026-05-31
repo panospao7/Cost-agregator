@@ -31,7 +31,7 @@
 | NEW-P3-001 | P1 | CancellationException swallowed in `ReceiptSideEffectDispatcher` | ReceiptSideEffectDispatcher.kt | ✅ FIXED (U-PR1) |
 | NEW-P3-002 | P1 | CancellationException swallowed in `BankStatementLifecycleProcessor` per-item | BankStatementLifecycleProcessor.kt | ✅ FIXED (U-PR1) |
 | NEW-P3-003 | P1 | CancellationException swallowed in `ReceiptLinkService.unlinkReceiptFromExpense` | ReceiptLinkService.kt | ✅ FIXED (U-PR1) |
-| NEW-P3-004 | P2 | Double `attachReceipt` call in `BankStatementLifecycleProcessor` | BankStatementLifecycleProcessor.kt | 🔴 OPEN |
+| NEW-P3-004 | P2 | Double `attachReceipt` call in `BankStatementLifecycleProcessor` | BankStatementLifecycleProcessor.kt | ✅ FIXED (P3-PR3) |
 | NEW-P3-005 | P2 | Race in post-OCR duplicate path | ReceiptLifecycleCoordinator.kt | 🔴 OPEN |
 | NEW-P3-006 | P2 | Privacy leak — merchant/category logged in production | ReceiptLifecycleCoordinator.kt | 🔴 OPEN |
 | NEW-P3-007 | P2 | `deleteReceipt` writes event for non-existent receipt | ReceiptLifecycleCoordinator.kt | 🔴 OPEN |

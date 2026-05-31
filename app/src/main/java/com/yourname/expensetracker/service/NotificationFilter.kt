@@ -232,7 +232,6 @@ object NotificationFilter {
                 )
             }
 
-            // 5. Incoming / credit deny
             // 5. Incoming-only / deposit deny
             // P1-PR3 (NEW-P1-005): Only deny deposit when NO expense signal keywords present.
             // "Deposit fee €2.50" should be captured; "Salary deposited €2000" should not.
