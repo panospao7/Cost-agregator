@@ -97,7 +97,7 @@ Full source: `PIPELINE_2_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P2-005 | P2 | `DefaultExpenseCategoryAssignmentService` bypasses lifecycle | Bug | Direct DAO mutation without events | 🔴 OPEN |
 | NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | Bug | Failed conversion doesn't clear old value | 🔴 OPEN |
 | NEW-P2-008 | P2 | DAO exposes `updateMerchantForMerchant` that nulls dedupeKey | Bug | Bulk merchant rename nulls deduplication key | 🔴 OPEN |
-| NEW-P2-009 | P2 | Planner hardcodes `EXPENSE_CREATED` trigger for update paths | Bug | Side-effect planner fires wrong trigger type | 🔴 OPEN |
+| NEW-P2-009 | P2 | Planner hardcodes `EXPENSE_CREATED` trigger for update paths | Bug | Side-effect planner fires wrong trigger type | ✅ FIXED (U-PR8) |
 
 ## Pipeline 3 — Receipt Capture / OCR / Email
 
@@ -319,7 +319,7 @@ Full source: `PIPELINE_11_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P11-P1-04 | P1 | Raw email body/subject/sender persisted without privacy policy | Bug | Sanitizer used but wrong mode for email fields | ⚠ PARTIAL |
 | P11-P1-05 | P1 | Restore barrier incomplete at email service boundary | Bug | Service checks barrier; coordinator uses `RestoreMaintenanceMode` directly | ⚠ PARTIAL |
 | P11-P1-06 | P1 | Email source insert conflicts ignored | Bug | Checks `insertOrIgnore` but messageId-only conflict unresolved | ⚠ PARTIAL |
-| P11-P1-07 | P1 | Receipt post-save side effects skipped in service path | Bug | Side effects dispatched — BUT double-dispatch bug exists | ✅ FIXED |
+| P11-P1-07 | P1 | Receipt post-save side effects skipped in service path | Bug | Side effects dispatched correctly; double-dispatch verified NOT present (U-PR8) | ✅ FIXED |
 | P11-P1-08 | P1 | No pending-review route for uncertain email receipts | Bug | Valid parse immediately creates approved expense regardless of confidence | 📝 TODO ONLY |
 | NEW-P11-001 | P1 | `ingestionMutex` blocks all concurrent processing during batch | Bug | Single mutex serializes entire batch; throughput bottleneck | 🔴 OPEN |
 | NEW-P11-002 | P2 | `AmazonReceiptParser.canParse()` overly broad | Bug | Matches non-Amazon emails | 🔴 OPEN |
@@ -415,7 +415,7 @@ Universal contracts extracted from the architectural strategy — each represent
 - P11-P1-04: Remains ⚠ PARTIAL (sanitizer used but wrong mode for email fields)
 - P11-P1-05: Was ✅ FIXED → now ⚠ PARTIAL (service checks barrier; coordinator uses RestoreMaintenanceMode directly)
 - P11-P1-06: Was 📝 TODO → now ⚠ PARTIAL (checks insertOrIgnore but messageId-only conflict unresolved)
-- P11-P1-07: Was 📝 TODO → now ✅ FIXED (side effects dispatched) — BUT double-dispatch bug exists
+- P11-P1-07: Was 📝 TODO → now ✅ FIXED (side effects dispatched) — double-dispatch verified NOT present (U-PR8 confirmed)
 - P12-P0-01: Was ⚠ PARTIAL → now 📝 TODO ONLY (no real import pipeline verified)
 - P12-P1-02: Was ✅ FIXED → now ⚠ PARTIAL (validation loads all, not snapshot-tied)
 - P12-P1-03: Was ✅ FIXED → now ⚠ PARTIAL (fields added but no conversionStatus)

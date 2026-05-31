@@ -50,8 +50,8 @@
 | U-WORKER-04 | P1 | DailyBriefing KEEP policy breaks one-shot chain | 9 | Engine | U-PR6 ✅ |
 | U-TIME-01 | P2 | System.currentTimeMillis() used instead of TimeProvider | 4,9,10 | Universal | U-PR7 ✅ |
 | U-TIME-02 | P2 | DST-unsafe day arithmetic (n * DAY_IN_MILLIS) | 6 | Engine | U-PR7 ✅ |
-| U-SIDEEFFECT-01 | P1 | Transaction side effects dispatched twice | 11 | Multi-pipeline | U-PR8 |
-| U-SIDEEFFECT-02 | P2 | Side-effect planner hardcodes EXPENSE_CREATED for update paths | 2 | Engine | U-PR8 |
+| U-SIDEEFFECT-01 | P1 | Transaction side effects dispatched twice | 11 | Multi-pipeline | U-PR8 ✅ NOT A BUG (verified: no double-dispatch in current code) |
+| U-SIDEEFFECT-02 | P2 | Side-effect planner hardcodes EXPENSE_CREATED for update paths | 2 | Engine | U-PR8 ✅ FIXED |
 | U-EXPORT-01 | P0 | JSON export produces invalid JSON (missing comma) | 12 | Pipeline-local | — |
 | U-EXPORT-02 | P1 | CsvCellSanitizer corrupts negative amounts in accounting exports | 12 | Pipeline-local | — |
 | U-DEAD-01 | P1 | Dead dashboard features (previousMonth null, runway=0) | 5 | Pipeline-local | — |
@@ -352,13 +352,15 @@ Pipeline agents should **PAUSE** on these until the universal PR lands:
 - Tests added: `BillReminderWorkerTimeProviderTest` (3 tests), `WarrantyExpirationWorkerTest` TimeProvider test, `FinancialStressForecastEngineTest` DST boundary tests (2 tests)
 - Grep verification: 0 `System.currentTimeMillis()` in worker files, 0 `DAY_IN_MILLIS` in forecast engine
 
-### U-PR8 — Transaction Side-Effect Semantics
-- **Issues:** U-SIDEEFFECT-01, U-SIDEEFFECT-02
+### U-PR8 — Transaction Side-Effect Semantics ✅ LANDED
+- **Issues:** U-SIDEEFFECT-01 (NOT A BUG), U-SIDEEFFECT-02 (FIXED)
 - **Pipelines:** 2, 11
-- **Files:** `TransactionSideEffectPlanner.kt`, `EmailReceiptIngestionService.kt`
-- **Steps:** (1) Remove duplicate dispatch in email service (2) Fix planner trigger type for update paths (3) Make idempotency keys time-unique
-- **Tests:** `email_receipt_dispatches_side_effects_once`, `update_path_uses_correct_trigger_type`
-- **Risk:** Low — removes duplicate work
+- **Files:** `TransactionSideEffectPlanner.kt`
+- **Fix (U-SIDEEFFECT-02):** Added `triggerType` parameter to `makeMerchantCategoryLearningAction()` and `makeMerchantCanonicalStatsAction()`; idempotency keys now use `${triggerType.name.lowercase()}` instead of hardcoded `:created:`; `planUpdated()` passes `EXPENSE_UPDATED`, `planCreated()` passes `EXPENSE_CREATED`
+- **Verification (U-SIDEEFFECT-01):** `ReceiptLifecycleCoordinator.processEmailReceipt()` uses `createExpenseDbOnlyV2()` (no dispatch), collects batches, dispatches ONCE via `postCommitActionRunner.runBestEffortAfterCommit(combinedBatch)`. No double-dispatch exists in current code.
+- **Tests:** `TransactionSideEffectPlannerTest` (12 tests) — trigger type correctness, idempotency key uniqueness, edge cases
+- **Risk:** Low — internal private method signature change only
+- **Date:** 2026-05-31
 
 ---
 
@@ -395,7 +397,7 @@ U-PR6 (Worker guard contract)
 U-PR7 (TimeProvider)
   └── independent — ✅ LANDED
 
-U-PR8 (Side-effect semantics)
+U-PR8 (Side-effect semantics) ✅ LANDED
   └── before Pipeline 11 email side-effect fixes
 ```
 
@@ -403,7 +405,7 @@ U-PR8 (Side-effect semantics)
 1. U-PR4 (barrier — unblocks everything) ✅ LANDED
 2. U-PR1 (cancellation — mechanical, low risk) ✅ LANDED
 3. U-PR7 (time — mechanical, low risk) ✅ LANDED
-4. U-PR8 (side effects — small scope)
+4. U-PR8 (side effects — small scope) ✅ LANDED
 5. U-PR2 (TOCTOU — medium risk, needs testing) ✅ LANDED
 6. U-PR6 (worker guard — medium risk) ✅ LANDED
 7. U-PR3 (money — medium risk, needs golden tests) ✅ LANDED

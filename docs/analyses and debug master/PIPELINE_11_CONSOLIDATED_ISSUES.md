@@ -16,7 +16,7 @@
 | P11-P1-04 | P1 | Raw email body/subject/sender persisted without privacy policy | ⚠ PARTIAL | ⚠ **PARTIAL** | Sanitizer used but wrong mode for email fields |
 | P11-P1-05 | P1 | Restore barrier incomplete at email service boundary | ⚠ PARTIAL | ⚠ **PARTIAL** | Service checks barrier; coordinator uses `RestoreMaintenanceMode` directly |
 | P11-P1-06 | P1 | Email source insert conflicts ignored | ⚠ PARTIAL | ⚠ **PARTIAL** | Checks `insertOrIgnore` but messageId-only conflict unresolved |
-| P11-P1-07 | P1 | Receipt post-save side effects skipped in service path | ✅ FIXED | ✅ **FIXED** | Side effects dispatched — BUT double-dispatch bug exists |
+| P11-P1-07 | P1 | Receipt post-save side effects skipped in service path | ✅ FIXED | ✅ **FIXED** | Side effects dispatched correctly; double-dispatch verified NOT present (U-PR8) |
 | P11-P1-08 | P1 | No pending-review route for uncertain email receipts | 📝 TODO ONLY | 📝 **TODO ONLY** | Valid parse immediately creates approved expense regardless of confidence |
 
 ---
@@ -54,7 +54,7 @@
 4. **P11-P1-04** — Sanitizer wrong mode for email fields
 5. **P11-P1-05** — Coordinator uses `RestoreMaintenanceMode` directly (not barrier)
 6. **P11-P1-06** — messageId-only conflict unresolved
-7. **P11-P1-07 remainder** — Double-dispatch bug in side effects
+7. ~~**P11-P1-07 remainder** — Double-dispatch bug in side effects~~ ✅ Verified NOT A BUG (U-PR8)
 8. **P11-P1-08** — No pending-review route for uncertain email receipts
 
 ### P2 (should fix)

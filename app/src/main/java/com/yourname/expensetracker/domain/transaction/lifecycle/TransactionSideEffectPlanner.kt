@@ -37,8 +37,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         val actions = listOf(
             makeBudgetCheckAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_CREATED),
             makeAnomalyAlertAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED),
-            makeMerchantCategoryLearningAction(expenseId, source.name, corrId),
-            makeMerchantCanonicalStatsAction(expenseId, source.name, corrId),
+            makeMerchantCategoryLearningAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED),
+            makeMerchantCanonicalStatsAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED),
             makeRecurringMatchingAction(expenseId, source, corrId)
         )
         return PostCommitActionBatch(corrId, actions)
@@ -66,8 +66,8 @@ class TransactionSideEffectPlanner @Inject constructor(
             TransactionUpdateKind.OWNERSHIP, TransactionUpdateKind.PAYMENT_CORE -> {
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
-                actions.add(makeMerchantCategoryLearningAction(expenseId, source, corrId))
-                actions.add(makeMerchantCanonicalStatsAction(expenseId, source, corrId))
+                actions.add(makeMerchantCategoryLearningAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+                actions.add(makeMerchantCanonicalStatsAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 if (kind.affectsRecurringMatch()) {
                     actions.add(makeRecurringReconcileAction(expenseId, source, corrId))
                 }
@@ -213,19 +213,20 @@ class TransactionSideEffectPlanner @Inject constructor(
     private fun makeMerchantCategoryLearningAction(
         expenseId: Long,
         source: String,
-        correlationId: String
+        correlationId: String,
+        triggerType: SideEffectTriggerType
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
             name = "merchant_category_pattern_learning",
             category = SideEffectCategory.MERCHANT_LEARNING,
-            triggerType = SideEffectTriggerType.EXPENSE_CREATED,
+            triggerType = triggerType,
             targetEntityType = "EXPENSE",
             targetEntityId = expenseId,
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "expense:$expenseId:created:merchant_category_learning",
+            idempotencyKey = "expense:$expenseId:${triggerType.name.lowercase()}:merchant_category_learning",
             metadata = SafeEventMetadata.builder()
                 .put("expenseId", expenseId.toString())
                 .build()
@@ -248,19 +249,20 @@ class TransactionSideEffectPlanner @Inject constructor(
     private fun makeMerchantCanonicalStatsAction(
         expenseId: Long,
         source: String,
-        correlationId: String
+        correlationId: String,
+        triggerType: SideEffectTriggerType
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
             name = "merchant_canonical_stats_update",
             category = SideEffectCategory.MERCHANT_LEARNING,
-            triggerType = SideEffectTriggerType.EXPENSE_CREATED,
+            triggerType = triggerType,
             targetEntityType = "EXPENSE",
             targetEntityId = expenseId,
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "expense:$expenseId:created:merchant_stats",
+            idempotencyKey = "expense:$expenseId:${triggerType.name.lowercase()}:merchant_stats",
             metadata = SafeEventMetadata.builder()
                 .put("expenseId", expenseId.toString())
                 .build()

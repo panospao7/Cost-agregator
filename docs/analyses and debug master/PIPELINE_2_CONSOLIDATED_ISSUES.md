@@ -30,7 +30,7 @@
 | NEW-P2-006 | P2 | `NotificationRepository.deleteAll()` bypasses audit trail | NotificationRepository.kt | 🔴 OPEN |
 | NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | ExpenseWriteStore.kt | 🔴 OPEN |
 | NEW-P2-008 | P2 | DAO exposes `updateMerchantForMerchant` that nulls dedupeKey | ExpenseDao.kt | 🔴 OPEN |
-| NEW-P2-009 | P2 | Planner hardcodes `EXPENSE_CREATED` trigger for update paths | SideEffectPlanner.kt | 🔴 OPEN |
+| NEW-P2-009 | P2 | Planner hardcodes `EXPENSE_CREATED` trigger for update paths | SideEffectPlanner.kt | ✅ FIXED (U-PR8) |
 | NEW-P2-010 | P2 | Inconsistent event-write guard between `bulkUpdateCategory` overloads | ExpenseWriteStore.kt | 🔴 OPEN |
 | NEW-P2-011 | P3 | `updateLocation` missing correlationId | ExpenseWriteStore.kt | 🔴 OPEN |
 | NEW-P2-012 | P3 | `updateMerchant` missing correlationId in event | ExpenseWriteStore.kt | 🔴 OPEN |
