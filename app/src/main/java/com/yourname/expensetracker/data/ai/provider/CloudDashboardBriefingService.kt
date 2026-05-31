@@ -52,6 +52,8 @@ class CloudDashboardBriefingService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
     private val cloudPayloadPolicy: CloudPayloadPolicy,
+    // PR5: Authoritative cloud AI gate — replaces ad-hoc aiSettings.allowCloudAi check
+    private val effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver,
     // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
     private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : DashboardBriefingService {
@@ -76,7 +78,8 @@ class CloudDashboardBriefingService @Inject constructor(
         cloudPayloadPolicy = DefaultCloudPayloadPolicy(
             EffectiveCloudAiPolicyResolver.failClosedNoAi(),
             DefaultCloudPayloadRedactor()
-        )
+        ),
+        effectiveCloudAiPolicyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
     )
 
     @VisibleForTesting
@@ -89,7 +92,8 @@ class CloudDashboardBriefingService @Inject constructor(
         cloudPayloadPolicy = DefaultCloudPayloadPolicy(
             EffectiveCloudAiPolicyResolver.failClosedNoAi(),
             DefaultCloudPayloadRedactor()
-        )
+        ),
+        effectiveCloudAiPolicyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
     )
 
     @VisibleForTesting
@@ -102,7 +106,8 @@ class CloudDashboardBriefingService @Inject constructor(
         cloudPayloadPolicy = DefaultCloudPayloadPolicy(
             EffectiveCloudAiPolicyResolver.failClosedNoAi(),
             DefaultCloudPayloadRedactor()
-        )
+        ),
+        effectiveCloudAiPolicyResolver = EffectiveCloudAiPolicyResolver.failClosedNoAi()
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -124,10 +129,16 @@ class CloudDashboardBriefingService @Inject constructor(
         }
 
         // PRIVACY GUARD: Cloud must not be used if user has disabled it.
-        val settings = aiSettingsRepository?.settings()?.first()
-        if (settings != null && !settings.allowCloudAi) {
-            Timber.d("CloudDashboardBriefingService: Cloud AI disabled in settings, skipping.")
-            return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
+        // PR5: EffectiveCloudAiPolicyResolver is the authoritative gate — checks both
+        // PrivacySettings.cloudAiEnabled AND AiSettings.allowCloudAi in one call.
+        val effectivePolicy = effectiveCloudAiPolicyResolver.resolve()
+        if (!effectivePolicy.cloudAllowed) {
+            Timber.d("CloudDashboardBriefingService: blocked by effective cloud AI policy: ${effectivePolicy.reason}")
+            return AiServiceResult.Failure(
+                AiServiceError.PrivacyDenied(
+                    PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING, effectivePolicy.reason ?: "Cloud AI disabled")
+                )
+            )
         }
 
         // PRIVACY GATE: Check privacy gate before cloud AI call

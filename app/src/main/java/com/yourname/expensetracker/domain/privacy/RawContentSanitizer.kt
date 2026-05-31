@@ -67,4 +67,11 @@ object RawContentSanitizer {
         RawStorageMode.STORE_RAW -> extrasJson
         else -> null  // extras are never stored unless STORE_RAW
     }
+
+    fun sanitizeBankDescription(text: String?, mode: RawStorageMode): String? = when (mode) {
+        RawStorageMode.STORE_RAW -> text
+        RawStorageMode.STORE_REDACTED -> if (text != null) "[REDACTED]" else null
+        RawStorageMode.STORE_METADATA_ONLY -> null
+        RawStorageMode.DO_NOT_STORE -> null
+    }
 }

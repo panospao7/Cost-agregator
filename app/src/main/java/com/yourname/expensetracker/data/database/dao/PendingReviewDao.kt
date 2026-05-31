@@ -667,4 +667,17 @@ AND LENGTH(:merchantKey) >= 8
      */
     @Query("SELECT COUNT(*) FROM pending_reviews WHERE scannedReceiptId = :receiptId")
     suspend fun countByScannedReceiptId(receiptId: Long): Int
+
+    /**
+     * PR5: Redacts notification text/title in pending reviews older than [cutoffMs].
+     * Preserves structural fields (amount, merchant, status, dates).
+     * @return number of rows updated
+     */
+    @Query("""
+        UPDATE pending_reviews
+        SET notificationText = NULL, notificationTitle = NULL
+        WHERE createdAt < :cutoffMs
+          AND (notificationText IS NOT NULL OR notificationTitle IS NOT NULL)
+    """)
+    suspend fun redactNotificationTextOlderThan(cutoffMs: Long): Int
 }

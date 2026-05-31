@@ -124,6 +124,26 @@ object RetentionModule {
                 val count = appDatabase.pipelineDiagnosticEventDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+        },
+
+        object : RetentionTarget {
+            override val name = "pending_reviews.notificationText"
+            // PR5: Redact notification text/title in pending reviews past the notification
+            // retention window. Preserves structural fields for review queue functionality.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                val count = appDatabase.pendingReviewDao().redactNotificationTextOlderThan(cutoffMs)
+                RetentionPurgeResult(name, count, true)
+            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+        },
+
+        object : RetentionTarget {
+            override val name = "background_job_runs.errorMessage"
+            // PR5: Redact error messages in background job runs older than 30 days.
+            // Error messages may contain PII from exception stack traces.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                val count = appDatabase.backgroundJobRunDao().redactErrorMessagesOlderThan(cutoffMs)
+                RetentionPurgeResult(name, count, true)
+            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
         }
     )
 

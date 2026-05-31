@@ -36,8 +36,8 @@ This ensures corruption can NEVER be misclassified as a permissive first-run sta
 | `NOTIFICATION` | `rawNotificationStorageMode` | `STORE_RAW` |
 | `RECEIPT_OCR` | `rawOcrStorageMode` | `STORE_RAW` |
 | `EMAIL_RECEIPT` | `emailReceiptStorageMode` | `STORE_REDACTED` |
-| `BANK_STATEMENT` | `rawOcrStorageMode` (reused) | `STORE_RAW` |
-| `BANK_API` | `rawOcrStorageMode` (reused) | `STORE_RAW` |
+| `BANK_STATEMENT` | `rawBankStatementStorageMode` | `STORE_REDACTED` |
+| `BANK_API` | `rawBankStatementStorageMode` | `STORE_REDACTED` |
 | `AI_ARTIFACT` | `debugDataPersistenceEnabled` | `DO_NOT_STORE` |
 | `EXPORT_DEBUG` | `debugDataPersistenceEnabled` | `DO_NOT_STORE` |
 
@@ -47,6 +47,7 @@ All modes fall back to:
 - `rawNotificationStorageMode = DO_NOT_STORE`
 - `rawOcrStorageMode = DO_NOT_STORE`
 - `emailReceiptStorageMode = DO_NOT_STORE`
+- `rawBankStatementStorageMode = DO_NOT_STORE`
 - `cloudAiEnabled = false`
 - `notificationCaptureEnabled = false`
 
@@ -91,8 +92,34 @@ capability.
 `ExportAnonymizer` redacts every PII-bearing table in the export copy (single
 transaction): `scanned_receipts.rawOcrText`, `raw_notifications` raw content,
 `ai_artifacts` (summary/explanation/payload/error), `ai_chat_messages` (text/payload),
-`merchant_locations` (display name/address/osmId + lat/lon zeroed), and
-`email_receipt_sources` (sender/subject/messageId; dedup hashes preserved).
+`merchant_locations` (display name/address/osmId + lat/lon zeroed),
+`email_receipt_sources` (sender/subject/messageId; dedup hashes preserved),
+`pending_reviews` (notificationText/notificationTitle → NULL), and
+`bank_statement_import_items` (merchant → '[REDACTED]').
+
+## Retention targets
+
+`DataRetentionWorker` uses `RetentionRegistry.allTargets()` to purge sensitive data:
+- `raw_notifications` — raw notification content
+- `scanned_receipts.rawOcrText` — OCR text
+- `ai_artifacts` — AI generated text
+- `ai_chat_messages` — chat text
+- `email_receipt_sources` — email fields (redact, not delete)
+- `notification_intake` — intake raw content
+- `pipeline_diagnostic_events` — diagnostic PII
+- `pending_reviews.notificationText` — notification text/title in pending reviews
+- `background_job_runs.errorMessage` — error messages that may contain PII
+
+## Cloud AI policy gate
+
+`EffectiveCloudAiPolicyResolver` is the **authoritative gate** for all cloud AI calls.
+It computes a composite policy from both `PrivacySettings.cloudAiEnabled` and
+`AiSettings.allowCloudAi`. Both must be true for cloud to be allowed.
+
+Cloud-calling services (`CloudDashboardBriefingService`, `CloudReviewExplanationService`)
+call `effectiveCloudAiPolicyResolver.resolve()` and check `cloudAllowed` before any
+network call. The `PrivacyGate` check is kept as a secondary defense-in-depth layer
+for capability-specific gates (e.g., `CLOUD_AI_DAILY_BRIEFING` vs `CLOUD_AI_GENERAL`).
 
 ## Static guard script
 
@@ -133,8 +160,8 @@ provides the real gate in production.
 | `NOTIFICATION` | `rawNotificationStorageMode` | `STORE_RAW` |
 | `RECEIPT_OCR` | `rawOcrStorageMode` | `STORE_RAW` |
 | `EMAIL_RECEIPT` | `emailReceiptStorageMode` | `STORE_REDACTED` |
-| `BANK_STATEMENT` | `rawOcrStorageMode` (reused) | `STORE_RAW` |
-| `BANK_API` | `rawOcrStorageMode` (reused) | `STORE_RAW` |
+| `BANK_STATEMENT` | `rawBankStatementStorageMode` | `STORE_REDACTED` |
+| `BANK_API` | `rawBankStatementStorageMode` | `STORE_REDACTED` |
 | `AI_ARTIFACT` | `debugDataPersistenceEnabled` | `DO_NOT_STORE` |
 | `EXPORT_DEBUG` | `debugDataPersistenceEnabled` | `DO_NOT_STORE` |
 
@@ -144,6 +171,7 @@ When DataStore is corrupted (`PrivacySettingsLoadState.CorruptedFailClosed`), al
 - `rawNotificationStorageMode = DO_NOT_STORE`
 - `rawOcrStorageMode = DO_NOT_STORE`
 - `emailReceiptStorageMode = DO_NOT_STORE`
+- `rawBankStatementStorageMode = DO_NOT_STORE`
 - `cloudAiEnabled = false`
 - `notificationCaptureEnabled = false`
 

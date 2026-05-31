@@ -66,6 +66,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         val RAW_NOTIFICATION_STORAGE_MODE = stringPreferencesKey("raw_notification_storage_mode")
         val RAW_OCR_STORAGE_MODE = stringPreferencesKey("raw_ocr_storage_mode")
         val EMAIL_RECEIPT_STORAGE_MODE = stringPreferencesKey("email_receipt_storage_mode")
+        val RAW_BANK_STATEMENT_STORAGE_MODE = stringPreferencesKey("raw_bank_statement_storage_mode")
     }
 
     override fun observeSettings(): Flow<PrivacySettings> =
@@ -120,6 +121,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             prefs[Keys.RAW_NOTIFICATION_STORAGE_MODE] = updated.rawNotificationStorageMode.name
             prefs[Keys.RAW_OCR_STORAGE_MODE] = updated.rawOcrStorageMode.name
             prefs[Keys.EMAIL_RECEIPT_STORAGE_MODE] = updated.emailReceiptStorageMode.name
+            prefs[Keys.RAW_BANK_STATEMENT_STORAGE_MODE] = updated.rawBankStatementStorageMode.name
             // Mark as initialized so future empty-prefs reads are not misclassified as first-run
             prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
         }
@@ -210,6 +212,8 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         rawOcrStorageMode = this[Keys.RAW_OCR_STORAGE_MODE]
             ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW,
         emailReceiptStorageMode = this[Keys.EMAIL_RECEIPT_STORAGE_MODE]
+            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_REDACTED,
+        rawBankStatementStorageMode = this[Keys.RAW_BANK_STATEMENT_STORAGE_MODE]
             ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_REDACTED
     )
 }

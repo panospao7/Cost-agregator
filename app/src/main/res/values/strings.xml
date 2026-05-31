@@ -834,6 +834,7 @@
     <string name="privacy_raw_storage_notification_label">Notification raw text storage</string>
     <string name="privacy_raw_storage_ocr_label">OCR raw text storage</string>
     <string name="privacy_raw_storage_email_label">Email receipt storage</string>
+    <string name="privacy_raw_storage_bank_statement_label">Bank statement/API storage</string>
     <string name="privacy_raw_storage_store_raw">Store raw (full text)</string>
     <string name="privacy_raw_storage_store_redacted">Store redacted</string>
     <string name="privacy_raw_storage_metadata_only">Metadata only</string>

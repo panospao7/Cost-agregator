@@ -75,6 +75,7 @@ class PrivacySettingsRepositoryImplCorruptionTest {
         assertEquals(RawStorageMode.DO_NOT_STORE, s.rawNotificationStorageMode)
         assertEquals(RawStorageMode.DO_NOT_STORE, s.rawOcrStorageMode)
         assertEquals(RawStorageMode.DO_NOT_STORE, s.emailReceiptStorageMode)
+        assertEquals(RawStorageMode.DO_NOT_STORE, s.rawBankStatementStorageMode)
     }
 
     @Test

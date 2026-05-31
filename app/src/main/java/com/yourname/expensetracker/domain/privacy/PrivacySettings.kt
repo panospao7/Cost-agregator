@@ -15,6 +15,7 @@ data class PrivacySettings(
     val rawNotificationStorageMode: RawStorageMode = RawStorageMode.STORE_RAW,
     val rawOcrStorageMode: RawStorageMode = RawStorageMode.STORE_RAW,
     val emailReceiptStorageMode: RawStorageMode = RawStorageMode.STORE_REDACTED,
+    val rawBankStatementStorageMode: RawStorageMode = RawStorageMode.STORE_REDACTED,
     val debugDataPersistenceEnabled: Boolean = false
 ) {
     companion object {
@@ -37,6 +38,7 @@ data class PrivacySettings(
             rawNotificationStorageMode = RawStorageMode.DO_NOT_STORE,
             rawOcrStorageMode = RawStorageMode.DO_NOT_STORE,
             emailReceiptStorageMode = RawStorageMode.DO_NOT_STORE,
+            rawBankStatementStorageMode = RawStorageMode.DO_NOT_STORE,
             debugDataPersistenceEnabled = false
         )
     }

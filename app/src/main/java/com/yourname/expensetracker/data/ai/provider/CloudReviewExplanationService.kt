@@ -50,6 +50,8 @@ class CloudReviewExplanationService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository? = null,
     private val privacyGate: PrivacyGate,
     private val cloudPayloadPolicy: CloudPayloadPolicy,
+    // PR5: Authoritative cloud AI gate — replaces ad-hoc aiSettings.allowCloudAi check
+    private val effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver,
     // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test ctors fail-closed)
     private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : ReviewExplanationService {
@@ -63,7 +65,8 @@ class CloudReviewExplanationService @Inject constructor(
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor()),
+        EffectiveCloudAiPolicyResolver.failClosedNoAi()
     )
 
     @androidx.annotation.VisibleForTesting
@@ -73,7 +76,8 @@ class CloudReviewExplanationService @Inject constructor(
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
         },
-        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor())
+        DefaultCloudPayloadPolicy(EffectiveCloudAiPolicyResolver.failClosedNoAi(), DefaultCloudPayloadRedactor()),
+        EffectiveCloudAiPolicyResolver.failClosedNoAi()
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -84,6 +88,18 @@ class CloudReviewExplanationService @Inject constructor(
         if (apiKey.isBlank()) {
             Timber.d("CloudReviewExplanationService: Gemini API key missing, skipping.")
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
+        }
+
+        // PR5: EffectiveCloudAiPolicyResolver is the authoritative gate — checks both
+        // PrivacySettings.cloudAiEnabled AND AiSettings.allowCloudAi in one call.
+        val effectivePolicy = effectiveCloudAiPolicyResolver.resolve()
+        if (!effectivePolicy.cloudAllowed) {
+            Timber.d("CloudReviewExplanationService: blocked by effective cloud AI policy: ${effectivePolicy.reason}")
+            return AiServiceResult.Failure(
+                AiServiceError.PrivacyDenied(
+                    PrivacyBlocked.Custom(PrivacyCapability.CLOUD_AI_GENERAL, effectivePolicy.reason ?: "Cloud AI disabled")
+                )
+            )
         }
 
         // PRIVACY GATE: Unified cloud AI gate — checks both PrivacySettings + AiSettings

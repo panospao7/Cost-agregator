@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
 import kotlinx.coroutines.Dispatchers
@@ -337,18 +338,10 @@ class BankApiIntegration @Inject constructor(
 
         // PR5: Redact/hash sensitive bank fields based on privacy policy
         val settings = privacySettingsRepository.getSettings()
-        val mode = settings.rawOcrStorageMode  // bank API uses OCR storage mode
+        val mode = settings.rawBankStatementStorageMode  // PR5-FIX: use dedicated bank statement mode
 
-        val safeDescription: String? = when (mode) {
-            RawStorageMode.STORE_RAW -> transaction.description
-            RawStorageMode.STORE_REDACTED -> "[REDACTED]"
-            else -> null
-        }
-        val safeReference: String? = when (mode) {
-            RawStorageMode.STORE_RAW -> transaction.reference
-            RawStorageMode.STORE_REDACTED -> if (transaction.reference != null) "[REDACTED]" else null
-            else -> null
-        }
+        val safeDescription: String? = RawContentSanitizer.sanitizeBankDescription(transaction.description, mode)
+        val safeReference: String? = RawContentSanitizer.sanitizeBankDescription(transaction.reference, mode)
         // transferAccountName must never be raw description unless STORE_RAW
         val safeTransferAccountName: String? = when {
             transactionType == TransactionType.TRANSFER && mode == RawStorageMode.STORE_RAW ->

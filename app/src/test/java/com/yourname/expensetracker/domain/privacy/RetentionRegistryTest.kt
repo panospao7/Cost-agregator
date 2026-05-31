@@ -27,7 +27,9 @@ class RetentionRegistryTest {
             "ai_chat_messages",
             "email_receipt_sources",
             "notification_intake",
-            "pipeline_diagnostic_events"
+            "pipeline_diagnostic_events",
+            "pending_reviews.notificationText",
+            "background_job_runs.errorMessage"
         )
 
         val targets = requiredTargets.map { makeTarget(it) }.toSet()

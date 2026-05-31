@@ -180,8 +180,11 @@ class BankPrivacyHardeningTest {
     }
 
     @Test
-    fun bank_statement_source_uses_ocr_storage_mode() {
-        val settings = PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_METADATA_ONLY)
+    fun bank_statement_source_uses_bank_statement_storage_mode() {
+        val settings = PrivacySettings(
+            rawOcrStorageMode = RawStorageMode.STORE_RAW,
+            rawBankStatementStorageMode = RawStorageMode.STORE_METADATA_ONLY
+        )
         val resolver = RawPersistencePolicyResolver(
             object : PrivacySettingsRepository {
                 override fun observeSettings() = kotlinx.coroutines.flow.flowOf(settings)

@@ -115,6 +115,7 @@ class PrivacySettingsViewModel @Inject constructor(
     fun setRawNotificationStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawNotificationStorageMode = mode) }
     fun setRawOcrStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawOcrStorageMode = mode) }
     fun setEmailReceiptStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(emailReceiptStorageMode = mode) }
+    fun setRawBankStatementStorageMode(mode: com.yourname.expensetracker.domain.privacy.RawStorageMode) = update { it.copy(rawBankStatementStorageMode = mode) }
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)

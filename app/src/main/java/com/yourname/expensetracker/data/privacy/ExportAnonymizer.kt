@@ -23,6 +23,8 @@ import javax.inject.Singleton
  *   `latitude`/`longitude` → 0.0, `displayAddress`/`osmId` → NULL)
  * - `email_receipt_sources` raw email fields (`emailSender`, `emailSubject`,
  *   `emailMessageId` → NULL; dedup hashes/fingerprint preserved)
+ * - `pending_reviews` notification text (`notificationText`, `notificationTitle` → NULL)
+ * - `bank_statement_import_items` merchant names (`merchant` → '[REDACTED]')
  *
  * The operation is performed **in-place** on the provided file, so callers
  * must pass a **temporary copy** — never the live database file.
@@ -71,13 +73,16 @@ class ExportAnonymizer @Inject constructor() {
                 val aiChatPurged = sanitizeAiChatMessages(db)
                 val merchantLocPurged = sanitizeMerchantLocations(db)
                 val emailPurged = sanitizeEmailReceiptSources(db)
+                val pendingReviewsPurged = sanitizePendingReviews(db)
+                val bankItemsPurged = sanitizeBankStatementImportItems(db)
                 db.setTransactionSuccessful()
 
                 Timber.d(
                     "$TAG: Sanitised receipts=$ocrPurged notifications=$notificationPurged " +
                         "notificationIntake=$intakePurged aiArtifacts=$aiArtifactsPurged " +
                         "aiChat=$aiChatPurged merchantLocations=$merchantLocPurged " +
-                        "emailSources=$emailPurged"
+                        "emailSources=$emailPurged pendingReviews=$pendingReviewsPurged " +
+                        "bankImportItems=$bankItemsPurged"
                 )
             } finally {
                 db.endTransaction()
@@ -250,6 +255,40 @@ class ExportAnonymizer @Inject constructor() {
                 "emailMessageId = NULL WHERE $where"
         )
         Timber.d("$TAG: Redacted email source fields in $count rows")
+        return count
+    }
+
+    /**
+     * PR5: Nulls out notification text/title in `pending_reviews` that carry
+     * raw notification content. Preserves structural fields (amount, merchant, status).
+     * @return number of rows updated
+     */
+    private fun sanitizePendingReviews(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "pending_reviews")) return 0
+        val where = "notificationText IS NOT NULL OR notificationTitle IS NOT NULL"
+        val count = countWhere(db, "pending_reviews", where)
+        if (count == 0) return 0
+        db.execSQL(
+            "UPDATE pending_reviews SET notificationText = NULL, notificationTitle = NULL WHERE $where"
+        )
+        Timber.d("$TAG: Redacted pending_reviews notification fields in $count rows")
+        return count
+    }
+
+    /**
+     * PR5: Redacts merchant names in `bank_statement_import_items` that carry
+     * raw bank transaction merchant text. Preserves structural fields (amount, status, fingerprint).
+     * @return number of rows updated
+     */
+    private fun sanitizeBankStatementImportItems(db: SQLiteDatabase): Int {
+        if (!tableExists(db, "bank_statement_import_items")) return 0
+        val where = "merchant IS NOT NULL"
+        val count = countWhere(db, "bank_statement_import_items", where)
+        if (count == 0) return 0
+        db.execSQL(
+            "UPDATE bank_statement_import_items SET merchant = '[REDACTED]' WHERE $where"
+        )
+        Timber.d("$TAG: Redacted bank import item merchants in $count rows")
         return count
     }
 

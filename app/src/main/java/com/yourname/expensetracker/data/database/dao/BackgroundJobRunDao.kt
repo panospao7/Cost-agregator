@@ -60,4 +60,17 @@ interface BackgroundJobRunDao {
 
     @Query("SELECT * FROM background_job_runs WHERE status IN ('FAILED','RETRY','CANCELLED','STALE_ABORTED') ORDER BY startedAt DESC LIMIT :limit")
     suspend fun getRecentFailedRuns(limit: Int = 50): List<BackgroundJobRun>
+
+    /**
+     * PR5: Redacts error messages in background job runs older than [cutoffMs].
+     * Error messages may contain PII from exception stack traces.
+     * @return number of rows updated
+     */
+    @Query("""
+        UPDATE background_job_runs
+        SET errorMessage = NULL
+        WHERE startedAt < :cutoffMs
+          AND errorMessage IS NOT NULL
+    """)
+    suspend fun redactErrorMessagesOlderThan(cutoffMs: Long): Int
 }

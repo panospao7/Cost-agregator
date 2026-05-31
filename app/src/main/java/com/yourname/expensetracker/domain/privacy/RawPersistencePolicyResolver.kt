@@ -9,15 +9,15 @@ import javax.inject.Singleton
  *
  * ## Mode matrix
  *
- * | Source         | Setting key                  | Default mode    |
- * |----------------|------------------------------|-----------------|
- * | NOTIFICATION   | rawNotificationStorageMode   | STORE_RAW       |
- * | RECEIPT_OCR    | rawOcrStorageMode            | STORE_RAW       |
- * | EMAIL_RECEIPT  | emailReceiptStorageMode      | STORE_REDACTED  |
- * | BANK_STATEMENT | rawOcrStorageMode (reused)   | STORE_RAW       |
- * | BANK_API       | rawOcrStorageMode (reused)   | STORE_RAW       |
- * | AI_ARTIFACT    | debugDataPersistenceEnabled  | DO_NOT_STORE    |
- * | EXPORT_DEBUG   | debugDataPersistenceEnabled  | DO_NOT_STORE    |
+ * | Source         | Setting key                      | Default mode    |
+ * |----------------|----------------------------------|-----------------|
+ * | NOTIFICATION   | rawNotificationStorageMode       | STORE_RAW       |
+ * | RECEIPT_OCR    | rawOcrStorageMode                | STORE_RAW       |
+ * | EMAIL_RECEIPT  | emailReceiptStorageMode          | STORE_REDACTED  |
+ * | BANK_STATEMENT | rawBankStatementStorageMode      | STORE_REDACTED  |
+ * | BANK_API       | rawBankStatementStorageMode      | STORE_REDACTED  |
+ * | AI_ARTIFACT    | debugDataPersistenceEnabled      | DO_NOT_STORE    |
+ * | EXPORT_DEBUG   | debugDataPersistenceEnabled      | DO_NOT_STORE    |
  */
 @Singleton
 class RawPersistencePolicyResolver @Inject constructor(
@@ -50,8 +50,8 @@ class RawPersistencePolicyResolver @Inject constructor(
             RawSourceType.NOTIFICATION -> settings.rawNotificationStorageMode
             RawSourceType.RECEIPT_OCR -> settings.rawOcrStorageMode
             RawSourceType.EMAIL_RECEIPT -> settings.emailReceiptStorageMode
-            RawSourceType.BANK_STATEMENT -> settings.rawOcrStorageMode   // bank statement uses OCR mode
-            RawSourceType.BANK_API -> settings.rawOcrStorageMode
+            RawSourceType.BANK_STATEMENT -> settings.rawBankStatementStorageMode
+            RawSourceType.BANK_API -> settings.rawBankStatementStorageMode
             RawSourceType.AI_ARTIFACT -> when {
                 settings.debugDataPersistenceEnabled -> RawStorageMode.STORE_REDACTED
                 else -> RawStorageMode.DO_NOT_STORE

@@ -263,6 +263,14 @@ fun PrivacySettingsScreen(
                     enabled = !isSaving
                 )
             }
+            item {
+                RawStorageModeRow(
+                    label = stringResource(R.string.privacy_raw_storage_bank_statement_label),
+                    selected = settings.rawBankStatementStorageMode,
+                    onSelect = viewModel::setRawBankStatementStorageMode,
+                    enabled = !isSaving
+                )
+            }
 
             item { HorizontalDivider() }
 
