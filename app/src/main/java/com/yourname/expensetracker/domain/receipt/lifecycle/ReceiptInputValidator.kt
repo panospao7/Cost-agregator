@@ -69,6 +69,7 @@ class ReceiptInputValidator @Inject constructor(
         val contentResolverMimeType = try {
             context.contentResolver.getType(uri)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to resolve MIME type") // P3-BLOCKER-E: no raw URI in logs
             null
         }
@@ -81,6 +82,7 @@ class ReceiptInputValidator @Inject constructor(
             context.contentResolver.openInputStream(uri)?.use { /* just open & close */ }
             true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Receipt input URI not readable") // P3-BLOCKER-E: no raw URI
             false
         }
@@ -101,6 +103,7 @@ class ReceiptInputValidator @Inject constructor(
                 pfd.statSize.takeIf { it >= 0 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to query file size") // P3-BLOCKER-E: no raw URI
             null
         }
@@ -126,6 +129,7 @@ class ReceiptInputValidator @Inject constructor(
                     false
                 } ?: false
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to stream-check file size") // P3-BLOCKER-E
                 false
             }
@@ -145,6 +149,7 @@ class ReceiptInputValidator @Inject constructor(
                     opts.outWidth > 0 && opts.outHeight > 0
                 } ?: false
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Bitmap decode failed") // P3-BLOCKER-E: no raw URI
                 false
             }

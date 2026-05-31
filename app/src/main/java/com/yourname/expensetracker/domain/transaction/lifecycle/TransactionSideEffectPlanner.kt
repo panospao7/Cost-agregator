@@ -167,6 +167,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                 budgetMonitor.get().checkBudgets()
                 SideEffectOutcome.Completed
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 SideEffectOutcome.FailedRetryable(e.message ?: "Budget check failed", e.javaClass.name)
             }
         }
@@ -202,6 +203,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                     anomalyAlertOrchestrator.checkAndAlert(ExpenseWithCategory(expense = expense, category = category))
                     SideEffectOutcome.Completed
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     SideEffectOutcome.FailedRetryable(e.message ?: "Anomaly check failed", e.javaClass.name)
                 }
             }
@@ -236,6 +238,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                     merchantCategoryRepository.learnPattern(expense.merchant, expense.categoryId!!)
                     SideEffectOutcome.Completed
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     SideEffectOutcome.FailedRetryable(e.message ?: "Merchant category learning failed", e.javaClass.name)
                 }
             }
@@ -279,6 +282,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                         )
                         SideEffectOutcome.Completed
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         SideEffectOutcome.FailedRetryable(e.message ?: "Merchant stats update failed", e.javaClass.name)
                     }
                 }
@@ -315,6 +319,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                     else -> SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring matching failed", e.javaClass.name)
             }
         }
@@ -354,6 +359,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                         SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring reconcile failed", e.javaClass.name)
             }
         }
@@ -390,6 +396,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                     else -> SideEffectOutcome.Completed
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 SideEffectOutcome.FailedRetryable(e.message ?: "Recurring unlink failed", e.javaClass.name)
             }
         }
@@ -425,6 +432,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                 budgetMonitor.get().checkBudgets()
                 SideEffectOutcome.Completed
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 SideEffectOutcome.FailedRetryable(e.message ?: "Bulk budget check failed", e.javaClass.name)
             }
         }
@@ -457,6 +465,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                 anomalyAlertOrchestrator.invalidateCache()
                 SideEffectOutcome.Completed
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 SideEffectOutcome.FailedRetryable(e.message ?: "Bulk anomaly invalidation failed", e.javaClass.name)
             }
         }
@@ -581,6 +590,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                 else if (result.meaningfulMutations > 0) SideEffectOutcome.Completed
                 else SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 SideEffectOutcome.FailedRetryable(e.message ?: "Bulk recurring reconcile failed", e.javaClass.name)
             }
         }

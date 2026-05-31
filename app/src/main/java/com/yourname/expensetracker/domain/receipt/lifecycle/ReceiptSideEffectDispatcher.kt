@@ -50,6 +50,7 @@ class ReceiptSideEffectDispatcher @Inject constructor(
             )
             runner.run(batch)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "dispatchAfterSave failed for receipt %d", receipt.id)
         }
     }

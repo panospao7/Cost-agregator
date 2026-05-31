@@ -23,7 +23,7 @@
 
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
-| NEW-P1-001 | P1 | CancellationException swallowed in `captureNotification` outer catch | NotificationCaptureService.kt ~line 578 | 🔴 OPEN |
+| NEW-P1-001 | P1 | CancellationException swallowed in `captureNotification` outer catch | NotificationCaptureService.kt ~line 578 | ✅ FIXED (U-PR1) |
 | NEW-P1-002 | P1 | `writeNotificationDedupeSourceLink` inside transaction performs I/O side effect | NotificationProcessingPipeline.kt | 🔴 OPEN |
 | NEW-P1-003 | P2 | `workTracker.acceptingNewWork` never set to false — dead code | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-004 | P2 | `emitOrderedNotificationEvents` silently drops events when launch returns null | NotificationCaptureService.kt | 🔴 OPEN |

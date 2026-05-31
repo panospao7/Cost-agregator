@@ -155,6 +155,7 @@ class SharedExpenseManager @Inject constructor(
                 sharedExpenseDataPort.removeMember(member)
                 RemoveSharedExpenseMemberResult.Success
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 RemoveSharedExpenseMemberResult.Error(e.message ?: "Failed to delete member")
             }
         }
@@ -292,7 +293,8 @@ class SharedExpenseManager @Inject constructor(
             if (group == null) android.util.Log.w("SharedExpenseManager", "Group $groupId not found in calculateBalances, defaulting to home currency")
             val groupCurrency = group?.defaultCurrency ?: try {
                 currencySettingsRepository.homeCurrency().first()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 "EUR"
             }
             val members = sharedExpenseDataPort.getGroupMembersOnce(groupId)

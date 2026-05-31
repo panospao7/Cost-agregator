@@ -358,6 +358,7 @@ class BudgetRepository @Inject constructor(
                 pendingReimbursements = breakdown.getPendingReimbursement()
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "Failed to compute adjusted spend for budget ${budget.id}; monitor/UI fall back to gross spend")
             null
         }
@@ -575,6 +576,7 @@ class BudgetRepository @Inject constructor(
             )
             com.yourname.expensetracker.domain.model.Result.Success(id)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to add budget")
             emitBudgetDiagnostic(
                 stage = "BUDGET_ADD_FAILED",
@@ -613,6 +615,7 @@ class BudgetRepository @Inject constructor(
             )
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to update budget ${budget.id}")
             emitBudgetDiagnostic(
                 stage = "BUDGET_UPDATE_FAILED",
@@ -714,6 +717,7 @@ class BudgetRepository @Inject constructor(
             )
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to delete budget ${budget.id}")
             emitBudgetDiagnostic(
                 stage = "BUDGET_DELETE_FAILED",
@@ -743,6 +747,7 @@ class BudgetRepository @Inject constructor(
             )
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to toggle budget $id")
             emitBudgetDiagnostic(
                 stage = "BUDGET_TOGGLE_FAILED",
@@ -771,6 +776,7 @@ class BudgetRepository @Inject constructor(
             budgetDao.deleteAll()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to delete all budgets")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete all budgets")
         }
@@ -811,6 +817,7 @@ class BudgetRepository @Inject constructor(
             }
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to restore debug budget snapshot")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to restore budgets")
         }

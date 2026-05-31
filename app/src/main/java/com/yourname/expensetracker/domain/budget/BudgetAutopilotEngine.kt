@@ -242,7 +242,7 @@ class BudgetAutopilotEngine @Inject constructor(
                 @Suppress("DEPRECATION_ERROR")
                 dao?.getMonthlySpendingTotalsByCategoryBetween(budget.categoryId, threeMonthsAgo, now)
                     ?: emptyList()
-            } catch (_: Exception) { emptyList() }
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
         } else {
             // S8-009: Overall budget — use currency-normalized totals from MultiCurrencyRepository
             try {
@@ -258,7 +258,7 @@ class BudgetAutopilotEngine @Inject constructor(
                 monthTotals.map { mt ->
                     MonthlySpendingTotal(monthKey = mt.monthKey, total = mt.total, txCount = 0)
                 }
-            } catch (_: Exception) { emptyList() }
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
         }
 
         val series = BudgetHistorySeriesBuilder.build(

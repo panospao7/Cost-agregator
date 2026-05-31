@@ -236,6 +236,7 @@ class CloudReceiptAssistService @Inject constructor(
                     Timber.w(e, "CloudReceiptAssistService: JSON parse failure")
                     return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "CloudReceiptAssistService: parse failure")
                     return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
                 }
@@ -386,6 +387,7 @@ class CloudReceiptAssistService @Inject constructor(
                         return@withContext AiServiceResult.Failure(AiServiceError.Offline)
                     }
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "CloudReceiptAssistService: suggestFromText error")
                     return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
                 }

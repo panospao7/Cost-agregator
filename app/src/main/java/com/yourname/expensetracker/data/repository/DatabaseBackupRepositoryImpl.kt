@@ -345,6 +345,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 failOnTimeout = true
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             return@withContext Result.failure(e)
         }
         try {
@@ -439,6 +440,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Result.success(backupFile)
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to export database")
             runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
             Result.failure(e)
@@ -638,6 +640,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 tempDb.delete()
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to create .costbackup bundle")
             restoreMaintenanceMode.exit(forceRestartRequired = false)
             run.failedFinal(e.message ?: "Exception", e)
@@ -761,6 +764,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
                 Timber.d("Staged DB quick verification passed")
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // DDL-512-01: emit terminal event BEFORE failJournal
                 restoreEvents.event("STAGED_DB_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR, exception = e, isTerminal = true)
@@ -814,6 +818,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     runCatching { stagedDatabase.close() }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // DDL-512-01: emit terminal event BEFORE failJournal
                 restoreEvents.event("STAGED_DB_MIGRATED",
                     com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -896,6 +901,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 if (stagedDbWalFile.exists()) copyFile(stagedDbWalFile, liveDbWalFile)
                 if (stagedDbShmFile.exists()) copyFile(stagedDbShmFile, liveDbShmFile)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // Swap failed — attempt rollback
                 Timber.e(e, "Swap failed, attempting rollback")
                 restoreFromSafetyBackup(safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile)
@@ -992,6 +998,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     runCatching { freshDb.close() }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // Verification failed — rollback from safety backup
                 Timber.e(e, "Live verification failed, rolling back")
                 restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
@@ -1031,6 +1038,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Result.failure(Exception("Restore verification failed and was rolled back: ${e.message}"))
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to restore .costbackup bundle")
             restoreMaintenanceMode.exit(forceRestartRequired = false)
             // Use finalizeRunFailed which respects roomAllowed flag
@@ -1062,6 +1070,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.d("Collected %d receipt asset(s) for backup", result.size)
                 result
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to collect receipt assets for backup")
                 emptyMap()
             }
@@ -1162,6 +1171,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     Timber.d("Restored receipt asset: %s -> %s (receiptId=%d)",
                         assetFile.name, finalFile.absolutePath, receiptId)
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     runCatching { tempFile.delete() }
                     runCatching { finalFile.delete() }
                     throw e
@@ -1191,6 +1201,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     runCatching { restoreJournal.writeJournal(journalEntry.copy(assetTasks = updatedTasks)) }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 val msg = "Failed to restore receipt asset: ${assetFile.name} - ${e.message}"
                 warnings.add(msg)
                 Timber.e(e, "Failed to restore receipt asset: %s", assetFile.name)
@@ -1476,6 +1487,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 Result.success(finalSummary)
             } catch (importError: Exception) {
+                if (importError is kotlinx.coroutines.CancellationException) throw importError
                 if (destinationFilesMutated && !importSucceeded) {
                     // DDL-C67-05: emit terminal event BEFORE failJournal so it's preserved
                     importEvents?.event("LEGACY_IMPORT_FAILED_AFTER_SWAP",
@@ -1545,6 +1557,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 stagedDbShmFile.delete()
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to import database")
             // Ensure maintenance mode is exited even for unexpected failures.
             // Calling exit() when already NORMAL is harmless (idempotent write).
@@ -2168,6 +2181,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 pendingReviewCount = pendingReviewDao.getPendingCount()
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to get database stats")
             DatabaseStats(0, 0, 0, 0)
         }
@@ -2185,6 +2199,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             restoreMaintenanceMode.exit(forceRestartRequired = false)
             result
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
             Result.failure(e)
         }
@@ -2222,6 +2237,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             Timber.d("Safety backup created by $callerOperation: ${safetyBackupFile.absolutePath}")
             Result.success(safetyBackupFile)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to create safety backup")
             Result.failure(e)
         }
@@ -2302,6 +2318,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.w("Database reset successfully. Restart required.")
                 Result.success(Unit)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // DDL-F876-01: after destructive point, use journal not run.*
                 restoreJournal.failJournal(journalEntry, e.message ?: "Reset failed")
                 resetEvents.event("RESET_FAILED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -2313,6 +2330,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Result.failure(e)
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to reset database")
             runCatching { resetEvents.finalizeRunFailed(e.message ?: "Exception", e) }
             restoreMaintenanceMode.exit(forceRestartRequired = false)

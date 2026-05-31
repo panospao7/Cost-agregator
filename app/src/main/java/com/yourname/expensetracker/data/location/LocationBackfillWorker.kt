@@ -60,6 +60,7 @@ class LocationBackfillWorker @AssistedInject constructor(
                 merchantLocationRepository.evictStaleCache()
                 Log.d(TAG, "Stale cache eviction complete")
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.w(TAG, "Cache eviction failed (non-fatal)", e)
             }
 
@@ -68,6 +69,7 @@ class LocationBackfillWorker @AssistedInject constructor(
             val unlocated = try {
                 expenseRepository.getUnlocatedExpensesForBackfill(limit = BATCH_SIZE)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "Failed to fetch unlocated expenses", e)
                 throw e
             }
@@ -98,6 +100,7 @@ class LocationBackfillWorker @AssistedInject constructor(
                         transactionDateMs = expense.date
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Log.w(TAG, "Resolver threw for expenseId=${expense.id} merchantToken=$merchantToken", e)
                     // Transient thrown failure: trigger a retry without consuming the permanent
                     // attempt budget, consistent with the structured Retryable result path. Unexpected

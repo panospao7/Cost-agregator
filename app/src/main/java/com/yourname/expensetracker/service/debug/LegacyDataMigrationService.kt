@@ -95,6 +95,7 @@ class LegacyDataMigrationService @Inject constructor(
         val db = try {
             SQLiteDatabase.openDatabase(backupDbPath, null, SQLiteDatabase.OPEN_READONLY)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to open legacy database: $backupDbPath")
             return MigrationResult()
         }
@@ -123,6 +124,7 @@ class LegacyDataMigrationService @Inject constructor(
             try {
                 db.close()
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "Error closing legacy database")
             }
         }
@@ -183,12 +185,14 @@ class LegacyDataMigrationService @Inject constructor(
                             failed++
                         }
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.w(e, "Failed to migrate category: $name")
                         failed++
                     }
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to migrate categories table")
         }
 
@@ -228,12 +232,14 @@ class LegacyDataMigrationService @Inject constructor(
                             }
                         }
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.w(e, "Failed to migrate expense row")
                         failed++
                     }
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to migrate expenses table")
         }
 
@@ -315,12 +321,14 @@ class LegacyDataMigrationService @Inject constructor(
                             }
                         }
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.w(e, "Failed to migrate budget row")
                         failed++
                     }
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to migrate budgets table")
         }
 
@@ -372,12 +380,14 @@ class LegacyDataMigrationService @Inject constructor(
                         manualRecurringExpenseRepository.insert(rule)
                         imported++
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.w(e, "Failed to migrate recurring rule")
                         failed++
                     }
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to migrate manual_recurring_expenses table")
         }
 
@@ -427,12 +437,14 @@ class LegacyDataMigrationService @Inject constructor(
                             skipped++
                         }
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.w(e, "Failed to migrate planned expense")
                         failed++
                     }
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to migrate planned_expenses table")
         }
 
@@ -476,12 +488,14 @@ class LegacyDataMigrationService @Inject constructor(
                         savingsGoalRepository.addGoal(goal)
                         imported++
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.w(e, "Failed to migrate savings goal")
                         failed++
                     }
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to migrate savings_goals table")
         }
 

@@ -132,6 +132,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
         try {
             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processBankStatement")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             return Result.failure(e)
         }
         val startTime = timeProvider.now()
@@ -145,7 +146,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // and parsing steps entirely.
             val preOcrHash = try {
                 assetStore.computeUriHash(uri).getOrNull()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 null
             }
 
@@ -261,7 +263,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // can be deduplicated).
             val fallbackHash = try {
                 assetStore.computeFileHash(ocrResult.savedImagePath).getOrNull()
-            } catch (_: Exception) { null }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                null
+            }
             val storedHash = preOcrHash ?: fallbackHash
 
             val statementReceipt = ScannedReceipt(
@@ -515,6 +520,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     parsingLogs.add("INSERT: Pending review created [REDACTED]")
 
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     bankStatementImportItemDao.insert(
                         BankStatementImportItem(
                             runId = runId,

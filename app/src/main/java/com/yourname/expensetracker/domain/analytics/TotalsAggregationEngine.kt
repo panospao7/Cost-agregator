@@ -408,6 +408,7 @@ class TotalsAggregationEngine @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.tag("TotalsAggregationEngine").e(e, "Error calculating average for $periodType")
             0.0
         }
@@ -625,6 +626,7 @@ class TotalsAggregationEngine @Inject constructor(
                     try {
                         block()
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.tag("TotalsAggregationEngine").e(e, "Reactive flow computation failed")
                         emptyList()
                     }
@@ -645,6 +647,7 @@ class TotalsAggregationEngine @Inject constructor(
                     try {
                         block()
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         Timber.tag("TotalsAggregationEngine").e(e, "Reactive category breakdown flow failed")
                         emptyList()
                     }

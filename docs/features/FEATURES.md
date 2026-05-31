@@ -1038,6 +1038,28 @@ CarbonFootprintScreen(onNavigateBack = { /* navigation */ })
 
 ---
 
+## Architecture Contracts
+
+### CANCEL-01: CancellationException Safety
+
+Every `catch (e: Exception)` block in a `suspend` function must rethrow `CancellationException` before performing error handling. This prevents zombie coroutines, stale WorkManager state, and resource leaks.
+
+**Canonical pattern:**
+```kotlin
+} catch (e: Exception) {
+    if (e is CancellationException) throw e
+    // ... handle real errors
+}
+```
+
+**Enforced by:**
+- `CancellationSafetyArchitectureGuardTest` — scans all production source files
+- `CancellationPropagationContractTest` — verifies 12 critical pipeline entry points
+
+**Affected pipelines:** P1, P3, P4, P6, P7, P8, P9, P10, P11
+
+---
+
 ## Contributors
 
 - **AI Assistant (OpenCode)** - Feature implementation, documentation

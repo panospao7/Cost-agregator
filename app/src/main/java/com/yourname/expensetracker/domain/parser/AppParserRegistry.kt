@@ -202,6 +202,7 @@ class AppParserRegistry @Inject constructor(
 			parsed = try {
 				specificParser.parse(title, text, bigText, subText, packageName)
 			} catch (e: Exception) {
+				if (e is kotlinx.coroutines.CancellationException) throw e
 				Timber.w(e, "Specific parser failed for package: $packageName")
 				null
 			}
@@ -218,6 +219,7 @@ class AppParserRegistry @Inject constructor(
 			parsed = try {
 				genericParser.parse(title, text, bigText, subText, packageName)
 			} catch (e: Exception) {
+				if (e is kotlinx.coroutines.CancellationException) throw e
 				Timber.w(e, "Generic parser failed for package: $packageName")
 				null
 			}
@@ -255,6 +257,7 @@ class AppParserRegistry @Inject constructor(
 						attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_NO_RESULT))
 					}
 				} catch (e: Exception) {
+					if (e is kotlinx.coroutines.CancellationException) throw e
 					aiStatus = AiFallbackStatus.FAILED_EXCEPTION
 					failureReason = ParseFailureReason.AI_EXCEPTION
 					attempts.add(ParserAttempt("NotificationFallbackParser", ParserSource.AI_FALLBACK, true, false, ParseFailureReason.AI_EXCEPTION))
@@ -319,6 +322,7 @@ class AppParserRegistry @Inject constructor(
 		return try {
 			aiFallbackParser.parse(title, text, bigText, packageName)
 		} catch (e: Exception) {
+			if (e is kotlinx.coroutines.CancellationException) throw e
 			Timber.w(e, "AI fallback parser failed for package: $packageName")
 			null
 		}

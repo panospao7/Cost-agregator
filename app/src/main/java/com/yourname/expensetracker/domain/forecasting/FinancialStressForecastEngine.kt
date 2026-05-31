@@ -162,6 +162,7 @@ class FinancialStressForecastEngine @Inject constructor(
             )
             
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             // FCST-17: Structured diagnostics instead of silent catch-all.
             // The exception type and message are captured and logged so the
             // caller can distinguish between transient errors (network, timeout)
@@ -304,6 +305,7 @@ class FinancialStressForecastEngine @Inject constructor(
                         endDate = endDate
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d", ruleId)
                     failedRuleIds.add(ruleId)
                 }
@@ -328,6 +330,7 @@ class FinancialStressForecastEngine @Inject constructor(
                 materializedReadBlocked = true
                 emptyList()
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "$TAG: reading materialized occurrences failed")
                 emptyList()
             }

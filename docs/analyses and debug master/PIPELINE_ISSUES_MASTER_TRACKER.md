@@ -6,6 +6,7 @@
 > **Last updated: 2026-05-31 (All 12 pipelines validated against HEAD code; NEW issues added from deep audit)**
 > **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items (63 ✅ FIXED + 16 ⚠ PARTIAL + 39 📝 TODO ONLY + 1 ⏭ DEFERRED)**
 > **All pipelines addendum: +126 NEW open issues discovered 2026-05-31 (see PIPELINE_{1-12}_CONSOLIDATED_ISSUES.md)**
+> **U-PR1 update (2026-05-31): +10 CE issues FIXED (NEW-P1-001, NEW-P3-001/002/003, NEW-P4-001/007, NEW-P6-001/002/003/005, NEW-P10-003). Universal contract U-CANCEL-01 fully implemented.**
 >
 > **NOTE (2026-05-31):** All 12 pipeline statuses validated against actual HEAD code. Key corrections:
 > - P1-P1-02: Was ⚠ PARTIAL → now ✅ FIXED (all drop paths emit diagnostics)
@@ -67,7 +68,7 @@ Full source: `PIPELINE_1_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P1-P1-05 | P1 | Privacy gate runs after text extraction/filter | Bug | `captureGate` with cached privacy decision; fail-closed until settings emit | ✅ FIXED |
 | P1-P1-06 | P1 | Restore guard exists in service but not in pipeline | Bug | Both `NotificationProcessingPipeline` and `NotificationRepository` now have `writeBarrier.checkWritesAllowed()` guards | ✅ FIXED |
 | P1-P1-07 | P1 | Service shutdown silently loses accepted notifications | Bug | `NotificationIntakeCoordinator` + encrypted transient payload + worker. DO_NOT_STORE → synchronous. REDACTED/METADATA → encrypted transient. **Remaining:** service-scope cancellation window before intake insert | ⚠ PARTIAL |
-| NEW-P1-001 | P1 | CancellationException swallowed in captureNotification outer catch | Bug | `catch (e: Exception)` in workTracker.launch does not rethrow CE | 🔴 OPEN |
+| NEW-P1-001 | P1 | CancellationException swallowed in captureNotification outer catch | Bug | `catch (e: Exception)` in workTracker.launch does not rethrow CE | ✅ FIXED (U-PR1) |
 | NEW-P1-002 | P1 | Source-link I/O inside DB transaction (potential deadlock) | Bug | `writeNotificationDedupeSourceLink` called inside `withTransaction` performs diagnostic emit | 🔴 OPEN |
 | NEW-P1-005 | P2 | Filter blocks ALL deposit notifications unconditionally | Bug | INCOMING_ONLY deny runs before expense signal check | 🔴 OPEN |
 | NEW-P1-006 | P2 | "failed" keyword deny overly broad | Bug | Matches merchant names containing "failed" | 🔴 OPEN |
@@ -115,9 +116,9 @@ Full source: `PIPELINE_3_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P3-P1-08 | P1 | Parse failures classified as `OCR_COMPLETED` not `PARSE_FAILED` | Bug | OCR succeeds but parsing throws; wrong status | 📝 TODO ONLY |
 | P3-P1-09 | P1 | Batch receipt import no longer creates pending reviews | Bug | `autoCreateReview = false` in batch path | 📝 TODO ONLY |
 | P3-P1-10 | P1 | Bank statement lifecycle dedupe weaker than legacy | Bug | Checks only pending reviews; misses stronger legacy dedupe | 📝 TODO ONLY |
-| NEW-P3-001 | P1 | CancellationException swallowed in `ReceiptSideEffectDispatcher` | Bug | `catch(e: Exception)` does not rethrow CE | 🔴 OPEN |
-| NEW-P3-002 | P1 | CancellationException swallowed in `BankStatementLifecycleProcessor` per-item | Bug | Per-item catch swallows CE | 🔴 OPEN |
-| NEW-P3-003 | P1 | CancellationException swallowed in `ReceiptLinkService.unlinkReceiptFromExpense` | Bug | Catch-all swallows CE | 🔴 OPEN |
+| NEW-P3-001 | P1 | CancellationException swallowed in `ReceiptSideEffectDispatcher` | Bug | `catch(e: Exception)` does not rethrow CE | ✅ FIXED (U-PR1) |
+| NEW-P3-002 | P1 | CancellationException swallowed in `BankStatementLifecycleProcessor` per-item | Bug | Per-item catch swallows CE | ✅ FIXED (U-PR1) |
+| NEW-P3-003 | P1 | CancellationException swallowed in `ReceiptLinkService.unlinkReceiptFromExpense` | Bug | Catch-all swallows CE | ✅ FIXED (U-PR1) |
 | NEW-P3-004 | P2 | Double `attachReceipt` call in `BankStatementLifecycleProcessor` | Bug | Receipt attached twice in success path | 🔴 OPEN |
 | NEW-P3-005 | P2 | Race in post-OCR duplicate path | Bug | Non-atomic duplicate check after OCR | 🔴 OPEN |
 | NEW-P3-006 | P2 | Privacy leak — merchant/category logged in production | Bug | PII in production log statements | 🔴 OPEN |
@@ -140,11 +141,11 @@ Full source: `PIPELINE_4_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P4-P1-08 | P1 | Materializer updates status without lifecycle event | Bug | Materializer writes `OCCURRENCE_STATUS_CHANGED` | ✅ FIXED |
 | P4-P1-09 | P1 | Shared recurring write methods miss restore guard | Bug | Write barrier present | ✅ FIXED |
 | P4-P1-10 | P1 | Legacy `BillReminderManager.markBillPaid()` creates mixed behavior | Bug | Legacy deprecated, coordinator owns | ✅ FIXED |
-| NEW-P4-001 | P1 | CancellationException swallowed in bulk reconcile | Bug | `catch(e: Exception)` does not rethrow CE | 🔴 OPEN |
+| NEW-P4-001 | P1 | CancellationException swallowed in bulk reconcile | Bug | `catch(e: Exception)` does not rethrow CE | ✅ FIXED (U-PR1) |
 | NEW-P4-003 | P2 | Race in `linkExpenseToOccurrence` — lookup outside transaction | Bug | Occurrence lookup outside DB transaction | 🔴 OPEN |
 | NEW-P4-004 | P2 | `BillReminderWorker` uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | 🔴 OPEN |
 | NEW-P4-005 | P2 | Notification ID collision risk | Bug | `hashCode()` used for notification ID | 🔴 OPEN |
-| NEW-P4-007 | P2 | CancellationException swallowed in `regenerateReminderDeliveries` | Bug | Catch-all swallows CE | 🔴 OPEN |
+| NEW-P4-007 | P2 | CancellationException swallowed in `regenerateReminderDeliveries` | Bug | Catch-all swallows CE | ✅ FIXED (U-PR1) |
 
 ## Pipeline 5 — Currency / Dashboard / Analytics
 
@@ -192,11 +193,11 @@ Full source: `PIPELINE_6_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P6-P1-13 | P1 | Stress forecast is not a real account-balance forecast | Bug | Computes net-cashflow, not account balance | 📝 TODO ONLY |
 | P6-P1-14 | P1 | Stress forecast counts PAID occurrences as active outflows | Bug | ACTIVE_OCCURRENCE_STATUSES includes PAID | 📝 TODO ONLY |
 | P6-P1-15 | P1 | Deleting budget can fail after forecasts exist | Bug | CASCADE + explicit delete | ✅ FIXED |
-| NEW-P6-001 | P1 | `computeStressForecast` swallows CancellationException | Bug | Catch-all does not rethrow CE | 🔴 OPEN |
-| NEW-P6-002 | P1 | `BudgetMonitor` writeAlertDiagnostic swallows CE | Bug | Diagnostic write catch swallows CE | 🔴 OPEN |
-| NEW-P6-003 | P1 | `BudgetMonitor` CHECK_FAILED diagnostic swallows CE | Bug | Same pattern in check-failed path | 🔴 OPEN |
+| NEW-P6-001 | P1 | `computeStressForecast` swallows CancellationException | Bug | Catch-all does not rethrow CE | ✅ FIXED (U-PR1) |
+| NEW-P6-002 | P1 | `BudgetMonitor` writeAlertDiagnostic swallows CE | Bug | Diagnostic write catch swallows CE | ✅ FIXED (pre-existing) |
+| NEW-P6-003 | P1 | `BudgetMonitor` CHECK_FAILED diagnostic swallows CE | Bug | Same pattern in check-failed path | ✅ FIXED (pre-existing) |
 | NEW-P6-004 | P1 | Unbounded rollover loop — O(N) queries for daily budgets | Bug | No batch/limit on period iteration | 🔴 OPEN |
-| NEW-P6-005 | P2 | `BudgetRepository` CRUD swallows CancellationException | Bug | Repository-level catch swallows CE | 🔴 OPEN |
+| NEW-P6-005 | P2 | `BudgetRepository` CRUD swallows CancellationException | Bug | Repository-level catch swallows CE | ✅ FIXED (U-PR1) |
 | NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | Bug | Inclusive bounds cause overlap | 🔴 OPEN |
 | NEW-P6-009 | P2 | DST-unsafe day arithmetic in stress horizon | Bug | Uses naive day addition | 🔴 OPEN |
 
@@ -303,7 +304,7 @@ Full source: `PIPELINE_10_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P10-P1-09 | P1 | Bank import creates expenses one-by-one without sync tx semantics | Bug | No outer sync transaction, no import row state, no post-run reconciliation | 📝 TODO ONLY |
 | NEW-P10-001 | P2 | `BankApiConfig.isStubMode` mutable global | Bug | Mutable global state; testability/safety concern | 🔴 OPEN |
 | NEW-P10-002 | P1 | BankTokenCipher swallows `KeyPermanentlyInvalidatedException` | Bug | Silent auth failure; user never prompted to re-authenticate | 🔴 OPEN |
-| NEW-P10-003 | P2 | BankStatementLifecycleProcessor per-item swallows CancellationException | Bug | Per-item catch swallows CE; worker can't be cancelled mid-batch | 🔴 OPEN |
+| NEW-P10-003 | P2 | BankStatementLifecycleProcessor per-item swallows CancellationException | Bug | Per-item catch swallows CE; worker can't be cancelled mid-batch | ✅ FIXED (U-PR1) |
 | NEW-P10-004 | P3 | `generateMockTransactions` non-reproducible | Bug | Random data makes tests non-deterministic | 🔴 OPEN |
 
 ## Pipeline 11 — Email Receipt Ingestion

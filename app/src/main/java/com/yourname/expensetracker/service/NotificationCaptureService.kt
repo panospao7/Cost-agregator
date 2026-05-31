@@ -577,6 +577,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to capture notification via coordinator from $packageName")
                 val retryable = e is java.io.IOException ||
                     e.message?.contains("database is locked", ignoreCase = true) == true

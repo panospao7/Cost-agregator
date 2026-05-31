@@ -425,6 +425,7 @@ class ForecastInputAssembler @Inject constructor(
                         endDate = forecastEnd
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     // Non-fatal: if one rule fails to project, continue with the rest
                     emptyList()
                 }
@@ -468,6 +469,7 @@ class ForecastInputAssembler @Inject constructor(
             materializedReadBlocked = true
             emptyList()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             emptyList()
         }
 

@@ -81,6 +81,7 @@ class RoomRecurringLifecycleEventWriter @Inject constructor(
                 )
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "Non-critical: failed to write diagnostic recurring event %s", eventType)
         }
     }

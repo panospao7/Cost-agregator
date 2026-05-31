@@ -420,7 +420,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                                 metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
                             )
                         )
-                    } catch (_: Exception) { /* best-effort */ }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        /* best-effort */
+                    }
                 }
                 return RecurringExpenseReconcileResult.UpdatedLinkedSnapshot(expenseId, linked.id)
             }
@@ -466,7 +469,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     is RecurringExpenseReconcileResult.NoMatch -> noMatch++
                     is RecurringExpenseReconcileResult.Skipped -> skipped++
                 }
-            } catch (_: Exception) { failed++ }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                failed++
+            }
         }
         Timber.d("Bulk recurring reconcile: l=%d u=%d r=%d s=%d n=%d k=%d f=%d",
             linked, unlinked, relinked, updatedSnapshots, noMatch, skipped, failed)
@@ -552,7 +558,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                             metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due"}"""
                         )
                     )
-                } catch (_: Exception) { /* best-effort event */ }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    /* best-effort event */
+                }
                 continue
             }
 
@@ -575,7 +584,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                             metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
                         )
                     )
-                } catch (_: Exception) { /* best-effort event */ }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    /* best-effort event */
+                }
                 continue
             }
 
@@ -604,7 +616,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                                 metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
                             )
                         )
-                    } catch (_: Exception) { /* best-effort event */ }
+                    } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    /* best-effort event */
+                }
                 }
             }
         }
@@ -867,6 +882,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     )
                 )
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "Non-critical: failed to write REMINDER_CANCELLED event for delivery %d", deliveryId)
             }
         }
@@ -902,6 +918,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     )
                 )
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "Non-critical: failed to write REMINDER_SENT event for delivery %d", deliveryId)
             }
         }
@@ -927,6 +944,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     )
                 )
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "Non-critical: failed to write REMINDER_DELIVERY_FAILED event for delivery %d", deliveryId)
             }
         }

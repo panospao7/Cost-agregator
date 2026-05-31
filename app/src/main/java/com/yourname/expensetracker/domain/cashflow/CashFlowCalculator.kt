@@ -145,6 +145,7 @@ class CashFlowCalculator @Inject constructor(
                     endDate = endTime
                 )
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d — falling back to ad-hoc expansion", ruleId)
                 failedRuleIds.add(ruleId)
             }
@@ -183,6 +184,7 @@ class CashFlowCalculator @Inject constructor(
                 materializedReadBlocked = true
                 emptyList()
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "$TAG: reading materialized occurrences failed")
                 emptyList()
             }
@@ -459,6 +461,7 @@ class CashFlowCalculator @Inject constructor(
                         endDate = endDate
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Timber.w(e, "$TAG: projectOccurrences failed for ruleId=%d, skipping rule", ruleId)
                 }
             }
@@ -470,6 +473,7 @@ class CashFlowCalculator @Inject constructor(
                             it.sourceId in ruleIds
                     }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "$TAG: reading materialized occurrences failed in getUpcomingBills")
                 emptyList()
             }

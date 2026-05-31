@@ -5,7 +5,20 @@
 **PR:** U-PR1  
 **Branch:** `master-refactor` at commit `f49188e2`  
 **Date:** 2026-05-31  
-**Affected Pipelines:** P1, P3, P4, P6, P7, P8, P9, P10, P11
+**Affected Pipelines:** P1, P3, P4, P6, P7, P8, P9, P10, P11  
+**Status:** ✅ IMPLEMENTED (2026-05-31)
+
+### Implementation Status
+
+| Scope | Status | Notes |
+|-------|--------|-------|
+| Category B catches (spec targets) | ✅ DONE | All 22 lines from spec applied |
+| Category C catches (best-effort events) | ✅ DONE | All lifecycle event catches guarded |
+| Architecture guard test (suspend funs) | ✅ DONE | Passes — scans all suspend function bodies |
+| Contract test (12 critical entry points) | ✅ DONE | Compiles; Gradle discovery issue on Windows (infra) |
+| Follow-up: additional suspend-fun catches | ✅ DONE | ~40 additional catches fixed across 12 files |
+| Follow-up: coroutine launch/async catches | ⚠ DEFERRED | ~120 ViewModel/UI catches identified; low-risk (viewModelScope auto-cancels) |
+| Build verification | ✅ PASSES | `assembleDebug` clean, zero errors |
 
 ---
 

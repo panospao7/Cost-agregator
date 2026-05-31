@@ -75,6 +75,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         categoryId: Long? = null
     ): BudgetSpendBreakdown = withContext(ioDispatcher) {
         val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             android.util.Log.w("BudgetOffset", "Failed to read home currency, defaulting to EUR", e)
             "EUR"
         }

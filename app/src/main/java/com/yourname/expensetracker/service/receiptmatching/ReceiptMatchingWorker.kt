@@ -139,6 +139,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
 
                 Timber.d("Receipt matching complete. Auto-matched: $autoMatched, Suggested: $suggested")
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Error in receipt matching worker")
                 throw e
             }

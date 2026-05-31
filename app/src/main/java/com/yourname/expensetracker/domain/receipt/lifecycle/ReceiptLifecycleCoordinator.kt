@@ -212,6 +212,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processReceiptInput")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             return Result.failure(e)
         }
 
@@ -282,7 +283,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             val fileHash = receipt.imagePath?.let { path ->
                 try {
                     assetStore.computeFileHash(path).getOrNull()
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     null
                 }
             }
@@ -847,6 +849,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processEmailReceipt")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null, correlationId)
             return EmailReceiptProcessResult.Error("Database writes blocked: ${e.message}")
         }
@@ -1249,6 +1252,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.deleteReceipt")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             return Result.failure(e)
         }
 
@@ -1376,6 +1380,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             return Result.failure(e)
         }
         val receiptId = request.scannedReceiptId

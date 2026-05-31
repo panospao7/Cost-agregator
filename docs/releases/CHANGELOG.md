@@ -1,3 +1,14 @@
+## [2.2.0] - 2026-05-31
+### Bug Fixes — Coroutine Safety (U-PR1)
+
+- **CANCEL-01:** Added CancellationException rethrow guards to 22 catch blocks across 7 production files
+  - P1: NotificationCaptureService — prevents zombie coroutines after service shutdown
+  - P3: ReceiptSideEffectDispatcher, BankStatementLifecycleProcessor, ReceiptLinkService — prevents side effects running after scope cancellation
+  - P4: RecurringLifecycleCoordinator — prevents loop continuation after cancellation (8 catches)
+  - P6: FinancialStressForecastEngine, BudgetRepository — prevents stale data and incorrect Result.Error wrapping
+- **Architecture guard:** CancellationSafetyArchitectureGuardTest prevents future regressions via source scanning
+- **Contract test:** CancellationPropagationContractTest verifies 12 critical entry points
+
 ## [2.1.0] - 2026-04-04
 ### UI/UX Improvements
 

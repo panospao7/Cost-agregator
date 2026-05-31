@@ -158,6 +158,7 @@ class ReceiptLinkService @Inject constructor(
         try {
             writeBarrier.checkWritesAllowed("ReceiptLinkService.linkReceiptToExpense")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             return Result.failure(e)
         }
 
@@ -361,6 +362,7 @@ class ReceiptLinkService @Inject constructor(
         try {
             writeBarrier.checkWritesAllowed("ReceiptLinkService.unlinkReceiptFromExpense")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             return Result.failure(e)
         }
 
@@ -440,6 +442,7 @@ class ReceiptLinkService @Inject constructor(
 
             Result.success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Result.failure(e)
         }
     }

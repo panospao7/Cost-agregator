@@ -468,7 +468,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // reconstruct the home-currency value without re-converting.
         val homeCurrency = try {
             currencySettingsRepository.homeCurrency().first()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             CurrencyConverter.DEFAULT_BASE_CURRENCY
         }
         if (expense.currency != homeCurrency) {
@@ -947,7 +948,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // ── Currency conversion snapshot ──────────────────────────────────
         val homeCurrencyUpdate = try {
             currencySettingsRepository.homeCurrency().first()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             CurrencyConverter.DEFAULT_BASE_CURRENCY
         }
         val finalExpense = if (updatedExpense.currency != homeCurrencyUpdate) {
@@ -2079,6 +2081,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
             Result.success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Result.failure(e)
         }
     }
@@ -2145,6 +2148,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
             Result.success(Unit)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Result.failure(e)
         }
     }

@@ -51,6 +51,7 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
             Timber.w(e, "OnDeviceReceiptAssistService: GenAI error (code=%d)", e.errorCode)
             AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "OnDeviceReceiptAssistService: unexpected error")
             AiServiceResult.Failure(AiServiceError.Unknown(e.message))
         }
@@ -90,6 +91,7 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
             Timber.w(e, "OnDeviceReceiptAssistService: suggestFromText GenAI error (code=%d)", e.errorCode)
             AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "OnDeviceReceiptAssistService: suggestFromText error")
             AiServiceResult.Failure(AiServiceError.Unknown(e.message))
         }

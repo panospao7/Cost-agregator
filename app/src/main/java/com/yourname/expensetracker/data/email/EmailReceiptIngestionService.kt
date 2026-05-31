@@ -114,7 +114,7 @@ class EmailReceiptIngestionService @Inject constructor(
                     .putHashed("sender", sender)
                     .build()
             ))
-        } catch (_: Exception) {}
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
         try {
             writeBarrier.checkWritesAllowed("EmailReceiptIngestionService.processEmailReceipt")
         } catch (e: IllegalStateException) {
@@ -127,7 +127,7 @@ class EmailReceiptIngestionService @Inject constructor(
                     correlationId = correlationId,
                     isTerminal = true
                 ))
-            } catch (_: Exception) {}
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
             return@withLock EmailReceiptResult.ParseError(e.message ?: "Database writes blocked during restore")
         }
         try {
@@ -144,7 +144,7 @@ class EmailReceiptIngestionService @Inject constructor(
                         .put("provider", provider)
                         .build()
                 ))
-            } catch (_: Exception) {}
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
 
             // Step 2: Parse email body based on provider
             val parsedReceipt = parseEmailReceipt(emailBody, receivedAt, provider)
@@ -158,7 +158,7 @@ class EmailReceiptIngestionService @Inject constructor(
                         correlationId = correlationId,
                         isTerminal = true
                     ))
-                } catch (_: Exception) {}
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                 return EmailReceiptResult.ParseError("Could not parse receipt from email")
             }
 
@@ -173,7 +173,7 @@ class EmailReceiptIngestionService @Inject constructor(
                         correlationId = correlationId,
                         isTerminal = true
                     ))
-                } catch (_: Exception) {}
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                 return EmailReceiptResult.ParseError("Invalid receipt data")
             }
 
@@ -242,7 +242,7 @@ class EmailReceiptIngestionService @Inject constructor(
                             entityId = coordinatorResult.receiptId,
                             isTerminal = true
                         ))
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                     EmailReceiptResult.Success(coordinatorResult.receiptId, coordinatorResult.expenseIds)
                 }
                 is EmailReceiptProcessResult.Duplicate -> {
@@ -257,7 +257,7 @@ class EmailReceiptIngestionService @Inject constructor(
                             entityId = coordinatorResult.existingReceiptId,
                             isTerminal = true
                         ))
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                     EmailReceiptResult.Duplicate(coordinatorResult.existingReceiptId)
                 }
                 is EmailReceiptProcessResult.Error -> {
@@ -273,7 +273,7 @@ class EmailReceiptIngestionService @Inject constructor(
                                 .build(),
                             isTerminal = true
                         ))
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                     EmailReceiptResult.ParseError(coordinatorResult.message)
                 }
                 is EmailReceiptProcessResult.NeedsReview -> {
@@ -287,7 +287,7 @@ class EmailReceiptIngestionService @Inject constructor(
                             entityId = coordinatorResult.receiptId,
                             isTerminal = true
                         ))
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
                     EmailReceiptResult.NeedsReview(coordinatorResult.receiptId, coordinatorResult.reason, coordinatorResult.confidence)
                 }
             }
@@ -307,7 +307,7 @@ class EmailReceiptIngestionService @Inject constructor(
                     exception = e,
                     isTerminal = true
                 ))
-            } catch (_: Exception) {}
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
             return EmailReceiptResult.ParseError("Processing error")
         }
     }

@@ -30,7 +30,7 @@
 |----|-----|-------|------|--------|
 | NEW-P10-001 | P2 | `BankApiConfig.isStubMode` mutable global | BankApiConfig.kt | 🔴 OPEN |
 | NEW-P10-002 | P1 | BankTokenCipher swallows `KeyPermanentlyInvalidatedException` | BankTokenCipher.kt | 🔴 OPEN |
-| NEW-P10-003 | P2 | BankStatementLifecycleProcessor per-item swallows CancellationException | BankStatementLifecycleProcessor.kt | 🔴 OPEN |
+| NEW-P10-003 | P2 | BankStatementLifecycleProcessor per-item swallows CancellationException | BankStatementLifecycleProcessor.kt | ✅ FIXED (U-PR1) |
 | NEW-P10-004 | P3 | `generateMockTransactions` non-reproducible | BankApiIntegration.kt | 🔴 OPEN |
 
 ---

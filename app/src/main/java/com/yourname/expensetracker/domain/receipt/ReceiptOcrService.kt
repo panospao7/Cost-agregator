@@ -356,7 +356,8 @@ class ReceiptOcrService @Inject constructor(
             return@withContext Pair("", 0)
         } finally {
             // MED-01 FIX: Add logging to catch blocks
-            try { document?.close() } catch (e: Exception) { 
+            try { document?.close() } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to close PDF document")
             }
             if (tempFile.exists()) tempFile.delete()
@@ -442,10 +443,12 @@ class ReceiptOcrService @Inject constructor(
             return@withContext ""
         } finally {
             // MED-01 FIX: Add logging to catch blocks
-            try { renderer?.close() } catch (e: Exception) { 
+            try { renderer?.close() } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to close PDF renderer during thumbnail")
             }
-            try { pfd?.close() } catch (e: Exception) { 
+            try { pfd?.close() } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to close ParcelFileDescriptor during thumbnail")
             }
             if (tempFile.exists()) tempFile.delete()
@@ -559,10 +562,12 @@ class ReceiptOcrService @Inject constructor(
             throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
         } finally {
             // MED-01 FIX: Add logging to catch blocks
-            try { renderer?.close() } catch (e: Exception) { 
+            try { renderer?.close() } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to close PDF renderer in processPdfWithOcr")
             }
-            try { pfd?.close() } catch (e: Exception) { 
+            try { pfd?.close() } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Failed to close ParcelFileDescriptor in processPdfWithOcr")
             }
             if (tempFile.exists()) tempFile.delete()

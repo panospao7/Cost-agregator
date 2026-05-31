@@ -52,6 +52,7 @@ class RestoreJournalImporter @Inject constructor(
                 restoreJournal.markSuccessJournalImported(correlationId)
                 Timber.i("RestoreJournalImporter: legacy zero-event journal marked imported for $correlationId")
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.w(e, "RestoreJournalImporter: failed to handle legacy empty journal")
             }
             return
@@ -112,6 +113,7 @@ class RestoreJournalImporter @Inject constructor(
                 Timber.w("RestoreJournalImporter: partial import for $correlationId — will retry on next startup")
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "RestoreJournalImporter: import failed, keeping journal for next attempt")
         }
     }
@@ -203,6 +205,7 @@ class RestoreJournalImporter @Inject constructor(
                 Timber.w("RestoreJournalImporter: partial failure import for $correlationId — will retry on next startup")
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "RestoreJournalImporter: failure import failed, keeping journal for next attempt")
         }
     }

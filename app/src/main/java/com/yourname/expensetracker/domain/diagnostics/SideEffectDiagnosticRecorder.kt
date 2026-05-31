@@ -86,6 +86,6 @@ class SideEffectDiagnosticRecorder @Inject constructor(
                 exception = exception,
                 isTerminal = isTerminal
             ))
-        } catch (_: Exception) {}
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
     }
 }

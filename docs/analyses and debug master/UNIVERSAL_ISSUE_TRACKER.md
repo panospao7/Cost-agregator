@@ -3,7 +3,8 @@
 > **Generated:** 2026-05-31  
 > **Input:** Pipeline reports 1–12 + deep audit NEW issues (59 + 59 + 18 = 136 new issues found)  
 > **Total issues reviewed:** ~250 (121 existing report issues P5-9 + 77 P10-12 + ~50 P1-5 report issues + 136 new)  
-> **Method:** Cross-pipeline root-cause clustering → classification → deduplication → PR organization
+> **Method:** Cross-pipeline root-cause clustering → classification → deduplication → PR organization  
+> **Implementation progress (2026-05-31):** U-PR1 (CancellationException Safety) ✅ FULLY IMPLEMENTED — 146 guards across 38 files, architecture guard test passing
 
 ---
 
@@ -32,7 +33,7 @@
 
 | ID | Sev | Title | Pipelines | Class | PR |
 |----|-----|-------|-----------|-------|-----|
-| U-CANCEL-01 | P1 | CancellationException swallowed in broad catch blocks | 1,3,4,6,7,8,9,10,11 | Universal | U-PR1 |
+| U-CANCEL-01 | P1 | CancellationException swallowed in broad catch blocks | 1,3,4,6,7,8,9,10,11 | Universal | U-PR1 ✅ |
 | U-TOCTOU-01 | P1 | beforeSnapshot captured outside DB transaction in all update methods | 2 (consumed by all) | Engine | U-PR2 |
 | U-MONEY-01 | P1 | Mixed-currency arithmetic without conversion | 5,6,12 | Universal | U-PR3 |
 | U-MONEY-02 | P1 | MoneyAggregate quality/warnings dropped by consumers | 5,6,12 | Universal | U-PR3 |
@@ -94,6 +95,15 @@
 **Tests required:** `cancellation_propagates_through_all_pipeline_coordinators`  
 **Architecture guard:** detekt rule in CI  
 **Suggested PR:** U-PR1
+
+**✅ IMPLEMENTATION STATUS (2026-05-31):**
+- All Category B catches fixed (spec targets): P1, P3, P4, P6 — 22 guards
+- All Category C catches fixed (best-effort events): P4 lifecycle events — 7 guards
+- Additional suspend-fun catches fixed: P3 (ReceiptLifecycleCoordinator, ReceiptOcrService, ReceiptInputValidator), P5 (TransactionLifecycleCoordinator, TransactionSideEffectPlanner), P7 (SharedExpenseManager, SharedExpenseBudgetOffsetEngine), P9 (workers) — ~40 guards
+- Architecture guard test: `CancellationSafetyArchitectureGuardTest` — PASSES
+- Contract test: `CancellationPropagationContractTest` — 12 critical entry points
+- Total CE guards in codebase: 146 across 38 files
+- Remaining: ~120 catches in ViewModel/UI `launch {}` blocks (low-risk, deferred)
 
 ---
 

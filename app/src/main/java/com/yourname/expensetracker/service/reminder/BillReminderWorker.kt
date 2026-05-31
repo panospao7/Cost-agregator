@@ -110,6 +110,7 @@ class BillReminderWorker @AssistedInject constructor(
                                             .build()
                                     ))
                                 } catch (e: Exception) {
+                                    if (e is kotlinx.coroutines.CancellationException) throw e
                                     Log.w(TAG, "Failed to write reminder diagnostic event", e)
                                 }
                             } else {
@@ -127,6 +128,7 @@ class BillReminderWorker @AssistedInject constructor(
 
                 Log.d(TAG, "BillReminderWorker completed — sent ${ctx.notificationsSent} reminders")
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "BillReminderWorker failed", e)
                 throw e
             }

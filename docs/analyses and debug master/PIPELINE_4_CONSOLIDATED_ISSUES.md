@@ -29,13 +29,13 @@
 
 | ID | Sev | Title | File | Status |
 |----|-----|-------|------|--------|
-| NEW-P4-001 | P1 | CancellationException swallowed in bulk reconcile | RecurringRuleLifecycleCoordinator.kt | 🔴 OPEN |
+| NEW-P4-001 | P1 | CancellationException swallowed in bulk reconcile | RecurringRuleLifecycleCoordinator.kt | ✅ FIXED (U-PR1) |
 | NEW-P4-002 | P2 | Variable shadowing — `scheduledAt` computed twice | OccurrenceMaterializer.kt | 🔴 OPEN |
 | NEW-P4-003 | P2 | Race in `linkExpenseToOccurrence` — lookup outside transaction | RecurringRuleLifecycleCoordinator.kt | 🔴 OPEN |
 | NEW-P4-004 | P2 | `BillReminderWorker` uses `System.currentTimeMillis` | BillReminderWorker.kt | 🔴 OPEN |
 | NEW-P4-005 | P2 | Notification ID collision risk | BillReminderWorker.kt | 🔴 OPEN |
 | NEW-P4-006 | P2 | PendingIntent request code collision | BillReminderWorker.kt | 🔴 OPEN |
-| NEW-P4-007 | P2 | CancellationException swallowed in `regenerateReminderDeliveries` | RecurringRuleLifecycleCoordinator.kt | 🔴 OPEN |
+| NEW-P4-007 | P2 | CancellationException swallowed in `regenerateReminderDeliveries` | RecurringRuleLifecycleCoordinator.kt | ✅ FIXED (U-PR1) |
 | NEW-P4-008 | P2 | `reconcilePlannedVsActual` has write side-effects in query-like method | RecurringRuleLifecycleCoordinator.kt | 🔴 OPEN |
 | NEW-P4-009 | P3 | JSON injection in lifecycle event metadata | RecurringRuleLifecycleCoordinator.kt | 🔴 OPEN |
 | NEW-P4-010 | P3 | `linkExpenseToOccurrenceDetailed` returns Skipped for impossible state | RecurringRuleLifecycleCoordinator.kt | 🔴 OPEN |

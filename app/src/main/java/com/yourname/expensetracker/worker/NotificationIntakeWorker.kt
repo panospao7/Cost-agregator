@@ -270,6 +270,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
         try {
             rawDao.markProcessed(rawId)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "IntakeWorker: markProcessed failed for rawId=$rawId")
         }
     }
@@ -280,6 +281,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
             intakeDao.purgeRawPayload(row.id, now)
             intakeDao.purgeTransientPayload(row.id, now)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=${row.id}")
         }
     }
