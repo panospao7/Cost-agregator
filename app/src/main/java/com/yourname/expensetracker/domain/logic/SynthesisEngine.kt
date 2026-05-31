@@ -124,9 +124,9 @@ class SynthesisEngine @Inject constructor(
             quality.excludedRecurringCount
         return forecast.copy(
             confidence = finalConfidence,
-            isPartial = quality.isPartial,
+            isPartial = quality.isPartial || forecast.isPartial,
             qualityWarnings = quality.conversionWarnings,
-            excludedCount = excluded
+            excludedCount = excluded + forecast.excludedCount
         )
     }
 

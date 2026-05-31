@@ -90,7 +90,8 @@ class DataRetentionWorker @AssistedInject constructor(
                 results += it.purge(ocrCutoff)
             }
 
-            // All other targets use now as their TTL-based cutoff, except email and ai_chat_messages
+            // All other targets use their appropriate cutoff
+            val defaultCutoff = now - TimeUnit.DAYS.toMillis(30)
             for (target in allTargets) {
                 if (target.name != "raw_notifications" && target.name != "scanned_receipts.rawOcrText") {
                     val cutoff = when (target.name) {
@@ -98,7 +99,8 @@ class DataRetentionWorker @AssistedInject constructor(
                         "ai_chat_messages" -> aiChatCutoff      // PR-D: proper 30-day cutoff
                         "notification_intake" -> notificationCutoff   // P8F-01: same captured content as raw_notifications
                         "pipeline_diagnostic_events" -> diagnosticsCutoff  // P8F-06: free-text PII, 30-day default
-                        else -> now  // ai_artifacts uses TTL-based expiry (expiresAt < now is correct)
+                        "ai_artifacts" -> now  // TTL-based expiry (expiresAt < now is correct)
+                        else -> defaultCutoff  // 30-day window for all other targets
                     }
                     results += target.purge(cutoff)
                 }

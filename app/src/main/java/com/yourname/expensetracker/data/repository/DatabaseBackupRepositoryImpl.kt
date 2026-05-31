@@ -351,7 +351,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         try {
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             if (!dbFile.exists()) {
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Database file not found"))
             }
 
@@ -367,7 +366,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     mapOf("operation" to "export")
                 )
                 if (encryptedDecision.blocksExecution()) {
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     return@withContext Result.failure(
                         Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason()}")
                     )
@@ -379,7 +377,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     mapOf("operation" to "export")
                 )
                 if (rawDecision.blocksExecution()) {
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     return@withContext Result.failure(
                         Exception("Plaintext backup denied by privacy gate: ${rawDecision.reason()}")
                     )
@@ -388,7 +385,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             val checkpointResult = checkpointWal()
             if (checkpointResult.isFailure) {
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
                     checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
                 )
@@ -424,7 +420,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
 
                     Timber.d("Database encrypted and exported successfully to: ${backupFile.absolutePath}")
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     Result.success(backupFile)
                 } finally {
                     tempCopy.delete()
@@ -440,14 +435,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 Timber.d("Database exported successfully to: ${backupFile.absolutePath}")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 Result.success(backupFile)
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to export database")
-            runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
             Result.failure(e)
+        } finally {
+            runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
         }
     }
 

@@ -542,28 +542,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 }
 
                 DeduplicationMode.BULK_IMPORT -> {
-                    val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-                        amount = expense.amount,
-                        merchant = expense.merchant,
-                        date = expense.date,
-                        currency = expense.currency,
-                        transactionType = expense.transactionType.name,
-                        merchantKey = expense.merchantKey,
-                        dedupeKey = expense.dedupeKey
-                    )
-                    if (isDuplicate) {
-                        val duplicateId = findDuplicateIdForExpense(expense)
-                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate", correlationId)
-                        return Pair(CreateExpenseResult.DuplicateSkipped(
-                            existingExpenseId = duplicateId ?: -1L,
-                            reason = if (duplicateId != null) {
-                                "Bulk import duplicate: existingExpenseId=$duplicateId"
-                            } else {
-                                "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}"
-                            },
-                            eventLogged = eventLogged
-                        ), PostCommitActionBatch.empty(correlationId))
-                    }
+                    // NEW-P2-004: Moved inside transaction to prevent TOCTOU race
                 }
 
                 DeduplicationMode.SKIP_FOR_DEBUG_RESTORE -> {
@@ -571,37 +550,39 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 }
 
                 DeduplicationMode.STANDARD -> {
-                    // Current behaviour: range check + insertAtomic
-                    val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-                        amount = expense.amount,
-                        merchant = expense.merchant,
-                        date = expense.date,
-                        currency = expense.currency,
-                        transactionType = expense.transactionType.name,
-                        merchantKey = expense.merchantKey,
-                        dedupeKey = expense.dedupeKey
-                    )
-                    if (isDuplicate) {
-                        val duplicateId = findDuplicateIdForExpense(expense)
-                        // Write duplicate resolution event with metadata
-                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate", correlationId)
-                        return Pair(CreateExpenseResult.DuplicateSkipped(
-                            existingExpenseId = duplicateId ?: -1L,
-                            reason = if (duplicateId != null) {
-                                "Duplicate expense detected: existingExpenseId=$duplicateId"
-                            } else {
-                                "Duplicate expense detected but existing ID could not be resolved"
-                            },
-                            eventLogged = eventLogged
-                        ), PostCommitActionBatch.empty(correlationId))
-                    }
+                    // NEW-P2-004: Moved inside transaction to prevent TOCTOU race
                 }
             }
         }
 
         // 5. Insert + event inside a single database transaction
+        //    Dedup check (STANDARD/BULK_IMPORT) is inside the transaction to prevent TOCTOU race.
         //    Side effects (step 7, 8) remain outside the transaction (post-commit).
         val insertedId = database.withTransaction {
+            // NEW-P2-004: Dedup check inside transaction to prevent race condition
+            if (!skipDedup) {
+                when (dedupMode) {
+                    DeduplicationMode.BULK_IMPORT, DeduplicationMode.STANDARD -> {
+                        val isDuplicate = expenseDao.isDuplicateCurrencyAware(
+                            amount = expense.amount,
+                            merchant = expense.merchant,
+                            date = expense.date,
+                            currency = expense.currency,
+                            transactionType = expense.transactionType.name,
+                            merchantKey = expense.merchantKey,
+                            dedupeKey = expense.dedupeKey
+                        )
+                        if (isDuplicate) {
+                            val duplicateId = findDuplicateIdForExpense(expense)
+                            val label = if (dedupMode == DeduplicationMode.BULK_IMPORT) "Bulk import duplicate" else "Standard duplicate"
+                            writeDuplicateEvent(expense, request, now, duplicateId, label, correlationId)
+                            return@withTransaction -(duplicateId ?: 1L)
+                        }
+                    }
+                    else -> { /* STRICT_EXTERNAL_ID handled above, SKIP_FOR_DEBUG_RESTORE = no-op */ }
+                }
+            }
+
             // Insert atomic — IGNORE-on-conflict provides race-condition guard
             val id = expenseDao.insertAtomic(expense)
             if (id <= 0L) {

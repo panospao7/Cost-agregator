@@ -144,6 +144,15 @@ object RetentionModule {
                 val count = appDatabase.backgroundJobRunDao().redactErrorMessagesOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+        },
+
+        object : RetentionTarget {
+            override val name = "bank_statement_import_items.merchant"
+            // U-PRIVACY-01: Redact raw merchant names from bank statement imports past retention window.
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+                val count = appDatabase.bankStatementImportItemDao().redactMerchantOlderThan(cutoffMs)
+                RetentionPurgeResult(name, count, true)
+            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
         }
     )
 
