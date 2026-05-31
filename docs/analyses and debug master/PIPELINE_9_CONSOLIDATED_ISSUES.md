@@ -40,7 +40,7 @@
 | NEW-P9-009 | P2 | LocationBackfillWorker `isStopped` exits as SUCCESS | LocationBackfillWorker.kt | 🔴 OPEN |
 | NEW-P9-010 | P2 | MerchantKeyBackfillWorker same `isStopped` issue | MerchantKeyBackfillWorker.kt | 🔴 OPEN |
 | NEW-P9-011 | P2 | `scheduleAtMidnight` near-zero delay edge case | WorkerSpecScheduler.kt | 🔴 OPEN |
-| NEW-P9-012 | P2 | DailyBriefing reschedule failure silently swallowed | DailyBriefingWorker.kt | 🔴 OPEN |
+| NEW-P9-012 | P2 | DailyBriefing reschedule failure silently swallowed | DailyBriefingWorker.kt | ✅ FIXED (U-PR6, 74c2e5b8) |
 | NEW-P9-013 | P2 | WorkerExecutionGuard read-only path no exception handling | WorkerExecutionGuard.kt | 🔴 OPEN |
 | NEW-P9-014 | P3 | WorkerSpec no battery constraint for `merchant_key_backfill` | WorkerSpec.kt | 🔴 OPEN |
 | NEW-P9-015 | P3 | `WorkerRunLogger.Handle` not idempotent | WorkerRunLogger.kt | 🔴 OPEN |
@@ -52,8 +52,9 @@
 | Status | Count |
 |--------|------:|
 | ✅ FIXED (old issues) | 12 |
-| 🔴 OPEN (new issues) | 15 |
-| **Total open work** | **15** |
+| ✅ FIXED (new issues, U-PR6) | 1 |
+| 🔴 OPEN (new issues) | 14 |
+| **Total open work** | **14** |
 
 ---
 

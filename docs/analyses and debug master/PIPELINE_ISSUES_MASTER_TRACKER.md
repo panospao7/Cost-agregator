@@ -169,7 +169,7 @@ Full source: `PIPELINE_5_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P5-002 | P1 | Division by zero risk in `projectedTotal` | Bug | No guard when daysElapsed=0 | 🔴 OPEN |
 | NEW-P5-003 | P1 | Deposit filter includes not-mine items | Bug | Filter too broad for deposit aggregation | 🔴 OPEN |
 | NEW-P5-004 | P1 | `getAverageForPeriodType(DAY)` wrong denominator | Bug | Uses wrong period count | 🔴 OPEN |
-| NEW-P5-005 | P1 | `SynthesisEngine` sums planned expenses across currencies | Bug | Raw-sums without normalization | 🔴 OPEN |
+| NEW-P5-005 | P1 | `SynthesisEngine` sums planned expenses across currencies | Bug | Raw-sums without normalization | ✅ FIXED (U-PR3) |
 | NEW-P5-011 | P1 | `FinancialRunway` always shows 0 days | Bug | Computation always returns zero | 🔴 OPEN |
 
 ## Pipeline 6 — Budget / Forecasting / Cashflow
@@ -217,8 +217,8 @@ Full source: `PIPELINE_7_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P7-P1-06 | P1 | Privacy audit events optional in backup verification | Bug | `privacy_audit_events` classified Tier 3 optional; can be dropped silently | 📝 TODO ONLY |
 | P7-P1-07 | P1 | Worker pause/resume not fully spec-driven | Bug | Both `pauseAllWorkers()` and `scheduleAllWorkers()` use DEFAULTS | ✅ FIXED |
 | P7-P1-08 | P1 | Successful restore leaves app blocked; UI can dismiss warning | Bug | `dismissRestartRequired()` only clears UI; writes still blocked | 📝 TODO ONLY |
-| NEW-P7-001 | P0 | Encrypted export never exits maintenance mode on success | Bug | Maintenance mode entered but never exited on success path | 🔴 OPEN |
-| NEW-P7-002 | P1 | Privacy gate denial / WAL failure leak maintenance mode | Bug | Error paths don't exit maintenance mode | 🔴 OPEN |
+| NEW-P7-001 | P0 | Encrypted export never exits maintenance mode on success | Bug | Maintenance mode entered but never exited on success path | ✅ FIXED (U-PR4) |
+| NEW-P7-002 | P1 | Privacy gate denial / WAL failure leak maintenance mode | Bug | Error paths don't exit maintenance mode | ✅ FIXED (U-PR4) |
 | NEW-P7-003 | P2 | `enterCriticalRecoveryRequired` non-atomic two-commit | Bug | Two separate commits; crash between them leaves inconsistent state | 🔴 OPEN |
 | NEW-P7-004 | P2 | RestoreJournal `appendEvent` read-modify-write race | Bug | Concurrent appends can lose events | 🔴 OPEN |
 | NEW-P7-005 | P2 | `CostbackupBundle.extract()` leaks FileInputStream | Bug | Stream not closed on exception path | 🔴 OPEN |
@@ -280,7 +280,7 @@ Full source: `PIPELINE_9_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P9-009 | P2 | LocationBackfillWorker `isStopped` exits as SUCCESS | Bug | Misleading result; should be RETRY or specific status | 🔴 OPEN |
 | NEW-P9-010 | P2 | MerchantKeyBackfillWorker same `isStopped` issue | Bug | Same pattern as LocationBackfillWorker | 🔴 OPEN |
 | NEW-P9-011 | P2 | `scheduleAtMidnight` near-zero delay edge case | Bug | Scheduling at 23:59:59 produces near-zero initial delay | 🔴 OPEN |
-| NEW-P9-012 | P2 | DailyBriefing reschedule failure silently swallowed | Bug | Failed reschedule breaks the one-shot chain | 🔴 OPEN |
+| NEW-P9-012 | P2 | DailyBriefing reschedule failure silently swallowed | Bug | `.onFailure` logging added; REPLACE policy prevents chain death | ✅ FIXED (U-PR6) |
 | NEW-P9-013 | P2 | WorkerExecutionGuard read-only path no exception handling | Bug | Exceptions in read-only guard path unhandled | 🔴 OPEN |
 | NEW-P9-014 | P3 | WorkerSpec no battery constraint for `merchant_key_backfill` | Bug | Heavy backfill runs without battery consideration | 🔴 OPEN |
 | NEW-P9-015 | P3 | `WorkerRunLogger.Handle` not idempotent | Bug | Double-complete can corrupt run record | 🔴 OPEN |

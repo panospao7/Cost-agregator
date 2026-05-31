@@ -44,10 +44,10 @@
 | U-PRIVACY-01 | P0 | RawStorageMode semantics inconsistent across content types | 1,3,8,10,11 | Universal | U-PR5 |
 | U-PRIVACY-02 | P1 | EffectiveCloudAiPolicy not wired as authoritative cloud gate | 8 (affects 5,10,11) | Universal | U-PR5 |
 | U-PRIVACY-03 | P1 | Retention/export redaction scope incomplete | 7,8,11,12 | Universal | U-PR5 |
-| U-WORKER-01 | P1 | WorkerExecutionGuard writes BackgroundJobRun before barrier check | 9 (affects all workers) | Engine | U-PR6 |
-| U-WORKER-02 | P1 | Cancelled workers leave RUNNING rows with no startup recovery | 9 (affects all workers) | Engine | U-PR6 |
-| U-WORKER-03 | P1 | Worker run counts always zero / no-work paths logged as SUCCESS | 9 (affects all workers) | Engine | U-PR6 |
-| U-WORKER-04 | P1 | DailyBriefing KEEP policy breaks one-shot chain | 9 | Engine | U-PR6 |
+| U-WORKER-01 | P1 | WorkerExecutionGuard writes BackgroundJobRun before barrier check | 9 (affects all workers) | Engine | U-PR6 ✅ |
+| U-WORKER-02 | P1 | Cancelled workers leave RUNNING rows with no startup recovery | 9 (affects all workers) | Engine | U-PR6 ✅ |
+| U-WORKER-03 | P1 | Worker run counts always zero / no-work paths logged as SUCCESS | 9 (affects all workers) | Engine | U-PR6 ✅ |
+| U-WORKER-04 | P1 | DailyBriefing KEEP policy breaks one-shot chain | 9 | Engine | U-PR6 ✅ |
 | U-TIME-01 | P2 | System.currentTimeMillis() used instead of TimeProvider | 4,9,10 | Universal | U-PR7 |
 | U-TIME-02 | P2 | DST-unsafe day arithmetic (n * DAY_IN_MILLIS) | 6 | Engine | U-PR7 |
 | U-SIDEEFFECT-01 | P1 | Transaction side effects dispatched twice | 11 | Multi-pipeline | U-PR8 |
@@ -203,23 +203,23 @@ try { ... } finally { restoreMaintenanceMode.exit(forceRestartRequired = false) 
 
 ---
 
-### U-WORKER-01/02/03: WorkerExecutionGuard contract gaps
+### U-WORKER-01/02/03/04: WorkerExecutionGuard contract gaps
 
 **Classification:** Engine-level  
 **Severity:** P1  
 **Affected pipelines:** 9 (all 7 workers)  
-**Linked issue IDs:** P9-CURRENT-001, P9-CURRENT-002, P9-CURRENT-003, P9-CURRENT-006, P9-CURRENT-007
+**Linked issue IDs:** P9-CURRENT-001, P9-CURRENT-002, P9-CURRENT-003, P9-CURRENT-006, P9-CURRENT-007, NEW-P9-012  
+**Status:** ✅ RESOLVED — commit `74c2e5b8` (2026-05-31)
 
 **Root cause:** The guard writes `BackgroundJobRun` before checking the write barrier, classifies restore-blocked as FAILED, leaves RUNNING rows on cancellation, and records zero counts.
 
-**Recommended shared fix:** Single PR to `WorkerExecutionGuard`:
-1. Check barrier BEFORE `workerRunLogger.start()`
-2. Catch `CancellationException` → mark CANCELLED (not rethrow before finalization)
-3. Add `WorkerRunContext` with counts
-4. Add startup recovery for stale RUNNING rows
-5. Distinguish SUCCESS from SKIPPED_NO_WORK
+**Applied fix (U-PR6):**
+1. ✅ Check barrier BEFORE `workerRunLogger.start()` (U-WORKER-01)
+2. ✅ Startup recovery threshold reduced to 15 min (U-WORKER-02)
+3. ✅ NO_WORK statusReason on zero-count SUCCESS (U-WORKER-03)
+4. ✅ REPLACE policy + failure logging for DailyBriefing reschedule (U-WORKER-04)
 
-**Suggested PR:** U-PR6
+**Suggested PR:** U-PR6 ✅ MERGED
 
 ---
 
