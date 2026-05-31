@@ -1094,7 +1094,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         placeId: String? = null,
         resolvedAddress: String? = null,
-        reason: String? = null
+        reason: String? = null,
+        correlationId: String? = null
     ) {
         checkWritesAllowed("updateLocation")
         require(latitude in -90.0..90.0) { "Latitude out of range" }

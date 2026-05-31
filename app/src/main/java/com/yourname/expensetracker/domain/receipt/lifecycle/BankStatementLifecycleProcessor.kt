@@ -320,8 +320,6 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 }
                 is ReceiptRecordWriteResult.Failed -> return Result.failure(IllegalStateException(write.reason))
             }
-            // P3-REG-007: Link the run to the statement receipt
-            bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)
 
             // ── Step 5: Write RECEIPT_SAVED lifecycle event ────────────────────
             receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(

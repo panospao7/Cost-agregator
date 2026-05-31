@@ -274,6 +274,8 @@ class NotificationCaptureService : NotificationListenerService() {
         isListenerConnected = true
         Timber.d("NotificationListener connected! Starting foreground service.")
         startForegroundWithNotification()
+        // P1-PR6 (NEW-P1-014): Purge expired deduper entries on reconnect
+        deduper.cleanupExpired(DEDUP_WINDOW_MS)
         // Refresh active notifications after connection is established
         if (pendingRefresh) {
             pendingRefresh = false
@@ -440,7 +442,7 @@ class NotificationCaptureService : NotificationListenerService() {
             // Step 3: Content-aware atomic dedupe via NotificationCaptureDeduper
             val now = timeProvider.now()
             val contentFingerprint = computeNotificationContentFingerprint(parts.combinedBody)
-            val dedupeKey = computeDedupeKey(packageName, notificationKey, sbn.postTime, contentFingerprint)
+            val dedupeKey = computeDedupeKey(packageName, notificationKey, contentFingerprint)
             if (deduper.tryStart(dedupeKey, DEDUP_WINDOW_MS)) {
                 notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -458,7 +460,7 @@ class NotificationCaptureService : NotificationListenerService() {
             }
 
             // Step 4: Filter with structured decision
-            val filterDecision = NotificationFilter.decide(packageName, parts.title, parts.text, parts.combinedBody)
+            val filterDecision = NotificationFilter.decide(packageName, parts.title, parts.text, parts.bigText)
             if (!filterDecision.capture) {
                 notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                     pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -865,10 +867,10 @@ class NotificationCaptureService : NotificationListenerService() {
      * Uses SHA-256 hashes to avoid storing raw identifiers in the in-memory dedupe map.
      * PostTime is excluded to maintain strong duplicate suppression across rapid updates.
      */
+    // P1-PR6 (NEW-P1-012): Removed unused postTime parameter
     private fun computeDedupeKey(
         packageName: String,
         notificationKey: String,
-        postTime: Long,
         contentFingerprint: String
     ): String {
         val pkgHash = sha256(packageName).take(16)

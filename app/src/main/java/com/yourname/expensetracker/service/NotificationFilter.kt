@@ -233,10 +233,14 @@ object NotificationFilter {
             }
 
             // 5. Incoming / credit deny
-            if (combined.contains("incoming") || combined.contains("credited") ||
+            // 5. Incoming-only / deposit deny
+            // P1-PR3 (NEW-P1-005): Only deny deposit when NO expense signal keywords present.
+            // "Deposit fee €2.50" should be captured; "Salary deposited €2000" should not.
+            val hasExpenseSignal = EXPENSE_SIGNAL_KEYWORDS.any { combined.contains(it) }
+            if (!hasExpenseSignal && (combined.contains("incoming") || combined.contains("credited") ||
                 combined.contains("salary") || combined.contains("εισερχόμενο") ||
                 combined.contains("μισθός") || combined.contains("μισθο") ||
-                combined.contains("deposit")) {
+                combined.contains("deposit"))) {
                 return NotificationFilterDecision(
                     capture = false,
                     reason = NotificationFilterReason.INCOMING_ONLY,
@@ -247,10 +251,16 @@ object NotificationFilter {
             }
 
             // 6. Payment failed / declined deny
-            if (combined.contains("declined") || combined.contains("failed") ||
+            // P1-PR3 (NEW-P1-006): Only deny "failed" when in payment/auth context,
+            // not when it's part of a merchant name (e.g. "Failed Pizza").
+            val failedInContext = (combined.contains("declined") ||
                 combined.contains("unsuccessful") || combined.contains("απορρίφθηκε") ||
                 combined.contains("αποτυχία") || combined.contains("αποτυχια") ||
-                combined.contains("ακυρώθηκε") || combined.contains("ακυρωθηκε")) {
+                combined.contains("ακυρώθηκε") || combined.contains("ακυρωθηκε")) ||
+                (combined.contains("failed") && (combined.contains("payment") ||
+                    combined.contains("transaction") || combined.contains("login") ||
+                    combined.contains("attempt") || combined.contains("verification")))
+            if (failedInContext) {
                 return NotificationFilterDecision(
                     capture = false,
                     reason = NotificationFilterReason.PAYMENT_FAILED_OR_DECLINED,
@@ -281,7 +291,7 @@ object NotificationFilter {
             }
 
             // 8. Must have an expense signal or a review-worthy transaction signal.
-            val hasExpenseSignal = EXPENSE_SIGNAL_KEYWORDS.any { combined.contains(it) }
+            // hasExpenseSignal is already computed above (P1-PR3 deposit/incoming deny block).
             val hasTransactionSignal = combined.contains("transaction") ||
                 combined.contains("transfer") || combined.contains("payment") ||
                 combined.contains("sent") || combined.contains("purchase")

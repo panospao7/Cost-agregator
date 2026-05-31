@@ -97,6 +97,8 @@ class NotificationCaptureGate @Inject constructor(
      */
     fun startObservers(scope: CoroutineScope) {
         scope.launch {
+            // P1-PR4 (NEW-P1-017): Retry loop so observer restarts after transient failure
+            while (true) {
             try {
                 privacySettingsRepository.observeSettings().collect { settings ->
                     notificationCaptureEnabled = settings.notificationCaptureEnabled
@@ -105,12 +107,18 @@ class NotificationCaptureGate @Inject constructor(
                         _state.value = GateState.Ready
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.w(e, "CaptureGate: settings observer failed")
+                Timber.w(e, "CaptureGate: settings observer failed, retrying in 5s")
+                kotlinx.coroutines.delay(5_000L)
+            }
             }
         }
 
         scope.launch {
+            // P1-PR4 (NEW-P1-017): Retry loop so observer restarts after transient failure
+            while (true) {
             try {
                 blockedPackageDao.getAllPackageNamesFlow().collect { packages ->
                     blockedPackages = packages.toSet()
@@ -119,8 +127,12 @@ class NotificationCaptureGate @Inject constructor(
                         _state.value = GateState.Ready
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Timber.w(e, "CaptureGate: blocked packages observer failed")
+                Timber.w(e, "CaptureGate: blocked packages observer failed, retrying in 5s")
+                kotlinx.coroutines.delay(5_000L)
+            }
             }
         }
     }

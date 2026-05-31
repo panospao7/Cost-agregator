@@ -43,7 +43,8 @@ class NotificationRepository @Inject constructor(
     private val classifier: TransactionClassifier,
     private val pipeline: NotificationProcessingPipeline,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository,
+    private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 ) {
 
     data class DebugNotificationsSnapshot(
@@ -200,6 +201,17 @@ class NotificationRepository @Inject constructor(
             pendingReviewDao.deleteAll()
             userCorrectionDao.deleteAll()
             sourceStatsDao.resetAllPendingCounts()
+            // P2-PR2 (NEW-P2-006): Write audit event for bulk delete
+            diagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                stage = "bulk_delete",
+                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId(),
+                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                    .put("operation", "deleteAllNotifications")
+                    .build(),
+                isTerminal = true
+            ))
         }
     }
 
