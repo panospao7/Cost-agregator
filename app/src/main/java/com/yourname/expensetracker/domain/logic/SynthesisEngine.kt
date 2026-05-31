@@ -130,7 +130,7 @@ class SynthesisEngine @Inject constructor(
         )
     }
 
-    fun synthesize(
+    internal fun synthesize(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
@@ -415,6 +415,7 @@ class SynthesisEngine @Inject constructor(
             horizon = ForecastHorizon.REST_OF_MONTH,
             generatedAt = Instant.ofEpochMilli(now),
             confidence = forecastConfidence.coerceIn(0.1, 0.95), 
+            displayCurrency = displayCurrency,
             components = ForecastComponents(
                 recurringExpenses = recurringPatterns,
                 plannedExpenses = filteredPlannedExpenses,

@@ -518,6 +518,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     RawStorageMode.STORE_RAW -> try {
                         buildExtrasJson(extras)
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         "{\"error\": \"${e.message}\"}"
                     }
                     RawStorageMode.STORE_REDACTED -> """{"redacted":true}"""

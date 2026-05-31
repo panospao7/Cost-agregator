@@ -512,7 +512,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // WAL checkpoint
             val checkpointResult = checkpointWal()
             if (checkpointResult.isFailure) {
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 // DDL-512-12: finalize operation run for early failures
                 run.event("WAL_CHECKPOINTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR)
@@ -524,7 +523,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             if (!dbFile.exists()) {
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 // DDL-512-12: finalize operation run
                 run.event("DATABASE_FILE_FOUND", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR)
@@ -572,7 +570,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     BackupVerifier.collectTableCountsStrict(snapshotDb)
                 } catch (e: BackupVerifier.RequiredTableCountException) {
                     // snapshotDb is closed by the finally below.
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
                     run.failedFinal("Required table count query failed", e)
@@ -584,7 +581,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // Verify snapshot integrity before bundling
                 val snapshotVerification = BackupVerifier.verify(tempDb, tableCounts)
                 if (!snapshotVerification.passed) {
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     // DDL-512-12: finalize operation run for snapshot verification failure
                     run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
@@ -622,7 +618,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
 
                 if (result.isFailure) {
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     run.failedFinal("Bundle creation failed", result.exceptionOrNull())
                     return@withContext Result.failure(
                         result.exceptionOrNull() ?: Exception("Failed to create .costbackup bundle")
@@ -631,7 +626,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 run.event("ENCRYPTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
                 Timber.d("Created .costbackup: %s", outputFile.absolutePath)
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
                 run.success()
                 Result.success(outputFile)
@@ -641,9 +635,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to create .costbackup bundle")
-            restoreMaintenanceMode.exit(forceRestartRequired = false)
             run.failedFinal(e.message ?: "Exception", e)
             Result.failure(e)
+        } finally {
+            runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
         }
     }
 

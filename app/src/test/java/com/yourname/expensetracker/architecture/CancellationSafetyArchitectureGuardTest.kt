@@ -262,6 +262,9 @@ class CancellationSafetyArchitectureGuardTest {
         "WorkerExecutionGuard.kt"
     )
 
+    /** Detects a preceding sibling `catch (e: CancellationException)` clause before a broad catch. */
+    private val precedingSiblingCeCatch = Regex("""catch\s*\(\s*\w+\s*:\s*CancellationException\s*\)""")
+
     @Test
     fun `launch blocks in pipeline-critical files rethrow CancellationException`() {
         val violations = mutableListOf<String>()
@@ -281,6 +284,10 @@ class CancellationSafetyArchitectureGuardTest {
 
                 val catchBody = extractCatchBlockBody(content, match.range.last) ?: continue
                 if (!ceGuardEvidence.containsMatchIn(catchBody)) {
+                    // Check for a preceding sibling CE catch in the same try block
+                    val lookback = content.substring((catchPos - 200).coerceAtLeast(0), catchPos)
+                    if (precedingSiblingCeCatch.containsMatchIn(lookback)) continue
+
                     val lineNum = content.substring(0, catchPos).count { it == '\n' } + 1
                     violations.add("$fileName:$lineNum — broad catch in launch/async without CE guard")
                 }
