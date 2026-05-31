@@ -7,8 +7,15 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 // T05-FIXED: Business reports use filingCurrency from TaxSettings for all totals.
-// CSV fields are sanitized via CsvCellSanitizer. No hardcoded euro formatting.
-// Export formatting policy: filingCurrency for monetary fields, UTC for dates.
+// CSV/IIF fields are sanitized via CsvCellSanitizer (RFC-4180 + formula neutralization).
+// No hardcoded euro formatting.
+//
+// P12-CURRENT-025 / P12-NEW-08 (timezone): date columns below are currently rendered
+// with ZoneId.systemDefault() — i.e. device-local, NOT UTC. This is non-deterministic
+// across timezones for near-midnight transactions. A deterministic export timezone
+// policy (UTC for machine formats / configured zone for human-facing accounting,
+// declared in a manifest) is the planned PR-TZ fix and is NOT yet applied. Do not
+// claim UTC date semantics until that change lands.
 
 /**
  * CRITICAL FIX (CRITICAL-4): Safe CSV/IIF exporters with proper escaping.
@@ -56,20 +63,17 @@ class QuickBooksIIFExporter {
         val safeAmount = expense.amount.takeIf { it.isFinite() } ?: 0.0
         val amount = CurrencyFormatter.formatForExport(safeAmount)
         val splitAmount = CurrencyFormatter.formatForExport(-safeAmount)
-        val memo = escapeIifField(expense.notes ?: "")
-        val name = escapeIifField(expense.merchant)
+        // P12-CURRENT-015: route ALL IIF string fields through the shared
+        // CsvCellSanitizer.sanitizeIif(), which neutralizes formula-leading
+        // characters (=, +, -, @) in addition to stripping tab/newline/CR.
+        // The old private escapeIifField() stripped delimiters but left formula
+        // prefixes intact, so a merchant like "=cmd|..." reached spreadsheet tools.
+        val memo = CsvCellSanitizer.sanitizeIif(expense.notes ?: "")
+        val name = CsvCellSanitizer.sanitizeIif(expense.merchant)
 
-        writer.append("TRNS\t${escapeIifField(date)}\t${escapeIifField(fundingAccount)}\t$amount\t${escapeIifField(expense.currency)}\t$memo\t$name\t\n")
-        writer.append("SPL\t${escapeIifField(date)}\t${escapeIifField(categoryAccount)}\t$splitAmount\t${escapeIifField(expense.currency)}\t$memo\t$name\t\n")
+        writer.append("TRNS\t${CsvCellSanitizer.sanitizeIif(date)}\t${CsvCellSanitizer.sanitizeIif(fundingAccount)}\t$amount\t${CsvCellSanitizer.sanitizeIif(expense.currency)}\t$memo\t$name\t\n")
+        writer.append("SPL\t${CsvCellSanitizer.sanitizeIif(date)}\t${CsvCellSanitizer.sanitizeIif(categoryAccount)}\t$splitAmount\t${CsvCellSanitizer.sanitizeIif(expense.currency)}\t$memo\t$name\t\n")
         writer.append("ENDTRNS\n")
-    }
-
-    private fun escapeIifField(field: String): String {
-        return field
-            .replace("\t", " ")
-            .replace("\n", " ")
-            .replace("\r", "")
-            .trim()
     }
 }
 

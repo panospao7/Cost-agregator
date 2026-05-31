@@ -98,13 +98,15 @@ class CsvEscapingTest {
     @Test
     fun `csv export handles empty string`() {
         val exporter = XeroCSVExporter()
-        
+
         val result = exporter.export(
             listOf(createExpense(merchant = "")),
             mapOf()
         )
-        
-        assertThat(result).contains(",,99.99,Uncategorized,1")
+
+        // Xero schema: Date,Description,Amount,Currency,Account,Reference,...
+        // Empty merchant → empty Description; amount 99.99; currency EUR; Uncategorized; id 1.
+        assertThat(result).contains(",,99.99,EUR,Uncategorized,1")
     }
 
     @Test
@@ -215,35 +217,84 @@ class CsvEscapingTest {
         assertThat(result).contains("Note with spaces")
     }
 
+    // ============= P12-CURRENT-015: IIF formula-injection neutralization =======
+
+    @Test
+    fun `quickbooks iif neutralizes formula-leading merchant`() {
+        val exporter = QuickBooksIIFExporter()
+        // Classic CSV/IIF formula-injection payload as a merchant NAME.
+        val result = exporter.export(
+            listOf(createExpense(merchant = "=cmd|'/c calc'!A1")),
+            mapOf()
+        )
+        // The leading '=' must be neutralized with a leading single-quote so the
+        // value is treated as text, never a formula, when opened in a spreadsheet.
+        assertThat(result).contains("'=cmd|'/c calc'!A1")
+        // Raw unescaped "\t=cmd" must NOT appear as a bare formula in any field.
+        assertThat(result).doesNotContain("\t=cmd|'/c calc'!A1\t")
+    }
+
+    @Test
+    fun `quickbooks iif neutralizes formula-leading memo`() {
+        val exporter = QuickBooksIIFExporter()
+        val result = exporter.export(
+            listOf(createExpense(notes = "+1+1")),
+            mapOf()
+        )
+        assertThat(result).contains("'+1+1")
+    }
+
+    @Test
+    fun `quickbooks iif neutralizes at-sign and minus formula prefixes`() {
+        val exporter = QuickBooksIIFExporter()
+        val atResult = exporter.export(
+            listOf(createExpense(merchant = "@SUM(A1)")),
+            mapOf()
+        )
+        assertThat(atResult).contains("'@SUM(A1)")
+
+        val minusResult = exporter.export(
+            listOf(createExpense(merchant = "-2+3")),
+            mapOf()
+        )
+        assertThat(minusResult).contains("'-2+3")
+    }
+
     // ==================== EXPORT FORMAT TESTS ====================
 
     @Test
     fun `xero csv has correct header format`() {
         val exporter = XeroCSVExporter()
-        
+
         val result = exporter.export(emptyList(), emptyMap())
-        
-        assertThat(result).startsWith("Date,Description,Amount,Account,Reference\n")
+
+        assertThat(result).startsWith(
+            "Date,Description,Amount,Currency,Account,Reference," +
+                "OriginalCurrency,HomeCurrency,ConversionRate,OriginalAmount\n"
+        )
     }
 
     @Test
     fun `quickbooks iif has correct header format`() {
         val exporter = QuickBooksIIFExporter()
-        
+
         val result = exporter.export(emptyList(), emptyMap())
-        
-        assertThat(result).startsWith("!TRNS\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n")
-        assertThat(result).contains("!SPL\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n")
+
+        assertThat(result).startsWith("!TRNS\tDATE\tACCNT\tAMOUNT\tCURRENCY\tMEMO\tNAME\tCLASS\n")
+        assertThat(result).contains("!SPL\tDATE\tACCNT\tAMOUNT\tCURRENCY\tMEMO\tNAME\tCLASS\n")
         assertThat(result).contains("!ENDTRNS\n")
     }
 
     @Test
     fun `freshbooks csv has correct header format`() {
         val exporter = FreshBooksExporter()
-        
+
         val result = exporter.export(emptyList(), emptyMap())
-        
-        assertThat(result).startsWith("date,description,amount,category,vendor\n")
+
+        assertThat(result).startsWith(
+            "date,description,amount,currency,category,vendor," +
+                "originalCurrency,homeCurrency,conversionRate,originalAmount\n"
+        )
     }
 
     @Test
@@ -302,8 +353,8 @@ class CsvEscapingTest {
         val dataLine = lines[1] // First data line after header
         val fields = parseCsvLine(dataLine)
         
-        // Should have exactly 5 fields, not 8
-        assertThat(fields.size).isEqualTo(5)
+        // Xero schema has 10 columns; the malicious value must stay ONE quoted field.
+        assertThat(fields.size).isEqualTo(10)
         assertThat(dataLine).contains("\"Normal,Evil,More,Fields\"")
     }
 
@@ -323,8 +374,8 @@ class CsvEscapingTest {
         val trnsLine = lines.find { it.startsWith("TRNS\t") }!!
         val tabCount = trnsLine.count { it == '\t' }
         
-        // Should have exactly 6 tabs (7 fields)
-        assertThat(tabCount).isEqualTo(6)
+        // TRNS schema is TRNS\tDATE\tACCNT\tAMOUNT\tCURRENCY\tMEMO\tNAME\tCLASS → 7 tabs (8 fields)
+        assertThat(tabCount).isEqualTo(7)
     }
 
     @Test

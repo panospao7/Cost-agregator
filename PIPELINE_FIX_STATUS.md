@@ -730,6 +730,33 @@ the orchestrator stop-rules reserve for explicit human approval, and the rename 
 paired with the real Robolectric roundtrip test in PR-RT (which needs a compile to author safely).
 Deferred to PR-RT.
 
+### Batch PR-VALIDATE (this session) — independent reviewer + fresh debugger pass + follow-up fixes
+Two independent read-only agents validated the three landed slices:
+- **Reviewer (deep, adversarial):** all four target issues FUNCTIONALLY fixed with real tests driving
+  the production `CompositePrivacyGate`; `@IoDispatcher` confirmed resolvable via `DispatchersModule`;
+  no lifecycle/DAO/migration/guard regressions. Found ONE blocker: a residual stale KDoc.
+- **Debugger (fresh regression scan):** the three slices are **regression-free** (no P0 compile-break,
+  no P1 functional regression). Confirmed the negative SPL amount is NOT passed through `sanitizeIif`
+  (stays `-100.00`, not `'-100.00`). Flagged pre-existing latent bugs (not regressions).
+
+Follow-up fixes applied this session in response:
+| ID | Title | Status after change |
+|----|-------|---------------------|
+| P12-CURRENT-003 (residual) | Stale "stable ID snapshot for consistency" KDoc survived on `getExpensesBetween` | FIXED — the reviewer blocker. The orphaned KDoc above `exportOp` (describing `getExpensesBetween`) still re-asserted snapshot consistency, contradicting the corrected class KDoc. Rewritten to "keyset pagination … NOT a point-in-time snapshot; see the class KDoc". `rg "snapshot for consistency" app/src/main` now empty. |
+| P12-CURRENT-020 (export-loop slice) | Source-link provenance read bypassed the `DatabaseReadBarrier` | FIXED — the debugger's P2-1. The export streaming loop read `exportDataRepository.sourceLinkDao.getForExpenses(...)` directly — the ONLY export read not fenced by the barrier that guards every other export read during restore. Added barrier-guarded `ExportDataRepository.getSourceLinksForExpenses(ids)` (same `EXPORT_OR_BACKUP_SNAPSHOT_READ` policy), made `sourceLinkDao` `private`, and routed the VM through it. Sole caller (VM streaming loop) updated. |
+
+**PR-VALIDATE files changed:**
+- `data/repository/ExportDataRepository.kt` — corrected residual snapshot KDoc; `+getSourceLinksForExpenses()` (barrier-guarded, returns grouped-by-targetEntityId); `sourceLinkDao` visibility `val` → `private val`; `+import EntitySourceLink`.
+- `ui/screens/export/ExportOptionsViewModel.kt` — streaming loop now calls `getSourceLinksForExpenses(expenseIds)` instead of the raw DAO.
+
+**PR-VALIDATE compile-risk notes:**
+- `ExportDataRepository` is Hilt-injected (grep: no direct `ExportDataRepository(` construction site anywhere, prod or test), so narrowing `sourceLinkDao` to `private` breaks no caller. The only external `.sourceLinkDao` reference (the VM) was rewired. `EntitySourceLink.targetEntityId` confirmed present for the `groupBy`.
+
+**Still-open pre-existing latent bugs (debugger findings — NOT regressions, NOT fixed this session):**
+- P12-CURRENT-021 (P2): non-finite money (NaN/∞) silently coerced to `0.0`/`""` in `ExpenseExportMapper`/`CurrencyFormatter`/VM number formatters — needs a policy decision (reject row vs mark invalid vs manifest record); belongs with PR-FIELDS/PR-SNAP. HELD.
+- Generic CSV uses a local `escapeCsv` that does not strip `\u0000`/`\u000B` (the shared `CsvCellSanitizer.sanitize` does) — P3 nit; route through the shared sanitizer in PR-FIELDS. HELD.
+- Encrypted export path has no production UI caller (unchanged reachability); if surfaced later, reconcile the `.enc` filename with `ExportOptionsScreen`'s `selectedFormat`-based save/share extension. Verify-only.
+
 ### Validation (human must run — NOT run by agent) — covers PR-REG + PR-ACCT
 - `:app:assembleDebug --stacktrace` — REQUIRED (Hilt graph: new `@IoDispatcher` ctor param on `ExportOptionsViewModel`).
 - `:app:testDebugUnitTest --tests "com.yourname.expensetracker.ui.screens.export.*" --tests "com.yourname.expensetracker.domain.export.*" --tests "com.yourname.expensetracker.domain.privacy.ExportPrivacyPolicyTest" --tests "com.yourname.expensetracker.data.repository.AccountingExportRepositoryTest" --stacktrace`

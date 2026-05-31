@@ -40,9 +40,16 @@ fun PrivacyBlockedCard(capability: String, reason: String, modifier: Modifier)
 | Screen | Capability Checked | Behavior on Deny |
 |--------|-------------------|-----------------|
 | AI Settings | `CLOUD_AI_GENERAL` | Connection test returns error string |
-| Export Options | `RAWBACKUP_EXPORT` | Export action shows error, returns early |
+| Export Options | `EXPENSE_EXPORT` (plain) / `EXPENSE_EXPORT_ENCRYPTED` (encrypted) | Export action shows error, returns early |
 | Spending Map | `EXTERNAL_GEOCODING` | Location features disabled |
 | Backup/Restore | (via repository) | Error message in UI state |
+
+> **P12-REG-01 (fixed):** Export Options previously requested `RAWBACKUP_EXPORT`,
+> which `ExportPrivacyGate` denies unconditionally — this made **every** normal
+> export fail at runtime. Ordinary expense export is not a raw database backup, so
+> it now uses the dedicated `EXPENSE_EXPORT` capability (and `EXPENSE_EXPORT_ENCRYPTED`
+> for the encrypted path). `RAWBACKUP_EXPORT` remains owned solely by
+> `ExportPrivacyGate` for true raw-database backup flows.
 
 ## Privacy Settings Screen
 

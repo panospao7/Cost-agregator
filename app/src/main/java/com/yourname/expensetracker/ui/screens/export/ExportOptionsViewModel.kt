@@ -21,8 +21,9 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.di.IoDispatcher
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -71,7 +72,8 @@ class ExportOptionsViewModel @Inject constructor(
     private val quickBooksExporter: QuickBooksIIFExporter,
     private val freshBooksExporter: FreshBooksExporter,
     private val readBarrier: DatabaseReadBarrier,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     companion object {
@@ -142,12 +144,23 @@ class ExportOptionsViewModel @Inject constructor(
      * O(totalExpenses). The cursor (date, id) of the last row on each page drives
      * the next query.
      *
-     * @param encryptExport When true, the output file will be encrypted via
-     *   [com.yourname.expensetracker.domain.export.ExportUtils.encryptExportFile].
-     *   Hardcoded to false pending a user-facing UI toggle (encryption is available
-     *   but not yet wired to the settings screen).
+     * ## P12-REG-01: Correct privacy capability
+     * Ordinary expense export is **not** a raw database backup. It requests
+     * [PrivacyCapability.EXPENSE_EXPORT] (allowed by [com.yourname.expensetracker.domain.privacy.ExportPrivacyGate]);
+     * encrypted export requests [PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED].
+     * Using `RAWBACKUP_EXPORT` here made the gate deny every normal export.
+     *
+     * ## P12-NEW-01: Fail-closed encryption
+     * @param encryptExport When true, the output is encrypted via
+     *   [ExportDataRepository.encryptExportFile]. There is **no** default/constant
+     *   passphrase: if [encryptExport] is true, [passphrase] MUST be a non-blank
+     *   user-supplied secret, otherwise the export fails closed. The plaintext is
+     *   encrypted in the app-private directory and the plaintext file is always
+     *   deleted (success or failure) so no cleartext financial data is left behind.
+     * @param passphrase User-supplied encryption secret. Required when
+     *   [encryptExport] is true; ignored otherwise.
      */
-    fun generateExport(encryptExport: Boolean = false) {
+    fun generateExport(encryptExport: Boolean = false, passphrase: String? = null) {
         exportJob?.cancel()
         val generation = ++exportGeneration
         exportJob = viewModelScope.launch {
@@ -160,8 +173,24 @@ class ExportOptionsViewModel @Inject constructor(
                 error = null
             )
 
-            // S3-003: Use the correct capability — encrypted export is not raw export
-            val exportCapability = if (encryptExport) PrivacyCapability.ENCRYPTED_BACKUP else PrivacyCapability.RAWBACKUP_EXPORT
+            // P12-NEW-01: Fail closed BEFORE doing any work if encryption is
+            // requested without a real passphrase. Never fall back to a constant.
+            if (encryptExport && passphrase.isNullOrBlank()) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Encrypted export requires a passphrase"
+                )
+                return@launch
+            }
+
+            // P12-REG-01: Use the dedicated expense-export capability — ordinary
+            // export is NOT a raw database backup. Encrypted export uses the
+            // encrypted-export capability.
+            val exportCapability = if (encryptExport) {
+                PrivacyCapability.EXPENSE_EXPORT_ENCRYPTED
+            } else {
+                PrivacyCapability.EXPENSE_EXPORT
+            }
             val privacyDecision = privacyGate.check(
                 exportCapability,
                 mapOf("operation" to "export", "encrypted" to encryptExport.toString())
@@ -193,14 +222,14 @@ class ExportOptionsViewModel @Inject constructor(
                 val endDate = _uiState.value.endDate
                 Timber.i("Export started: format=%s, startDate=%d, endDate=%d", format, startDate, endDate)
 
-                val categories = withContext(Dispatchers.IO) { exportDataRepository.getCategoryNameMap() }
+                val categories = withContext(ioDispatcher) { exportDataRepository.getCategoryNameMap() }
                 val extension = extensionFor(format)
                 val exportFile = exportDataRepository.createExportFile(extension, timeProvider.now())
 
                 val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
 
                 // BAK-12: Validate dataset size and accounting policy before streaming
-                val expenseCount = withContext(Dispatchers.IO) {
+                val expenseCount = withContext(ioDispatcher) {
                     exportDataRepository.countExpensesBetween(startDate, endDate)
                 }
                 if (expenseCount == 0 && !format.allowsEmptyDataset()) {
@@ -210,7 +239,7 @@ class ExportOptionsViewModel @Inject constructor(
                 // Accounting format validation: validate full dataset before streaming
                 // to catch data quality issues across all pages, not just the first.
                 if (format.requiresAccountingPolicy()) {
-                    val allExpenses = withContext(Dispatchers.IO) {
+                    val allExpenses = withContext(ioDispatcher) {
                         exportDataRepository.getExpensesBetween(startDate, endDate)
                     }
                     if (allExpenses.isNotEmpty()) {
@@ -226,7 +255,7 @@ class ExportOptionsViewModel @Inject constructor(
                     Timber.w("BAK-12: Exporting %d expenses via streaming", expenseCount)
                 }
 
-                withContext(Dispatchers.IO) {
+                val finalFile = withContext(ioDispatcher) {
                     val tempFile = java.io.File(exportFile.parentFile, ".tmp_${exportFile.name}")
                     try {
                         tempFile.writer().use { writer ->
@@ -251,13 +280,38 @@ class ExportOptionsViewModel @Inject constructor(
 
                             writeStreamFooter(writer, format, previewCollector)
                         }
-                        if (!tempFile.renameTo(exportFile)) {
-                            tempFile.copyTo(exportFile, overwrite = true)
-                            tempFile.delete()
+
+                        if (encryptExport) {
+                            // P12-NEW-01: Encrypt the hidden temp file directly into the
+                            // final .enc path. Plaintext NEVER lands at the shareable
+                            // export path. passphrase is guaranteed non-blank above.
+                            val encryptedFile = java.io.File(
+                                exportFile.parentFile,
+                                "${exportFile.name}.enc"
+                            )
+                            try {
+                                exportDataRepository.encryptExportFile(
+                                    tempFile,
+                                    encryptedFile,
+                                    passphrase!!
+                                )
+                            } catch (e: Exception) {
+                                // Fail closed: leave no plaintext and no partial ciphertext.
+                                encryptedFile.delete()
+                                throw e
+                            }
+                            encryptedFile
+                        } else {
+                            if (!tempFile.renameTo(exportFile)) {
+                                tempFile.copyTo(exportFile, overwrite = true)
+                            }
+                            exportFile
                         }
-                    } catch (e: Exception) {
+                    } finally {
+                        // Always remove the plaintext temp (rename consumes it; this is a
+                        // no-op then). On encryption or any failure this is what prevents a
+                        // plaintext leak.
                         tempFile.delete()
-                        throw e
                     }
                 }
 
@@ -266,18 +320,11 @@ class ExportOptionsViewModel @Inject constructor(
                     isLoading = false,
                     exportPreview = previewCollector.value,
                     exportPreviewTruncated = previewCollector.truncated,
-                    exportFilePath = if (encryptExport) {
-                        val encrypted = withContext(Dispatchers.IO) {
-                            exportDataRepository.encryptExportFile(exportFile, "default")
-                        }
-                        encrypted.absolutePath
-                    } else {
-                        exportFile.absolutePath
-                    },
+                    exportFilePath = finalFile.absolutePath,
                     exportSuccess = true,
                     error = null
                 )
-                Timber.i("Export finished: format=%s, path=%s, previewChars=%d", format, exportFile.absolutePath, previewCollector.value.length)
+                Timber.i("Export finished: format=%s, path=%s, previewChars=%d", format, finalFile.absolutePath, previewCollector.value.length)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 if (exportGeneration != generation) return@launch
                 _uiState.value = _uiState.value.copy(
@@ -600,11 +647,11 @@ class ExportOptionsViewModel @Inject constructor(
             )
             if (page.isEmpty()) break
 
-            // PR7: Batch-load source links for this page to avoid N+1 queries
+            // PR7: Batch-load source links for this page to avoid N+1 queries.
+            // P12-CURRENT-020: routed through the barrier-guarded repository method
+            // (not the raw DAO) so this read is fenced during restore like the others.
             val expenseIds = page.map { it.id }
-            val sourceLinksByExpense = exportDataRepository.sourceLinkDao
-                .getForExpenses(expenseIds)
-                .groupBy { it.targetEntityId }
+            val sourceLinksByExpense = exportDataRepository.getSourceLinksForExpenses(expenseIds)
 
             pageCount++
             writePage(writer, page, categories, format, preview, pageCount, pageSize, sourceLinksByExpense)

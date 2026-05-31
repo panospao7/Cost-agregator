@@ -6,8 +6,15 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
+import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.ExportPrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
+import com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
@@ -17,20 +24,20 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
-@Ignore("ViewModel uses Dispatchers.IO internally which fails in test env (Main dispatcher init issue). Needs production refactoring to inject dispatchers.")
 class ExportOptionsViewModelTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
@@ -61,7 +68,16 @@ class ExportOptionsViewModelTest {
         coEvery { exportDataRepository.getCategoryNameMap() } returns emptyMap()
         coEvery { exportDataRepository.createExportFile(any(), any()) } returns File(System.getProperty("java.io.tmpdir"), "test_export.csv")
 
-        viewModel = ExportOptionsViewModel(
+        viewModel = buildViewModel(privacyGate)
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    private fun buildViewModel(gate: PrivacyGate): ExportOptionsViewModel =
+        ExportOptionsViewModel(
             exportDataRepository = exportDataRepository,
             accountingExportPolicy = AccountingExportPolicy(),
             timeProvider = timeProvider,
@@ -69,13 +85,35 @@ class ExportOptionsViewModelTest {
             quickBooksExporter = QuickBooksIIFExporter(),
             freshBooksExporter = FreshBooksExporter(),
             readBarrier = readBarrier,
-            privacyGate = privacyGate
+            privacyGate = gate,
+            ioDispatcher = testDispatcher
         )
-    }
 
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
+    /**
+     * Builds the REAL production composite gate ([CompositePrivacyGate] wrapping
+     * [ExportPrivacyGate]) so tests observe actual gate routing — unlike the
+     * relaxed `privacyGate` mock above, this catches P12-REG-01 (the ViewModel
+     * requesting a capability the gate denies).
+     */
+    private fun realCompositeGate(
+        encryptedBackupEnabled: Boolean = true,
+        debugDataPersistenceEnabled: Boolean = false
+    ): PrivacyGate {
+        val settings = PrivacySettings(
+            encryptedBackupEnabled = encryptedBackupEnabled,
+            debugDataPersistenceEnabled = debugDataPersistenceEnabled
+        )
+        val repo = mockk<PrivacySettingsRepository>(relaxed = true)
+        coEvery { repo.getSettings() } returns settings
+        every { repo.observeSettings() } returns flowOf(settings)
+        every { repo.observeLoadState() } returns flowOf(PrivacySettingsLoadState.Loaded(settings))
+        coEvery { repo.getLoadState() } returns PrivacySettingsLoadState.Loaded(settings)
+        val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
+        return CompositePrivacyGate(
+            gates = listOf(ExportPrivacyGate(repo, isDebugBuild = false)),
+            auditLogger = auditLogger,
+            gateHandledCapabilities = PrivacyCapabilityHandlingPolicy.gateHandledCapabilities
+        )
     }
 
     @Test
@@ -201,8 +239,10 @@ class ExportOptionsViewModelTest {
         assertTrue(state.exportSuccess)
         assertEquals(null, state.error)
         assertEquals(out.absolutePath, state.exportFilePath)
-        assertEquals("date,description,amount,category,vendor\n", state.exportPreview)
-        assertEquals(listOf("date,description,amount,category,vendor"), out.readLines())
+        val freshBooksHeader =
+            "date,description,amount,currency,category,vendor,originalCurrency,homeCurrency,conversionRate,originalAmount"
+        assertEquals("$freshBooksHeader\n", state.exportPreview)
+        assertEquals(listOf(freshBooksHeader), out.readLines())
     }
 
     @Test
@@ -216,6 +256,117 @@ class ExportOptionsViewModelTest {
         assertEquals(null, state.exportFilePath)
         assertEquals("Failed to generate export: cache dir unavailable", state.error)
         assertTrue(!state.isLoading)
+    }
+
+    // ── P12-REG-01: real composite-gate routing (regression guards) ────────────
+
+    @Test
+    fun `export succeeds through real composite gate with EXPENSE_EXPORT capability`() = runBlocking {
+        // The REAL ExportPrivacyGate ALLOWS EXPENSE_EXPORT and DENIES RAWBACKUP_EXPORT.
+        // If the ViewModel still requested RAWBACKUP_EXPORT (the regression), this
+        // export would be denied. Asserting success proves the capability switch.
+        val vm = buildViewModel(realCompositeGate())
+
+        val expenses = listOf(createExpense(merchant = "Coffee"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        val out = createTempFile(prefix = "export_real_gate_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        vm.generateExport()
+        val state = vm.uiState.value
+        assertTrue("Normal export must NOT be denied by the real composite gate", state.exportSuccess)
+        assertEquals(out.absolutePath, state.exportFilePath)
+    }
+
+    @Test
+    fun `export succeeds through real composite gate even when raw backup is denied`() = runBlocking {
+        // encryptedBackupEnabled=false → ExportPrivacyGate denies RAWBACKUP_EXPORT.
+        // The old code requested RAWBACKUP_EXPORT and died here. EXPENSE_EXPORT is
+        // independent of encryptedBackupEnabled, so the export must still succeed.
+        val vm = buildViewModel(realCompositeGate(encryptedBackupEnabled = false))
+
+        val expenses = listOf(createExpense(merchant = "Coffee"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        val out = createTempFile(prefix = "export_raw_denied_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        vm.generateExport()
+        assertTrue(vm.uiState.value.exportSuccess)
+    }
+
+    // ── P12-NEW-01: fail-closed encryption ─────────────────────────────────────
+
+    @Test
+    fun `encrypted export with blank passphrase fails closed and writes no file`() = runBlocking {
+        val expenses = listOf(createExpense(merchant = "Coffee"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+
+        viewModel.generateExport(encryptExport = true, passphrase = "  ")
+        val state = viewModel.uiState.value
+        assertFalse(state.exportSuccess)
+        assertEquals(null, state.exportFilePath)
+        assertTrue(state.error.orEmpty().contains("passphrase"))
+        // Must short-circuit before touching the repository at all.
+        io.mockk.verify(exactly = 0) { exportDataRepository.createExportFile(any(), any()) }
+    }
+
+    @Test
+    fun `encrypted export uses non-default passphrase and never leaves plaintext at final path`() = runBlocking {
+        val expenses = listOf(createExpense(merchant = "Coffee"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+
+        val dir = createTempDir(prefix = "export_enc_")
+        val out = File(dir, "expenses_1.csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        // Simulate a real encryptor: capture the passphrase + write the dest .enc file.
+        // encryptExportFile is NOT suspend → every. Assert on captured values AFTER the
+        // call (assertions inside answers throw AssertionError through the coroutine).
+        val passSlot = io.mockk.slot<String>()
+        every {
+            exportDataRepository.encryptExportFile(any(), any(), capture(passSlot))
+        } answers {
+            secondArg<File>().writeBytes(byteArrayOf(1, 2, 3))
+        }
+
+        viewModel.generateExport(encryptExport = true, passphrase = "s3cret-passphrase")
+        val state = viewModel.uiState.value
+        assertTrue("export should succeed: ${state.error}", state.exportSuccess)
+        // P12-NEW-01: passphrase is the user secret, never the old hardcoded "default".
+        assertTrue("encryptor was invoked with a passphrase", passSlot.isCaptured)
+        assertEquals("s3cret-passphrase", passSlot.captured)
+        assertFalse("must not use hardcoded default", passSlot.captured == "default")
+        // Final path is the encrypted file…
+        assertTrue(state.exportFilePath!!.endsWith(".enc"))
+        // …and the plaintext temp must be gone (fail-closed cleanup in `finally`).
+        assertFalse(File(out.parentFile, ".tmp_${out.name}").exists())
+        // The plaintext final path was never produced for the encrypted flow.
+        assertFalse(out.exists())
+    }
+
+    @Test
+    fun `encrypted export deletes plaintext when encryption fails`() = runBlocking {
+        val expenses = listOf(createExpense(merchant = "Coffee"))
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+
+        val dir = createTempDir(prefix = "export_enc_fail_")
+        val out = File(dir, "expenses_1.csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        every {
+            exportDataRepository.encryptExportFile(any(), any(), any())
+        } throws java.io.IOException("disk full")
+
+        viewModel.generateExport(encryptExport = true, passphrase = "s3cret-passphrase")
+        val state = viewModel.uiState.value
+        assertFalse(state.exportSuccess)
+        // No plaintext temp and no plaintext final file left behind.
+        assertFalse(File(out.parentFile, ".tmp_${out.name}").exists())
+        assertFalse(out.exists())
     }
 
     private fun createExpense(
@@ -238,6 +389,3 @@ class ExportOptionsViewModelTest {
         )
     }
 }
-
-
-
