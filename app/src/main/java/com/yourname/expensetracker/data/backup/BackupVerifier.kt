@@ -40,7 +40,13 @@ object BackupVerifier {
      * All 57 entity table names with their verification tier.
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (30 tables) ──
+        // ── Tier 1: Exact row count required (37 total) ──
+        // 30 listed here + 7 event/link tables grouped under the Tier 2 comment
+        // below (transaction_events, receipt_events, receipt_expense_links,
+        // recurring_occurrences, recurring_reminder_deliveries,
+        // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
+        // TIER_1_EXACT. requiredManifestTables() filters by value, so the physical
+        // grouping is cosmetic; the tier assignment is authoritative.
         "raw_notifications"              to VerificationTier.TIER_1_EXACT,
         "expenses"                       to VerificationTier.TIER_1_EXACT,
         "categories"                     to VerificationTier.TIER_1_EXACT,
@@ -72,7 +78,8 @@ object BackupVerifier {
         "budget_adjustment_events"       to VerificationTier.TIER_1_EXACT,
         "spending_challenges"            to VerificationTier.TIER_1_EXACT,
 
-        // ── Tier 2: Validity check (17 tables) ──
+        // ── Tier 2: Validity check (10 tables) — followed by 7 TIER_1_EXACT
+        //    event/link tables (see Tier 1 note above) ──
         "blocked_packages"               to VerificationTier.TIER_2_VALIDITY,
         "merchant_canonicals"            to VerificationTier.TIER_2_VALIDITY,
         "merchant_aliases"               to VerificationTier.TIER_2_VALIDITY,

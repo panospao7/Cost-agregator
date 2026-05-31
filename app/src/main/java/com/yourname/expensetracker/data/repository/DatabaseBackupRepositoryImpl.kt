@@ -561,20 +561,23 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 // Get table counts from snapshot
+                // P7-CURRENT-015: Fail backup creation if a required (Tier 1/Tier 2) table's
+                // count query fails. Silently recording 0 would create a misleading manifest
+                // and let a later restore compare against fake zero counts.
                 val snapshotDb = android.database.sqlite.SQLiteDatabase.openDatabase(
                     tempDb.absolutePath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
                 )
                 val tableCounts = try {
-                    BackupVerifier.allTableNames().associateWith { tableName ->
-                        try {
-                            val cursor = snapshotDb.rawQuery("SELECT COUNT(*) FROM \"$tableName\"", null)
-                            cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
-                        } catch (e: Exception) {
-                            0
-                        }
-                    }
+                    BackupVerifier.collectTableCountsStrict(snapshotDb)
+                } catch (e: BackupVerifier.RequiredTableCountException) {
+                    // snapshotDb is closed by the finally below.
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    run.event("SNAPSHOT_VERIFIED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
+                    run.failedFinal("Required table count query failed", e)
+                    return@withContext Result.failure(e)
                 } finally {
-                    snapshotDb.close()
+                    runCatching { snapshotDb.close() }
                 }
 
                 // Verify snapshot integrity before bundling
@@ -727,6 +730,26 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 return@withContext Result.failure(
                     Exception("Backup contains no data. Restore blocked.")
                 )
+            }
+
+            // 4a. P7-CURRENT-014: Reject incomplete manifests BEFORE any destructive swap.
+            // verifyQuick() skips Tier 1 tables whose manifest count is null, so a malformed
+            // manifest could pass pre-swap checks and only fail in full verify() AFTER the
+            // live DB has already been replaced. Fail closed here while the live DB is intact.
+            try {
+                BackupVerifier.validateManifestCompleteness(
+                    manifestTableCounts,
+                    manifest.backupFormatVersion
+                )
+            } catch (e: BackupVerifier.IncompleteManifestException) {
+                restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
+                restoreEvents.finalizeRunFailed("Incomplete backup manifest", e)
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreJournal.failJournal(journalEntry, e.message ?: "Incomplete backup manifest")
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(e)
             }
 
             // 5. Copy extracted DB to staging location

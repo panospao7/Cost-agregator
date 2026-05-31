@@ -39,7 +39,7 @@ object CostbackupBundle {
     private const val FORMAT_VERSION: UShort = 1u
 
     /** Header size: magic (11) + format version (2) = 13 bytes. */
-    private const val HEADER_SIZE = 11 + 2
+    const val HEADER_SIZE = 11 + 2
 
     // ── Manifest / Checksums data classes (manual JSON) ───────────
 
@@ -153,6 +153,30 @@ object CostbackupBundle {
     class UnsupportedBackupVersionException(message: String) : Exception(message)
     class InvalidBackupFormatException(message: String) : Exception(message)
     class ChecksumMismatchException(message: String) : Exception(message)
+
+    /**
+     * P7-CURRENT-023: thrown when a (decrypted) bundle exceeds the configured
+     * decompressed-size or entry-count limits — a zip-bomb / storage-fill guard.
+     */
+    class BackupTooLargeException(message: String) : Exception(message)
+
+    // ── Extraction limits (P7-CURRENT-023) ───────────────────────
+
+    /** Default cap on total decompressed bytes across all entries (2 GiB). */
+    const val DEFAULT_MAX_TOTAL_DECOMPRESSED_BYTES: Long = 2L * 1024 * 1024 * 1024
+
+    /** Default cap on a single decompressed entry's bytes (1 GiB). */
+    const val DEFAULT_MAX_ENTRY_BYTES: Long = 1L * 1024 * 1024 * 1024
+
+    /** Default cap on the number of ZIP entries. */
+    const val DEFAULT_MAX_ENTRY_COUNT: Int = 100_000
+
+    /** Bundles the three extraction limits so callers/tests can override them. */
+    data class ExtractionLimits(
+        val maxTotalDecompressedBytes: Long = DEFAULT_MAX_TOTAL_DECOMPRESSED_BYTES,
+        val maxEntryBytes: Long = DEFAULT_MAX_ENTRY_BYTES,
+        val maxEntryCount: Int = DEFAULT_MAX_ENTRY_COUNT
+    )
 
     // ── Header helpers ─────────────────────────────────────────────
 
@@ -284,7 +308,8 @@ object CostbackupBundle {
         bundleFile: File,
         outputDir: File,
         password: String,
-        encryptionService: BackupEncryptionService = BackupEncryptionService()
+        encryptionService: BackupEncryptionService = BackupEncryptionService(),
+        limits: ExtractionLimits = ExtractionLimits()
     ): Result<ExtractionResult> = runCatching {
         // 1. Open bundle and read/validate header via streaming
         val fis = FileInputStream(bundleFile)
@@ -329,8 +354,17 @@ object CostbackupBundle {
             val fullStream = SequenceInputStream(magicInput, cipherStream)
             val zis = ZipInputStream(fullStream)
             try {
+                var entryCount = 0
+                var totalDecompressedBytes = 0L
                 var entry = zis.nextEntry
                 while (entry != null) {
+                    // P7-CURRENT-023: cap the number of entries (zip-bomb / storage-fill guard).
+                    entryCount++
+                    if (entryCount > limits.maxEntryCount) {
+                        throw BackupTooLargeException(
+                            "Backup has too many entries (> ${limits.maxEntryCount})"
+                        )
+                    }
                     // ZIP Slip prevention: resolve against outputDir and verify canonical path
                     val entryName = entry.name.replace('\\', '/')
                     // Reject entries with parent directory traversal
@@ -355,8 +389,18 @@ object CostbackupBundle {
                         targetFile.mkdirs()
                     } else {
                         targetFile.parentFile?.mkdirs()
+                        // P7-CURRENT-023: bounded copy — enforce per-entry and cumulative
+                        // decompressed-size caps. ZipEntry.size is untrusted (can be -1 or a
+                        // lie), so we measure the actual bytes streamed, not the declared size.
                         FileOutputStream(targetFile).use { fos ->
-                            zis.copyTo(fos)
+                            totalDecompressedBytes += copyBounded(
+                                source = zis,
+                                dest = fos,
+                                entryName = entry.name,
+                                maxEntryBytes = limits.maxEntryBytes,
+                                alreadyWrittenTotal = totalDecompressedBytes,
+                                maxTotalBytes = limits.maxTotalDecompressedBytes
+                            )
                         }
                         extractedFiles[entry.name] = targetFile
                     }
@@ -486,6 +530,44 @@ object CostbackupBundle {
             zos.write(checksumsManifest.toJson().toString(2).toByteArray(Charsets.UTF_8))
             zos.closeEntry()
         }
+    }
+
+    /**
+     * P7-CURRENT-023: Copies [source] → [dest] while enforcing a per-entry cap
+     * ([maxEntryBytes]) and a cumulative cap ([maxTotalBytes], counting
+     * [alreadyWrittenTotal] bytes written by prior entries). Throws
+     * [BackupTooLargeException] as soon as either cap is exceeded, so a zip-bomb
+     * cannot fill storage even though the declared `ZipEntry.size` is untrusted.
+     *
+     * @return the number of bytes copied for this entry.
+     */
+    private fun copyBounded(
+        source: InputStream,
+        dest: java.io.OutputStream,
+        entryName: String,
+        maxEntryBytes: Long,
+        alreadyWrittenTotal: Long,
+        maxTotalBytes: Long
+    ): Long {
+        val buffer = ByteArray(8192)
+        var entryBytes = 0L
+        while (true) {
+            val n = source.read(buffer)
+            if (n == -1) break
+            entryBytes += n
+            if (entryBytes > maxEntryBytes) {
+                throw BackupTooLargeException(
+                    "ZIP entry '$entryName' exceeds per-entry limit ($maxEntryBytes bytes)"
+                )
+            }
+            if (alreadyWrittenTotal + entryBytes > maxTotalBytes) {
+                throw BackupTooLargeException(
+                    "Backup exceeds total decompressed-size limit ($maxTotalBytes bytes)"
+                )
+            }
+            dest.write(buffer, 0, n)
+        }
+        return entryBytes
     }
 
     /**

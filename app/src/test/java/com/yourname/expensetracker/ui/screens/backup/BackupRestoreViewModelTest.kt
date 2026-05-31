@@ -17,6 +17,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -30,6 +31,16 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     private val restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
         every { it.isWritesAllowed() } returns true
     }
+
+    /** A minimal valid .costbackup byte stream: COSTBACKUP1 magic + format version 1 + body. */
+    private fun validBundleBytes(bodySize: Int = 64): ByteArray {
+        val magic = "COSTBACKUP1".toByteArray(Charsets.US_ASCII)
+        val version = byteArrayOf(0x00, 0x01)
+        return magic + version + ByteArray(bodySize) { it.toByte() }
+    }
+
+    private fun bundleInputStream(bodySize: Int = 64) =
+        java.io.ByteArrayInputStream(validBundleBytes(bodySize))
 
     @Before
     override fun setup() {
@@ -124,7 +135,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
                     allTableCounts = emptyMap()
                 )
             ))
-        coEvery { context.contentResolver.openInputStream(uri) } returns mockk(relaxed = true)
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
 
         val vm = createViewModel()
         advanceUntilIdle()
@@ -153,7 +164,10 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `dismissRestartRequired resets restart flag`() = runTest(testDispatcher) {
+    fun `dismissRestartRequired does NOT clear the restart-required flag`() = runTest(testDispatcher) {
+        // P7-CURRENT-019: restart-required is a global, non-dismissible lock. The deprecated
+        // dismiss call must be a no-op so a caller/test cannot hide the banner while writes
+        // remain globally blocked.
         val uri = Uri.parse("content://backups/test.costbackup")
         coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
             Result.success(DatabaseImportResult.SuccessNeedsRestart(
@@ -171,7 +185,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
                     allTableCounts = emptyMap()
                 )
             ))
-        coEvery { context.contentResolver.openInputStream(uri) } returns mockk(relaxed = true)
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
 
         val vm = createViewModel()
         advanceUntilIdle()
@@ -179,7 +193,112 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
         assertTrue(vm.uiState.value.restartRequired)
 
+        @Suppress("DEPRECATION")
         vm.dismissRestartRequired()
-        assertFalse(vm.uiState.value.restartRequired)
+        assertTrue(
+            "dismissRestartRequired() must be a no-op — the restart-required lock cannot be dismissed",
+            vm.uiState.value.restartRequired
+        )
+    }
+
+    // ── P7-CURRENT-017: restore URI header + size preflight ───────
+
+    @Test
+    fun `copyBackupWithPreflight accepts a valid header and copies body`() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        val dest = File.createTempFile("preflight_ok_", ".costbackup")
+        dest.deleteOnExit()
+        try {
+            vm.copyBackupWithPreflight(bundleInputStream(bodySize = 128), dest)
+            // header (13) + body (128)
+            assertEquals(13L + 128L, dest.length())
+        } finally {
+            dest.delete()
+        }
+    }
+
+    @Test
+    fun `copyBackupWithPreflight rejects a file with wrong magic before full copy`() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        val dest = File.createTempFile("preflight_bad_", ".costbackup")
+        dest.deleteOnExit()
+        // 13+ bytes of non-COSTBACKUP data.
+        val garbage = java.io.ByteArrayInputStream(ByteArray(64) { 0x7A })
+        try {
+            assertThrows(
+                com.yourname.expensetracker.data.backup.CostbackupBundle.InvalidBackupFormatException::class.java
+            ) {
+                vm.copyBackupWithPreflight(garbage, dest)
+            }
+        } finally {
+            dest.delete()
+        }
+    }
+
+    @Test
+    fun `copyBackupWithPreflight rejects a file shorter than the header`() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        val dest = File.createTempFile("preflight_short_", ".costbackup")
+        dest.deleteOnExit()
+        val tooShort = java.io.ByteArrayInputStream(ByteArray(4))
+        try {
+            assertThrows(
+                com.yourname.expensetracker.data.backup.CostbackupBundle.InvalidBackupFormatException::class.java
+            ) {
+                vm.copyBackupWithPreflight(tooShort, dest)
+            }
+        } finally {
+            dest.delete()
+        }
+    }
+
+    @Test
+    fun `copyBackupWithPreflight rejects a body exceeding the size cap`() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        val dest = File.createTempFile("preflight_big_", ".costbackup")
+        dest.deleteOnExit()
+        try {
+            // Valid header but body well over a 32-byte cap.
+            assertThrows(
+                com.yourname.expensetracker.data.backup.CostbackupBundle.BackupTooLargeException::class.java
+            ) {
+                vm.copyBackupWithPreflight(bundleInputStream(bodySize = 4096), dest, maxBytes = 32L)
+            }
+        } finally {
+            dest.delete()
+        }
+    }
+
+    @Test
+    fun `restore maps extract-phase BackupTooLargeException to a size message`() = runTest(testDispatcher) {
+        // P7-CURRENT-023: a zip-bomb / oversized bundle rejected inside restoreCostBackup()
+        // (the extract phase, after preflight) must surface a clear size message, not the
+        // generic "Restore failed".
+        val uri = Uri.parse("content://backups/huge.costbackup")
+        every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
+        coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
+            Result.failure(
+                com.yourname.expensetracker.data.backup.CostbackupBundle.BackupTooLargeException(
+                    "Backup exceeds total decompressed-size limit"
+                )
+            )
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.restoreBackup(uri, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isRestoring)
+        assertNotNull(state.errorMessage)
+        assertTrue(
+            "expected a size/entry-count message, got: ${state.errorMessage}",
+            state.errorMessage!!.contains("too large", ignoreCase = true) ||
+                state.errorMessage!!.contains("too many", ignoreCase = true)
+        )
+        assertFalse(
+            "must not fall through to the generic message",
+            state.errorMessage!!.startsWith("Restore failed:")
+        )
     }
 }

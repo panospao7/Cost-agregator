@@ -244,10 +244,11 @@ class RestoreJournal @Inject constructor(
             )
             json.put("events", serializeEvents(existingEvents + newEvent))
             val tmpFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
-            tmpFile.writeText(json.toString(2))
+            // P7-CURRENT-022: fsync temp file before rename so the event is crash-durable.
+            writeTextSynced(tmpFile, json.toString(2))
             // DDL-C67-07: check rename result; fallback to copy+delete
             if (!tmpFile.renameTo(targetFile)) {
-                targetFile.writeText(tmpFile.readText())
+                writeTextSynced(targetFile, tmpFile.readText())
                 tmpFile.delete()
             }
         } catch (e: Exception) {
@@ -381,6 +382,60 @@ class RestoreJournal @Inject constructor(
         } catch (_: Exception) { false }
     }
 
+    // ── Failure-journal import APIs (P7-CURRENT-016) ──────────────
+    // Symmetric to the success-journal APIs above. The restore/reset path bans
+    // Room after the DB swap (P7-CURRENT-005), so terminal FAILURE diagnostics
+    // live only in the on-disk failure journal until a startup importer ingests
+    // them into the queryable OperationRun ledger.
+
+    /** Read the last-failure journal (written by [failJournal]/[preserveJournal]). */
+    fun readFailureJournal(): JournalEntry? {
+        return try {
+            val file = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+            if (!file.exists()) return null
+            val text = file.readText()
+            if (text.isBlank()) return null
+            JournalEntry.fromJson(JSONObject(text))
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to read failure journal")
+            null
+        }
+    }
+
+    /** Read all events from the failure journal. */
+    fun getFailureJournalEvents(): List<RestoreJournalEvent> {
+        return try {
+            val file = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+            if (!file.exists()) return emptyList()
+            val json = JSONObject(file.readText())
+            parseEvents(json)
+        } catch (_: Exception) { emptyList() }
+    }
+
+    /** Mark failure journal as imported by adding importedAt timestamp. */
+    fun markFailureJournalImported(correlationId: String) {
+        try {
+            val file = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+            if (!file.exists()) return
+            val json = JSONObject(file.readText())
+            json.put("importedAt", System.currentTimeMillis())
+            json.put("importedCorrelationId", correlationId)
+            file.writeText(json.toString(2))
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to mark failure journal imported")
+        }
+    }
+
+    /** True if the failure journal has been fully imported. */
+    fun isFailureJournalImported(correlationId: String): Boolean {
+        return try {
+            val file = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+            if (!file.exists()) return false
+            val json = JSONObject(file.readText())
+            json.has("importedAt") && json.optString("importedCorrelationId") == correlationId
+        } catch (_: Exception) { false }
+    }
+
     /** DDL-A8-19: read events from active, success, and failure journals. */
     fun getAllDiagnosticEventsByCorrelationId(correlationId: String): List<RestoreJournalEvent> {
         val all = mutableListOf<RestoreJournalEvent>()
@@ -431,15 +486,35 @@ class RestoreJournal @Inject constructor(
                 newJson.put("events", existingEvents)
             }
             val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
-            tmpFile.writeText(newJson.toString(2))
+            // P7-CURRENT-022: fsync temp file before rename so the journal state
+            // (incl. safety backup path needed for crash recovery) is crash-durable.
+            writeTextSynced(tmpFile, newJson.toString(2))
             // DDL-C67-07: check rename result
             if (!tmpFile.renameTo(journalFile)) {
-                journalFile.writeText(tmpFile.readText())
+                writeTextSynced(journalFile, tmpFile.readText())
                 tmpFile.delete()
             }
             Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
         } catch (e: Exception) {
             Timber.e(e, "Failed to write restore journal")
+        }
+    }
+
+    /**
+     * P7-CURRENT-022: Writes [text] to [file] and forces it to stable storage via
+     * [java.io.FileDescriptor.sync] before returning. Without the fsync, a power
+     * loss / crash immediately after [renameTo] can leave the (renamed) file with
+     * unflushed or partial contents — losing a journal transition or safety-backup
+     * path at the exact moment it is needed for recovery.
+     */
+    private fun writeTextSynced(file: File, text: String) {
+        java.io.FileOutputStream(file).use { fos ->
+            fos.write(text.toByteArray(Charsets.UTF_8))
+            fos.flush()
+            // fd.sync() flushes OS buffers to disk; guard against the rare device
+            // that throws SyncFailedException so a sync limitation never aborts the
+            // operation (the bytes are still written + flushed above).
+            runCatching { fos.fd.sync() }
         }
     }
 
@@ -651,7 +726,7 @@ class RestoreJournal @Inject constructor(
 
     companion object {
         private const val JOURNAL_FILENAME = "restore_journal.json"
-        private const val FAILURE_JOURNAL_FILENAME = "restore_journal_last_failure.json"
+        const val FAILURE_JOURNAL_FILENAME = "restore_journal_last_failure.json"
         const val SUCCESS_JOURNAL_FILENAME = "restore_journal_last_success.json"
     }
 }

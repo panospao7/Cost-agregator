@@ -22,7 +22,9 @@ class AppStartupCoordinator @Inject constructor(
     private val syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase,
     private val restoreJournal: RestoreJournal,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
-    private val restoreDatabaseOpener: RestoreDatabaseOpener
+    private val restoreDatabaseOpener: RestoreDatabaseOpener,
+    private val workerExecutionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard,
+    private val restoreJournalImporter: com.yourname.expensetracker.data.backup.RestoreJournalImporter
 ) {
 
     fun initialize(application: Application) {
@@ -36,6 +38,8 @@ class AppStartupCoordinator @Inject constructor(
         } else {
             scheduleStartupWork(application)
             syncProactiveBriefingWork()
+            recoverStaleWorkerRuns()
+            importRestoreJournals()
         }
     }
 
@@ -48,8 +52,12 @@ class AppStartupCoordinator @Inject constructor(
      *
      * For destructive states (SWAPPING, VERIFYING), this actually restores the
      * safety backup to recover the live database rather than just logging.
+     *
+     * Visible for testing so the fail-closed crash-recovery contract
+     * (P7-CURRENT-003) can be exercised without bootstrapping the full app.
      */
-    private fun checkRestoreJournal() {
+    @androidx.annotation.VisibleForTesting
+    internal fun checkRestoreJournal() {
         Timber.i("Startup: checking restore journal")
         when (val recovery = restoreJournal.checkAndRecover()) {
             is RestoreJournal.RecoveryResult.NoAction -> {
@@ -131,17 +139,26 @@ class AppStartupCoordinator @Inject constructor(
                 }
 
                 if (!recovered) {
-                    // Fail-closed: preserve journal as failure record and block all writes.
+                    // P7-CURRENT-003: Fail-closed across restarts.
+                    // Preserve journal as failure record and block all writes.
                     // Do NOT clean staging, do NOT delete journal, do NOT reset maintenance mode.
                     // The app is in an unknown state — operator must intervene before use.
+                    //
+                    // Use CRITICAL_RECOVERY_REQUIRED (NOT RESTORE_COMPLETE_RESTART_REQUIRED):
+                    // failJournal() renames the active journal away, so on the next restart
+                    // checkAndRecover() returns NoAction. Only CRITICAL_RECOVERY_REQUIRED is
+                    // exempt from the startup auto-reset below, so it is the only mode that
+                    // keeps writes blocked across repeated restarts until manual recovery.
                     restoreJournal.failJournal(
                         entry,
                         "Startup crash recovery failed: safety backup copy did not complete"
                     )
-                    restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
+                    restoreMaintenanceMode.enterCriticalRecoveryRequired(
+                        "Startup crash recovery failed: safety backup copy did not complete"
+                    )
                     Timber.e(
                         "Startup: CRITICAL — crash recovery failed; " +
-                            "maintenance mode blocks all writes until manual intervention and app restart"
+                            "maintenance mode blocks all writes across restarts until manual intervention"
                     )
                     return
                 }
@@ -171,9 +188,23 @@ class AppStartupCoordinator @Inject constructor(
             }
         }
 
-        if (restoreMaintenanceMode.currentMode() != RestoreMaintenanceMode.Mode.NORMAL) {
-            Timber.w("Startup: resetting maintenance mode from %s to NORMAL", restoreMaintenanceMode.currentMode())
+        // P7-CURRENT-003: Auto-reset to NORMAL on clean startup is intended for transient
+        // modes (e.g. RESTORE_COMPLETE_RESTART_REQUIRED after a successful restore + restart,
+        // or a stale in-progress mode whose journal was already resolved above).
+        //
+        // CRITICAL_RECOVERY_REQUIRED must NEVER be auto-reset: it is the fail-closed mode set
+        // when a rollback or crash recovery failed and the DB may be corrupt. Its journal has
+        // been renamed to the failure file, so checkAndRecover() returns NoAction on subsequent
+        // restarts; if we reset here, writes would silently resume against an unknown DB. It
+        // stays blocked across restarts until manual intervention clears it.
+        val mode = restoreMaintenanceMode.currentMode()
+        if (mode != RestoreMaintenanceMode.Mode.NORMAL &&
+            mode != RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED
+        ) {
+            Timber.w("Startup: resetting maintenance mode from %s to NORMAL", mode)
             restoreMaintenanceMode.reset()
+        } else if (mode == RestoreMaintenanceMode.Mode.CRITICAL_RECOVERY_REQUIRED) {
+            Timber.e("Startup: CRITICAL_RECOVERY_REQUIRED persists across restart; writes remain blocked")
         }
     }
 
@@ -282,6 +313,38 @@ class AppStartupCoordinator @Inject constructor(
     private fun syncProactiveBriefingWork() {
         ProcessLifecycleOwner.get().lifecycleScope.launch {
             syncProactiveBriefingWorkUseCase()
+        }
+    }
+
+    /**
+     * P9-CURRENT-003 / N3: Reconcile background_job_runs rows left in RUNNING by
+     * process death (no CancellationException is thrown when the OS kills the
+     * process, so the guard's in-run finalizer never executes). Marks runs older
+     * than the stale threshold as STALE_ABORTED so the run ledger is accurate.
+     */
+    private fun recoverStaleWorkerRuns() {
+        ProcessLifecycleOwner.get().lifecycleScope.launch {
+            runCatching { workerExecutionGuard.recoverStaleRunningJobs() }
+                .onFailure { Timber.w(it, "Startup: stale worker-run recovery failed") }
+        }
+    }
+
+    /**
+     * P7-CURRENT-016: Import the last restore/reset journal trails (success + failure)
+     * into the queryable OperationRun ledger.
+     *
+     * The restore/reset path bans Room after the DB swap (P7-CURRENT-005), so the
+     * operation trail — including terminal FAILURE outcomes (wrong password, verification
+     * failure, rollback failure, reset failure) — survives only in the on-disk journal
+     * until ingested here on the next healthy startup. Runs only when writes are allowed
+     * (DB healthy) and is idempotent per event, so repeated startups never duplicate rows.
+     */
+    private fun importRestoreJournals() {
+        ProcessLifecycleOwner.get().lifecycleScope.launch {
+            runCatching { restoreJournalImporter.importLastSuccessJournalIfPresent() }
+                .onFailure { Timber.w(it, "Startup: restore success-journal import failed") }
+            runCatching { restoreJournalImporter.importLastFailureJournalIfPresent() }
+                .onFailure { Timber.w(it, "Startup: restore failure-journal import failed") }
         }
     }
 }
