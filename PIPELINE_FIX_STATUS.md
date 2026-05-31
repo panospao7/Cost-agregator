@@ -754,8 +754,14 @@ Follow-up fixes applied this session in response:
 
 **Still-open pre-existing latent bugs (debugger findings — NOT regressions, NOT fixed this session):**
 - P12-CURRENT-021 (P2): non-finite money (NaN/∞) silently coerced to `0.0`/`""` in `ExpenseExportMapper`/`CurrencyFormatter`/VM number formatters — needs a policy decision (reject row vs mark invalid vs manifest record); belongs with PR-FIELDS/PR-SNAP. HELD.
-- Generic CSV uses a local `escapeCsv` that does not strip `\u0000`/`\u000B` (the shared `CsvCellSanitizer.sanitize` does) — P3 nit; route through the shared sanitizer in PR-FIELDS. HELD.
 - Encrypted export path has no production UI caller (unchanged reachability); if surfaced later, reconcile the `.enc` filename with `ExportOptionsScreen`'s `selectedFormat`-based save/share extension. Verify-only.
+
+### Batch PR-CLEANUP (this session) — generic-CSV sanitizer consolidation (debugger P3-1)
+| ID | Title | Status after change |
+|----|-------|---------------------|
+| P12 P3-1 | Generic CSV used a local `escapeCsv` that did NOT strip `\u0000`/`\u000B` | FIXED — `ExportOptionsViewModel.escapeCsv` now delegates to the shared `CsvCellSanitizer.sanitize` (RFC-4180 quoting + `=,+,-,@` formula neutralization), which additionally strips NUL/VT control chars. Removed the now-dead private `isDangerousFormulaPrefix`. Behavior-preserving for existing CSV tests (`=SUM(A1:A2)`→`'=SUM(A1:A2)`, plain values unchanged); only adds control-char stripping. |
+
+**PR-CLEANUP files changed:** `ui/screens/export/ExportOptionsViewModel.kt` — `escapeCsv` delegates to `CsvCellSanitizer.sanitize`; `+import CsvCellSanitizer`; removed dead `isDangerousFormulaPrefix`.
 
 ### Validation (human must run — NOT run by agent) — covers PR-REG + PR-ACCT
 - `:app:assembleDebug --stacktrace` — REQUIRED (Hilt graph: new `@IoDispatcher` ctor param on `ExportOptionsViewModel`).

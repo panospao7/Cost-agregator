@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
+import com.yourname.expensetracker.domain.export.CsvCellSanitizer
 import com.yourname.expensetracker.domain.export.ExpenseExportMapper
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
@@ -751,15 +752,13 @@ class ExportOptionsViewModel @Inject constructor(
         else -> "csv"
     }
 
-    private fun escapeCsv(field: String): String {
-        val trimmed = field.trim()
-        val neutralizedField = if (trimmed.isNotEmpty() && isDangerousFormulaPrefix(trimmed.first())) "'$field" else field
-        val needsQuoting = neutralizedField.contains(",") ||
-            neutralizedField.contains("\"") ||
-            neutralizedField.contains("\n") ||
-            neutralizedField.contains("\r")
-        return if (needsQuoting) "\"" + neutralizedField.replace("\"", "\"\"") + "\"" else neutralizedField
-    }
+    /**
+     * P12-P3 (debugger): delegate generic-CSV field encoding to the shared
+     * [CsvCellSanitizer.sanitize] (RFC-4180 quoting + formula `=,+,-,@`
+     * neutralization) instead of a private duplicate. This additionally strips
+     * `\u0000`/`\u000B` control characters that the old local helper let through.
+     */
+    private fun escapeCsv(field: String): String = CsvCellSanitizer.sanitize(field)
 
     private fun escapeJson(value: String): String {
         val out = StringBuilder(value.length + 8)
@@ -781,9 +780,6 @@ class ExportOptionsViewModel @Inject constructor(
     private fun formatJsonNumber(value: Double): String = if (value.isFinite()) value.toString() else "0.0"
 
     private fun formatCsvNumber(value: Double): String = if (value.isFinite()) value.toString() else ""
-
-    private fun isDangerousFormulaPrefix(char: Char): Boolean =
-        char == '=' || char == '+' || char == '-' || char == '@'
 
     fun clearExport() {
         _uiState.value = _uiState.value.copy(
