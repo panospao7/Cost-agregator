@@ -93,10 +93,9 @@ class BankConnectionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                // DAO flow will automatically emit via the init collector
-                // Force a refresh by touching the DB — the Flow picks it up
-                val current = bankConnectionDao.getAllConnections()
-                // The flow is already collected in init
+                // Force a one-shot DB read to trigger fresh data
+                bankConnectionDao.getAllConnections().first()
+                // Flow collector in init{} picks up the invalidation
             } catch (e: Exception) {
                 Timber.e(e, "Failed to refresh bank connections")
             } finally {
