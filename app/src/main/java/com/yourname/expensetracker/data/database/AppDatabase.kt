@@ -7684,11 +7684,9 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
         val MIGRATION_122_123 = object : androidx.room.migration.Migration(122, 123) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN entityType TEXT")
-                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN entityId INTEGER")
-                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN exceptionClass TEXT")
-                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN exceptionMessage TEXT")
-                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN metadataJson TEXT")
+                // No-op: pipeline_diagnostic_events table was created fresh in MIGRATION_121_122
+                // with all columns (entityType, entityId, exceptionClass, exceptionMessage, metadataJson)
+                // already included. ALTER TABLE would cause "duplicate column name" crash.
             }
         }
 
