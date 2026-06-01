@@ -72,6 +72,7 @@ class AppStartupCoordinator @Inject constructor(
                 // Asset recovery will be handled by periodic cleanup or user-initiated restore
                 restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
                 Timber.w("Restore incomplete — user should verify receipt attachments")
+                return
             }
 
             is RestoreJournal.RecoveryResult.CleanedNonDestructive -> {

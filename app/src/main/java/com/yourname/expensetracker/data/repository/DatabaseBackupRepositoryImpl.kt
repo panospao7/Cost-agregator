@@ -931,7 +931,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
                     exception = e, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Database swap failed", e)
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
                 restoreJournal.failJournal(journalEntry, "Swap failed: ${e.message}")
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
@@ -1057,7 +1057,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // DDL-512-01: emit ROLLBACK_COMPLETED BEFORE failJournal
                 restoreEvents.event("ROLLBACK_COMPLETED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
                 restoreJournal.failJournal(journalEntry, "Verification failed, rolled back: ${e.message}")
-                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
                 tempDir.deleteRecursively()
 
                 // F6: DB was swapped — do not use old run handle. Journal is authoritative.
@@ -1394,16 +1394,19 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         try {
             // Validate source file exists and is readable
             if (!sourceFile.exists()) {
+                restoreJournal.failJournal(journalEntry, "validation_failed: source database file not found")
                 run.failedFinal("Source database file not found")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Source database file not found: ${sourceFile.absolutePath}"))
             }
             if (!sourceFile.canRead()) {
+                restoreJournal.failJournal(journalEntry, "validation_failed: cannot read source database file")
                 run.failedFinal("Cannot read source database file")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Cannot read source database file. Check file permissions."))
             }
             if (sourceFile.length() == 0L) {
+                restoreJournal.failJournal(journalEntry, "validation_failed: source database file is empty")
                 run.failedFinal("Source database file is empty")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Source database file is empty."))
@@ -1412,6 +1415,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // Validate source database before touching anything
             val sourceValidation = validateSourceDatabase(sourceFile)
             if (sourceValidation.isFailure) {
+                restoreJournal.failJournal(journalEntry, "validation_failed: ${sourceValidation.exceptionOrNull()?.message}")
                 Timber.e("Source database validation failed: ${sourceValidation.exceptionOrNull()?.message}")
                 run.event("SOURCE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
@@ -1422,6 +1426,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
             val sourceSummary = sourceValidation.getOrNull() ?: run {
+                restoreJournal.failJournal(journalEntry, "validation_failed: failed to read backup summary")
                 run.failedFinal("Failed to read backup summary")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Failed to read backup summary"))
@@ -1429,6 +1434,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             // Block empty imports only when all tracked meaningful tables are empty.
             if (!sourceSummary.hasMeaningfulData()) {
+                restoreJournal.failJournal(journalEntry, "validation_failed: backup file contains no data")
                 Timber.e(
                     "Source database is empty across tracked tables " +
                         "(expenses=0, categories=0, merchants=0, pendingReviews=0, budgets=0). Blocking import."
@@ -1577,7 +1583,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                     restoreJournal.failJournal(journalEntry, importError.message ?: "Import failed after swap")
                     if (rollbackResult.isSuccess) {
-                        restoreMaintenanceMode.exit(forceRestartRequired = false)
+                        restoreMaintenanceMode.exit(forceRestartRequired = true)
                     } else {
                         restoreMaintenanceMode.enterCriticalRecoveryRequired(
                             "Import failed after swap and rollback also failed"

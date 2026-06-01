@@ -486,27 +486,29 @@ class RestoreJournal @Inject constructor(
      * Writes (overwrites) the journal entry.
      */
     fun writeJournal(entry: JournalEntry) {
-        try {
-            journalFile.parentFile?.mkdirs()
-            // DDL-A8-02: preserve existing events when overwriting journal state
-            val oldJson = readJournalJson()
-            val newJson = entry.toJson()
-            val existingEvents = oldJson?.optJSONArray("events")
-            if (existingEvents != null && existingEvents.length() > 0) {
-                newJson.put("events", existingEvents)
+        synchronized(journalLock) {
+            try {
+                journalFile.parentFile?.mkdirs()
+                // DDL-A8-02: preserve existing events when overwriting journal state
+                val oldJson = readJournalJson()
+                val newJson = entry.toJson()
+                val existingEvents = oldJson?.optJSONArray("events")
+                if (existingEvents != null && existingEvents.length() > 0) {
+                    newJson.put("events", existingEvents)
+                }
+                val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
+                // P7-CURRENT-022: fsync temp file before rename so the journal state
+                // (incl. safety backup path needed for crash recovery) is crash-durable.
+                writeTextSynced(tmpFile, newJson.toString(2))
+                // DDL-C67-07: check rename result
+                if (!tmpFile.renameTo(journalFile)) {
+                    writeTextSynced(journalFile, tmpFile.readText())
+                    tmpFile.delete()
+                }
+                Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to write restore journal")
             }
-            val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
-            // P7-CURRENT-022: fsync temp file before rename so the journal state
-            // (incl. safety backup path needed for crash recovery) is crash-durable.
-            writeTextSynced(tmpFile, newJson.toString(2))
-            // DDL-C67-07: check rename result
-            if (!tmpFile.renameTo(journalFile)) {
-                writeTextSynced(journalFile, tmpFile.readText())
-                tmpFile.delete()
-            }
-            Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to write restore journal")
         }
     }
 
