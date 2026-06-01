@@ -72,6 +72,13 @@ class FinancialStressForecastEngine @Inject constructor(
         // Note: 500.0 is in home currency units
         private const val DEFAULT_EMERGENCY_BUFFER_FALLBACK = 500.0
         private const val SEED = 42L
+
+        // NEW-P6-010: Risk classification thresholds — extracted from hardcoded magic numbers.
+        // TODO: Migrate these to AppConfig so they can be tuned without a code deployment.
+        private const val RISK_THRESHOLD_LOW = 0.10
+        private const val RISK_THRESHOLD_MODERATE = 0.25
+        private const val RISK_THRESHOLD_ELEVATED = 0.50
+        private const val RISK_THRESHOLD_HIGH = 0.75
     }
 
     /**
@@ -264,15 +271,18 @@ class FinancialStressForecastEngine @Inject constructor(
      * For each manual recurring rule (patterns with non-null id):
      * 1. Generate occurrences via [RecurringLifecycleCoordinator] (idempotent writes).
      * 2. Query all materialized occurrences in the date range.
-     * 3. Sum expected amounts for PAID and PLANNED occurrences.
+     * 3. Sum expected amounts for PLANNED, OVERDUE, and DUE occurrences (PAID is excluded).
      *
      * Detected-only patterns (id == null) have no corresponding manual rule and
      * are handled by a simplified ad-hoc expansion for backward compatibility.
      */
     /**
      * Allowed statuses for recurring occurrences that represent active obligations.
+     * P6-P1-14: PAID is excluded — paid occurrences no longer count as future
+     * obligations. OVERDUE and DUE are included because they represent pending
+     * or late obligations that still affect cash flow.
      */
-    private val ACTIVE_OCCURRENCE_STATUSES = setOf("PLANNED")
+    private val ACTIVE_OCCURRENCE_STATUSES = setOf("PLANNED", "OVERDUE", "DUE")
 
     /**
      * Statuses that represent skipped/cancelled/ignored occurrences (excluded from totals).
@@ -345,7 +355,8 @@ class FinancialStressForecastEngine @Inject constructor(
             val allOccurrences = mergedByKey.values
 
             for (occ in allOccurrences) {
-                // P0-1: Filter by status — only count PLANNED and PAID
+                // P6-P1-14: Filter by status — only count PLANNED, OVERDUE, DUE.
+                // PAID is explicitly excluded (paid obligations are no longer future outflows).
                 if (occ.status in EXCLUDED_OCCURRENCE_STATUSES) continue
                 if (occ.status == "MISSED") {
                     Timber.w("$TAG: Occurrence id=%d ruleId=%d is MISSED", occ.id, occ.sourceId)
@@ -358,17 +369,8 @@ class FinancialStressForecastEngine @Inject constructor(
                 }
 
                 // P0-2: Convert amount to displayCurrency before summing
-                val amount = when (occ.status) {
-                    // NOTE (P3-06): The "PAID" branch is unreachable dead code — PAID is not in
-                    // ACTIVE_OCCURRENCE_STATUSES so it is filtered out by the guard above.
-                    // Kept for defensive safety in case ACTIVE_OCCURRENCE_STATUSES is expanded.
-                    "PAID" -> occ.paidAmount ?: occ.expectedAmount
-                    else -> occ.expectedAmount
-                }
-                val currency = when (occ.status) {
-                    "PAID" -> occ.paidCurrency ?: occ.expectedCurrency
-                    else -> occ.expectedCurrency
-                }
+                val amount = occ.expectedAmount
+                val currency = occ.expectedCurrency
 
                 val converted = runCatching {
                     currencyConverter.convert(amount, currency, displayCurrency)
@@ -411,9 +413,21 @@ class FinancialStressForecastEngine @Inject constructor(
         endDate: Long,
         displayCurrency: String = ""
     ): Double {
+        // NEW-P6-008: Stale pattern threshold — exclude patterns whose nextExpectedDate
+        // is more than 90 days before the forecast window (likely dead/abandoned patterns).
+        val staleThreshold = TimePeriodUtils.addDays(startDate, -90)
+
         var total = 0.0
         for (pattern in patterns) {
             var nextDate = pattern.nextExpectedDate
+
+            // Skip stale patterns
+            if (nextDate < staleThreshold) {
+                Timber.w("$TAG: Detected pattern '%s' is stale (nextExpectedDate=%d < threshold=%d), excluding from forecast",
+                    pattern.merchantName, nextDate, staleThreshold)
+                continue
+            }
+
             if (nextDate >= endDate) continue
             // P6-PR2 (NEW-P6-007): Half-open interval [start, end) prevents double-counting at boundaries
             while (nextDate >= startDate && nextDate < endDate) {
@@ -436,17 +450,31 @@ class FinancialStressForecastEngine @Inject constructor(
 
     /**
      * Estimate expected income for the horizon based on normalized historical deposits.
+     *
+     * NEW-P6-014: Replaced the hardcoded `/ 3.0` divisor with the actual month count
+     * derived from the deposit date range, so the monthly average adapts to however
+     * much data is available (not just a fixed 90-day window).
      */
     private suspend fun estimateIncome(
         daysAhead: Int,
         normalizedDeposits: List<ExpenseSnapshot>
     ): Double {
+        if (normalizedDeposits.isEmpty()) return 0.0
         // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 83
         val totalDeposits = normalizedDeposits.sumOf { it.effectiveAmount }
-        
-        // Average monthly income based on 90-day window
-        val avgMonthlyIncome = totalDeposits / 3.0 // 3 months
-        
+
+        // Compute the actual number of months spanned by the deposit history.
+        val minDate = normalizedDeposits.minOf { it.date }
+        val maxDate = normalizedDeposits.maxOf { it.date }
+        val monthCount = if (maxDate > minDate) {
+            java.time.temporal.ChronoUnit.MONTHS.between(
+                java.time.Instant.ofEpochMilli(minDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
+                java.time.Instant.ofEpochMilli(maxDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            ).toDouble().coerceAtLeast(1.0)
+        } else 1.0
+
+        val avgMonthlyIncome = totalDeposits / monthCount
+
         // Scale to the horizon
         val monthsInHorizon = daysAhead / 30.0
         return (avgMonthlyIncome * monthsInHorizon).coerceAtLeast(0.0)
@@ -573,10 +601,10 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private fun classifyRiskLevel(probabilityOfCrunch: Double): StressRiskLevel {
         return when {
-            probabilityOfCrunch < 0.10 -> StressRiskLevel.LOW
-            probabilityOfCrunch < 0.25 -> StressRiskLevel.MODERATE
-            probabilityOfCrunch < 0.50 -> StressRiskLevel.ELEVATED
-            probabilityOfCrunch < 0.75 -> StressRiskLevel.HIGH
+            probabilityOfCrunch < RISK_THRESHOLD_LOW -> StressRiskLevel.LOW
+            probabilityOfCrunch < RISK_THRESHOLD_MODERATE -> StressRiskLevel.MODERATE
+            probabilityOfCrunch < RISK_THRESHOLD_ELEVATED -> StressRiskLevel.ELEVATED
+            probabilityOfCrunch < RISK_THRESHOLD_HIGH -> StressRiskLevel.HIGH
             else -> StressRiskLevel.CRITICAL
         }
     }

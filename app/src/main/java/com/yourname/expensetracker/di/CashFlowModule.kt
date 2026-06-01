@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
+import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.AccountBalanceProvider
@@ -39,7 +40,8 @@ object CashFlowModule {
         analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
         currencyConverter: CurrencyConverter,
         currencySettingsRepository: CurrencySettingsRepository,
-        databaseReadBarrier: DatabaseReadBarrier
+        databaseReadBarrier: DatabaseReadBarrier,
+        normalizationEngine: MoneyNormalizationEngine
     ): CashFlowCalculator = CashFlowCalculator(
         expenseRepository,
         recurringPatternsProvider,
@@ -49,6 +51,7 @@ object CashFlowModule {
         analyticsCurrencyNormalizer,
         currencySettingsRepository,
         currencyConverter,
-        databaseReadBarrier
+        databaseReadBarrier,
+        normalizationEngine
     )
 }

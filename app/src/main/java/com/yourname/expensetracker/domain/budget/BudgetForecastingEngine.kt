@@ -68,7 +68,6 @@ class BudgetForecastingEngine @Inject constructor(
     private val budgetCalculator = BudgetCalculator(timeProvider)
 
     companion object {
-        const val MIN_HISTORY_MONTHS = 3
         const val CONFIDENCE_THRESHOLD_HIGH = 0.8
         const val CONFIDENCE_THRESHOLD_MEDIUM = 0.6
         private const val TREND_THRESHOLD = 0.10
@@ -493,11 +492,8 @@ class BudgetForecastingEngine @Inject constructor(
             SpendingTrend.STABLE -> prediction
         }
         
-        // Add seasonal adjustment (if we have enough history)
-        if (historicalData.monthsOfHistory >= 6) {
-            val seasonalFactor = calculateSeasonalFactor()
-            prediction *= seasonalFactor
-        }
+        // NEW-P6-011: calculateSeasonalFactor was a dead stub that always returned 1.0;
+        // removed entirely. Seasonal adjustment may be re-added when real data is available.
         
         return max(prediction, 0.0)
     }
@@ -594,13 +590,6 @@ class BudgetForecastingEngine @Inject constructor(
         
         // Adjust by confidence
         return probability * confidence
-    }
-    
-    /**
-     * Calculate seasonal adjustment factor.
-     */
-    private fun calculateSeasonalFactor(): Double {
-        return 1.0
     }
     
     /**

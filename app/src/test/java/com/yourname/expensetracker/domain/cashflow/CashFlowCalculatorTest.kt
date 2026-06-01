@@ -17,6 +17,7 @@ import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -78,6 +79,20 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
 
+        // P6-P1-11: Mock normalization engine to return the sum of effectiveAmounts.
+        val normalizationEngine = mockk<MoneyNormalizationEngine>(relaxed = true)
+        coEvery { normalizationEngine.aggregateExpenses(any(), any(), any(), any()) } answers {
+            val expenses = firstArg<List<Expense>>()
+            val homeCurrency = secondArg<CurrencyCode>()
+            val total = expenses.sumOf { it.effectiveAmount }
+            com.yourname.expensetracker.domain.core.money.MoneyAggregate(
+                displayAmount = total,
+                displayCurrency = homeCurrency,
+                sourceBuckets = emptyList(),
+                conversionFailures = emptyList()
+            )
+        }
+
         calculator = CashFlowCalculator(
             expenseRepository = expenseRepository,
             recurringPatternsProvider = recurringPatternsProvider,
@@ -87,7 +102,8 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             analyticsCurrencyNormalizer = mockk(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
             currencyConverter = mockk(relaxed = true),
-            databaseReadBarrier = databaseReadBarrier
+            databaseReadBarrier = databaseReadBarrier,
+            normalizationEngine = normalizationEngine
         )
     }
 

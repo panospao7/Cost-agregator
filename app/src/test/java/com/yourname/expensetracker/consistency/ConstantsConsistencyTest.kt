@@ -41,7 +41,7 @@ class ConstantsConsistencyTest : AnalyticsEngineTestBase() {
 
         assertEquals(100_000, settlementIterationLimit)
 
-        assertEquals(3, BudgetForecastingEngine.MIN_HISTORY_MONTHS)
+        // NEW-P6-012: MIN_HISTORY_MONTHS was unused and removed from BudgetForecastingEngine.
         assertApproxEquals(0.8, BudgetForecastingEngine.CONFIDENCE_THRESHOLD_HIGH, 0.0)
         assertApproxEquals(0.6, BudgetForecastingEngine.CONFIDENCE_THRESHOLD_MEDIUM, 0.0)
     }

@@ -119,14 +119,20 @@ class BudgetCalculator @Inject constructor(
                 PeriodRange(start, cal.timeInMillis)
             }
             BudgetPeriod.WEEKLY -> {
-                // Find the most recent occurrence of the anchor weekday
-                val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
-                while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
-                    cal.add(Calendar.DAY_OF_YEAR, -1)
+                // NEW-P6-016: Use ISO week fields instead of Calendar.WEEK_OF_YEAR,
+                // which is locale-dependent.  Converting to java.time.LocalDate for
+                // ISO-aware week arithmetic ensures consistent week boundaries.
+                val zone = java.time.ZoneId.systemDefault()
+                val anchorDayOfWeek = java.time.Instant.ofEpochMilli(anchorDate)
+                    .atZone(zone).toLocalDate().dayOfWeek
+                var evalDate = java.time.Instant.ofEpochMilli(startOfDay)
+                    .atZone(zone).toLocalDate()
+                while (evalDate.dayOfWeek != anchorDayOfWeek) {
+                    evalDate = evalDate.minusDays(1)
                 }
-                val start = cal.timeInMillis
-                cal.add(Calendar.WEEK_OF_YEAR, 1)
-                PeriodRange(start, cal.timeInMillis)
+                val start = evalDate.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = evalDate.plusWeeks(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                PeriodRange(start, end)
             }
             BudgetPeriod.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)

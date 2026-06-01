@@ -88,10 +88,12 @@ class SpendingPaceCalculator @Inject constructor(
         )
 
         val hasBaseline = baselineDailyRate > 0.0
+        // NEW-P6-013: Return -1f (sentinel) instead of 0f when no baseline exists,
+        // because 0f is misleading — it would be indistinguishable from a true 0% pace.
         val pacePercentage = if (hasBaseline) {
             (currentDailyRate / baselineDailyRate * 100).toFloat()
         } else {
-            0f
+            -1f
         }
 
         Timber.tag("SpendingPaceCalculator").d(

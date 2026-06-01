@@ -9,7 +9,11 @@ import com.yourname.expensetracker.data.database.entity.toRecurringPattern
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.TransactionTypeFilter
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
@@ -68,7 +72,13 @@ class CashFlowCalculator @Inject constructor(
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val currencyConverter: CurrencyConverter,
-    private val databaseReadBarrier: DatabaseReadBarrier
+    private val databaseReadBarrier: DatabaseReadBarrier,
+    /**
+     * P6-P1-11: Canonical normalizer for multi-currency amount aggregation.
+     * Replaces ad-hoc inline conversion loops with proper failure tracking
+     * and consistent rate-basis selection.
+     */
+    private val normalizationEngine: MoneyNormalizationEngine
 ) {
 
     /**
@@ -340,38 +350,34 @@ class CashFlowCalculator @Inject constructor(
                 deduplicatedPredicted.add(pattern)
             }
 
-            // Calculate ending balance — normalize to home currency
-            var dayIncome = 0.0
-            var conversionFailures = 0
-            for (inc in incomeList) {
-                if (inc.currency.equals(homeCurrency, ignoreCase = true)) {
-                    dayIncome += inc.effectiveAmount
-                } else {
-                    val converted = currencyConverter.convertAsOf(inc.effectiveAmount, inc.currency, homeCurrency, inc.date)
-                    if (converted != null) {
-                        dayIncome += converted.convertedAmount
-                    } else {
-                        conversionFailures++
-                    }
-                }
-            }
-            
-            var dayExpensesTotal = 0.0
-            for (exp in expenseList) {
-                if (exp.currency.equals(homeCurrency, ignoreCase = true)) {
-                    dayExpensesTotal += exp.effectiveAmount
-                } else {
-                    val converted = currencyConverter.convertAsOf(exp.effectiveAmount, exp.currency, homeCurrency, exp.date)
-                    if (converted != null) {
-                        dayExpensesTotal += converted.convertedAmount
-                    } else {
-                        conversionFailures++
-                    }
-                }
-            }
+            // P6-P1-11: Normalize multi-currency amounts via MoneyNormalizationEngine
+            // instead of ad-hoc inline conversion loops. This ensures consistent
+            // rate-basis selection (TRANSACTION_DATE), proper failure tracking,
+            // and canonical metadata propagation.
+            val incomeAggregate = normalizationEngine.aggregateExpenses(
+                expenses = incomeList,
+                homeCurrency = CurrencyCode(homeCurrency),
+                rateBasis = RateBasis.TRANSACTION_DATE,
+                transactionTypeFilter = TransactionTypeFilter.ALL_TYPES
+            )
+            var dayIncome = incomeAggregate.displayAmount
+            var conversionFailures = incomeAggregate.failedTransactionCount
+
+            val expenseAggregate = normalizationEngine.aggregateExpenses(
+                expenses = expenseList,
+                homeCurrency = CurrencyCode(homeCurrency),
+                rateBasis = RateBasis.TRANSACTION_DATE,
+                transactionTypeFilter = TransactionTypeFilter.ALL_TYPES
+            )
+            var dayExpensesTotal = expenseAggregate.displayAmount
+            conversionFailures += expenseAggregate.failedTransactionCount
+            // NEW-P6-015: Direction check for predicted recurring patterns.
+            // Income-type rules contribute positively to the balance; expense-type
+            // rules are subtracted.  Currently all manual patterns (id != null) are
+            // expenses; support for income patterns will be added in a future change.
             for (recurring in deduplicatedPredicted) {
-                if (recurring.currency.equals(homeCurrency, ignoreCase = true)) {
-                    dayExpensesTotal += recurring.averageAmount
+                val convertedAmount = if (recurring.currency.equals(homeCurrency, ignoreCase = true)) {
+                    recurring.averageAmount
                 } else {
                     // CURR-70F-12: Use FORECAST_DATE basis for predicted recurring items
                     val outcome = currencyConverter.convertOutcome(
@@ -384,10 +390,17 @@ class CashFlowCalculator @Inject constructor(
                     )
                     when (outcome) {
                         is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted ->
-                            dayExpensesTotal += outcome.convertedAmount
-                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed ->
+                            outcome.convertedAmount
+                        is com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed -> {
                             conversionFailures++
+                            continue
+                        }
                     }
+                }
+                if (isIncomePattern(recurring)) {
+                    dayIncome += convertedAmount
+                } else {
+                    dayExpensesTotal += convertedAmount
                 }
             }
 
@@ -595,6 +608,26 @@ class CashFlowCalculator @Inject constructor(
             }
         }
         return dueDates
+    }
+
+    /**
+     * NEW-P6-015: Determines whether a [RecurringPattern] represents income (true)
+     * or an expense (false).
+     *
+     * Currently all manual patterns (id != null) correspond to [ManualRecurringExpense]
+     * rows which are explicitly created by the user as recurring expenses, so they are
+     * always classified as expense.  Detected-only patterns (id == null) are assumed
+     * expense by default.
+     *
+     * When income-specific recurring rules/occurrences are introduced (e.g. via
+     * [com.yourname.expensetracker.domain.income.RecurringIncomeTracker]), this
+     * method should be updated to inspect the pattern's source type or a dedicated
+     * direction/transactionType field.
+     */
+    private fun isIncomePattern(pattern: com.yourname.expensetracker.domain.model.RecurringPattern): Boolean {
+        // TODO: Support income recurring patterns — inspect pattern attributes
+        //       (e.g. source type or new transactionType field) when available.
+        return false
     }
 
     companion object {
