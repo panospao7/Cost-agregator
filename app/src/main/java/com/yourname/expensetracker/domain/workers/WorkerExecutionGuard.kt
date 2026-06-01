@@ -171,13 +171,32 @@ class WorkerExecutionGuard @Inject constructor(
         }
     }
 
+    /**
+     * P9 (NEW-P9-013): The read-only path (checking if writes are allowed) is
+     * wrapped in try-catch. If an exception occurs, log and fail-safe by
+     * throwing a [kotlinx.coroutines.CancellationException] to stop the worker
+     * rather than allowing it to proceed with an unknown barrier state.
+     */
     suspend fun checkpoint(operation: String) {
         if (leaseRegistry.isStopRequested()) {
             throw kotlinx.coroutines.CancellationException(
                 "Worker cancelled at checkpoint '$operation' — maintenance stop requested"
             )
         }
-        writeBarrier.checkWritesAllowed(operation)
+        try {
+            writeBarrier.checkWritesAllowed(operation)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w(e, "Checkpoint '$operation' failed — blocking writes")
+            diagnosticSink.recordBlockedOperation(
+                operation,
+                restoreMaintenanceMode.currentMode(),
+                "P9"
+            )
+            throw kotlinx.coroutines.CancellationException(
+                "Writes blocked at checkpoint '$operation': ${e.message}"
+            )
+        }
         yield()
     }
 

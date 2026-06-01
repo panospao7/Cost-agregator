@@ -190,7 +190,7 @@ Full source: `PIPELINE_5_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P5-001 | P0 | `previousMonthAggregate` always null — dead feature | Bug | Dashboard loads previous month for month-over-month comparison (P5-PR1) | ✅ FIXED (P5-PR1) |
 | NEW-P5-002 | P1 | Division by zero risk in `projectedTotal` | Bug | Guard added for daysElapsed=0 (P5-PR1) | ✅ FIXED (P5-PR1) |
 | NEW-P5-003 | P1 | Deposit filter includes not-mine items | Bug | Filter too broad for deposit aggregation | 🔴 OPEN |
-| NEW-P5-004 | P1 | `getAverageForPeriodType(DAY)` wrong denominator | Bug | Uses wrong period count | 🔴 OPEN |
+| NEW-P5-004 | P1 | `getAverageForPeriodType(DAY)` wrong denominator | Bug | Code uses `daysBetween(startMs, now).coerceAtLeast(1)` — verified FIXED (commit 37a0b83d) | ✅ FIXED |
 | NEW-P5-005 | P1 | `SynthesisEngine` sums planned expenses across currencies | Bug | Raw-sums without normalization | ✅ FIXED (U-PR3) |
 | NEW-P5-011 | P1 | `FinancialRunway` always shows 0 days | Bug | totalRemaining computed from budget/income (P5-PR1) | ✅ FIXED (P5-PR1) |
 

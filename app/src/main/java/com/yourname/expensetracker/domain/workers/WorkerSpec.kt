@@ -23,7 +23,7 @@ import androidx.work.NetworkType
  * @property oneShotPolicy How to handle existing one-shot work (used only when
  *   [repeatIntervalHours] is null). Defaults to [ExistingWorkPolicy.KEEP] so a
  *   one-shot is scheduled at most once unless overridden. A spec version bump
- *   always forces REPLACE regardless of this value.
+ *   always forces UPDATE regardless of this value.
  * @property backoffPolicy Retry backoff policy for transient failures.
  * @property backoffDelaySeconds Initial backoff delay in seconds.
  */
@@ -116,7 +116,12 @@ data class WorkerSpec(
                 name = "merchant_key_backfill",
                 repeatIntervalHours = null, // one-shot
                 oneShotPolicy = ExistingWorkPolicy.REPLACE,
-                constraints = Constraints.NONE,
+                // P9 (NEW-P9-014): Battery-not-low constraint prevents the worker
+                // from running during critical low-battery scenarios where the
+                // backfill's CPU and I/O load could cause ANR or battery drain.
+                constraints = Constraints.Builder()
+                    .setRequiresBatteryNotLow(true)
+                    .build(),
                 backoffPolicy = BackoffPolicy.EXPONENTIAL,
                 backoffDelaySeconds = 15
             )

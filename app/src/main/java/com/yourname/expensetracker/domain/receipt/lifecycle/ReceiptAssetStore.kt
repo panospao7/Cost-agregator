@@ -79,10 +79,10 @@ class ReceiptAssetStore @Inject constructor(
                 throw IllegalStateException("Persisted file is missing or empty: ${destFile.absolutePath}")
             }
 
-            Timber.d("Persisted receipt asset: %s -> %s (%d bytes)", sourceUri, destFile.absolutePath, destFile.length())
+            Timber.d("Persisted receipt asset: [REDACTED] -> [REDACTED] (%d bytes)", destFile.length())
             destFile.absolutePath
         }.onFailure { error ->
-            Timber.e(error, "Failed to persist receipt asset from %s", sourceUri)
+            Timber.e(error, "Failed to persist receipt asset from [REDACTED]")
         }
     }
 
@@ -108,7 +108,7 @@ class ReceiptAssetStore @Inject constructor(
             val hashBytes = digest.digest()
             hashBytes.joinToString("") { "%02x".format(it) }
         }.onFailure { error ->
-            Timber.e(error, "Failed to compute SHA-256 hash for %s", filePath)
+            Timber.e(error, "Failed to compute SHA-256 hash for [REDACTED]")
         }
     }
 
@@ -137,7 +137,7 @@ class ReceiptAssetStore @Inject constructor(
             val hashBytes = digest.digest()
             hashBytes.joinToString("") { "%02x".format(it) }
         }.onFailure { error ->
-            Timber.e(error, "Failed to compute SHA-256 hash for URI: %s", uri)
+            Timber.e(error, "Failed to compute SHA-256 hash for URI: [REDACTED]")
         }
     }
 
@@ -151,13 +151,13 @@ class ReceiptAssetStore @Inject constructor(
         return try {
             val result = File(filePath).delete()
             if (result) {
-                Timber.d("Deleted receipt asset: %s", filePath)
+                Timber.d("Deleted receipt asset: [REDACTED]")
             } else {
-                Timber.w("Failed to delete receipt asset (may not exist): %s", filePath)
+                Timber.w("Failed to delete receipt asset (may not exist): [REDACTED]")
             }
             result
         } catch (e: Exception) {
-            Timber.e(e, "Error deleting receipt asset: %s", filePath)
+            Timber.e(e, "Error deleting receipt asset: [REDACTED]")
             false
         }
     }
@@ -218,13 +218,13 @@ class ReceiptAssetStore @Inject constructor(
                     val path = receipt.imagePath!!
                     val file = File(path)
                     if (!file.exists() || !file.isFile) {
-                        Timber.w("Backup manifest: receipt asset file missing: %s (receiptId=%d)", path, receipt.id)
+                        Timber.w("Backup manifest: receipt asset file missing: [REDACTED] (receiptId=%d)", receipt.id)
                         return@mapNotNull null
                     }
                     val fileHash = runCatching {
                         computeFileHashSync(path)
                     }.getOrElse { error ->
-                        Timber.w(error, "Backup manifest: hash computation failed for %s", path)
+                        Timber.w(error, "Backup manifest: hash computation failed for [REDACTED]")
                         null
                     }
                     val mimeType = URLConnection.guessContentTypeFromName(file.name)

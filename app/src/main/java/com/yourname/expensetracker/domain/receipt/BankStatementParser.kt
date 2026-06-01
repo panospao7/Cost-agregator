@@ -520,7 +520,7 @@ class BankStatementParser @Inject constructor(
             confidence = 0.95f,
             date = timestamp
         )
-        if (BuildConfig.DEBUG) Timber.d("RevolutParser: Successfully parsed -> ${tx.merchant} | $absAmount | ${tx.type}")
+        if (BuildConfig.DEBUG) Timber.d("RevolutParser: Successfully parsed -> [REDACTED] | [REDACTED] | [REDACTED]")
         return tx
     }
 

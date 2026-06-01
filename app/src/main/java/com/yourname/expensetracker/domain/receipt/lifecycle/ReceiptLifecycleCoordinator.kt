@@ -1336,7 +1336,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                             oldStatus = "DELETED",
                             newStatus = null,
                             actor = "system:coordinator",
-                            message = "Failed to delete asset file: $path",
+                            message = "Failed to delete asset file: [REDACTED]",
                             metadata = null,
                             errorDetails = e.message?.take(500)
                         )

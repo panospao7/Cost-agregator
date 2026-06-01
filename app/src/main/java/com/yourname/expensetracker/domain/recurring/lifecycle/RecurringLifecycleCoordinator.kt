@@ -910,7 +910,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         occurredAt = now,
                         oldStatus = "CLAIMED",
                         newStatus = "CANCELLED",
-                        metadata = """{"deliveryId":$deliveryId,"reason":"$reason"}"""
+                        metadata = JSONObject().apply {
+                            put("deliveryId", deliveryId)
+                            put("reason", reason)
+                        }.toString()
                     )
                 )
             } catch (e: Exception) {
@@ -972,7 +975,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         occurredAt = now,
                         oldStatus = existing.status,
                         newStatus = status,
-                        metadata = """{"deliveryId":$deliveryId,"reason":"$reason"}"""
+                        metadata = JSONObject().apply {
+                            put("deliveryId", deliveryId)
+                            put("reason", reason)
+                        }.toString()
                     )
                 )
             } catch (e: Exception) {

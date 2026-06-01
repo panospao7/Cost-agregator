@@ -23,8 +23,11 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
+import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -420,6 +423,7 @@ class ReceiptLifecycleBugFixesTest {
         assertTrue("Expected success despite homeCurrency hang, got $result", result.isSuccess)
         val savedReceipt = result.getOrNull()
         assertNotNull("Saved receipt should not be null", savedReceipt)
+        assertEquals("XXX", savedReceipt?.currency) // Verify fallback currency is used
     }
 
     /**

@@ -108,7 +108,10 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                 occurredAt = now,
                                 oldStatus = existing.status,
                                 newStatus = entity.status,
-                                metadata = "{\"oldStatus\":\"${existing.status}\",\"newStatus\":\"${entity.status}\"}"
+                                metadata = JSONObject().apply {
+                                    put("oldStatus", existing.status)
+                                    put("newStatus", entity.status)
+                                }.toString()
                             )
                         )
                         finalStatus = entity.status

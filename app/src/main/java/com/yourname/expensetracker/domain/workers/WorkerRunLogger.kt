@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.workers
 
+import android.util.Log
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
@@ -54,27 +55,47 @@ class WorkerRunLoggerImpl @Inject constructor(
         private val dao: BackgroundJobRunDao
     ) : WorkerRunHandle {
 
+        /**
+         * P9 (NEW-P9-015): Idempotency guard — once [complete] has been called
+         * (via any terminal method), all subsequent invocations are no-ops.
+         * This prevents duplicate database writes when the guard's catch blocks
+         * race with a [NonCancellable] terminal update.
+         */
+        private var completed = false
+
         override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?) {
+            if (completed) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate success"); return }
+            completed = true
             update("SUCCESS", rowsScanned = rowsScanned, rowsUpdated = rowsUpdated, notificationsSent = notificationsSent, statusReason = message)
         }
 
         override suspend fun skipped(reason: String) {
+            if (completed) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate skipped"); return }
+            completed = true
             update("SKIPPED", statusReason = reason)
         }
 
         override suspend fun retry(reason: String, error: Throwable?) {
+            if (completed) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate retry"); return }
+            completed = true
             update("RETRY", retryReason = reason, errorMessage = sanitizer.sanitizeExceptionMessage(error?.message), errorClass = error?.javaClass?.simpleName)
         }
 
         override suspend fun failure(reason: String, error: Throwable?) {
+            if (completed) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate failure"); return }
+            completed = true
             update("FAILED", errorMessage = sanitizer.sanitizeExceptionMessage(error?.let { "$reason: ${it.message}" } ?: reason), errorClass = error?.javaClass?.simpleName)
         }
 
         override suspend fun cancelled(reason: String) {
+            if (completed) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate cancelled"); return }
+            completed = true
             update("CANCELLED", statusReason = reason, cancellationReason = reason)
         }
 
         override suspend fun staleAborted() {
+            if (completed) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate staleAborted"); return }
+            completed = true
             update("STALE_ABORTED")
         }
 

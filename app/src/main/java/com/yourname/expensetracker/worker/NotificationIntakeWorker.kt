@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.service.NotificationFilter
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -28,7 +29,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
     private val repository: NotificationRepository,
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider,
-    private val crypto: NotificationTransientPayloadCrypto
+    private val crypto: NotificationTransientPayloadCrypto,
+    private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -51,6 +53,10 @@ class NotificationIntakeWorker @AssistedInject constructor(
             Timber.d("IntakeWorker: writes blocked, retrying intakeId=$intakeId")
             return Result.retry()
         }
+
+        // P9 (NEW-P9-008): Checkpoint to observe maintenance stop requests and
+        // write-barrier status before beginning the pipeline.
+        executionGuard.checkpoint("notification_intake")
 
         // PR 2: Enforce maxAttempts
         if (intake.attempts >= intake.maxAttempts) {
