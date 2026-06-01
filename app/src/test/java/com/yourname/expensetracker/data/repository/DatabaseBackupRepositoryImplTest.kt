@@ -19,6 +19,9 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.mockk.verifyOrder
+import com.yourname.expensetracker.data.backup.RestoreJournal
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -64,6 +67,8 @@ class DatabaseBackupRepositoryImplTest {
     private val backupEncryptionService = mockk<BackupEncryptionService>(relaxed = true)
     private val exportAnonymizer = mockk<ExportAnonymizer>(relaxed = true)
     private val secureKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+    private val mockRestoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+    private val mockRestoreJournal = mockk<RestoreJournal>(relaxed = true)
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var repository: DatabaseBackupRepositoryImpl
@@ -146,6 +151,35 @@ class DatabaseBackupRepositoryImplTest {
         assertEquals(3, countRows(dbFile, "expenses"))
         assertEquals(2, countRows(dbFile, "categories"))
         assertEquals(4, countRows(dbFile, "merchant_categories"))
+    }
+
+    @Test
+    fun `journal created before maintenance mode entry during import`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_backup.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            expenseCount = 3,
+            categoryCount = 2,
+            merchantCount = 4,
+            pendingCount = 1,
+            budgetCount = 2
+        )
+
+        repository.importDatabase(sourceBackup)
+
+        // P7-P0-01: Verify journal is created before maintenance mode enters RESTORE_PREPARING
+        verifyOrder {
+            mockRestoreJournal.beginJournal(any(), any(), any())
+            mockRestoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+        }
     }
 
     @Test
@@ -542,8 +576,8 @@ class DatabaseBackupRepositoryImplTest {
             exportAnonymizer = exportAnonymizer,
             secureKeyStorage = secureKeyStorage,
             receiptAssetStore = mockk(relaxed = true),
-            restoreMaintenanceMode = mockk(relaxed = true),
-            restoreJournal = mockk(relaxed = true),
+            restoreMaintenanceMode = mockRestoreMaintenanceMode,
+            restoreJournal = mockRestoreJournal,
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier
         )

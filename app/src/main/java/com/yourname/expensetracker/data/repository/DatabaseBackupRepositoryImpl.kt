@@ -1309,6 +1309,23 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         // DDL-512-13: wrap with operation run recorder for uniform diagnostic trail
         val run = operationRunRecorder.start("RESTORE_LEGACY_DB", actor = "user")
 
+        // P7-P0-01: Journal created before maintenance mode to prevent crash-window where mode is active but no journal exists for recovery
+        val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
+        val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
+        val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
+        val stagedDbName = "$IMPORT_STAGING_PREFIX${System.currentTimeMillis()}"
+        val stagedDbFile = context.getDatabasePath(stagedDbName)
+        val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
+        val stagedDbShmFile = File(stagedDbFile.parentFile, "$stagedDbName-shm")
+
+        // Create restore journal — crash-safe state tracking identical to restoreCostBackup
+        var journalEntry = restoreJournal.beginJournal(
+            sourceBackupPath = sourceFile.absolutePath,
+            stagedDbPath = stagedDbFile.absolutePath,
+            liveDbPath = liveDbFile.absolutePath
+        )
+        Timber.d("Legacy import journal created: %s", journalEntry.operationId)
+
         // Enter maintenance mode + drain workers — blocks all concurrent writes during the swap
         maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
         "importDatabase",
@@ -1367,21 +1384,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
 
             Timber.d("Source validated: ${sourceSummary.transactionCount} transactions, ${sourceSummary.categoryCount} categories, schema v${sourceSummary.schemaVersion}")
-            val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
-            val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
-            val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
-            val stagedDbName = "$IMPORT_STAGING_PREFIX${System.currentTimeMillis()}"
-            val stagedDbFile = context.getDatabasePath(stagedDbName)
-            val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
-            val stagedDbShmFile = File(stagedDbFile.parentFile, "$stagedDbName-shm")
-
-            // Create restore journal — crash-safe state tracking identical to restoreCostBackup
-            var journalEntry = restoreJournal.beginJournal(
-                sourceBackupPath = sourceFile.absolutePath,
-                stagedDbPath = stagedDbFile.absolutePath,
-                liveDbPath = liveDbFile.absolutePath
-            )
-            Timber.d("Legacy import journal created: %s", journalEntry.operationId)
 
             var destinationFilesMutated = false
             var importSucceeded = false
