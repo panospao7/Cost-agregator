@@ -732,6 +732,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
             val manifest = extractionResult.manifest
+            // P7-P1-04: persist tempDir path for crash-recoverable asset restore
+            journalEntry = journalEntry.copy(extractTempDirPath = tempDir.absolutePath).also {
+                restoreJournal.writeJournal(it)
+            }
             journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.STAGED)
             restoreEvents.event("BUNDLE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
@@ -975,6 +979,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         journalEntry,
                         RestoreJournal.JournalState.ASSETS_RESTORING
                     )
+                    restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.ASSETS_RESTORING)
 
                     val receiptWarnings = if (tempDir.exists()) {
                         restoreReceiptAssets(tempDir, manifest, freshDb, journalEntry, restoreEvents)
@@ -1138,6 +1143,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         val dao = db.scannedReceiptDao()
         var restoredCount = 0
 
+        // P7-P1-04: Use a mutable local var so pre-populated PENDING tasks are tracked.
+        var currentJournalEntry = journalEntry
+
         // DDL-512-09: emit ASSETS_RESTORING event
         restoreEvents?.run {
             runCatching {
@@ -1148,6 +1156,28 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         .put("count", receiptFiles.size)
                         .build()
                 )
+            }
+        }
+
+        // P7-P1-04: Pre-populate PENDING tasks so every receipt file is tracked in the
+        // journal before any copy/DB work begins. A crash mid-loop will leave a journal
+        // that shows which tasks were still PENDING and can be resumed.
+        if (currentJournalEntry != null) {
+            val pendingTasks = receiptFiles.mapNotNull { assetFile ->
+                val receiptId = assetFile.nameWithoutExtension
+                    .substringBefore("_")
+                    .toLongOrNull()
+                if (receiptId != null && receiptId > 0L) {
+                    RestoreJournal.AssetRestoreTask(
+                        receiptId = receiptId,
+                        sourceRelativePath = assetFile.name,
+                        status = RestoreJournal.AssetRestoreStatus.PENDING
+                    )
+                } else null
+            }
+            if (pendingTasks.isNotEmpty()) {
+                currentJournalEntry = currentJournalEntry.copy(assetTasks = pendingTasks)
+                runCatching { restoreJournal.writeJournal(currentJournalEntry) }
             }
         }
 
@@ -1212,14 +1242,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
                 }
                 // Update journal ledger: mark task COMPLETED
-                if (journalEntry != null) {
-                    val updatedTasks = journalEntry.assetTasks.map { t ->
+                if (currentJournalEntry != null) {
+                    val updatedTasks = currentJournalEntry.assetTasks.map { t ->
                         if (t.receiptId == receiptId) t.copy(
                             status = RestoreJournal.AssetRestoreStatus.COMPLETED,
                             targetPath = finalFile.absolutePath
                         ) else t
                     }
-                    runCatching { restoreJournal.writeJournal(journalEntry.copy(assetTasks = updatedTasks)) }
+                    currentJournalEntry = currentJournalEntry.copy(assetTasks = updatedTasks)
+                    runCatching { restoreJournal.writeJournal(currentJournalEntry) }
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -1244,14 +1275,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
                 }
                 // Update journal ledger: mark task FAILED
-                if (journalEntry != null && receiptId != null) {
-                    val updatedTasks = journalEntry.assetTasks.map { t ->
+                if (currentJournalEntry != null && receiptId != null) {
+                    val updatedTasks = currentJournalEntry.assetTasks.map { t ->
                         if (t.receiptId == receiptId) t.copy(
                             status = RestoreJournal.AssetRestoreStatus.FAILED,
                             error = e.message
                         ) else t
                     }
-                    runCatching { restoreJournal.writeJournal(journalEntry.copy(assetTasks = updatedTasks)) }
+                    currentJournalEntry = currentJournalEntry.copy(assetTasks = updatedTasks)
+                    runCatching { restoreJournal.writeJournal(currentJournalEntry) }
                 }
             }
         }

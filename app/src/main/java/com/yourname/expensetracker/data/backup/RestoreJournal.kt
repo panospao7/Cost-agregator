@@ -56,7 +56,9 @@ class RestoreJournal @Inject constructor(
         val safetyBackupPath: String? = null,
         val liveDbPath: String? = null,
         val error: String? = null,
-        val assetTasks: List<AssetRestoreTask> = emptyList()
+        val assetTasks: List<AssetRestoreTask> = emptyList(),
+        /** P7-P1-04: absolute path to the temp directory where the costbackup bundle was extracted. */
+        val extractTempDirPath: String? = null
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("operationId", operationId)
@@ -73,6 +75,7 @@ class RestoreJournal @Inject constructor(
             put("_stagedDbPath", stagedDbPath ?: JSONObject.NULL)
             put("_safetyBackupPath", safetyBackupPath ?: JSONObject.NULL)
             put("_liveDbPath", liveDbPath ?: JSONObject.NULL)
+            put("_extractTempDirPath", extractTempDirPath ?: JSONObject.NULL)
             put("error", error ?: JSONObject.NULL)
             put("assetTasks", org.json.JSONArray().also { arr ->
                 assetTasks.forEach { t ->
@@ -91,7 +94,7 @@ class RestoreJournal @Inject constructor(
         /** DDL-A8-06: privacy-safe version — strips internal path fields before debug/export. */
         fun toDiagnosticsJson(): JSONObject {
             val json = toJson()
-            listOf("_sourceBackupPath", "_stagedDbPath", "_safetyBackupPath", "_liveDbPath").forEach { json.remove(it) }
+            listOf("_sourceBackupPath", "_stagedDbPath", "_safetyBackupPath", "_liveDbPath", "_extractTempDirPath").forEach { json.remove(it) }
             return json
         }
 
@@ -118,6 +121,8 @@ class RestoreJournal @Inject constructor(
                     ?: json.optString("liveDbPath", null)?.takeIf { it != "null" }),
                 error = json.optString("error", null)
                     ?.takeIf { it != "null" },
+                extractTempDirPath = json.optString("_extractTempDirPath")
+                    .takeIf { it.isNotEmpty() && it != "null" },
                 assetTasks = json.optJSONArray("assetTasks")?.let { arr ->
                     (0 until arr.length()).mapNotNull { i ->
                         runCatching {
@@ -660,6 +665,9 @@ class RestoreJournal @Inject constructor(
         /** Non-destructive state (PREPARING, STAGED, FAILED) — staging cleaned, normal startup. */
         data class CleanedNonDestructive(val entry: JournalEntry) : RecoveryResult()
 
+        /** P7-P1-04: ASSETS_RESTORING state — DB has been swapped but assets are incomplete. Journal must be preserved for recovery. */
+        data class AssetsIncomplete(val entry: JournalEntry) : RecoveryResult()
+
         /** Destructive state during swap — recovery attempted. */
         data class RecoveredFromSwap(val entry: JournalEntry, val success: Boolean) : RecoveryResult()
 
@@ -691,13 +699,18 @@ class RestoreJournal @Inject constructor(
                 RecoveryResult.CleanedNonDestructive(entry)
             }
 
-            JournalState.SAFETY_BACKUP_CREATED,
-            JournalState.ASSETS_RESTORING -> {
+            JournalState.SAFETY_BACKUP_CREATED -> {
                 // Safety backup was created but swap didn't start.
                 // Clean up staging, keep safety backup, delete journal.
                 cleanStagingFiles(entry)
                 deleteJournal()
                 RecoveryResult.CleanedNonDestructive(entry)
+            }
+
+            JournalState.ASSETS_RESTORING -> {
+                // DB has already been swapped — journal entry is incomplete.
+                // Preserve journal for crash recovery; do NOT clean staging or delete journal.
+                RecoveryResult.AssetsIncomplete(entry)
             }
 
             JournalState.SWAPPING,

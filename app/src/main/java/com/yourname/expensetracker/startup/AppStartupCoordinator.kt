@@ -66,6 +66,14 @@ class AppStartupCoordinator @Inject constructor(
                 Timber.w("Startup: found completed restore journal, cleaning up")
             }
 
+            is RestoreJournal.RecoveryResult.AssetsIncomplete -> {
+                Timber.w("Restore journal in ASSETS_RESTORING state — DB has been swapped but assets may be incomplete")
+                // Best-effort: keep maintenance mode active, log warning
+                // Asset recovery will be handled by periodic cleanup or user-initiated restore
+                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
+                Timber.w("Restore incomplete — user should verify receipt attachments")
+            }
+
             is RestoreJournal.RecoveryResult.CleanedNonDestructive -> {
                 val state = recovery.entry.state
                 Timber.w("Startup: cleaned up from non-destructive restore state: %s", state)
