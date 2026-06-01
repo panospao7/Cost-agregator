@@ -30,9 +30,10 @@ class BackupVerifierManifestTest {
         val required = BackupVerifier.requiredManifestTables()
         assertTrue("expenses must be required", required.contains("expenses"))
         assertTrue("budgets must be required", required.contains("budgets"))
-        // Tier 3 optional tables must NOT be required.
+        // Tier 1 exact tables must be required; Tier 3 optional tables must NOT be required.
+        assertTrue("privacy_audit_events is now Tier 1 required", required.contains("privacy_audit_events"))
         assertFalse("exchange_rates is optional", required.contains("exchange_rates"))
-        assertFalse("privacy_audit_events tier handled separately", required.contains("background_job_runs"))
+        assertFalse("background_job_runs is optional", required.contains("background_job_runs"))
         // Every required table is Tier 1 exact.
         required.forEach {
             assertEquals(

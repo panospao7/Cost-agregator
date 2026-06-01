@@ -40,8 +40,8 @@ object BackupVerifier {
      * All 57 entity table names with their verification tier.
      */
     private val TABLE_TIERS: Map<String, VerificationTier> = mapOf(
-        // ── Tier 1: Exact row count required (37 total) ──
-        // 30 listed here + 7 event/link tables grouped under the Tier 2 comment
+        // ── Tier 1: Exact row count required (38 total) ──
+        // 31 listed here + 7 event/link tables grouped under the Tier 2 comment
         // below (transaction_events, receipt_events, receipt_expense_links,
         // recurring_occurrences, recurring_reminder_deliveries,
         // recurring_lifecycle_events, warranty_reminder_deliveries) which are also
@@ -77,6 +77,7 @@ object BackupVerifier {
         "budget_adjustment_recommendations" to VerificationTier.TIER_1_EXACT,
         "budget_adjustment_events"       to VerificationTier.TIER_1_EXACT,
         "spending_challenges"            to VerificationTier.TIER_1_EXACT,
+        "privacy_audit_events"           to VerificationTier.TIER_1_EXACT,
 
         // ── Tier 2: Validity check (10 tables) — followed by 7 TIER_1_EXACT
         //    event/link tables (see Tier 1 note above) ──
@@ -100,7 +101,7 @@ object BackupVerifier {
         // recurring_reminder_deliveries; exact-count verified so it survives restore.
         "warranty_reminder_deliveries"   to VerificationTier.TIER_1_EXACT,
 
-        // ── Tier 3: Optional (10 tables) ──
+        // ── Tier 3: Optional (9 tables) ──
         "exchange_rates"                 to VerificationTier.TIER_3_OPTIONAL,
         "anomaly_alerts"                 to VerificationTier.TIER_3_OPTIONAL,
         "prompt_states"                  to VerificationTier.TIER_3_OPTIONAL,
@@ -109,7 +110,6 @@ object BackupVerifier {
         "spending_personality_profiles"  to VerificationTier.TIER_3_OPTIONAL,
         "stress_forecast_snapshots"      to VerificationTier.TIER_3_OPTIONAL,
         "email_receipt_sources"          to VerificationTier.TIER_3_OPTIONAL,
-        "privacy_audit_events"           to VerificationTier.TIER_3_OPTIONAL,
         "background_job_runs"            to VerificationTier.TIER_3_OPTIONAL
     )
 
