@@ -6321,6 +6321,8 @@ val MIGRATION_102_103 = object : androidx.room.migration.Migration(102, 103) {
 val MIGRATION_103_104 = object : androidx.room.migration.Migration(103, 104) {
     override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER DEFAULT NULL")
+        database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT DEFAULT NULL")
+        database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT DEFAULT NULL")
         database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER DEFAULT NULL")
     }
 }
@@ -6549,6 +6551,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                 // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
@@ -6740,6 +6743,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                 // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
@@ -6860,6 +6864,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                 // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
@@ -7058,6 +7063,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                 // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
@@ -7153,6 +7159,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
@@ -7317,6 +7324,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                 // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN parseResult TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
                 try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
