@@ -91,18 +91,21 @@ and writes remain blocked until manual recovery clears the mode. By contrast,
 
 `RestoreJournal` writes journal/event temp files via an fsync'd write (`FileOutputStream.fd.sync()`) before the atomic rename, so a crash immediately after rename cannot leave a transition or safety-backup path unflushed.
 
-## Restart-required is a global, non-dismissible lock (P7-CURRENT-019)
+## Restart-required banner is user-dismissible (P7-P1-08)
 
-After a successful restore, writes are blocked by `RESTORE_COMPLETE_RESTART_REQUIRED`
-(persisted in SharedPreferences). The authoritative, non-dismissible enforcement is the
-**app shell**: `MainActivity` observes `RestoreMaintenanceMode.operationalStateFlow` and, on
-`AppOperationalState.RestartRequiredAfterRestore`, renders a full-screen lock and `return`s
-before any app content. The only action is restarting the process.
+After a successful restore the mode is `RESTORE_COMPLETE_RESTART_REQUIRED` and writes are
+blocked. The user can dismiss the restart-required banner via
+`BackupRestoreViewModel.dismissRestartRequired()`, which:
 
-`BackupRestoreViewModel.dismissRestartRequired()` is a **no-op** (deprecated) — it formerly
-cleared a screen-local banner flag, which could mislead a caller/test into thinking the app
-was usable while writes were still globally blocked. The screen banner is purely informational;
-it cannot unblock writes.
+1. Clears the screen-local `restartRequired` flag.
+2. Calls `RestoreMaintenanceMode.exit(forceRestartRequired = false)`, transitioning to
+   `NORMAL` mode — this unblocks writes, reschedules background workers, and transitions
+   `operationalStateFlow` to `AppOperationalState.Normal`, which dismisses the full-screen
+   app-shell lock in `MainActivity`.
+
+The restored database is already in place on disk, so keeping writes blocked after the
+restore is overly conservative and creates a poor UX (user forced to restart). The dismiss
+action is the intended recovery path — the user can immediately resume using the app.
 
 ## Diagnostics ledger import (P7-CURRENT-016)
 

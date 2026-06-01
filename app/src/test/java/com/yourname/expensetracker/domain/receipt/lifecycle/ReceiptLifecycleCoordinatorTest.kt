@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner
 import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
@@ -124,7 +125,8 @@ class ReceiptLifecycleCoordinatorTest {
             receiptSideEffectPlanner = receiptSideEffectPlanner,
             pendingReviewDao = mockk(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
-            receiptInsertResolver = receiptInsertResolver
+            receiptInsertResolver = receiptInsertResolver,
+            effectiveCloudAiPolicyResolver = mockk(relaxed = true)
         )
     }
 
@@ -449,5 +451,39 @@ class ReceiptLifecycleCoordinatorTest {
         val needsReview = result as EmailReceiptProcessResult.NeedsReview
         kotlin.test.assertEquals("incomplete_parse", needsReview.reason)
         kotlin.test.assertEquals(1L, needsReview.receiptId)
+    }
+
+    // P11-P1-08: high-confidence email above the auto-expense threshold must
+    // create an approved expense directly (not route to NeedsReview).
+    @Test
+    fun `high_confidence_email_creates_expense_directly`() = runTest {
+        val emailData = EmailReceiptData(
+            messageId = "", from = "receipt@amazon.com", subject = "Order",
+            body = "Your order", receivedAt = now,
+            amount = 49.99, merchant = "Amazon", currency = "USD",
+            date = now, items = null,
+            confidence = 0.95  // well above EMAIL_AUTO_EXPENSE_MIN_CONFIDENCE (0.75)
+        )
+        coEvery { scannedReceiptDao.insert(any()) } returns 2L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { scannedReceiptDao.getById(2L) } returns ScannedReceipt(
+            id = 2L, imagePath = null, rawOcrText = "Your order",
+            parsedTotal = 49.99, parsedMerchant = "Amazon", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 0.95f
+        )
+
+        val result = coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your order",
+            sender = "receipt@amazon.com",
+            subject = "Order",
+            messageId = "",
+            provider = "amazon"
+        )
+
+        assertTrue("Expected Success for high-confidence parse, got $result", result is EmailReceiptProcessResult.Success)
+        val success = result as EmailReceiptProcessResult.Success
+        kotlin.test.assertEquals(2L, success.receiptId)
     }
 }

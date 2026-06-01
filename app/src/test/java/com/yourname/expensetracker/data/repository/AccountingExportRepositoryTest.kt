@@ -12,6 +12,9 @@ import com.yourname.expensetracker.domain.export.AccountingExportPolicy
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -21,6 +24,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -46,6 +50,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var deterministicExpenseExportPager: DeterministicExpenseExportPager
     private lateinit var repository: AccountingExportRepository
+    private lateinit var privacyGate: PrivacyGate
 
     /** Temp directory used as a fake [Context.getCacheDir] for production-path tests. */
     private lateinit var tempCacheDir: File
@@ -55,6 +60,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         super.setUp()
         expenseRepository = mockk(relaxed = true)
         deterministicExpenseExportPager = DeterministicExpenseExportPager(expenseRepository)
+        privacyGate = mockk(relaxed = true)
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
         repository = AccountingExportRepository(
             categoryRepository = categoryRepository,
@@ -69,7 +76,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
                 currencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true),
             ),
             timeProvider = mockk<TimeProvider>(relaxed = true),
-            readBarrier = mockk(relaxed = true)
+            readBarrier = mockk(relaxed = true),
+            privacyGate = privacyGate
         )
 
         tempCacheDir = createTempDir("export_test_cache")
@@ -754,6 +762,39 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             )
         }
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
+    }
+
+    // ── P12-P1-05: Privacy gate ──────────────────────────────────────────────
+
+    /**
+     * Verifies that when the privacy gate denies EXPENSE_EXPORT, the accounting
+     * export fails with a descriptive error message and does not touch the
+     * repository or write any file.
+     */
+    @Test
+    fun `exportExpenses fails when privacy gate denies EXPENSE_EXPORT`() = runTest {
+        val denial = PrivacyDecision.Denied("Export blocked by admin policy")
+        coEvery { privacyGate.check(PrivacyCapability.EXPENSE_EXPORT, any()) } returns denial
+
+        val result = repository.exportExpenses(
+            fakeContext(),
+            ms("2026-03-01"),
+            ms("2026-04-01"),
+            ExportFormat.XERO_CSV
+        )
+
+        assertFalse("Export must be denied", result.success)
+        assertTrue(
+            "Error message must reference privacy denial",
+            result.errorMessage.orEmpty().contains("privacy settings")
+        )
+        assertTrue(
+            "Error message must include the gate's reason",
+            result.errorMessage.orEmpty().contains("Export blocked by admin policy")
+        )
+        assertEquals(0, result.recordCount)
+        // No data should have been fetched
+        coVerify(exactly = 0) { expenseRepository.getExpensesBetweenForExportKeyset(any(), any(), any(), any(), any()) }
     }
 
     private fun ms(date: String): Long =

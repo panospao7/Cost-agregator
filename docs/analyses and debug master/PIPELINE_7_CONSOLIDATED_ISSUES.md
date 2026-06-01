@@ -19,7 +19,7 @@
 | P7-P1-05 | P1 | Restore success does not prove dashboard/analytics equivalence | 📝 TODO ONLY | 📝 **TODO ONLY** | Verification checks table counts only, not semantic output equivalence |
 | P7-P1-06 | P1 | Privacy audit events optional in backup verification | 📝 TODO ONLY | 📝 **TODO ONLY** | `privacy_audit_events` classified Tier 3 optional; can be dropped silently |
 | P7-P1-07 | P1 | Worker pause/resume not fully spec-driven | ✅ FIXED | ✅ **FIXED** | `pauseAllWorkers()` and `scheduleAllWorkers()` both use DEFAULTS |
-| P7-P1-08 | P1 | Successful restore leaves app blocked; UI can dismiss warning | 📝 TODO ONLY | 📝 **TODO ONLY** | `dismissRestartRequired()` only clears UI; writes still blocked |
+| P7-P1-08 | P1 | Successful restore leaves app blocked; UI can dismiss warning | ✅ FIXED | ✅ **FIXED** | `dismissRestartRequired()` now clears UI AND exits maintenance mode, unblocking writes |
 
 ---
 
@@ -40,10 +40,10 @@
 
 | Status | Count |
 |--------|------:|
-| ✅ FIXED (old issues) | 2 |
-| 📝 TODO ONLY (old issues) | 8 |
+| ✅ FIXED (old issues) | 3 |
+| 📝 TODO ONLY (old issues) | 7 |
 | 🔴 OPEN (new issues) | 6 |
-| **Total open work** | **14** |
+| **Total open work** | **13** |
 
 ---
 
@@ -61,12 +61,11 @@
 7. **P7-P1-04** — Receipt asset restore not atomic with DB restore
 8. **P7-P1-05** — Restore success does not prove semantic equivalence
 9. **P7-P1-06** — Privacy audit events optional in backup verification
-10. **P7-P1-08** — Successful restore leaves app blocked; UI can dismiss warning
 
 ### P2 (should fix)
-11. **NEW-P7-003** — `enterCriticalRecoveryRequired` non-atomic two-commit
-12. **NEW-P7-004** — RestoreJournal `appendEvent` read-modify-write race
-13. **NEW-P7-005** — `CostbackupBundle.extract()` leaks FileInputStream
+10. **NEW-P7-003** — `enterCriticalRecoveryRequired` non-atomic two-commit
+11. **NEW-P7-004** — RestoreJournal `appendEvent` read-modify-write race
+12. **NEW-P7-005** — `CostbackupBundle.extract()` leaks FileInputStream
 
 ### P3 (cleanup)
-14. **NEW-P7-006** — `countRowsFromSourceTable` uses unquoted table name
+13. **NEW-P7-006** — `countRowsFromSourceTable` uses unquoted table name

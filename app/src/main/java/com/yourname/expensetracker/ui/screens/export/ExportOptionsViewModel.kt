@@ -561,6 +561,9 @@ class ExportOptionsViewModel @Inject constructor(
                         append(tx.exchangeRateUsed).append(',')
                         append(if (tx.isBusinessExpense) "true" else "false").append(',')
                         append(escapeCsv(tx.businessPurpose ?: "")).append(',')
+                        append(escapeCsv(tx.businessCategory ?: "")).append(',')
+                        append(escapeCsv(tx.businessProject ?: "")).append(',')
+                        append(if (tx.requiresReceipt) "true" else "false").append(',')
                         append(escapeCsv(tx.sourceLinksJson ?: "")).append('\n')
                     }
                     writer.append(line)
@@ -619,6 +622,13 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"businessPurpose\":")
                 if (tx.businessPurpose == null) append("null,")
                 else append("\"").append(escapeJson(tx.businessPurpose)).append("\",")
+                append("\"businessCategory\":")
+                if (tx.businessCategory == null) append("null,")
+                else append("\"").append(escapeJson(tx.businessCategory)).append("\",")
+                append("\"businessProject\":")
+                if (tx.businessProject == null) append("null,")
+                else append("\"").append(escapeJson(tx.businessProject)).append("\",")
+                append("\"requiresReceipt\":").append(if (tx.requiresReceipt) "true" else "false").append(',')
                 append("\"sourceLinks\":")
                 // P12-PR1 (NEW-P12-002): sourceLinksJson is already valid JSON — append raw, don't escape
                 if (tx.sourceLinksJson == null) append("null")
@@ -727,7 +737,8 @@ class ExportOptionsViewModel @Inject constructor(
                 val metadataLine = "# ExpenseTracker Export v2, rowCount=$rowCount, startDate=$startDate, endDate=$endDate\n"
                 writer.append(metadataLine)
                 preview.append(metadataLine)
-                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,IsBusinessExpense,BusinessPurpose,SourceLinks\n"
+                // P12-P1-06: Added BusinessCategory, BusinessProject, RequiresReceipt columns
+                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks\n"
                 writer.append(header)
                 preview.append(header)
             }

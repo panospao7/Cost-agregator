@@ -128,6 +128,20 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         private const val FALLBACK_CURRENCY = "XXX"  // ISO 4217 unknown currency — no longer "EUR"
 
         /**
+         * P3-PR2 / P3-P1-09: Batch import review confidence threshold.
+         * When a parsed receipt's confidence is below this threshold, a
+         * [PendingReview] is automatically created so the user can verify
+         * and correct the OCR/parse results before the receipt becomes
+         * actionable.  Receipts at or above the threshold are trusted
+         * enough to skip the review queue (unless the caller explicitly
+         * requests review via [ReceiptProcessingOptions.createReview]).
+         *
+         * Mirrors the email receipt threshold [EMAIL_AUTO_EXPENSE_MIN_CONFIDENCE]
+         * to keep behaviour consistent across ingestion paths.
+         */
+        private const val BATCH_REVIEW_CONFIDENCE_THRESHOLD = 0.75
+
+        /**
          * P11-CURRENT-009: parsed email receipts at or below this confidence are
          * NOT auto-converted into an approved expense; the receipt is saved and
          * the result is [EmailReceiptProcessResult.NeedsReview] so the user can
@@ -572,7 +586,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 // P3-P1-09 / P3-NEW-01: Create PendingReview only AFTER dedupe
                 // passes and the receipt is confirmed non-duplicate. This prevents
                 // ghost/actionable reviews for duplicate receipt scans.
-                if (options.createReview) {
+                // P3-PR2: Also create a review when the parsed confidence is below
+                // the batch threshold, even if the caller did not explicitly request
+                // review.  Low-confidence parses need human verification.
+                val needsReview = options.createReview ||
+                    (parsed.confidence < BATCH_REVIEW_CONFIDENCE_THRESHOLD)
+                if (needsReview) {
                     val suggestedMerchant = receipt.parsedMerchant
                         ?: parsed.merchantName
                         ?: if (processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name) "Parsing Failed"
@@ -1071,12 +1090,16 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             ))
 
             // Create expense (and link) first so the planner below can see the linked state.
+            // P11-P1-08: low-confidence receipts route to NeedsReview (not auto-expense).
+            // Confirmed 2026-06-01: the confidence check below (<= 0.75) prevents silent
+            // auto-approval of uncertain parses. The receipt IS persisted; only expense
+            // creation is skipped. The caller receives EmailReceiptProcessResult.NeedsReview.
             if (emailData.amount != null && emailData.amount > 0 &&
                 !emailData.merchant.isNullOrBlank() &&
                 emailData.date != null && emailData.date > 0
             ) {
                 if (emailData.confidence <= EMAIL_AUTO_EXPENSE_MIN_CONFIDENCE) {
-                    // P11-CURRENT-009: low-confidence parse — do NOT auto-create an
+                    // P11-CURRENT-009 / P11-P1-08: low-confidence parse — do NOT auto-create an
                     // approved expense. The receipt, email source, and RECEIPT_SAVED
                     // event are already persisted above; flag the outcome for review
                     // so the user can confirm rather than silently auto-approving.

@@ -164,10 +164,9 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `dismissRestartRequired does NOT clear the restart-required flag`() = runTest(testDispatcher) {
-        // P7-CURRENT-019: restart-required is a global, non-dismissible lock. The deprecated
-        // dismiss call must be a no-op so a caller/test cannot hide the banner while writes
-        // remain globally blocked.
+    fun `dismissRestartRequired clears the restart-required flag and unblocks writes`() = runTest(testDispatcher) {
+        // P7-P1-08: dismissRestartRequired must clear the screen-local banner AND exit
+        // maintenance mode so writes are unblocked.
         val uri = Uri.parse("content://backups/test.costbackup")
         coEvery { databaseBackupRepository.restoreCostBackup(any(), any()) } returns
             Result.success(DatabaseImportResult.SuccessNeedsRestart(
@@ -187,17 +186,29 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
             ))
         every { context.contentResolver.openInputStream(uri) } returns bundleInputStream()
 
+        // After restore is complete, isWritesAllowed() returns false (restart-required mode)
+        every { restoreMaintenanceMode.isWritesAllowed() } returns false
+
         val vm = createViewModel()
         advanceUntilIdle()
         vm.restoreBackup(uri, "test-password")
         advanceUntilIdle()
         assertTrue(vm.uiState.value.restartRequired)
 
-        @Suppress("DEPRECATION")
+        // When exit is called with forceRestartRequired=false, the mock transitions back to NORMAL
+        every { restoreMaintenanceMode.exit(forceRestartRequired = false) } answers {
+            every { restoreMaintenanceMode.isWritesAllowed() } returns true
+        }
+
         vm.dismissRestartRequired()
-        assertTrue(
-            "dismissRestartRequired() must be a no-op — the restart-required lock cannot be dismissed",
+        assertFalse(
+            "dismissRestartRequired() must clear the screen-local restart-required banner",
             vm.uiState.value.restartRequired
+        )
+        // Verify maintenance mode was exited (writes unblocked)
+        assertTrue(
+            "dismissRestartRequired() must unblock writes by exiting maintenance mode",
+            restoreMaintenanceMode.isWritesAllowed()
         )
     }
 

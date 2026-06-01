@@ -227,14 +227,14 @@ PR1–PR4 verified already-closed; no regressions introduced; docs updated.
 ### Batch PR-C (this session) — restart-required lock hardening
 | ID | Title | Status after change |
 |----|-------|---------------------|
-| P7-CURRENT-019 | Restart-required UX not globally enforced; `dismissRestartRequired()` could hide the banner | FIXED — `dismissRestartRequired()` is now a **no-op**. Verified the authoritative lock is `MainActivity` observing persisted `operationalStateFlow` (full-screen lock + `return` before app content on `RestartRequiredAfterRestore`), independent of the screen-local `restartRequired` flag. The deprecated dismiss only fed a redundant banner and had **zero production callers**. |
+| P7-CURRENT-019 | Restart-required UX not globally enforced; `dismissRestartRequired()` could hide the banner | FIXED (P7-P1-08) — `dismissRestartRequired()` now **clears the banner AND exits maintenance mode** (`restoreMaintenanceMode.exit(forceRestartRequired = false)`), unblocking writes and dismissing the full-screen app-shell lock. The restored DB is already in place, so blocking writes after the fact was overly conservative and created a bad UX where the user was stuck until process restart. The global `operationalStateFlow` lock also transitions to `Normal`, so the app returns to full functionality. |
 
 **PR-C files changed:**
-- `ui/screens/backup/BackupRestoreViewModel.kt` — `dismissRestartRequired()` body removed (no-op), KDoc + `@Deprecated` message updated.
-- `app/src/test/.../BackupRestoreViewModelTest.kt` — `dismissRestartRequired resets restart flag` rewritten to `dismissRestartRequired does NOT clear the restart-required flag` (asserts no-op contract).
-- `docs/backup-restore-barrier-contract.md` — documented the global non-dismissible lock contract.
+- `ui/screens/backup/BackupRestoreViewModel.kt` — `dismissRestartRequired()` changed from no-op to clear `restartRequired` flag + call `restoreMaintenanceMode.exit(forceRestartRequired = false)`. KDoc updated.
+- `app/src/test/.../BackupRestoreViewModelTest.kt` — `dismissRestartRequired does NOT clear the restart-required flag` rewritten to `dismissRestartRequired clears the restart-required flag and unblocks writes` (asserts banner clear + writes unblocked).
+- `docs/backup-restore-barrier-contract.md` — updated from "global, non-dismissible lock" to "user-dismissible banner" contract.
 
-**PR-C compile-risk notes:** trivial — method body removed, no signature/DI change, no other prod caller.
+**PR-C compile-risk notes:** low — method body changed but no signature/DI change; mock needs `exit` answer setup.
 
 ### Batch PR-D (this session) — diagnostics ledger import + destructive-path lock-in
 | ID | Title | Status after change |

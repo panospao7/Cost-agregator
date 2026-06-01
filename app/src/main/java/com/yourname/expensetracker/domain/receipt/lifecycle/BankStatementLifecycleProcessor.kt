@@ -519,6 +519,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
+                    writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processItem.errorRecovery")
                     bankStatementImportItemDao.insert(
                         BankStatementImportItem(
                             runId = runId,
@@ -569,6 +570,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // status when the run is not in a failed state.
             val runSucceeded = finalStatus != BankStatementImportRun.STATUS_FAILED
             if (runSucceeded) {
+                // P3-PR2 / P3-P1-05: Write barrier check before direct DAO mutation
+                writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.finalizeStatus")
                 val receiptToUpdate = scannedReceiptDao.getById(receiptId)
                 if (receiptToUpdate != null) {
                     scannedReceiptDao.update(receiptToUpdate.copy(

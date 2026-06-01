@@ -375,13 +375,20 @@ class ReceiptRepository @Inject constructor(
      * [TransactionLifecycleCoordinator], which provides consistent validation,
      * normalisation, deduplication, event emission, and warranty auto-creation.
      */
+    /**
+     * P3-PR2: Elevated to ERROR — no production callers remain.
+     * All callers have been migrated to the lifecycle coordinator path.
+     * @Deprecated(ERROR) — calling this will produce a compile-time error.
+     */
     @Deprecated(
-        message = "Use ReceiptLifecycleCoordinator.processEmailReceipt for atomic save+link. " +
-            "This convenience path will be removed.",
-        level = DeprecationLevel.WARNING,
+        message = "Permanently disabled. " +
+            "Use ReceiptLifecycleCoordinator.processReceiptInput() or " +
+            "createExpenseAndLinkReceipt() for atomic receipt expense creation. " +
+            "No production callers remain.",
+        level = DeprecationLevel.ERROR,
         replaceWith = ReplaceWith(
-            expression = "coordinator.createExpense(request)",
-            imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
+            expression = "ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt(request)",
+            imports = ["com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator"]
         )
     )
     suspend fun createExpenseFromReceipt(
@@ -528,6 +535,7 @@ class ReceiptRepository @Inject constructor(
 
     @Deprecated("Use ReceiptMatchLifecycleService.clearMatchForReceipt().", level = DeprecationLevel.ERROR)
     suspend fun clearMatchForReceipt(receiptId: Long) {
+        writeBarrier.checkWritesAllowed("ReceiptRepository.clearMatchForReceipt")
         val receipt = scannedReceiptDao.getById(receiptId) ?: return
         scannedReceiptDao.update(receipt.copy(
             expenseId = null,

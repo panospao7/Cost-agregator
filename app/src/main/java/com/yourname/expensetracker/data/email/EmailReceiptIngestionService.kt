@@ -73,7 +73,9 @@ class EmailReceiptIngestionService @Inject constructor(
         hashingService = com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService()
     )
 
-    // P11-PR1 (NEW-P11-001): Semaphore allows bounded concurrency instead of full serialization
+    // P11-PR1 (NEW-P11-001): Semaphore(3) allows bounded concurrency instead of full serialization.
+    // Verified 2026-06-01: replaces the original single-Mutex which blocked all concurrent
+    // processing during batch ingestion. Three concurrent emails may now process in parallel.
     private val ingestionSemaphore = Semaphore(3)
 
     // Provider parsers

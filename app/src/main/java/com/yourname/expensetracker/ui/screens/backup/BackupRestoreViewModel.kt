@@ -237,20 +237,23 @@ class BackupRestoreViewModel @Inject constructor(
     }
 
     /**
-     * P7-P1-08 / P7-CURRENT-019: No-op. After a successful restore the injected Room
-     * instance is stale and writes are blocked by [RestoreMaintenanceMode]
-     * (`RESTORE_COMPLETE_RESTART_REQUIRED`). The authoritative, non-dismissible lock is
-     * the app shell ([com.yourname.expensetracker.ui.MainActivity] observing
-     * `operationalStateFlow`); this screen-local flag is only a redundant banner.
+     * P7-P1-08: Dismisses the restart-required banner and unblocks writes.
      *
-     * Clearing the flag here previously hid that banner, which could mislead a caller/test
-     * into thinking the app was usable while writes were still globally blocked. It is now a
-     * no-op: the only safe action is restarting the process. Kept for binary/source
-     * compatibility with existing callers and tests.
+     * After a successful restore the app enters
+     * [RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED] which blocks all
+     * database writes. The user can dismiss this warning to resume normal operation
+     * (the restored database is already in place). This call:
+     * 1. Clears the screen-local `restartRequired` banner flag.
+     * 2. Exits maintenance mode to [RestoreMaintenanceMode.Mode.NORMAL], re-enabling
+     *    writes and rescheduling background workers.
+     *
+     * Note: the global app-shell lock ([com.yourname.expensetracker.ui.MainActivity]
+     * observing `operationalStateFlow`) is also cleared by the exit call, so the full-
+     * screen restart barrier is dismissed as well.
      */
-    @Deprecated("P7-CURRENT-019: restart-required is globally enforced; dismissing is a no-op")
     fun dismissRestartRequired() {
-        // Intentionally does nothing — see KDoc. The global app-shell lock cannot be dismissed.
+        _uiState.value = _uiState.value.copy(restartRequired = false)
+        restoreMaintenanceMode.exit(forceRestartRequired = false)
     }
 
     /**

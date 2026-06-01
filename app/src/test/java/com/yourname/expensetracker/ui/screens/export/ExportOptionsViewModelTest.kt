@@ -130,8 +130,11 @@ class ExportOptionsViewModelTest {
         val state = viewModel.uiState.value
         assertTrue(state.exportSuccess)
         assertEquals(out.absolutePath, state.exportFilePath)
-        // CSV format writes a metadata line then header: "# ExpenseTracker Export v2,..." then "ID,Date,..."
+        // P12-P1-06: CSV header now includes BusinessCategory, BusinessProject, RequiresReceipt
         assertTrue((state.exportPreview ?: "").contains("ID,Date"))
+        assertTrue((state.exportPreview ?: "").contains("BusinessCategory"))
+        assertTrue((state.exportPreview ?: "").contains("BusinessProject"))
+        assertTrue((state.exportPreview ?: "").contains("RequiresReceipt"))
     }
 
     @Test
@@ -185,6 +188,67 @@ class ExportOptionsViewModelTest {
         assertTrue(preview.contains("\"exportType\":\"expenses\""))
         assertTrue(preview.contains("\"merchant\":\"Cafe \\\"Central\\\"\""))
         assertTrue(preview.contains("\"notes\":\"line1\\n2\\\\\""))
+    }
+
+    @Test
+    fun `generate json export includes businessCategory businessProject requiresReceipt fields`() = runBlocking {
+        val expenses = listOf(
+            createExpense(
+                merchant = "BizExpense",
+                isBusinessExpense = true,
+                businessPurpose = "Client meeting",
+                businessCategory = "Travel",
+                businessProject = "ProjectX",
+                requiresReceipt = true
+            )
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        coEvery { exportDataRepository.getCategoryNameMap() } returns mapOf(1L to "Food")
+
+        val out = createTempFile(prefix = "export_json_biz_", suffix = ".json")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        viewModel.selectFormat("json")
+        viewModel.generateExport()
+        val preview = viewModel.uiState.value.exportPreview.orEmpty()
+
+        // P12-P1-06: Verify business/tax fields are present in JSON output
+        assertTrue("JSON must contain businessCategory", preview.contains("\"businessCategory\":\"Travel\""))
+        assertTrue("JSON must contain businessProject", preview.contains("\"businessProject\":\"ProjectX\""))
+        assertTrue("JSON must contain requiresReceipt", preview.contains("\"requiresReceipt\":true"))
+    }
+
+    @Test
+    fun `generate generic csv includes businessCategory businessProject requiresReceipt columns`() = runBlocking {
+        val expenses = listOf(
+            createExpense(
+                merchant = "BizExpense",
+                isBusinessExpense = true,
+                businessPurpose = "Client meeting",
+                businessCategory = "Travel",
+                businessProject = "ProjectX",
+                requiresReceipt = true
+            )
+        )
+        coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns expenses.size
+        coEvery { exportDataRepository.getExpensesPage(any(), any(), any(), any(), any()) } returns expenses
+        coEvery { exportDataRepository.getCategoryNameMap() } returns mapOf(1L to "Food")
+
+        val out = createTempFile(prefix = "export_csv_biz_", suffix = ".csv")
+        every { exportDataRepository.createExportFile(any(), any()) } returns out
+
+        viewModel.generateExport()
+        val preview = viewModel.uiState.value.exportPreview.orEmpty()
+
+        // P12-P1-06: Verify CSV header contains the new columns
+        assertTrue("CSV header must contain BusinessCategory", preview.contains("BusinessCategory"))
+        assertTrue("CSV header must contain BusinessProject", preview.contains("BusinessProject"))
+        assertTrue("CSV header must contain RequiresReceipt", preview.contains("RequiresReceipt"))
+        // Verify data row contains the values
+        assertTrue("CSV data must contain Travel", preview.contains("Travel"))
+        assertTrue("CSV data must contain ProjectX", preview.contains("ProjectX"))
+        assertTrue("CSV data must contain true for requiresReceipt", preview.contains(",true,"))
     }
 
     @Test
@@ -374,7 +438,12 @@ class ExportOptionsViewModelTest {
         notes: String = "note",
         id: Long = 1L,
         currency: String = "EUR",
-        transactionType: TransactionType = TransactionType.PURCHASE
+        transactionType: TransactionType = TransactionType.PURCHASE,
+        isBusinessExpense: Boolean = false,
+        businessPurpose: String? = null,
+        businessCategory: String? = null,
+        businessProject: String? = null,
+        requiresReceipt: Boolean = false
     ): Expense {
         return Expense(
             id = id,
@@ -385,7 +454,12 @@ class ExportOptionsViewModelTest {
             date = 1_700_000_000_000L,
             categoryId = 1L,
             notes = notes,
-            createdAt = System.currentTimeMillis()
+            createdAt = System.currentTimeMillis(),
+            isBusinessExpense = isBusinessExpense,
+            businessPurpose = businessPurpose,
+            businessCategory = businessCategory,
+            businessProject = businessProject,
+            requiresReceipt = requiresReceipt
         )
     }
 }

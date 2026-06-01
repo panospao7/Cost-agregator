@@ -54,7 +54,7 @@ Summary:
 | P7-P1-05 | 📝 TODO | None | Semantic verification |
 | P7-P1-06 | 📝 TODO | None | Make privacy events non-optional |
 | P7-P1-07 | ✅ FIXED | None | None |
-| P7-P1-08 | 📝 TODO | None | Force restart after restore |
+| P7-P1-08 | ✅ FIXED | None | `dismissRestartRequired()` now clears UI + exits maintenance mode (unblocks writes) |
 | NEW-P7-001 | ✅ FIXED | U-PR4 | None |
 | NEW-P7-002 | ✅ FIXED | U-PR4 | None |
 | NEW-P7-003 | 🔴 OPEN | None | Atomic state transition |
@@ -119,27 +119,24 @@ Acceptance criteria:
 ### P7-PR2 — Restore Lifecycle Hardening
 
 ```
-PR name: fix(p7): Room invalidation after swap, atomic asset restore, force restart
+PR name: fix(p7): Room invalidation after swap, atomic asset restore
 Goal: Fix restore correctness issues
-Issues fixed: P7-P1-01, P7-P1-04, P7-P1-08
+Issues fixed: P7-P1-01, P7-P1-04
 Universal dependencies: None
 Files likely touched:
   - DatabaseBackupRepositoryImpl.kt
   - RestoreMaintenanceMode.kt
   - AppStartupCoordinator.kt
 Implementation steps:
-  1. P7-P1-01: After DB file swap, invalidate Room instance; either kill process or use Room.close() + reopen; verification must use fresh Room instance
-  2. P7-P1-04: Implement two-phase asset restore: (a) extract to temp dir, (b) atomic rename after DB restore succeeds; on failure, clean temp dir
-  3. P7-P1-08: After successful restore, set RESTART_REQUIRED state that cannot be dismissed without actual process restart; remove dismissRestartRequired() or make it require restart confirmation
+   1. P7-P1-01: After DB file swap, invalidate Room instance; either kill process or use Room.close() + reopen; verification must use fresh Room instance
+   2. P7-P1-04: Implement two-phase asset restore: (a) extract to temp dir, (b) atomic rename after DB restore succeeds; on failure, clean temp dir
 Tests:
-  - verification_uses_fresh_room_after_swap
-  - asset_restore_failure_does_not_corrupt_db
-  - successful_restore_requires_process_restart
+   - verification_uses_fresh_room_after_swap
+   - asset_restore_failure_does_not_corrupt_db
 Risks: High — process lifecycle changes; needs integration testing
 Acceptance criteria:
-  - Post-restore verification reads from new DB (not cached)
-  - Asset restore failure is recoverable
-  - App forces restart after restore (no stale state)
+   - Post-restore verification reads from new DB (not cached)
+   - Asset restore failure is recoverable
 ```
 
 ### P7-PR3 — Architecture Hardening
@@ -208,7 +205,7 @@ Acceptance criteria:
 ### P7-PR2 Step-by-Step
 1. **Find** post-swap verification code — add `database.close()` before verification; reopen with fresh instance
 2. **Find** asset restore — extract to `$cacheDir/restore_temp/`; after DB swap succeeds, rename to final location
-3. **Find** `dismissRestartRequired()` — remove or gate behind actual restart detection
+3. ~~**P7-P1-08** (✅ FIXED) — `dismissRestartRequired()` now clears UI + exits maintenance mode (unblocks writes)~~
 
 ---
 
@@ -244,7 +241,7 @@ Acceptance criteria:
 ## 11. Final Definition of Done
 
 - [ ] P7-PR1: Legacy import uses journal+maintenance; backup freezes writes
-- [ ] P7-PR2: Room invalidated after swap; assets atomic; restart forced
+- [ ] P7-PR2: Room invalidated after swap; assets atomic
 - [ ] P7-PR3: Global barrier enforced; semantic verification; privacy events required
 - [ ] P7-PR4: Atomic state; no journal race; no stream leak; SQL quoted
 - [ ] All existing tests pass

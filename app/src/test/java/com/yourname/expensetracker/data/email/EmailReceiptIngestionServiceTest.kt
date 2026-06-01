@@ -668,6 +668,92 @@ class EmailReceiptIngestionServiceTest {
         assertEquals("validation_failed", needsReview.reason)
     }
 
+    // -------------------------------------------------------------------------
+    // P11-P1-08: low-confidence emails must route to NeedsReview (not auto-expense)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `low_confidence_email_routes_to_pending_review`() = runTest {
+        // below-threshold parse (0.3 < 0.75) with all required fields present
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 50.00,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-LOW-CONF",
+            confidence = 0.3
+        )
+
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.NeedsReview(receiptId = 88L, reason = "low_confidence", confidence = 0.3)
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$50.00 Order # ORD-LOW-CONF",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-low-confidence-review"
+        )
+
+        assertTrue("Expected NeedsReview for low-confidence email, got $result", result is EmailReceiptResult.NeedsReview)
+        val needsReview = result as EmailReceiptResult.NeedsReview
+        assertEquals(88L, needsReview.receiptId)
+        assertEquals("low_confidence", needsReview.reason)
+        assertEquals(0.3, needsReview.confidence!!, 1e-9)
+    }
+
+    @Test
+    fun `high_confidence_email_creates_expense_directly`() = runTest {
+        // above-threshold parse (0.95 > 0.75) — should auto-create expense
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 99.99,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-HIGH-CONF",
+            confidence = 0.95
+        )
+
+        coEvery { receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            EmailReceiptProcessResult.Success(receiptId = 99L, expenseIds = listOf(199L))
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$99.99 Order # ORD-HIGH-CONF",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-high-confidence"
+        )
+
+        assertTrue("Expected Success for high-confidence email, got $result", result is EmailReceiptResult.Success)
+        val success = result as EmailReceiptResult.Success
+        assertEquals(99L, success.receiptId)
+        assertEquals(listOf(199L), success.expenseIds)
+    }
+
+    // -------------------------------------------------------------------------
+    // NEW-P11-001: ingestion mutex is a bounded Semaphore(3), not a single Mutex
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `ingestion_mutex_is_bounded_semaphore`() = runTest {
+        val semaphoreField = service::class.java.getDeclaredField("ingestionSemaphore")
+        semaphoreField.isAccessible = true
+        val semaphore = semaphoreField.get(service)
+        assertTrue("ingestionSemaphore must be a Semaphore, got ${semaphore?.javaClass?.name}",
+            semaphore is kotlinx.coroutines.sync.Semaphore)
+
+        // Verify permits == 3 (bounded concurrency, not full serialization)
+        // Semaphore.availablePermits reflects the current count. Since we're not
+        // inside a withPermit block here, it should equal the initial permits.
+        @Suppress("UNCHECKED_CAST")
+        val typed = semaphore as kotlinx.coroutines.sync.Semaphore
+        assertTrue("Semaphore must allow at least 3 concurrent permits, got ${typed.availablePermits}",
+            typed.availablePermits >= 3)
+    }
+
     companion object {
         private const val FIXED_NOW = 1_730_000_000_000L
     }

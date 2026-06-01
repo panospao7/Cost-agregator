@@ -7,6 +7,9 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
 import com.yourname.expensetracker.domain.export.*
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -47,7 +50,9 @@ class AccountingExportRepository @Inject constructor(
     private val xeroExporter: XeroCSVExporter,
     private val freshBooksExporter: FreshBooksExporter,
     private val accountantReportPdfExporter: AccountantReportPdfExporter,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    /** P12-P1-05: Privacy gate — denies export if user privacy settings block EXPENSE_EXPORT. */
+    private val privacyGate: PrivacyGate
 ) {
     companion object {
         /** Maximum allowed export date range in days (10 years). */
@@ -72,6 +77,18 @@ class AccountingExportRepository @Inject constructor(
         format: ExportFormat
     ): ExportResult = withContext(Dispatchers.IO) {
         try {
+            // P12-P1-05: Privacy gate check — deny export if user settings block EXPENSE_EXPORT.
+            val privacyDecision = privacyGate.check(
+                PrivacyCapability.EXPENSE_EXPORT,
+                mapOf("operation" to "accounting_export", "format" to format.name)
+            )
+            if (privacyDecision.blocksExecution()) {
+                return@withContext ExportResult(
+                    success = false,
+                    errorMessage = "Export denied by privacy settings: ${privacyDecision.reason()}"
+                )
+            }
+
             readBarrier.checkReadAllowed(
                 DatabaseAccessOperation("AccountingExportRepository.exportExpenses", pipeline = "P12"),
                 DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ

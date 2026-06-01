@@ -237,7 +237,7 @@ Full source: `PIPELINE_7_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P7-P1-05 | P1 | Restore success does not prove dashboard/analytics equivalence | Bug | Verification checks table counts only, not semantic output equivalence | 📝 TODO ONLY |
 | P7-P1-06 | P1 | Privacy audit events optional in backup verification | Bug | `privacy_audit_events` classified Tier 3 optional; can be dropped silently | 📝 TODO ONLY |
 | P7-P1-07 | P1 | Worker pause/resume not fully spec-driven | Bug | Both `pauseAllWorkers()` and `scheduleAllWorkers()` use DEFAULTS | ✅ FIXED |
-| P7-P1-08 | P1 | Successful restore leaves app blocked; UI can dismiss warning | Bug | `dismissRestartRequired()` only clears UI; writes still blocked | 📝 TODO ONLY |
+| P7-P1-08 | P1 | Successful restore leaves app blocked; UI can dismiss warning | Bug | `dismissRestartRequired()` now clears UI AND exits maintenance mode, unblocking writes | ✅ FIXED |
 | NEW-P7-001 | P0 | Encrypted export never exits maintenance mode on success | Bug | Maintenance mode entered but never exited on success path | ✅ FIXED (U-PR4) |
 | NEW-P7-002 | P1 | Privacy gate denial / WAL failure leak maintenance mode | Bug | Error paths don't exit maintenance mode | ✅ FIXED (U-PR4) |
 | NEW-P7-003 | P2 | `enterCriticalRecoveryRequired` non-atomic two-commit | Bug | Two separate commits; crash between them leaves inconsistent state | 🔴 OPEN |
@@ -295,16 +295,16 @@ Full source: `PIPELINE_9_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P9-003 | P1 | WorkerRunContext counters not thread-safe | Bug | Counters made thread-safe via atomic operations (P9-PR1) | ✅ FIXED (P9-PR1) |
 | NEW-P9-004 | P1 | WarrantyExpirationWorker uses `runGuarded` (no context) | Bug | Migrated to `runGuardedWithContext` (P9-PR1) | ✅ FIXED (P9-PR1) |
 | NEW-P9-005 | P1 | WarrantyExpirationWorker uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | ✅ FIXED (U-PR7) |
-| NEW-P9-006 | P2 | WorkerSpecScheduler uses deprecated REPLACE | Bug | Should use KEEP or UPDATE for periodic workers | 🔴 OPEN |
-| NEW-P9-007 | P2 | SharedPreferences version write not atomic with enqueue | Bug | Crash between write and enqueue leaves stale version | 🔴 OPEN |
-| NEW-P9-008 | P2 | NotificationIntakeWorker not in guard/registry | Bug | Bypasses shared execution infrastructure | 🔴 OPEN |
-| NEW-P9-009 | P2 | LocationBackfillWorker `isStopped` exits as SUCCESS | Bug | Misleading result; should be RETRY or specific status | 🔴 OPEN |
-| NEW-P9-010 | P2 | MerchantKeyBackfillWorker same `isStopped` issue | Bug | Same pattern as LocationBackfillWorker | 🔴 OPEN |
-| NEW-P9-011 | P2 | `scheduleAtMidnight` near-zero delay edge case | Bug | Scheduling at 23:59:59 produces near-zero initial delay | 🔴 OPEN |
+| NEW-P9-006 | P2 | WorkerSpecScheduler uses deprecated REPLACE | Bug | Uses UPDATE on version bump; no deprecated REPLACE constant | ✅ FIXED (P9-PR1/P9-PR2) |
+| NEW-P9-007 | P2 | SharedPreferences version write not atomic with enqueue | Bug | Version written AFTER enqueue inside same try block | ✅ FIXED (P9-PR1) |
+| NEW-P9-008 | P2 | NotificationIntakeWorker not in guard/registry | Bug | Has `executionGuard.checkpoint()` for maintenance stop observation; does not use full `runGuarded` lifecycle | ⚠ PARTIAL |
+| NEW-P9-009 | P2 | LocationBackfillWorker `isStopped` exits as SUCCESS | Bug | Throws `RetryableWorkerException` when stopped mid-loop | ✅ FIXED (P9-PR2) |
+| NEW-P9-010 | P2 | MerchantKeyBackfillWorker same `isStopped` issue | Bug | Same `RetryableWorkerException` pattern | ✅ FIXED (P9-PR2) |
+| NEW-P9-011 | P2 | `scheduleAtMidnight` near-zero delay edge case | Bug | `maxOf(rawDelayMs, 60_000L)` floor applied | ✅ FIXED (P9-PR1) |
 | NEW-P9-012 | P2 | DailyBriefing reschedule failure silently swallowed | Bug | `.onFailure` logging added; REPLACE policy prevents chain death | ✅ FIXED (U-PR6) |
-| NEW-P9-013 | P2 | WorkerExecutionGuard read-only path no exception handling | Bug | Exceptions in read-only guard path unhandled | 🔴 OPEN |
-| NEW-P9-014 | P3 | WorkerSpec no battery constraint for `merchant_key_backfill` | Bug | Heavy backfill runs without battery consideration | 🔴 OPEN |
-| NEW-P9-015 | P3 | `WorkerRunLogger.Handle` not idempotent | Bug | Double-complete can corrupt run record | 🔴 OPEN |
+| NEW-P9-013 | P2 | WorkerExecutionGuard read-only path no exception handling | Bug | try-catch wraps `readBarrier.checkReadAllowed()` in both `runGuarded` and `runGuardedWithContext` | ✅ FIXED (P9-PR1) |
+| NEW-P9-014 | P3 | WorkerSpec no battery constraint for `merchant_key_backfill` | Bug | `setRequiresBatteryNotLow(true)` added | ✅ FIXED (P9-PR1) |
+| NEW-P9-015 | P3 | `WorkerRunLogger.Handle` not idempotent | Bug | `completed` flag guards all 6 terminal methods | ✅ FIXED (P9-PR1) |
 
 ## Pipeline 10 — Bank Integration
 
@@ -400,13 +400,13 @@ Universal contracts extracted from the architectural strategy — each represent
 |----------|-----|-----|-------|----------|-----------|-----------|
 | 1 — Notification | 0 | 6 | 6+17 | 23 | 0 | 0 — 🟢 COMPLETE |
 | 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 21 | 0 | 0 — 🟢 COMPLETE |
-| 3 — Receipt Capture | 1 | 10 | 11+8 | 8 | 2 | 9 (2 TODO + 7 NEW) |
+| 3 — Receipt Capture | 1 | 10 | 11+8 | 15 | 2 | 4 (2 PARTIAL + 2 TODO) |
 | 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 22 | 0 | 0 — 🟢 COMPLETE |
 | 5 — Currency/Dashboard | 0 | 12 | 12+14 | 17 | 1 | 8 NEW |
 | 6 — Budget/Forecasting | 0 | 15 | 15+16 | 26 | 0 | 5 TODO (design) |
 | 7 — Backup/Restore | 2 | 8 | 10+6 | 6 | 0 | 10 (8 TODO + 2 NEW) |
-| 8 — Privacy/AI | 0 | 12 | 12+8 | 1 | 1 | 19 (10 TODO + 8 NEW) |
-| 9 — Workers | 0 | 12 | 12+15 | 23 | 0 | 4 NEW |
+| 8 — Privacy/AI | 0 | 12 | 12+8 | 12 | 1 | 7 TODO (design — U-PR5) |
+| 9 — Workers | 0 | 12 | 12+15 | 23 | 1 | 0 — 🟢 COMPLETE |
 | 10 — Bank Integration | 2 | 9 | 11+4 | 4 | 2 | 9 (7 TODO + 2 NEW) |
 | 11 — Email Receipt | 0 | 8 | 8+5 | 6 | 5 | 2 (1 TODO + 1 NEW) |
 | 12 — Import/Export | 1 | 10 | 11+7 | 12 | 4 | 2 (4 TODO + 2 NEW) |
@@ -428,7 +428,16 @@ Universal contracts extracted from the architectural strategy — each represent
 
 > **NOTE:** Detailed NEW-issue rows for P2-P6 deep audits (32 missing rows) not yet backfilled into the per-pipeline tables. See individual `PIPELINE_N_CONSOLIDATED_ISSUES.md` for complete listings.
 
-## Key Changes Since Last Update (2026-05-31 P7–12 validation)
+## Key Changes Since Last Update (2026-06-01 P9 revalidation)
+
+**P9 NEW issues revalidated against HEAD:**
+- 11 of 15 NEW-P9 issues confirmed ✅ FIXED (fixes already present in production from P9-PR1/P9-PR2 and earlier commits)
+- 1 (NEW-P9-008) corrected to ⚠ PARTIAL (has checkpoint, but not full `runGuarded` lifecycle)
+- 3 NEW-P9 issues (004, 005, 012) already ✅ FIXED in tracker; confirmed
+- All 12 original P9 issues already ✅ FIXED (no change)
+- **P9 section is now 🟢 COMPLETE** — 23 FIXED + 1 PARTIAL, 0 open
+
+## Key Changes — Prior Update (2026-05-31 P7–12 validation)
 
 **Pipelines 7–12 status corrections (validated against HEAD):**
 - P9: All 12 old issues confirmed ✅ FIXED (was previously showing only 5 fixed)
