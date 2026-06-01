@@ -156,6 +156,18 @@ class ExportOptionsViewModel @Inject constructor(
      * O(totalExpenses). The cursor (date, id) of the last row on each page drives
      * the next query.
      *
+     * ## P12-P1-04: Snapshot consistency limitation
+     * Keyset pagination is NOT a true point-in-time snapshot. Concurrent inserts
+     * or deletes during streaming can cause rows to be missed or duplicated:
+     * - Rows inserted with a (date, id) ahead of the cursor appear mid-export.
+     * - Rows inserted behind the cursor are missed entirely.
+     * - The rowCount written in the export header is obtained from a separate count
+     *   query that is NOT anchored to the paged read, so it may disagree with the
+     *   actual number of streamed rows under concurrent writes.
+     * The [DatabaseReadBarrier] prevents export from running during a database
+     * restore, but it does NOT provide the atomicity of a true read-only
+     * transaction. A frozen export_snapshot table is the planned fix (PR-SNAP).
+     *
      * ## P12-REG-01: Correct privacy capability
      * Ordinary expense export is **not** a raw database backup. It requests
      * [PrivacyCapability.EXPENSE_EXPORT] (allowed by [com.yourname.expensetracker.domain.privacy.ExportPrivacyGate]);
@@ -553,12 +565,14 @@ class ExportOptionsViewModel @Inject constructor(
                         append(escapeCsv(tx.notes ?: "")).append(',')
                         append(escapeCsv(tx.source ?: "")).append(',')
                         append(escapeCsv(tx.paymentMethod)).append(',')
+                        append(escapeCsv(tx.sourceAccountName)).append(',')
                         append(escapeCsv(tx.originalCurrency)).append(',')
                         append(tx.originalAmount?.let { formatCsvNumber(it) } ?: "").append(',')
                         append(escapeCsv(tx.homeCurrency)).append(',')
                         append(tx.baseAmount).append(',')
                         append(escapeCsv(tx.baseCurrency)).append(',')
                         append(tx.exchangeRateUsed).append(',')
+                        append(tx.conversionRateUsed?.let { formatCsvNumber(it) } ?: "").append(',')
                         append(if (tx.isBusinessExpense) "true" else "false").append(',')
                         append(escapeCsv(tx.businessPurpose ?: "")).append(',')
                         append(escapeCsv(tx.businessCategory ?: "")).append(',')
@@ -612,12 +626,14 @@ class ExportOptionsViewModel @Inject constructor(
                 if (tx.source == null) append("null,")
                 else append("\"").append(escapeJson(tx.source)).append("\",")
                 append("\"paymentMethod\":\"").append(escapeJson(tx.paymentMethod)).append("\",")
+                append("\"sourceAccountName\":\"").append(escapeJson(tx.sourceAccountName)).append("\",")
                 append("\"originalCurrency\":\"").append(escapeJson(tx.originalCurrency)).append("\",")
                 append("\"originalAmount\":").append(tx.originalAmount?.let { formatJsonNumber(it) } ?: "null").append(',')
                 append("\"homeCurrency\":\"").append(escapeJson(tx.homeCurrency)).append("\",")
                 append("\"baseAmount\":").append(formatJsonNumber(tx.baseAmount)).append(',')
                 append("\"baseCurrency\":\"").append(escapeJson(tx.baseCurrency)).append("\",")
                 append("\"exchangeRateUsed\":").append(tx.exchangeRateUsed).append(',')
+                append("\"conversionRateUsed\":").append(tx.conversionRateUsed?.let { formatJsonNumber(it) } ?: "null").append(',')
                 append("\"isBusinessExpense\":").append(if (tx.isBusinessExpense) "true" else "false").append(',')
                 append("\"businessPurpose\":")
                 if (tx.businessPurpose == null) append("null,")
@@ -655,6 +671,16 @@ class ExportOptionsViewModel @Inject constructor(
      * 3. Update cursors from the last row of the current page.
      * 4. Fetch next page with updated cursors.
      * 5. Repeat until an empty page is returned.
+     *
+     * ## Snapshot limitation (P12-P1-04)
+     * This method uses keyset (cursor) pagination ordered by `(date ASC, id ASC)`.
+     * It does **NOT** provide point-in-time snapshot consistency:
+     * - Rows inserted with a `(date, id)` ahead of the cursor can appear mid-export.
+     * - Rows inserted behind the cursor are missed entirely.
+     * - The `rowCount` written in the header is obtained from a separate count query
+     *   that is not anchored to the paged read, so it can disagree with the actual
+     *   number of streamed rows under concurrent writes.
+     * A future fix (planned) will use a frozen `export_snapshot` table for atomicity.
      *
      * @param writer     The output writer.
      * @param startDate  Start of the date range (inclusive).
@@ -737,8 +763,8 @@ class ExportOptionsViewModel @Inject constructor(
                 val metadataLine = "# ExpenseTracker Export v2, rowCount=$rowCount, startDate=$startDate, endDate=$endDate\n"
                 writer.append(metadataLine)
                 preview.append(metadataLine)
-                // P12-P1-06: Added BusinessCategory, BusinessProject, RequiresReceipt columns
-                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks\n"
+                // P12-P1-06: Added BusinessCategory, BusinessProject, RequiresReceipt, SourceAccountName, ConversionRateUsed columns
+                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,SourceAccountName,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,ConversionRateUsed,IsBusinessExpense,BusinessPurpose,BusinessCategory,BusinessProject,RequiresReceipt,SourceLinks\n"
                 writer.append(header)
                 preview.append(header)
             }

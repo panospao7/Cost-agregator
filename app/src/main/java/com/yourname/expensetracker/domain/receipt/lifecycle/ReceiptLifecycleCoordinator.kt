@@ -501,6 +501,33 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
             }
 
+            // P3-P1-09: Create PendingReview for batch imports and low-confidence receipts
+            if (options.createReview || parsed.confidence < BATCH_REVIEW_CONFIDENCE_THRESHOLD) {
+                runCatching {
+                    val reviewNow = timeProvider.now()
+                    val review = PendingReview(
+                        scannedReceiptId = savedId,
+                        suggestedMerchant = parsed.merchantName ?: "Unknown",
+                        suggestedAmount = parsed.total ?: 0.0,
+                        suggestedCurrency = parsed.currency ?: FALLBACK_CURRENCY,
+                        suggestedDate = parsed.date ?: reviewNow,
+                        confidence = parsed.confidence,
+                        suggestedType = TransactionType.PURCHASE.name,
+                        rawNotificationId = null,
+                        suggestedCategoryId = null,
+                        notificationTitle = null,
+                        notificationText = null,
+                        packageName = "",
+                        createdAt = reviewNow,
+                        extractionState = ExtractionState.REAL_EXTRACTION
+                    )
+                    pendingReviewDao.insert(review)
+                }.onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    Timber.w(error, "Failed to create PendingReview for receipt %d", savedId)
+                }
+            }
+
             Result.success(updated.copy(id = savedId))
         }
     }

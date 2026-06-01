@@ -173,10 +173,15 @@ class ReceiptRepository @Inject constructor(
      * Process an image URI: run OCR, parse receipt, save to DB
      *
      * @param imageUri URI of the image to process
-     * @param autoCreateReview Whether to automatically create a PendingReview entry (true for batch, false for manual)
+     * @param autoCreateReview **Deprecated.** Review creation is now handled by
+     *   [ReceiptLifecycleCoordinator.processReceiptInput] based on confidence
+     *   threshold and [ReceiptLifecycleCoordinator.ReceiptProcessingOptions.createReview].
+     *   This parameter is unused and will be removed in a future release.
+     * @param resolvedMimeType Optional MIME type hint.
      */
     suspend fun processReceipt(
         imageUri: Uri,
+        @Suppress("UNUSED_PARAMETER")
         autoCreateReview: Boolean = false,
         resolvedMimeType: String? = null
     ): ProcessReceiptResult {

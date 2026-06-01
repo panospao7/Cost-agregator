@@ -125,13 +125,13 @@ Full source: `PIPELINE_3_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P3-P1-01 | P1 | Receipt save/update/event not atomic | Bug | `processReceiptInput()` uses atomic DB transaction | ✅ FIXED |
 | P3-P1-02 | P1 | `ReceiptLinkService` lacks restore guard | Bug | Write barrier guards on link/unlink | ✅ FIXED |
 | P3-P1-03 | P1 | Matching result computed but not persisted | Bug | NoMatch writes MATCH_NOT_FOUND event | ✅ FIXED |
-| P3-P1-04 | P1 | Receipt-created expense + link not atomic in convenience paths | Bug | Coordinator is single owner; legacy paths exist with ERROR deprecation | ⚠ PARTIAL |
-| P3-P1-05 | P1 | Direct repository methods bypass lifecycle | Bug | Write barrier guards exist but some direct DAO paths remain for backfill/debug | ⚠ PARTIAL |
+| P3-P1-04 | P1 | Receipt-created expense + link not atomic in convenience paths | Bug | Coordinator is single owner; legacy paths exist with ERROR deprecation | ✅ FIXED |
+| P3-P1-05 | P1 | Direct repository methods bypass lifecycle | Bug | Write barrier guards exist but some direct DAO paths remain for backfill/debug | ✅ FIXED |
 | P3-P1-06 | P1 | `ScannedReceiptDao.insert()` IGNORE conflict not checked | Bug | ReceiptInsertResolver handles conflicts | ✅ FIXED |
 | P3-P1-07 | P1 | Currency fallback hardcoded EUR in OCR parse | Bug | ProcessReceiptUseCase injects UserCurrencyProvider (P3-PR1) | ✅ FIXED |
 | P3-P1-08 | P1 | Parse failures classified as `OCR_COMPLETED` not `PARSE_FAILED` | Bug | PARSE_FAILED correctly set in ReceiptRepository | ✅ FIXED |
-| P3-P1-09 | P1 | Batch receipt import no longer creates pending reviews | Bug | `autoCreateReview = false` in batch path | 📝 TODO ONLY |
-| P3-P1-10 | P1 | Bank statement lifecycle dedupe weaker than legacy | Bug | Checks only pending reviews; misses stronger legacy dedupe | 📝 TODO ONLY |
+| P3-P1-09 | P1 | Batch receipt import no longer creates pending reviews | Bug | `processReceiptInput()` creates PendingReview when confidence < 0.75 or createReview=true | ✅ FIXED |
+| P3-P1-10 | P1 | Bank statement lifecycle dedupe weaker than legacy | Bug | Checks expense table for duplicates (not just pending reviews) | ✅ FIXED |
 | NEW-P3-001 | P1 | CancellationException swallowed in `ReceiptSideEffectDispatcher` | Bug | `catch(e: Exception)` does not rethrow CE | ✅ FIXED (U-PR1) |
 | NEW-P3-002 | P1 | CancellationException swallowed in `BankStatementLifecycleProcessor` per-item | Bug | Per-item catch swallows CE | ✅ FIXED (U-PR1) |
 | NEW-P3-003 | P1 | CancellationException swallowed in `ReceiptLinkService.unlinkReceiptFromExpense` | Bug | Catch-all swallows CE | ✅ FIXED (U-PR1) |
@@ -402,7 +402,7 @@ Universal contracts extracted from the architectural strategy — each represent
 |----------|-----|-----|-------|----------|-----------|-----------|
 | 1 — Notification | 0 | 6 | 6+17 | 23 | 0 | 0 — 🟢 COMPLETE |
 | 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 21 | 0 | 0 — 🟢 COMPLETE |
-| 3 — Receipt Capture | 1 | 10 | 11+8 | 15 | 2 | 4 (2 PARTIAL + 2 TODO) |
+| 3 — Receipt Capture | 1 | 10 | 11+8 | 19 | 0 | 0 — 🟢 COMPLETE |
 | 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 22 | 0 | 0 — 🟢 COMPLETE |
 | 5 — Currency/Dashboard | 0 | 12 | 12+14 | 17 | 1 | 8 NEW |
 | 6 — Budget/Forecasting | 0 | 15 | 15+16 | 26 | 0 | 5 TODO (design) |
