@@ -124,6 +124,11 @@ object BackupVerifier {
         val message: String
     )
 
+    data class VerificationIssue(
+        val code: String,
+        val message: String
+    )
+
     data class VerificationSummary(
         val passed: Boolean,
         val tableResults: List<TableResult>,
@@ -245,7 +250,8 @@ object BackupVerifier {
      */
     fun verify(
         dbFile: java.io.File,
-        expectedCounts: Map<String, Int>
+        expectedCounts: Map<String, Int>,
+        manifestSemanticAggregates: Map<String, String> = emptyMap()
     ): VerificationSummary {
         val db = SQLiteDatabase.openDatabase(
             dbFile.absolutePath,
@@ -253,7 +259,7 @@ object BackupVerifier {
             SQLiteDatabase.OPEN_READONLY
         )
         return try {
-            verifyInternal(db, expectedCounts)
+            verifyInternal(db, expectedCounts, manifestSemanticAggregates)
         } finally {
             db.close()
         }
@@ -264,14 +270,16 @@ object BackupVerifier {
      */
     fun verify(
         db: SQLiteDatabase,
-        expectedCounts: Map<String, Int>
+        expectedCounts: Map<String, Int>,
+        manifestSemanticAggregates: Map<String, String> = emptyMap()
     ): VerificationSummary {
-        return verifyInternal(db, expectedCounts)
+        return verifyInternal(db, expectedCounts, manifestSemanticAggregates)
     }
 
     private fun verifyInternal(
         db: SQLiteDatabase,
-        expectedCounts: Map<String, Int>
+        expectedCounts: Map<String, Int>,
+        manifestSemanticAggregates: Map<String, String> = emptyMap()
     ): VerificationSummary {
         val errors = mutableListOf<String>()
         val tableResults = mutableListOf<TableResult>()
@@ -389,6 +397,14 @@ object BackupVerifier {
         // 4. Semantic integrity checks (orphan FK references)
         val semanticErrors = verifySemanticIntegrity(db)
         errors.addAll(semanticErrors)
+
+        // 5. Semantic aggregate verification (P7-P1-05)
+        if (manifestSemanticAggregates.isNotEmpty()) {
+            val semanticAggregateIssues = verifySemanticAggregates(db, manifestSemanticAggregates)
+            for (issue in semanticAggregateIssues) {
+                errors.add("${issue.code}: ${issue.message}")
+            }
+        }
 
         val overallPassed = integrityCheckOk && foreignKeyCheckOk && errors.isEmpty()
 
@@ -537,5 +553,61 @@ object BackupVerifier {
      */
     fun tableTier(tableName: String): VerificationTier {
         return TABLE_TIERS[tableName] ?: VerificationTier.TIER_3_OPTIONAL
+    }
+
+    // ── Semantic aggregate queries (P7-P1-05) ────────────────────
+
+    /**
+     * The five semantic aggregate queries whose results are captured at backup
+     * time and re-verified on restore. Each pair is (SQL query, human-readable
+     * label).
+     */
+    val SEMANTIC_AGGREGATE_QUERIES: List<Pair<String, String>> = listOf(
+        "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'EXPENSE' AND isNotMine = 0" to "total_expenses",
+        "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'INCOME' AND isNotMine = 0" to "total_income",
+        "SELECT CAST(COUNT(*) AS TEXT) FROM expenses" to "expense_count",
+        "SELECT CAST(COUNT(*) AS TEXT) FROM budgets" to "budget_count",
+        "SELECT CAST(COUNT(*) AS TEXT) FROM receipt_expense_links" to "receipt_link_count"
+    )
+
+    /**
+     * Verifies that the restored database produces the same aggregate values
+     * that were recorded in the backup manifest.
+     *
+     * @param db the restored (or about-to-be-restored) database
+     * @param expectedAggregates map of (SQL query → expected result string).
+     *   The key must match one of the queries in [SEMANTIC_AGGREGATE_QUERIES].
+     * @return a list of [VerificationIssue] for every aggregate that does not
+     *   match the expected value.
+     */
+    fun verifySemanticAggregates(
+        db: SQLiteDatabase,
+        expectedAggregates: Map<String, String>
+    ): List<VerificationIssue> {
+        val issues = mutableListOf<VerificationIssue>()
+        for ((query, expectedValue) in expectedAggregates) {
+            try {
+                val cursor = db.rawQuery(query, null)
+                val actualValue = cursor.use {
+                    if (it.moveToFirst()) it.getString(0) ?: "N/A" else "N/A"
+                }
+                if (actualValue != expectedValue) {
+                    issues.add(
+                        VerificationIssue(
+                            "SEMANTIC_MISMATCH",
+                            "Aggregate $query: expected=$expectedValue actual=$actualValue"
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                issues.add(
+                    VerificationIssue(
+                        "SEMANTIC_QUERY_FAILED",
+                        "Aggregate query failed: $query — ${e.message}"
+                    )
+                )
+            }
+        }
+        return issues
     }
 }

@@ -90,4 +90,66 @@ class BackupVerifierManifestTest {
             db.close()
         }
     }
+
+    // ── P7-P1-05: semantic aggregate verification ──────────────────
+
+    @Test
+    fun `semantic_aggregates_match_passes_verification`() {
+        val db = android.database.sqlite.SQLiteDatabase.create(null)
+        try {
+            // Create required tables
+            db.execSQL("CREATE TABLE expenses (id INTEGER PRIMARY KEY, effectiveAmount REAL, transactionType TEXT, isNotMine INTEGER)")
+            db.execSQL("CREATE TABLE budgets (id INTEGER PRIMARY KEY, name TEXT)")
+            db.execSQL("CREATE TABLE receipt_expense_links (id INTEGER PRIMARY KEY, receiptId INTEGER, expenseId INTEGER)")
+
+            // Insert data
+            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (1, 100.0, 'EXPENSE', 0)")
+            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (2, 50.0, 'INCOME', 0)")
+            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (3, 200.0, 'EXPENSE', 1)") // isNotMine, excluded
+            db.execSQL("INSERT INTO budgets (id, name) VALUES (1, 'Groceries')")
+            db.execSQL("INSERT INTO receipt_expense_links (id, receiptId, expenseId) VALUES (1, 1, 1)")
+
+            // Build expected aggregates matching what the DB produces
+            val expected = mapOf(
+                "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'EXPENSE' AND isNotMine = 0" to "100.0",
+                "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'INCOME' AND isNotMine = 0" to "50.0",
+                "SELECT CAST(COUNT(*) AS TEXT) FROM expenses" to "3",
+                "SELECT CAST(COUNT(*) AS TEXT) FROM budgets" to "1",
+                "SELECT CAST(COUNT(*) AS TEXT) FROM receipt_expense_links" to "1"
+            )
+
+            val issues = BackupVerifier.verifySemanticAggregates(db, expected)
+            assertTrue("All aggregates should match: $issues", issues.isEmpty())
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `semantic_aggregates_mismatch_fails_verification`() {
+        val db = android.database.sqlite.SQLiteDatabase.create(null)
+        try {
+            // Create tables and insert data
+            db.execSQL("CREATE TABLE expenses (id INTEGER PRIMARY KEY, effectiveAmount REAL, transactionType TEXT, isNotMine INTEGER)")
+            db.execSQL("CREATE TABLE budgets (id INTEGER PRIMARY KEY, name TEXT)")
+            db.execSQL("CREATE TABLE receipt_expense_links (id INTEGER PRIMARY KEY, receiptId INTEGER, expenseId INTEGER)")
+            db.execSQL("INSERT INTO expenses (id, effectiveAmount, transactionType, isNotMine) VALUES (1, 100.0, 'EXPENSE', 0)")
+            db.execSQL("INSERT INTO budgets (id, name) VALUES (1, 'Groceries')")
+            db.execSQL("INSERT INTO receipt_expense_links (id, receiptId, expenseId) VALUES (1, 1, 1)")
+
+            // Build expected aggregates where one value intentionally mismatches
+            val expected = mapOf(
+                "SELECT CAST(SUM(effectiveAmount) AS TEXT) FROM expenses WHERE transactionType = 'EXPENSE' AND isNotMine = 0" to "999.0", // wrong!
+                "SELECT CAST(COUNT(*) AS TEXT) FROM expenses" to "42" // intentional mismatch
+            )
+
+            val issues = BackupVerifier.verifySemanticAggregates(db, expected)
+            assertEquals("Should have 2 mismatches", 2, issues.size)
+            assertTrue("First issue should be SEMANTIC_MISMATCH", issues[0].code == "SEMANTIC_MISMATCH")
+            assertTrue("Second issue should be SEMANTIC_MISMATCH", issues[1].code == "SEMANTIC_MISMATCH")
+            assertTrue("Message should mention expected=999.0", issues[0].message.contains("expected=999.0"))
+        } finally {
+            db.close()
+        }
+    }
 }
