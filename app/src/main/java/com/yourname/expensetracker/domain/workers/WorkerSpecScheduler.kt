@@ -170,9 +170,8 @@ object WorkerSpecScheduler {
                 "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing UPDATE"
             )
             // A version bump always wins over the spec's oneShotPolicy.
-            // UPDATE cancels the pending work and enqueues the new one, replacing
-            // the deprecated ExistingWorkPolicy.REPLACE (WorkManager 2.8+).
-            ExistingWorkPolicy.UPDATE
+            // KEEP preserves existing work; REPLACE is deprecated in WorkManager 2.8+.
+            ExistingWorkPolicy.KEEP
         } else {
             spec.oneShotPolicy
         }
