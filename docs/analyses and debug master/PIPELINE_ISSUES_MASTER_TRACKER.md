@@ -101,10 +101,18 @@ Full source: `PIPELINE_2_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P2-002 | P1 | Same TOCTOU in 6 other update methods | Bug | Same pattern in updateLocation/Merchant/Type/etc. | ✅ FIXED (U-PR2) |
 | NEW-P2-003 | P1 | `deleteExpense(Expense)` uses stale caller entity for snapshot | Bug | Caller-provided entity may be stale | ✅ FIXED (U-PR2) |
 | NEW-P2-004 | P2 | Non-atomic duplicate check in `updateExpense` | Bug | Duplicate check moved inside transaction via U-PR2 | ✅ FIXED (U-PR2) |
-| NEW-P2-005 | P2 | `DefaultExpenseCategoryAssignmentService` bypasses lifecycle | Bug | Direct DAO mutation without events | 🔴 OPEN |
+| NEW-P2-005 | P2 | `DefaultExpenseCategoryAssignmentService` bypasses lifecycle | Bug | Write barrier already present — verified; guards DAO writes | ✅ FIXED (verified) |
+| NEW-P2-006 | P2 | `NotificationRepository.deleteAll()` bypasses audit trail | Bug | BULK_DELETED TransactionEvent written before mutations (P2-PR2) | ✅ FIXED (P2-PR2) |
 | NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | Bug | Stale baseAmount/baseCurrency cleared on conversion failure (P2-PR1) | ✅ FIXED (P2-PR1) |
-| NEW-P2-008 | P2 | DAO exposes `updateMerchantForMerchant` that nulls dedupeKey | Bug | Bulk merchant rename nulls deduplication key | 🔴 OPEN |
+| NEW-P2-008 | P2 | DAO exposes `updateMerchantForMerchant` that nulls dedupeKey | Bug | `dedupeKey = NULL` removed from SQL; KDoc directs to coordinator (P2-PR2) | ✅ FIXED (P2-PR2) |
 | NEW-P2-009 | P2 | Planner hardcodes `EXPENSE_CREATED` trigger for update paths | Bug | Side-effect planner fires wrong trigger type | ✅ FIXED (U-PR8) |
+| NEW-P2-010 | P2 | Inconsistent event-write guard between `bulkUpdateCategory` overloads | Bug | Guard unified — only writes if affectedCount > 0 (P2-PR1) | ✅ FIXED (P2-PR1) |
+| NEW-P2-011 | P3 | `updateLocation` missing correlationId | Bug | correlationId added to TransactionEvent (P2-PR3) | ✅ FIXED (P2-PR3) |
+| NEW-P2-012 | P3 | `updateMerchant` missing correlationId in event | Bug | correlationId added to TransactionEvent (P2-PR3) | ✅ FIXED (P2-PR3) |
+| NEW-P2-013 | P3 | `updateType` missing correlationId in event | Bug | correlationId added to TransactionEvent (P2-PR3) | ✅ FIXED (P2-PR3) |
+| NEW-P2-014 | P3 | `ExpenseWriteStore.updateMerchant` doesn't update merchantKey/dedupeKey | Bug | Already FIXED (P2-PR1); test confirms regeneration | ✅ FIXED (P2-PR3 verified) |
+| NEW-P2-015 | P3 | Bulk idempotency keys non-unique across time | Bug | Timestamp suffix added to 7 bulk keys (P2-PR3) | ✅ FIXED (P2-PR3) |
+| NEW-P2-016 | P3 | `Flow.first()` could hang indefinitely for currency settings | Bug | `withTimeoutOrNull(5_000L)` wrapper + fallback (P2-PR3) | ✅ FIXED (P2-PR3) |
 
 ## Pipeline 3 — Receipt Capture / OCR / Email
 
@@ -385,7 +393,7 @@ Universal contracts extracted from the architectural strategy — each represent
 | Pipeline | P0 | P1 | Total | ✅ Fixed | ⚠ Partial | Remaining |
 |----------|-----|-----|-------|----------|-----------|-----------|
 | 1 — Notification | 0 | 6 | 6+17 | 23 | 0 | 0 — 🟢 COMPLETE |
-| 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 7 | 0 | 14 NEW (8 missing from table) |
+| 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 21 | 0 | 0 — 🟢 COMPLETE |
 | 3 — Receipt Capture | 1 | 10 | 11+8 | 8 | 2 | 9 (2 TODO + 7 NEW) |
 | 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 10 | 0 | 12 (1 DEF + 11 NEW) |
 | 5 — Currency/Dashboard | 0 | 12 | 12+14 | 14 | 1 | 11 NEW |

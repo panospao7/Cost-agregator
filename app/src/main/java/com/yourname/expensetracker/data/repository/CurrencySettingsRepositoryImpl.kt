@@ -17,6 +17,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -75,7 +76,8 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
     }
     
     override suspend fun areRatesStale(thresholdMs: Long): Boolean {
-        val lastUpdate = lastRateUpdate().first()
+        val lastUpdate = withTimeoutOrNull(5_000L) { lastRateUpdate().first() }
+            ?: return true // Timeout — assume stale
         if (lastUpdate == 0L) return true // Never updated
         
         val now = timeProvider.now()
@@ -101,7 +103,8 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
 
     override suspend fun resolveHomeCurrency(): HomeCurrencyResolution {
         return try {
-            val prefs = context.currencyDataStore.data.first()
+            val prefs = withTimeoutOrNull(5_000L) { context.currencyDataStore.data.first() }
+                ?: return HomeCurrencyResolution.Failed("Timeout reading home currency from DataStore (5s)")
             val code = prefs[HOME_CURRENCY_KEY]
             if (code.isNullOrBlank()) {
                 HomeCurrencyResolution.FirstRunDefault(CurrencyCode.EUR)

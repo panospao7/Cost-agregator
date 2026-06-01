@@ -13,6 +13,8 @@ import com.yourname.expensetracker.data.database.entity.BlockedPackage
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
+import com.yourname.expensetracker.data.database.entity.TransactionEvent
+import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.notification.NotificationPersistenceContext
@@ -190,6 +192,22 @@ class NotificationRepository @Inject constructor(
     suspend fun deleteAllNotifications() {
         writeBarrier.checkWritesAllowed("NotificationRepository.deleteAllNotifications")
         database.withTransaction {
+            // P2-PR2 (NEW-P2-006): Write BULK_DELETED TransactionEvent before mutation
+            database.transactionEventDao().insert(TransactionEvent(
+                expenseId = null,
+                eventType = LifecycleEventType.BULK_DELETED.name,
+                source = "SYSTEM",
+                actor = null,
+                occurredAt = System.currentTimeMillis(),
+                dedupeKey = null,
+                duplicateExpenseId = null,
+                beforeSnapshot = null,
+                afterSnapshot = null,
+                metadata = """{"operation":"deleteAllNotifications"}""",
+                reason = "Bulk delete all notifications, reviews, corrections, and stats",
+                correlationId = null
+            ))
+
             dao.deleteAll()
             pendingReviewDao.deleteAll()
             userCorrectionDao.deleteAll()

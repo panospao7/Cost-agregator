@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.currency
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Repository for currency-related settings.
@@ -69,7 +70,10 @@ interface CurrencySettingsRepository {
      */
     suspend fun resolveHomeCurrency(): HomeCurrencyResolution {
         return try {
-            val code = homeCurrency().first()
+            val code = withTimeoutOrNull(5_000L) { homeCurrency().first() }
+            if (code == null) {
+                return HomeCurrencyResolution.Failed("Timeout reading home currency (5s)")
+            }
             if (code.isBlank()) {
                 HomeCurrencyResolution.FirstRunDefault(
                     com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR

@@ -1003,7 +1003,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     afterSnapshot = afterSnapshot,
                     metadata = null,
                     reason = reason,
-                    correlationId = correlationId
+                    correlationId = correlationId  // DDL-C67-10
                 )
             )
         }
@@ -1122,7 +1122,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 dedupeKey = existing.dedupeKey, duplicateExpenseId = null,
                 beforeSnapshot = beforeSnapshot,
                 afterSnapshot = expenseToSnapshot(expenseId, updated),
-                metadata = null, reason = reason
+                metadata = null, reason = reason,
+                correlationId = correlationId  // DDL-C67-10
             ))
         }
 
@@ -1364,7 +1365,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = beforeSnapshot,
                     afterSnapshot = expenseToSnapshot(expenseId, updated),
                     metadata = null,
-                    reason = reason
+                    reason = reason,
+                    correlationId = correlationId  // DDL-C67-10
                 )
             )
         }
@@ -1442,7 +1444,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     beforeSnapshot = beforeSnapshot,
                     afterSnapshot = expenseToSnapshot(expenseId, updated),
                     metadata = null,
-                    reason = reason
+                    reason = reason,
+                    correlationId = correlationId  // DDL-C67-10
                 )
             )
         }

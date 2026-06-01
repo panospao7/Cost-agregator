@@ -109,7 +109,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                     source = source,
                     correlationId = corrId,
                     causationId = null,
-                    idempotencyKey = "bulk:$source:0:budget_check",
+                    idempotencyKey = "bulk:$source:0:budget_check:${System.currentTimeMillis()}",
                     priority = SideEffectPriority.LOW,
                     metadata = SafeEventMetadata.builder().put("affectedCount", "0").build()
                 ) { SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK) }
@@ -422,7 +422,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:budget_check",
+            idempotencyKey = "bulk:$source:$affectedCount:budget_check:${System.currentTimeMillis()}",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -456,7 +456,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:anomaly_invalidation",
+            idempotencyKey = "bulk:$source:$affectedCount:anomaly_invalidation:${System.currentTimeMillis()}",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -489,7 +489,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:merchant_category_dirty",
+            idempotencyKey = "bulk:$source:$affectedCount:merchant_category_dirty:${System.currentTimeMillis()}",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -518,7 +518,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:merchant_stats_dirty",
+            idempotencyKey = "bulk:$source:$affectedCount:merchant_stats_dirty:${System.currentTimeMillis()}",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -547,7 +547,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:analytics_cache",
+            idempotencyKey = "bulk:$source:$affectedCount:analytics_cache:${System.currentTimeMillis()}",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -576,7 +576,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:recurring_reconciliation",
+            idempotencyKey = "bulk:$source:$affectedCount:recurring_reconciliation:${System.currentTimeMillis()}",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())

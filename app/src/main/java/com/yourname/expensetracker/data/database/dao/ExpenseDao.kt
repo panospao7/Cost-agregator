@@ -317,8 +317,23 @@ interface ExpenseDao {
     @Query("SELECT COUNT(*) FROM expenses")
     suspend fun countAllExpenses(): Int
 
+    /**
+     * Bulk-update merchant identity for all expenses matching [oldMerchantKey].
+     *
+     * NOTE: This method does **not** regenerate [dedupeKey] — the existing key
+     * is preserved (not nullified). The dedupeKey depends on merchant, amount,
+     * date, currency, and transactionType, so it becomes **stale** after the
+     * merchant rename. Only the old dedupeKey is retained to keep the unique
+     * index intact.
+     *
+     * Production code MUST use [TransactionLifecycleCoordinator.bulkUpdateMerchant]
+     * which reads each row and recomputes the dedupeKey correctly. This DAO
+     * method is restricted to internal/test usage.
+     *
+     * @see TransactionLifecycleCoordinator.bulkUpdateMerchant
+     */
     @RestrictedExpenseDaoMutation
-@Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey, dedupeKey = NULL WHERE merchantKey = :oldMerchantKey")
+@Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey WHERE merchantKey = :oldMerchantKey")
 suspend fun updateMerchantForMerchant(oldMerchantKey: String, newMerchant: String, newMerchantKey: String)
 
     @RestrictedExpenseDaoMutation
