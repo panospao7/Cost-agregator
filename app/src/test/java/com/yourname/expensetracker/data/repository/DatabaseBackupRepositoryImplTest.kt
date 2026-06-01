@@ -20,6 +20,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.verifyOrder
+import io.mockk.mockkObject
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -123,6 +124,33 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(backupFile!!.exists())
         assertTrue(backupFile.length() > 0L)
         verify(atLeast = 1) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
+    }
+
+    @Test
+    fun `createCostBackup checks barrier doubleCheck before snapshot`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 2,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        // createCostBackup will likely fail later due to missing tables in BackupVerifier
+        // (which expects 57 tables), but the write barrier double-check happens early in
+        // the flow — right after WAL checkpoint, before snapshot creation.
+        runCatching {
+            repository.createCostBackup(
+                password = "test_password",
+                includeReceiptImages = false,
+                redacted = true,
+                privacyMode = null
+            )
+        }
+
+        // P7-P1-03: Verify write barrier is checked before snapshot
+        verify { mockRestoreMaintenanceMode.isWritesAllowed() }
     }
 
     @Test

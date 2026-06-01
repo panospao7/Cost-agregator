@@ -521,6 +521,23 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
+            // P7-P1-03: Snapshot consistency is protected by:
+            // 1. BACKUP_EXPORTING maintenance mode (write barrier + worker drain)
+            // 2. WAL checkpoint before snapshot
+            // 3. Write barrier double-check right before snapshot
+            // 4. PRAGMA locking_mode = EXCLUSIVE (no-op on Android, documents intent)
+
+            // Set exclusive locking mode — no-op on Android (SQLite always uses
+            // exclusive mode for on-device DBs), but documents the intent.
+            database.openHelper.writableDatabase.query("PRAGMA locking_mode = EXCLUSIVE").use { /* consume cursor */ }
+
+            // Double-check: verify write barrier is still active (mode wasn't exited
+            // between checkpoint and snapshot). If somehow the mode was exited, this
+            // catches it and fails fast.
+            require(!restoreMaintenanceMode.isWritesAllowed()) {
+                "BACKUP_EXPORTING write barrier was exited between WAL checkpoint and snapshot"
+            }
+
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             if (!dbFile.exists()) {
                 // DDL-512-12: finalize operation run
