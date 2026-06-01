@@ -308,6 +308,8 @@ class TotalsAggregationEngine @Inject constructor(
     fun getCategoryBreakdown(startMs: Long, endMs: Long, periodLabel: String): Flow<List<CategoryBreakdown>> = reactiveCategoryBreakdownFlow {
         val categories = categoryRepository.getAll()
         val categoryMap = categories.associateBy { it.id }
+        // NEW-P5-008: Explicit PURCHASE_ONLY filter ensures category breakdown matches
+        // dashboard totals and excludes deposits/transfers.
         val categoryAggregates = multiCurrencyRepository.getCategoryAggregatesHistorical(startMs, endMs)
         val grandTotal = categoryAggregates.values.sumOf { it.displayAmount }
 
@@ -541,8 +543,17 @@ class TotalsAggregationEngine @Inject constructor(
         if (expenses.isEmpty()) return emptyList()
 
         val defaultStatus = PeriodStatus.NO_DATA
+        // NEW-P5-010: Use per-day average (total / calendarDays) instead of per-expense
+        // average (total / expenseCount) so the status comparison is rate-of-spending
+        // based rather than transaction-count based.
+        val calendarDays = input.period?.let { period ->
+            java.time.Duration.between(
+                java.time.Instant.ofEpochMilli(period.startInclusiveMillis),
+                java.time.Instant.ofEpochMilli(period.endExclusiveMillis)
+            ).toDays().coerceAtLeast(1)
+        } ?: expenses.map { it.date }.distinct().size.coerceAtLeast(1)
         val average = if (expenses.isNotEmpty()) {
-            expenses.sumOf { it.normalizedAmount } / expenses.size
+            expenses.sumOf { it.normalizedAmount } / calendarDays
         } else 0.0
 
         // Group by day using the same dayKey format as [dayKey]

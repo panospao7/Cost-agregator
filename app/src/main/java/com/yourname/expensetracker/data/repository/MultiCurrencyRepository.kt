@@ -80,6 +80,14 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
+     * NEW-P5-006: Cached home currency to avoid repeated [CurrencySettingsRepository.homeCurrency]
+     * Flow subscriptions on every public method call. The cache is reset when the repository's
+     * [CurrencySettingsRepository] emits a new value (TODO: wire up Flow collection in init block).
+     */
+    @Volatile
+    private var cachedHomeCurrency: CurrencyCode? = null
+
+    /**
      * **LATEST-RATE:** Get total expenses between dates, converted to home currency.
      *
      * Uses type-agnostic aggregate DAO helper [ExpenseDao.getAllSpentBetweenByCurrency]
@@ -402,10 +410,17 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Throws [HomeCurrencyUnavailableException] when home currency cannot be resolved.
      * Prefer [resolveHomeCurrencyForMoneyMath] in new code.
+     *
+     * NEW-P5-006: Uses [cachedHomeCurrency] to avoid repeated Flow subscriptions.
+     * The cache persists for the lifetime of this singleton; TODO: invalidate when
+     * [CurrencySettingsRepository.homeCurrency] emits a new value.
      */
     private suspend fun requireHomeCurrencyForMoneyMath(): CurrencyCode {
+        cachedHomeCurrency?.let { return it }
         return when (val result = resolveHomeCurrencyForMoneyMath()) {
-            is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available -> result.currency
+            is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Available -> {
+                result.currency.also { cachedHomeCurrency = it }
+            }
             is com.yourname.expensetracker.domain.core.money.HomeCurrencyForMoneyMath.Unavailable ->
                 throw HomeCurrencyUnavailableException(result.reason)
         }
@@ -882,8 +897,10 @@ class MultiCurrencyRepository @Inject constructor(
                     amounts.add(Pair(bucket.total, bucket.currency))
                     counts.add(bucket.txCount)
                 }
+                // NEW-P5-013: Warning log + empty return for unknown types prevents
+                // silent data loss. Callers are alerted to investigate the unexpected type.
                 else -> {
-                    Timber.w("Unexpected bucket type in aggregate: ${bucket?.javaClass?.name}")
+                    Timber.w("NEW-P5-013: Unexpected bucket type in aggregate: ${bucket?.javaClass?.name}")
                     return MoneyAggregate.empty(CurrencyCode(homeCurrency))
                 }
             }

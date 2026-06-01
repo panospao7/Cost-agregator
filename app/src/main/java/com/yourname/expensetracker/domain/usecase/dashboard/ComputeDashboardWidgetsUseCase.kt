@@ -358,8 +358,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchases = expenses.filter {
             it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
         }
+        // NEW-P5-003: Exclude shared-expense deposits (isSharedExpense=true) so deposit
+        // totals reflect only the user's own income, not shared-expense repayments.
         val deposits = expenses.filter {
-            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT && !it.isNotMine
+            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT
+                && !it.isNotMine
+                && !it.isSharedExpense
         }
 
         val periodAggregate = engine.aggregateExpenses(purchases, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
@@ -385,10 +389,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 engine.aggregateExpenses(group, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
             }
 
+        // NEW-P5-008: Category breakdown uses PURCHASE_ONLY filter (matching dashboard totals),
+        // not ALL_TYPES. Since 'purchases' is already PURCHASE-only, this is a semantic fix.
         val categoryAggregates = purchases
             .groupBy { it.categoryId }
             .mapValues { (_, group) ->
-                engine.aggregateExpenses(group, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.ALL_TYPES)
+                engine.aggregateExpenses(group, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
             }
 
         val normalizedExpenses = expenses.mapNotNull { expense ->
@@ -803,51 +809,58 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
     }
 
+    /**
+     * NEW-P5-014: Uses java.time.ZonedDateTime for all date arithmetic,
+     * avoiding java.util.Calendar DST transition edge cases.
+     */
     private fun buildTrendFromNormalizedInput(
         input: DashboardNormalizedInput,
         ctx: ComputeContext
     ): DashboardWidget.SpendingTrend {
-        val trendSeriesCal = java.util.Calendar.getInstance()
+        val systemZone = java.time.ZoneId.systemDefault()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
 
-        // Group normalized purchase expenses by (year, month)
+        // Group normalized purchase expenses by (year, month) using ZonedDateTime
         val purchasesByMonth = input.normalizedExpenses
             .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
             .distinctBy { it.id }
             .groupBy { ne ->
-                trendSeriesCal.timeInMillis = ne.date
-                Pair(trendSeriesCal.get(java.util.Calendar.YEAR), trendSeriesCal.get(java.util.Calendar.MONTH))
+                val zdt = java.time.Instant.ofEpochMilli(ne.date).atZone(systemZone)
+                Pair(zdt.year, zdt.monthValue - 1) // month 0-based for label array
             }
 
+        // Build last 6 month keys using ZonedDateTime
         val monthKeys = mutableListOf<Pair<Int, Int>>()
-        val baseCal = java.util.Calendar.getInstance().apply { timeInMillis = ctx.now }
+        val nowZdt = java.time.Instant.ofEpochMilli(ctx.now).atZone(systemZone)
         repeat(6) {
-            monthKeys.add(0, Pair(baseCal.get(java.util.Calendar.YEAR), baseCal.get(java.util.Calendar.MONTH)))
-            baseCal.add(java.util.Calendar.MONTH, -1)
+            val m = nowZdt.minusMonths(it.toLong())
+            monthKeys.add(0, Pair(m.year, m.monthValue - 1))
         }
 
         val monthLabels = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
         monthKeys.forEach { (yr, mo) ->
             val monthExpenses = purchasesByMonth[Pair(yr, mo)] ?: emptyList()
 
-            val tempCal = java.util.Calendar.getInstance()
-            tempCal.set(yr, mo, 1, 0, 0, 0)
-            tempCal.set(java.util.Calendar.MILLISECOND, 0)
-            val mStart = tempCal.timeInMillis
-            val daysInThisMonth = tempCal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+            // Start of month using ZonedDateTime (DST-safe)
+            val mStartZdt = java.time.LocalDate.of(yr, mo + 1, 1)
+                .atStartOfDay(systemZone)
+                .toInstant()
+                .toEpochMilli()
+            val daysInThisMonth = java.time.YearMonth.of(yr, mo + 1).lengthOfMonth()
 
             // DSH-N1: Zero-filled series for empty months
             val daily = DoubleArray(daysInThisMonth)
             monthExpenses.forEach { ne ->
-                val dayIdx = TimePeriodUtils.daysBetween(mStart, ne.date).coerceIn(0, daysInThisMonth - 1)
+                val dayIdx = TimePeriodUtils.daysBetween(mStartZdt, ne.date).coerceIn(0, daysInThisMonth - 1)
                 // Use normalizedAmount — already in home currency, no conversion needed
                 daily[dayIdx] += ne.normalizedAmount
             }
             var running = 0.0
             val cumulative = daily.map { d -> running += d; running.toFloat() }
 
-            val isCurrentMonth = (yr == ctx.calendar.get(java.util.Calendar.YEAR) &&
-                    mo == ctx.calendar.get(java.util.Calendar.MONTH))
+            // Compare with ctx.now via ZonedDateTime
+            val currentZdt = java.time.Instant.ofEpochMilli(ctx.now).atZone(systemZone)
+            val isCurrentMonth = (yr == currentZdt.year && mo == currentZdt.monthValue - 1)
 
             trendSeries.add(SpendingTrendSeries(
                 label = monthLabels[mo],

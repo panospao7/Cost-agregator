@@ -1300,6 +1300,9 @@ AND LENGTH(:merchantKey) >= 8
      * Returns deposit totals grouped by currency for the given date range.
      * Used by [MultiCurrencyRepository.getHomeCurrencyDepositTotal] for
      * currency-aware income aggregation.
+     *
+     * NEW-P5-003: Excludes shared-expense and not-mine deposits so deposit totals
+     * reflect only the user's own income, not shared-expense repayments.
      */
     @Query("""
         SELECT UPPER(COALESCE(currency, 'EUR')) AS currency,
@@ -1309,6 +1312,7 @@ AND LENGTH(:merchantKey) >= 8
         WHERE ${DEPOSIT_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
           AND isNotMine = 0
+          AND isSharedExpense = 0
         GROUP BY UPPER(currency)
         ORDER BY total DESC
     """)

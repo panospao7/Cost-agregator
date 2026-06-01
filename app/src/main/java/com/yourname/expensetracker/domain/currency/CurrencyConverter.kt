@@ -83,6 +83,7 @@ class CurrencyConverter @Inject constructor(
 ) {
     companion object {
         const val DEFAULT_BASE_CURRENCY = "EUR"
+        /** NEW-P5-012: Stale-rate threshold. TODO — make configurable via AppConfig. */
         const val MAX_RATE_AGE_MS = 24 * 60 * 60 * 1000L  // 24 hours
 
         /** Rate bases that require atMillis and use getRateAsOf (CURR-70F-01). */

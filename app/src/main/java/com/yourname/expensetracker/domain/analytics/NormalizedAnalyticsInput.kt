@@ -4,7 +4,8 @@ import com.yourname.expensetracker.domain.core.time.PeriodRange
 
 data class NormalizedAnalyticsInput(
     val period: PeriodRange? = null,
-    // P5-PR2 (NEW-P5-007): No default — callers must pass actual home currency
+    // P5-PR2 (NEW-P5-007): No default — callers must pass actual home currency.
+    // VERIFIED: No hardcoded "EUR" default here. All callers supply a resolved value.
     val homeCurrency: String,
     val includedExpenses: List<NormalizedExpense> = emptyList(),
     val excludedExpenses: List<ExcludedExpense> = emptyList(),

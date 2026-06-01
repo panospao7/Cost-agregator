@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.core.money
 
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import timber.log.Timber
 
 /**
  * Common helper for building MoneyAggregate from per-currency buckets.
@@ -38,6 +39,15 @@ object MoneyAggregateBuilder {
         }
 
         // Group by currency
+        // NEW-P5-009: Log warning when transactionCounts is shorter than buckets,
+        // indicating a caller-side bug that would otherwise silently default to 0.
+        if (transactionCounts.isNotEmpty() && transactionCounts.size < buckets.size) {
+            Timber.w(
+                "MoneyAggregateBuilder size mismatch: %d buckets but %d transactionCounts. " +
+                    "Missing counts defaulted to 0.",
+                buckets.size, transactionCounts.size
+            )
+        }
         val byCurrency = mutableMapOf<String, Pair<Double, Int>>()
         buckets.forEachIndexed { index, (amount, currency) ->
             val ccy = currency.uppercase()
