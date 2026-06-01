@@ -154,6 +154,67 @@ class DatabaseBackupRepositoryImplTest {
     }
 
     @Test
+    fun `createCostBackup aborts when write barrier is breached during snapshot`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 2,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        // Simulate barrier defeated — writes are allowed during snapshot
+        every { mockRestoreMaintenanceMode.isWritesAllowed() } returns true
+
+        val result = runCatching {
+            repository.createCostBackup(
+                password = "test_password",
+                includeReceiptImages = false,
+                redacted = true,
+                privacyMode = null
+            )
+        }
+
+        assertTrue(result.isFailure)
+        assertTrue(
+            result.exceptionOrNull()?.message?.contains("write barrier was exited") == true
+        )
+    }
+
+    @Test
+    fun `createCostBackup proceeds when write barrier protects snapshot`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 2,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        // Normal case — writes are not allowed, barrier is intact
+        every { mockRestoreMaintenanceMode.isWritesAllowed() } returns false
+
+        val result = runCatching {
+            repository.createCostBackup(
+                password = "test_password",
+                includeReceiptImages = false,
+                redacted = true,
+                privacyMode = null
+            )
+        }
+
+        // The backup may fail later at verification (57 tables expected), but it should
+        // not fail at the write barrier check — i.e. barrier check passes.
+        if (result.isFailure) {
+            assertTrue(
+                result.exceptionOrNull()?.message?.contains("write barrier was exited") != true
+            )
+        }
+    }
+
+    @Test
     fun `restore from backup works`() = runTest(testDispatcher) {
         createSqliteDatabase(
             file = dbFile,
