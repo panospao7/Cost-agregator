@@ -1,9 +1,9 @@
 # Pipeline 1 — Notification Capture: Consolidated Issue Registry
 
-> **Last validated:** 2026-05-31 against local HEAD code  
-> **Status:** 5 FIXED, 1 PARTIAL, 17 NEW open issues  
-> **Total open items:** 18
-> **Update 2026-05-31:** NEW-P1-002 and NEW-P1-015 FIXED by P1-PR2 (deferred diagnostic emission, no IllegalStateException in transaction)
+> **Last validated:** 2026-06-01 against HEAD (commits ca5972bf, 6b31d468, 31696516)  
+> **Status:** 5 FIXED (original), 1 PARTIAL (original), 10 FIXED (NEW), 7 OPEN (NEW), 1 BLOCKED (NEW)  
+> **Total open items:** 8 (7 OPEN + 1 PARTIAL from original P1-P1-07)
+> **Update 2026-06-01:** Post-tracker commits reconciled. P1-PR2 (ca5972bf): NEW-P1-002/015 FIXED. P1-PR3 (6b31d468): NEW-P1-005/006/013 FIXED. P1-PR4 (6b31d468): NEW-P1-017 FIXED. P1-PR5 (31696516): NEW-P1-008 FIXED. P1-PR6 (6b31d468): NEW-P1-012/014 FIXED. Remaining: NEW-P1-003/004/007/010/011/016 OPEN, NEW-P1-009 BLOCKED by U-PR5.
 
 ---
 
@@ -31,7 +31,7 @@
 | NEW-P1-005 | P2 | Filter blocks ALL "deposit" notifications unconditionally | NotificationFilter.kt | ✅ FIXED (P1-PR3) |
 | NEW-P1-006 | P2 | "failed" keyword deny is overly broad (matches merchant names) | NotificationFilter.kt | ✅ FIXED (P1-PR3) |
 | NEW-P1-007 | P2 | Race between `captureGate.warmUp()` (async) and first notification | NotificationCaptureService.kt | 🔴 OPEN |
-| NEW-P1-008 | P2 | `processMutex` serializes ALL processing — bottleneck | NotificationProcessingPipeline.kt | 🔴 OPEN |
+| NEW-P1-008 | P2 | `processMutex` serializes ALL processing — bottleneck | NotificationProcessingPipeline.kt | ✅ FIXED (P1-PR5) |
 | NEW-P1-009 | P2 | Double privacy settings fetch — TOCTOU race | NotificationCaptureService.kt | 🔴 OPEN |
 | NEW-P1-010 | P2 | `processAndSave` marks processed OUTSIDE pipeline transaction | NotificationRepository.kt | 🔴 OPEN |
 | NEW-P1-011 | P3 | Redundant SHA-256 implementations | NotificationCaptureService.kt | 🔴 OPEN |
@@ -48,38 +48,30 @@
 
 | Status | Count |
 |--------|------:|
-| ✅ FIXED (old issues) | 5 |
-| ⚠ PARTIAL (old issues) | 1 |
-| 🔴 OPEN (new issues) | 17 |
-| **Total open work** | **18** |
+| ✅ FIXED (original issues) | 5 |
+| ✅ FIXED (NEW issues) | 10 |
+| ⚠ PARTIAL (original issues) | 1 |
+| 🔴 OPEN (NEW issues) | 6 |
+| ⏳ BLOCKED by U-PR5 | 1 |
+| **Total open work** | **8** |
 
 ---
 
 ## Priority Order for Remaining Work
 
 ### P1 (must fix)
-1. **NEW-P1-001** — CancellationException swallowed (universal fix U-PR1)
-2. **P1-P1-07 remainder** — Wrap intake insert in `NonCancellable` or `@ApplicationScope`
-3. **NEW-P1-002** — Source-link I/O inside transaction (potential deadlock)
-4. **NEW-P1-015** — Orphaned diagnostic for rolled-back transactions
+1. **P1-P1-07 remainder** — Wrap intake insert in `NonCancellable` or `@ApplicationScope` (P1-PR1)
 
 ### P2 (should fix)
-5. **NEW-P1-013** — combinedBody passed as bigText to filter (over-inclusive)
-6. **NEW-P1-005** — Filter blocks all deposits unconditionally
-7. **NEW-P1-006** — "failed" keyword too broad
-8. **NEW-P1-007** — Warm-up race on cold start
-9. **NEW-P1-008** — processMutex bottleneck
-10. **NEW-P1-009** — TOCTOU privacy settings race
-11. **NEW-P1-010** — markProcessed outside transaction
-12. **NEW-P1-017** — Settings observer dies permanently
-13. **NEW-P1-003** — Dead workTracker code
-14. **NEW-P1-004** — Silently dropped events
+2. **NEW-P1-007** — Warm-up race on cold start (P1-PR4 remainder)
+3. **NEW-P1-010** — markProcessed outside transaction (P1-PR5 remainder)
+4. **NEW-P1-009** — TOCTOU privacy settings race ⏳ **BLOCKED by U-PR5**
+5. **NEW-P1-003** — Dead workTracker code (P1-PR6)
+6. **NEW-P1-004** — Silently dropped events (P1-PR6)
 
 ### P3 (cleanup)
-15. **NEW-P1-011** — Redundant SHA-256
-16. **NEW-P1-012** — Unused postTime parameter
-17. **NEW-P1-014** — Deduper cleanup never called
-18. **NEW-P1-016** — Sensitive key exact match
+7. **NEW-P1-011** — Redundant SHA-256 (P1-PR6)
+8. **NEW-P1-016** — Sensitive key exact match (P1-PR6)
 
 ---
 

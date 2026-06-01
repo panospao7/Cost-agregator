@@ -5,7 +5,6 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
-import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
@@ -26,7 +25,6 @@ class NotificationIntakeWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val intakeDao: NotificationIntakeDao,
-    private val rawDao: RawNotificationDao,
     private val repository: NotificationRepository,
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider,
@@ -227,11 +225,32 @@ class NotificationIntakeWorker @AssistedInject constructor(
             )
             terminalMarked = true
 
-            // Best-effort cleanup: failures must not regress the terminal status
-            markRawProcessedBestEffort(rawId)
+            // P1-SLICE-D: markProcessed is now atomic inside the pipeline — no best-effort needed.
             purgePayloadBestEffort(current, now)
 
             Result.success()
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Timber.w(e, "Worker timeout, marking retryable intakeId=$intakeId")
+            if (current.attempts + 1 < current.maxAttempts) {
+                val backoff = computeBackoff(current.attempts + 1)
+                intakeDao.markRetryableFailure(
+                    id = intakeId,
+                    nextAttemptAt = now + backoff,
+                    failureCode = "TIMEOUT",
+                    failureHash = null,
+                    nowMs = now
+                )
+                return Result.retry()
+            } else {
+                intakeDao.markFinalFailure(
+                    id = intakeId,
+                    failureCode = "TIMEOUT",
+                    failureHash = null,
+                    nowMs = now
+                )
+                purgePayloadBestEffort(current, now)
+                return Result.failure()
+            }
         } catch (e: CancellationException) {
             Timber.d("IntakeWorker: cancelled intakeId=$intakeId")
             throw e
@@ -251,7 +270,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     failureHash = null,
                     nowMs = now
                 )
-                Result.retry()
+                return Result.retry()
             } else {
                 intakeDao.markFinalFailure(
                     id = intakeId,
@@ -260,18 +279,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     nowMs = now
                 )
                 purgePayloadBestEffort(current, now)
-                Result.failure()
+                return Result.failure()
             }
-        }
-    }
-
-    private suspend fun markRawProcessedBestEffort(rawId: Long?) {
-        if (rawId == null) return
-        try {
-            rawDao.markProcessed(rawId)
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.w(e, "IntakeWorker: markProcessed failed for rawId=$rawId")
         }
     }
 

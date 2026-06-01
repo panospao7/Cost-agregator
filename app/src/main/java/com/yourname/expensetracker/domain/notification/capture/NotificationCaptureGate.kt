@@ -138,6 +138,12 @@ class NotificationCaptureGate @Inject constructor(
     }
 
     /**
+     * Returns true when both settings and blocked-packages observers have loaded.
+     * Non-blocking; does not trigger self-healing.
+     */
+    fun isReady(): Boolean = settingsLoaded && blockedPackagesLoaded
+
+    /**
      * Decide whether capture is allowed for the given notification.
      *
      * This MUST be called before accessing [android.app.Notification.extras]

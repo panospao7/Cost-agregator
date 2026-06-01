@@ -11,16 +11,18 @@
 
 ```
 Pipeline: 1 — Notification Capture
-Verdict: RED
+Verdict: YELLOW
 Summary:
-- 5 old issues fully FIXED, 1 PARTIAL (P1-P1-07 loss window)
-- 1 issue FIXED by universal (NEW-P1-001 via U-PR1)
+- 5 original issues fully FIXED, 1 PARTIAL (P1-P1-07 loss window)
+- 10 NEW issues FIXED by post-tracker commits (ca5972bf, 6b31d468, 31696516)
 - 1 issue BLOCKED by universal (NEW-P1-009 privacy TOCTOU → U-PR5)
-- 15 pipeline-local issues remain OPEN (2 P1, 9 P2, 4 P3)
-- Major regression: non-raw storage modes produce PAYLOAD_UNAVAILABLE_PRIVACY
-- processMutex serializes all processing — throughput bottleneck
-- Filter too broad — deposits blocked, "failed" keyword over-matches
-- Settings observer dies permanently on exception — privacy regression risk
+- 6 pipeline-local issues remain OPEN (1 P1, 2 P2, 3 P3)
+- Major remaining: service-shutdown loss window (P1-PR1 not started)
+- P1-PR2 (source-link isolation): ✅ DONE
+- P1-PR3 (filter correctness): ✅ DONE
+- P1-PR4 (gate lifecycle): ⚠ PARTIAL — observer restart (017) done, cold-start retry (007) remaining
+- P1-PR5 (concurrency/atomicity): ⚠ PARTIAL — Semaphore (008) done, markProcessed atomic (010) remaining
+- P1-PR6 (cleanup): ⚠ PARTIAL — 2 of 6 items done (012, 014); 4 remain (003, 004, 011, 016)
 ```
 
 ---
@@ -70,24 +72,24 @@ Summary:
 | P1-P1-03 | ✅ FIXED | None | None |
 | P1-P1-05 | ✅ FIXED | None | None |
 | P1-P1-06 | ✅ FIXED | U-PR4 compatible | None |
-| P1-P1-07 | ⚠ PARTIAL | U-PR5 (privacy modes) | Service-scope cancellation window; non-raw mode regression |
-| NEW-P1-001 | ✅ FIXED | U-PR1 | None |
-| NEW-P1-002 | ✅ FIXED | None | Diagnostic emit deferred to post-commit (P1-PR2 landed) |
-| NEW-P1-003 | 🔴 OPEN | None | Remove dead `acceptingNewWork` code |
-| NEW-P1-004 | 🔴 OPEN | None | Handle null launch return |
-| NEW-P1-005 | 🔴 OPEN | None | Fix deposit filter logic |
-| NEW-P1-006 | 🔴 OPEN | None | Narrow "failed" keyword matching |
-| NEW-P1-007 | 🔴 OPEN | None | Add blocking warmUp or retry on TemporarilyUnavailable |
-| NEW-P1-008 | 🔴 OPEN | None | Replace Mutex with Semaphore or per-notification concurrency |
-| NEW-P1-009 | 🔴 BLOCKED | U-PR5 | Privacy TOCTOU — wait for RawContentPolicy |
-| NEW-P1-010 | 🔴 OPEN | None | Move markProcessed inside transaction |
-| NEW-P1-011 | 🔴 OPEN | None | Deduplicate SHA-256 implementations |
-| NEW-P1-012 | 🔴 OPEN | None | Remove unused postTime parameter |
-| NEW-P1-013 | 🔴 OPEN | None | Pass structured fields to filter, not concatenated body |
-| NEW-P1-014 | 🔴 OPEN | None | Wire cleanupExpired to periodic maintenance |
-| NEW-P1-015 | ✅ FIXED | None | IllegalStateException removed; review always created (P1-PR2 landed) |
-| NEW-P1-016 | 🔴 OPEN | None | Use case-insensitive/camelCase-aware key filtering |
-| NEW-P1-017 | 🔴 OPEN | None | Add supervisor/restart to settings observer |
+| P1-P1-07 | ⚠ PARTIAL | None | P1-PR1: NonCancellable intake insert + non-raw mode fix |
+| NEW-P1-001 | ✅ FIXED | U-PR1 (e12aad97) | None |
+| NEW-P1-002 | ✅ FIXED (P1-PR2) | None | Source-link writes deferred post-commit (ca5972bf) |
+| NEW-P1-005 | ✅ FIXED (P1-PR3) | None | Deposit deny requires no expense signal (6b31d468) |
+| NEW-P1-006 | ✅ FIXED (P1-PR3) | None | "failed" requires payment/auth context (6b31d468) |
+| NEW-P1-013 | ✅ FIXED (P1-PR3) | None | Filter receives raw EXTRA_BIG_TEXT (6b31d468) |
+| NEW-P1-015 | ✅ FIXED (P1-PR2) | None | IllegalStateException → DeferredSourceLinkDiagnostic (ca5972bf) |
+| NEW-P1-008 | ✅ FIXED (P1-PR5) | None | Mutex → Semaphore(4) bounded concurrency (31696516) |
+| NEW-P1-017 | ✅ FIXED (P1-PR4) | None | while(true) retry loop with 5s backoff (6b31d468) |
+| NEW-P1-012 | ✅ FIXED (P1-PR6) | None | Removed unused postTime from computeDedupeKey (6b31d468) |
+| NEW-P1-014 | ✅ FIXED (P1-PR6) | None | cleanupExpired wired to onListenerConnected (6b31d468) |
+| NEW-P1-003 | 🔴 OPEN | None | P1-PR6: Remove dead `acceptingNewWork` code |
+| NEW-P1-004 | 🔴 OPEN | None | P1-PR6: Handle null launch return |
+| NEW-P1-007 | 🔴 OPEN | None | P1-PR4: Retry on TemporarilyUnavailable instead of drop |
+| NEW-P1-010 | 🔴 OPEN | None | P1-PR5: Move markProcessed inside pipeline transaction |
+| NEW-P1-011 | 🔴 OPEN | None | P1-PR6: Consolidate SHA-256 to shared Hashing.kt |
+| NEW-P1-016 | 🔴 OPEN | None | P1-PR6: Add camelCase variants to sensitive key filter |
+| NEW-P1-009 | ⏳ BLOCKED | U-PR5 | Privacy TOCTOU — wait for RawContentPolicy |
 
 
 
@@ -104,11 +106,11 @@ Summary:
 **Relation to universal:** Blocked by U-PR5 (RawStorageMode contract). The fix requires the shared `RawContentPolicy` to define per-source-type transient storage semantics.  
 **Temporary mitigation:** For DO_NOT_STORE mode, process synchronously in service using ephemeral raw text (no async recovery). Document that full durability requires STORE_RAW or encrypted transient queue.
 
-### Regression risk: Settings observer permanent death
+### Regression risk: Settings observer permanent death ✅ FIXED (P1-PR4, `6b31d468`)
 
-**Severity:** P2  
-**Evidence:** `NotificationCaptureGate.startObservers()` launches two coroutines that collect flows. If either throws an exception, the `catch` block logs but does NOT restart the observer. The observer dies permanently.  
-**Impact:** If privacy settings change after observer death, the gate uses stale cached values. Could allow capture when user disabled it, or block capture when user enabled it.
+**Severity:** P2 (was)  
+**Fix:** `NotificationCaptureGate.startObservers()` now wraps both observer collect loops in `while(true)` with 5s backoff on transient failure. `CancellationException` still propagates to respect structured concurrency.  
+**Status:** ✅ RESOLVED — observers now restart after transient DB/flow exceptions.
 
 ---
 
@@ -117,19 +119,12 @@ Summary:
 | ID | Severity | Title | Area | Suggested PR |
 |---|---|---|---|---|
 | P1-P1-07 (remainder) | P1 | Service-scope cancellation window before intake insert | Intake durability | P1-PR1 |
-| NEW-P1-005 | P2 | Filter blocks ALL deposit notifications | Filter logic | P1-PR3 |
-| NEW-P1-006 | P2 | "failed" keyword deny overly broad | Filter logic | P1-PR3 |
-| NEW-P1-013 | P2 | combinedBody as bigText — over-inclusive matching | Filter logic | P1-PR3 |
-| NEW-P1-007 | P2 | Race between warmUp() and first notification | Gate lifecycle | P1-PR4 |
-| NEW-P1-017 | P2 | Settings observer dies permanently on exception | Gate lifecycle | P1-PR4 |
-| NEW-P1-008 | P2 | processMutex serializes ALL processing | Performance | P1-PR5 |
-| NEW-P1-010 | P2 | markProcessed outside pipeline transaction | Atomicity | P1-PR5 |
-| NEW-P1-003 | P3 | Dead `acceptingNewWork` code | Cleanup | P1-PR6 |
-| NEW-P1-004 | P3 | Silently dropped events on null launch | Cleanup | P1-PR6 |
-| NEW-P1-011 | P3 | Redundant SHA-256 implementations | Cleanup | P1-PR6 |
-| NEW-P1-012 | P3 | Unused postTime parameter | Cleanup | P1-PR6 |
-| NEW-P1-014 | P3 | Deduper cleanupExpired never called | Cleanup | P1-PR6 |
-| NEW-P1-016 | P3 | Sensitive key filtering exact match only | Cleanup | P1-PR6 |
+| NEW-P1-007 | P2 | Race between warmUp() and first notification | Gate lifecycle | P1-PR4 (remainder) |
+| NEW-P1-010 | P2 | markProcessed outside pipeline transaction | Atomicity | P1-PR5 (remainder) |
+| NEW-P1-003 | P3 | Dead `acceptingNewWork` code | Cleanup | P1-PR6 (remainder) |
+| NEW-P1-004 | P3 | Silently dropped events on null launch | Cleanup | P1-PR6 (remainder) |
+| NEW-P1-011 | P3 | Redundant SHA-256 implementations | Cleanup | P1-PR6 (remainder) |
+| NEW-P1-016 | P3 | Sensitive key filtering exact match only | Cleanup | P1-PR6 (remainder) |
 | NEW-P1-009 | P2 | Double privacy settings fetch — TOCTOU | Privacy | Blocked by U-PR5 |
 
 
@@ -138,7 +133,7 @@ Summary:
 
 ## 7. PR Organization
 
-### P1-PR1 — Intake Durability & Non-Raw Mode Fix
+### P1-PR1 — Intake Durability & Non-Raw Mode Fix ⬜ NOT STARTED
 
 ```
 PR name: fix(p1): intake durability — NonCancellable insert + non-raw mode processing
@@ -171,10 +166,11 @@ Acceptance criteria:
   - Worker returns Result.retry() without DB write when barrier is active
 ```
 
-### P1-PR2 — Transaction Side-Effect Isolation
+### P1-PR2 — Transaction Side-Effect Isolation ✅ DONE (`ca5972bf`)
 
 ```
 PR name: fix(p1): move diagnostic emit and source-link I/O outside DB transaction
+Status: ✅ LANDED in ca5972bf (2026-05-31)
 Goal: Prevent potential deadlock from I/O side effects inside Room transaction
 Issues fixed: NEW-P1-002, NEW-P1-015
 Universal dependencies: None
@@ -200,10 +196,11 @@ Acceptance criteria:
   - All existing pipeline tests pass unchanged
 ```
 
-### P1-PR3 — Filter Correctness
+### P1-PR3 — Filter Correctness ✅ DONE (`6b31d468`)
 
 ```
 PR name: fix(p1): narrow filter — deposit pass-through, keyword precision, structured input
+Status: ✅ LANDED in 6b31d468 (2026-06-01)
 Goal: Fix false-positive rejections and over-inclusive matching
 Issues fixed: NEW-P1-005, NEW-P1-006, NEW-P1-013
 Universal dependencies: None
@@ -230,11 +227,13 @@ Acceptance criteria:
   - Filter uses structured fields, not concatenated body
 ```
 
-### P1-PR4 — Gate Lifecycle Hardening
+### P1-PR4 — Gate Lifecycle Hardening ⚠ PARTIAL (1 of 2 done — `6b31d468`)
 
 ```
 PR name: fix(p1): gate warmUp race + observer restart on failure
-Goal: Prevent cold-start drops and permanent observer death
+Status: ⚠ PARTIAL in 6b31d468 (2026-06-01)
+Done: NEW-P1-017 (while(true) retry loop for settings/blocked-packages observers)
+Remaining: NEW-P1-007 (TemporarilyUnavailable still dropped — no retry/enqueue)
 Issues fixed: NEW-P1-007, NEW-P1-017
 Universal dependencies: None
 Files likely touched:
@@ -257,11 +256,13 @@ Acceptance criteria:
   - Observer stops retrying after configured max attempts
 ```
 
-### P1-PR5 — Pipeline Concurrency & Atomicity
+### P1-PR5 — Pipeline Concurrency & Atomicity ⚠ PARTIAL (1 of 2 done — `31696516`)
 
 ```
 PR name: fix(p1): replace processMutex with bounded concurrency + atomic markProcessed
-Goal: Improve throughput and fix atomicity gap
+Status: ⚠ PARTIAL in 31696516 (2026-06-01)
+Done: NEW-P1-008 (Mutex → Semaphore(4) bounded concurrency)
+Remaining: NEW-P1-010 (markProcessed still runs outside pipeline transaction)
 Issues fixed: NEW-P1-008, NEW-P1-010
 Universal dependencies: None
 Files likely touched:
@@ -284,11 +285,13 @@ Acceptance criteria:
   - markProcessed is atomic with pipeline outcome
 ```
 
-### P1-PR6 — Dead Code & Cleanup
+### P1-PR6 — Dead Code & Cleanup ⚠ PARTIAL (2 of 6 done — `6b31d468`)
 
 ```
 PR name: chore(p1): remove dead code, wire deduper cleanup, fix minor issues
-Goal: Code hygiene and minor correctness fixes
+Status: ⚠ PARTIAL in 6b31d468 (2026-06-01)
+Done: NEW-P1-012 (postTime removed), NEW-P1-014 (cleanupExpired wired)
+Remaining: NEW-P1-003 (acceptingNewWork), NEW-P1-004 (null launch), NEW-P1-011 (SHA-256), NEW-P1-016 (camelCase keys)
 Issues fixed: NEW-P1-003, NEW-P1-004, NEW-P1-011, NEW-P1-012, NEW-P1-014, NEW-P1-016
 Universal dependencies: None
 Files likely touched:
@@ -318,9 +321,9 @@ Acceptance criteria:
 
 ---
 
-## 8. Detailed Implementation Plan
+## 8. Detailed Implementation Plan (Remaining Work Only)
 
-### P1-PR1 Step-by-Step
+### P1-PR1 Step-by-Step ⬜ NOT STARTED
 
 1. **Open** `NotificationCaptureService.kt`
    - Find the `workTracker.launch(serviceScope)` block that calls `intakeCoordinator.capture()`
@@ -344,36 +347,13 @@ Acceptance criteria:
 
 4. **Write tests** in `NotificationIntakeWorkerTest.kt` and `NotificationIntakeCoordinatorTest.kt`
 
-### P1-PR2 Step-by-Step
+### ✅ P1-PR2 — COMPLETED (`ca5972bf`, 2026-05-31)
+All steps implemented. DeferredSourceLinkDiagnostic pattern in place. Source-link writes and diagnostic emissions deferred to post-commit.
 
-1. **Open** `NotificationProcessingPipeline.kt`
-   - Find all calls to `writeNotificationDedupeSourceLink()` inside `database.withTransaction { }`
-   - Replace with: collect `SourceLinkRequest(rawId, matchType, correlationId)` into a local list
-   - After `withTransaction` block completes, iterate the list and call `writeNotificationDedupeSourceLink()`
-   - Same for `diagnosticEmitter.emit()` calls inside transactions — collect as `DiagnosticRequest` objects
+### ✅ P1-PR3 — COMPLETED (`6b31d468`, 2026-06-01)
+All steps implemented. Filter passes deposits with expense signals; "failed" requires payment/auth context; raw EXTRA_BIG_TEXT passed to filter.
 
-2. **Handle rollback case:**
-   - If `withTransaction` throws (including the `IllegalStateException` from source-link fatal failure), do NOT execute deferred source-link writes
-   - Remove the `throw IllegalStateException(...)` inside transaction for source-link failures; instead, collect the failure and handle post-commit
-
-3. **Verify** that `pendingReviewSourceLinkService.linkSourcesForReview()` is also moved outside transaction (it calls `sourceLinkWriter` internally)
-
-### P1-PR3 Step-by-Step
-
-1. **Open** `NotificationFilter.kt`
-   - Find the INCOMING_ONLY / deposit deny logic
-   - Change: only deny "deposit"/"κατάθεση" when NO expense signal keywords are present in the same notification
-   - Find "failed" in deny keywords or deny logic
-   - Change: require "failed" to co-occur with auth/security context words (login, authentication, verification)
-
-2. **Open** `NotificationCaptureService.kt`
-   - Find where `shouldCapture(packageName, title, text, bigText)` is called
-   - Ensure `bigText` passed is the ACTUAL bigText from notification extras, NOT a concatenation of title+text+bigText
-   - If the service currently builds `combinedBody` and passes it as bigText, fix to pass raw bigText only
-
-3. **Write filter unit tests** covering edge cases
-
-### P1-PR4 Step-by-Step
+### P1-PR4 Step-by-Step — REMAINING: NEW-P1-007
 
 1. **Open** `NotificationCaptureGate.kt`
    - In `startObservers()`: wrap each `scope.launch { ... collect ... }` in a retry loop:
@@ -398,16 +378,29 @@ Acceptance criteria:
 2. **Open** `NotificationCaptureService.kt`
    - Handle `TemporarilyUnavailable` from gate: enqueue via intake coordinator for retry instead of emitting DROP diagnostic
 
-### P1-PR5 Step-by-Step
+### P1-PR5 Step-by-Step — REMAINING: NEW-P1-010
 
-1. **Open** `NotificationProcessingPipeline.kt`
-   - Replace `private val processMutex = Mutex()` with `private val processSemaphore = Semaphore(MAX_CONCURRENT = 4)`
-   - Change `processMutex.withLock { }` to `processSemaphore.withPermit { }`
-   - Move `classifier.initialize()` to a separate `classifierMutex` that only guards initialization (not processing)
+✅ **NEW-P1-008 DONE** (`31696516`): processMutex → Semaphore(4) with bounded concurrency.
+
+**Remaining work for NEW-P1-010:**
 
 2. **Open** `NotificationRepository.kt`
-   - Find `markProcessed()` call
+   - Find `markProcessed()` call in `processAndSave()`
    - Move it inside the pipeline's `withTransaction` block (or ensure it's called atomically with the outcome write)
+
+---
+
+### P1-PR6 Step-by-Step — REMAINING: NEW-P1-003, 004, 011, 016
+
+✅ **NEW-P1-012 DONE** (`6b31d468`): Unused postTime parameter removed from `computeDedupeKey`.
+✅ **NEW-P1-014 DONE** (`6b31d468`): `deduper.cleanupExpired(DEDUP_WINDOW_MS)` wired to `onListenerConnected`.
+
+**Remaining work:**
+
+1. **NEW-P1-003:** Remove `workTracker.acceptingNewWork` field and all references — never set to false in production (`stopAcceptingAndDrain()` never called).
+2. **NEW-P1-004:** Add null-check on `workTracker.launch()` return; log warning if coroutine not started (silent drop).
+3. **NEW-P1-011:** Consolidate SHA-256 implementations to shared `Hashing.kt`; remove duplicates in `NotificationCaptureService.kt`, `NotificationIntakeCoordinator.kt`, and other files.
+4. **NEW-P1-016:** Add camelCase variants (`cardNumber`, `accountNumber`, `fullName`, `transactionId`, etc.) to sensitive key filter set alongside existing `snake_case` keys.
 
 ---
 
@@ -449,13 +442,14 @@ Acceptance criteria:
 ## 11. Final Definition of Done
 
 - [ ] P1-PR1: All 4 RawStorageMode values produce correct outcomes; no loss window before intake insert
-- [ ] P1-PR2: Zero I/O side effects inside `withTransaction` blocks; no orphaned diagnostics
-- [ ] P1-PR3: Filter passes deposit-with-fee, merchant-named-"failed"; rejects auth-failed; no bigText duplication
-- [ ] P1-PR4: Gate observer survives transient exceptions; cold-start notifications retried
-- [ ] P1-PR5: Concurrent notifications process in parallel; markProcessed atomic with outcome
-- [ ] P1-PR6: No dead code; deduper cleanup wired; sensitive key filter comprehensive
+- [x] P1-PR2: Zero I/O side effects inside `withTransaction` blocks; no orphaned diagnostics ✅ (`ca5972bf`)
+- [x] P1-PR3: Filter passes deposit-with-fee, merchant-named-"failed"; rejects auth-failed; no bigText duplication ✅ (`6b31d468`)
+- [ ] P1-PR4: Gate observer survives transient exceptions (✅ done); cold-start notifications retried (🔴 remaining)
+- [ ] P1-PR5: Concurrent notifications process in parallel (✅ done); markProcessed atomic with outcome (🔴 remaining)
+- [ ] P1-PR6: No dead code (🔴 1 remaining); deduper cleanup wired (✅ done); sensitive key filter comprehensive (🔴 remaining); SHA-256 consolidated (🔴 remaining)
 - [ ] All existing tests pass (`./gradlew :app:testDebugUnitTest`)
 - [ ] Build succeeds (`./gradlew :app:assembleDebug`)
 - [ ] Architecture guard passes
 - [ ] U-PR5 adapter landed (after U-PR5 merges): NEW-P1-009 closed, non-raw mode fully correct
+- [ ] Pipeline 1 status upgraded to GREEN in master tracker
 - [ ] Pipeline 1 status upgraded to GREEN in master tracker

@@ -136,14 +136,7 @@ class NotificationRepository @Inject constructor(
             is NotificationPipelineOutcome.Error ->
                 Timber.e(outcome.throwable, "Notification processing failed for ${outcome.packageName}")
         }
-        // P1-NEW-14: Mark raw rows processed from repository (covers direct/batch paths too)
-        when (outcome) {
-            is NotificationPipelineOutcome.AutoAccepted -> dao.markProcessed(outcome.rawId)
-            is NotificationPipelineOutcome.NeedsReview -> dao.markProcessed(outcome.rawId)
-            is NotificationPipelineOutcome.ParserFailed -> outcome.rawId?.let { dao.markProcessed(it) }
-            is NotificationPipelineOutcome.AutoRejected -> outcome.rawId?.let { dao.markProcessed(it) }
-            else -> { /* Duplicate, Dropped, Error: no raw row to mark */ }
-        }
+        // P1-SLICE-D: markProcessed is now performed atomically inside NotificationProcessingPipeline transactions.
         return outcome
     }
 

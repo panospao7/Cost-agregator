@@ -15,7 +15,8 @@ import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.worker.NotificationIntakeWorker
 import timber.log.Timber
-import java.security.MessageDigest
+import com.yourname.expensetracker.domain.common.sha256
+import com.yourname.expensetracker.domain.common.sha256Fingerprint
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -104,7 +105,7 @@ class NotificationIntakeCoordinator @Inject constructor(
             source = source,
             correlationId = correlationId,
             dedupeFingerprint = dedupeFingerprint,
-            contentHash = combinedBody?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { "%02x".format(it) } },
+            contentHash = combinedBody?.sha256Fingerprint(),
             // Raw mode: store visible fields. Transient mode: store encrypted payload, null visible fields.
             title = if (isRaw) title else null,
             text = if (isRaw) text else null,
@@ -146,5 +147,94 @@ class NotificationIntakeCoordinator @Inject constructor(
 
         Timber.d("Intake enqueued: intakeId=$intakeId package=$packageName source=$source")
         return NotificationIntakeCaptureResult.Enqueued(intakeId, correlationId)
+    }
+
+    /**
+     * Persists a notification for deferred processing when the capture gate is not yet ready.
+     * Extracted text is encrypted as a transient payload for worker-side decryption and processing.
+     * The worker uses the same transient-payload decryption path as regular captures.
+     */
+    suspend fun captureForRetry(
+        packageName: String,
+        notificationKey: String,
+        postTime: Long,
+        correlationId: String,
+        title: String? = null,
+        text: String? = null,
+        bigText: String? = null,
+        subText: String? = null
+    ) {
+        val now = timeProvider.now()
+        val notificationKeyHash = notificationKey.sha256().take(32)
+
+        val hasContent = title != null || text != null || bigText != null || subText != null
+        var ciphertext: String? = null
+        var nonce: String? = null
+        var version: Int? = null
+        val payloadMode: String
+        if (hasContent) {
+            val transientPayload = NotificationTransientPayload(
+                title = title, text = text, bigText = bigText,
+                subText = subText, extrasJson = null
+            )
+            val encrypted = crypto.encrypt(transientPayload)
+            ciphertext = encrypted.ciphertext
+            nonce = encrypted.nonce
+            version = encrypted.version
+            payloadMode = "TRANSIENT"
+        } else {
+            payloadMode = "DEFERRED"
+        }
+
+        val entity = NotificationIntakeEntity(
+            packageName = packageName,
+            appName = null,
+            notificationKeyHash = notificationKeyHash,
+            postTime = postTime,
+            capturedAt = now,
+            source = "deferred",
+            correlationId = correlationId,
+            dedupeFingerprint = "DEFERRED_${notificationKeyHash}",
+            contentHash = null,
+            title = null,
+            text = null,
+            bigText = null,
+            subText = null,
+            extrasJson = null,
+            transientPayloadCiphertext = ciphertext,
+            transientPayloadNonce = nonce,
+            transientPayloadVersion = version,
+            rawStorageMode = "STORE_METADATA_ONLY",
+            payloadMode = payloadMode,
+            status = NotificationIntakeStatus.RECEIVED.name,
+            createdAt = now,
+            updatedAt = now
+        )
+
+        val intakeId = intakeDao.insertOrIgnore(entity)
+        if (intakeId == -1L) {
+            Timber.d("captureForRetry: insert conflict for $packageName")
+            return
+        }
+
+        // Enqueue WorkManager job with short delay to let gate warm up
+        val request = OneTimeWorkRequestBuilder<NotificationIntakeWorker>()
+            .setInputData(workDataOf("intakeId" to intakeId))
+            .addTag("notification-intake")
+            .addTag("notification-intake-$intakeId")
+            .setInitialDelay(5, TimeUnit.SECONDS)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                30, TimeUnit.SECONDS
+            )
+            .build()
+
+        workManager.enqueueUniqueWork(
+            "intake_${notificationKeyHash}",
+            ExistingWorkPolicy.REPLACE,
+            request
+        )
+
+        Timber.d("captureForRetry: deferred intakeId=$intakeId package=$packageName")
     }
 }

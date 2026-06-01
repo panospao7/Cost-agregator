@@ -348,6 +348,8 @@ class NotificationProcessingPipeline @Inject constructor(
                             deferredLinkDiagnostics += DeferredSourceLinkDiagnostic(rawId, linkMatchType, correlationId, linkResult)
                         }
                         parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Oversized duplicate")
+                        // P1-SLICE-D: markProcessed atomically inside transaction
+                        dao.markProcessed(rawId)
                         return@withTransaction
                     }
 
@@ -400,6 +402,8 @@ class NotificationProcessingPipeline @Inject constructor(
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                     dao.markRelevance(rawId, true)
                     parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(notification.packageName, correlationId, rawId, reviewId)
+                    // P1-SLICE-D: markProcessed atomically inside transaction
+                    dao.markProcessed(rawId)
                 } else {
                     val transactionSignalCandidate = detectTransactionSignalCandidate(
                         title = notification.title,
@@ -445,8 +449,10 @@ class NotificationProcessingPipeline @Inject constructor(
                             if (linkResult is SourceLinkWriteResult.Failed) {
                                 deferredLinkDiagnostics += DeferredSourceLinkDiagnostic(rawId, linkMatchType, correlationId, linkResult)
                             }
-                            parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Signal duplicate")
-                            return@withTransaction
+                        parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Signal duplicate")
+                        // P1-SLICE-D: markProcessed atomically inside transaction
+                        dao.markProcessed(rawId)
+                        return@withTransaction
                         }
 
                         val review = PendingReview(
@@ -497,11 +503,15 @@ class NotificationProcessingPipeline @Inject constructor(
                         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, true)
                         parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(notification.packageName, correlationId, rawId, reviewId)
+                    // P1-SLICE-D: markProcessed atomically inside transaction
+                    dao.markProcessed(rawId)
                     } else {
                         Timber.d("Pipeline outcome: AUTO_REJECTED reason=%s", "Unparseable notification with no transaction signal")
                         sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, false)
                         parserFailedOutcome = NotificationPipelineOutcome.AutoRejected(notification.packageName, correlationId, rawId, "Unparseable notification with no transaction signal")
+                        // P1-SLICE-D: markProcessed atomically inside transaction
+                        dao.markProcessed(rawId)
                     }
                 }
                     } // close Inserted
@@ -568,6 +578,8 @@ class NotificationProcessingPipeline @Inject constructor(
                     } else {
                         dao.markRelevance(rawId, false)
                         sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, sourceStatsTimestamp)
+                        // P1-SLICE-D: markProcessed atomically inside transaction
+                        dao.markProcessed(rawId)
                         ParsedDbOutcome.AutoRejected
                     }
                 }
@@ -1176,6 +1188,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             if (linkResult1 is SourceLinkWriteResult.Failed) {
                 deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "canonical_expense_duplicate", correlationId, linkResult1)
             }
+            // P1-SLICE-D: markProcessed atomically inside transaction
+            dao.markProcessed(rawId)
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1204,6 +1218,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             if (linkResult2 is SourceLinkWriteResult.Failed) {
                 deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "pending_review_duplicate", correlationId, linkResult2)
             }
+            // P1-SLICE-D: markProcessed atomically inside transaction
+            dao.markProcessed(rawId)
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1293,6 +1309,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     preDb.correctedMerchant
                 )
 
+                // P1-SLICE-D: markProcessed atomically inside transaction
+                dao.markProcessed(rawId)
                 ParsedDbOutcome.AutoAccepted(
                     rawId = rawId,
                     expenseId = expenseId,
@@ -1311,6 +1329,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     correlationId = correlationId,
                     confidence = preDb.routingResult.adjustedConfidence.toDouble()
                 )
+                // P1-SLICE-D: markProcessed atomically inside transaction
+                dao.markProcessed(rawId)
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1327,6 +1347,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     correlationId = correlationId,
                     confidence = preDb.routingResult.adjustedConfidence.toDouble()
                 )
+                // P1-SLICE-D: markProcessed atomically inside transaction
+                dao.markProcessed(rawId)
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1341,6 +1363,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     correlationId = correlationId,
                     confidence = preDb.routingResult.adjustedConfidence.toDouble()
                 )
+                // P1-SLICE-D: markProcessed atomically inside transaction
+                dao.markProcessed(rawId)
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1372,6 +1396,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             if (linkResult1 is SourceLinkWriteResult.Failed) {
                 deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "canonical_expense_duplicate", correlationId, linkResult1)
             }
+            // P1-SLICE-D: markProcessed atomically inside transaction
+            dao.markProcessed(rawId)
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1402,6 +1428,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             if (linkResult2 is SourceLinkWriteResult.Failed) {
                 deferredDiagnostics += DeferredSourceLinkDiagnostic(rawId, "pending_review_duplicate", correlationId, linkResult2)
             }
+            // P1-SLICE-D: markProcessed atomically inside transaction
+            dao.markProcessed(rawId)
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1456,6 +1484,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         }
         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
+        // P1-SLICE-D: markProcessed atomically inside transaction
+        dao.markProcessed(rawId)
         return ParsedDbOutcome.NeedsReviewCreated(rawId = rawId, reviewId = reviewId)
     }
 

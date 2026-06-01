@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.notification.RawNotificationFingerprin
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.receiver.ServiceRestartReceiver
@@ -35,6 +36,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.annotation.VisibleForTesting
 import org.json.JSONObject
 import javax.inject.Inject
 
@@ -45,6 +47,8 @@ import com.yourname.expensetracker.domain.notification.capture.NotificationIntak
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler
 import com.yourname.expensetracker.domain.notification.capture.NotificationTextParts
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
+import com.yourname.expensetracker.domain.common.sha256
+import com.yourname.expensetracker.domain.common.sha256Fingerprint
 
 /**
  * Originally defined here; extracted to [NotificationTextParts] for reuse across
@@ -54,11 +58,14 @@ import com.yourname.expensetracker.domain.notification.NotificationPipelineOutco
 internal class NotificationServiceWorkTracker {
     private val lock = Any()
     private val inFlightJobs = linkedSetOf<Job>()
-    private var acceptingNewWork = true
 
-    fun launch(scope: CoroutineScope, block: suspend () -> Unit): Job? {
+    /**
+     * Launches the given block in the provided scope and tracks the resulting Job.
+     * Always returns a non-null Job since acceptingNewWork/stopAcceptingAndDrain
+     * was removed (dead code — see NEW-P1-003).
+     */
+    fun launch(scope: CoroutineScope, block: suspend () -> Unit): Job {
         val job = synchronized(lock) {
-            if (!acceptingNewWork) return null
             scope.launch { block() }.also { launched ->
                 inFlightJobs += launched
             }
@@ -69,23 +76,6 @@ internal class NotificationServiceWorkTracker {
             }
         }
         return job
-    }
-
-    suspend fun stopAcceptingAndDrain(timeoutMs: Long): Boolean {
-        synchronized(lock) {
-            acceptingNewWork = false
-        }
-        val drained = withTimeoutOrNull<Boolean>(timeoutMs) {
-            while (true) {
-                val snapshot = synchronized(lock) { inFlightJobs.toList() }
-                if (snapshot.isEmpty()) {
-                    break
-                }
-                snapshot.joinAll()
-            }
-            true
-        }
-        return drained ?: false
     }
 }
 
@@ -197,7 +187,23 @@ class NotificationCaptureService : NotificationListenerService() {
         private const val DEDUP_WINDOW_MS = 5000L
         private const val SHUTDOWN_DRAIN_TIMEOUT_MS = 2_000L
         private const val RESTART_INTERVAL_MS = 900_000L // Restart no more than every 15 minutes
-        
+
+        /** Sensitive extras keys filtered from raw notification extras JSON. */
+        internal val SENSITIVE_EXTRAS_KEYS: Set<String> = setOf(
+            // Android system keys that contain personal data
+            "android.largeIcon", "android.picture", "android.icon",
+            "android.wearable.EXTENSIONS", "android.people.list",
+            // Financial/personal data keys (snake_case)
+            "account_number", "account", "card_number", "card_last_four",
+            "balance", "amount", "cvv", "pin", "password",
+            "iban", "transaction_id", "reference_number",
+            "full_name", "email", "phone", "address",
+            // Financial/personal data keys (camelCase)
+            "cardNumber", "accountNumber", "fullName", "firstName", "lastName",
+            "transactionId", "referenceNumber", "apiKey", "authToken", "accessToken",
+            "sessionId", "deviceId", "userId", "lastFour", "cardLastFour",
+            "cvvCode", "ibanNumber", "phoneNumber", "emailAddress"
+        )
     }
 
     override fun onCreate() {
@@ -342,6 +348,14 @@ class NotificationCaptureService : NotificationListenerService() {
         captureNotification(sbn, CaptureSource.LISTENER)
     }
 
+    /**
+     * Captures a single notification through the pipeline: gate check, dedupe,
+     * filter, privacy gate, and durable intake insert+enqueue.
+     *
+     * Once the filter passes (Step 4), the entire path from privacy check
+     * through intake insert+enqueue runs in [withContext]\([NonCancellable]\) to
+     * prevent service-shutdown notification loss (P1-P1-07).
+     */
     private fun captureNotification(sbn: StatusBarNotification, source: CaptureSource) {
         val packageName = sbn.packageName
         val notificationKey = sbn.key
@@ -393,6 +407,8 @@ class NotificationCaptureService : NotificationListenerService() {
 
         // After fast checks, everything runs inside a coroutine so the capture
         // gate (suspend) can run without blocking the listener callback thread.
+        // workTracker.launch now always returns non-null Job since
+        // acceptingNewWork/stopAcceptingAndDrain was removed (dead code).
         workTracker.launch(serviceScope) {
             // Emit RECEIVED first inside the work-tracked coroutine
             notificationDiagnosticEmitter.emit(receivedEvent)
@@ -429,8 +445,24 @@ class NotificationCaptureService : NotificationListenerService() {
                             .putHashed("packageName", packageName)
                             .put("gateReason", gateDecision.reason.name)
                             .build(),
-                        isTerminal = true
+                        isTerminal = false
                     ))
+                    // Gate not ready — persist deferred intake row for retry
+                    // Extract basic text fields before deferring so the worker
+                    // has content to process when the gate becomes available.
+                    val deferredParts = NotificationTextParts.extract(sbn.notification.extras)
+                    withContext(NonCancellable) {
+                        intakeCoordinator.captureForRetry(
+                            packageName = packageName,
+                            notificationKey = notificationKey,
+                            postTime = sbn.postTime,
+                            correlationId = correlationId,
+                            title = deferredParts.title,
+                            text = deferredParts.text,
+                            bigText = deferredParts.bigText,
+                            subText = deferredParts.subText
+                        )
+                    }
                     return@launch
                 }
             }
@@ -478,66 +510,68 @@ class NotificationCaptureService : NotificationListenerService() {
                 return@launch
             }
 
-            // Step 5: Full privacy gate (defense-in-depth)
-            try {
-                when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
-                    is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
-                        Timber.d("Privacy gate denied notification capture from $packageName")
-                        notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                            stage = "privacy_gate",
-                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                            correlationId = correlationId,
-                            isTerminal = true
-                        ))
-                        return@launch
+            // Step 5: Full privacy gate & capture — once filter passes, the entire path
+            // from privacy check through intake insert+enqueue runs in
+            // withContext(NonCancellable) to prevent service-shutdown notification
+            // loss (P1-P1-07).
+            withContext(NonCancellable) {
+                try {
+                    when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
+                        is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
+                            Timber.d("Privacy gate denied notification capture from $packageName")
+                            notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                                stage = "privacy_gate",
+                                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                                correlationId = correlationId,
+                                isTerminal = true
+                            ))
+                            return@withContext
+                        }
+                        is PrivacyDecision.Allowed -> { /* proceed */ }
+                        else -> {
+                            // Fail closed (defense-in-depth): NotApplicable / any
+                            // non-Allowed decision MUST block capture. Previously this
+                            // branch logged "proceeding with capture" and fell through,
+                            // which failed OPEN. Only an explicit Allowed proceeds.
+                            Timber.d("Privacy gate did not allow notification capture from $packageName — blocking (fail-closed)")
+                            notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                                stage = "privacy_gate",
+                                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
+                                correlationId = correlationId,
+                                isTerminal = true
+                            ))
+                            return@withContext
+                        }
                     }
-                    is PrivacyDecision.Allowed -> { /* proceed */ }
-                    else -> {
-                        // Fail closed (defense-in-depth): NotApplicable / any
-                        // non-Allowed decision MUST block capture. Previously this
-                        // branch logged "proceeding with capture" and fell through,
-                        // which failed OPEN. Only an explicit Allowed proceeds.
-                        Timber.d("Privacy gate did not allow notification capture from $packageName — blocking (fail-closed)")
-                        notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                            stage = "privacy_gate",
-                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
-                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.PRIVACY_DENIED,
-                            correlationId = correlationId,
-                            isTerminal = true
-                        ))
-                        return@launch
+
+                    // Step 6: Capture via durable intake coordinator
+                    val settings = privacySettingsRepository.getSettings()
+
+                    val extrasJson = when (settings.rawNotificationStorageMode) {
+                        RawStorageMode.STORE_RAW -> try {
+                            buildExtrasJson(extras)
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            "{\"error\": \"${e.message}\"}"
+                        }
+                        RawStorageMode.STORE_REDACTED -> """{"redacted":true}"""
+                        RawStorageMode.STORE_METADATA_ONLY -> null
+                        RawStorageMode.DO_NOT_STORE -> null
                     }
-                }
 
-                // Step 6: Capture via durable intake coordinator (NonCancellable — must not
-                // lose intake insert+enqueue even if service scope is being cancelled).
-                val settings = privacySettingsRepository.getSettings()
-
-                val extrasJson = when (settings.rawNotificationStorageMode) {
-                    RawStorageMode.STORE_RAW -> try {
-                        buildExtrasJson(extras)
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        "{\"error\": \"${e.message}\"}"
+                    val appName = try {
+                        val appInfo = packageManager.getApplicationInfo(packageName, 0)
+                        packageManager.getApplicationLabel(appInfo).toString()
+                    } catch (e: PackageManager.NameNotFoundException) {
+                        null
                     }
-                    RawStorageMode.STORE_REDACTED -> """{"redacted":true}"""
-                    RawStorageMode.STORE_METADATA_ONLY -> null
-                    RawStorageMode.DO_NOT_STORE -> null
-                }
 
-                val appName = try {
-                    val appInfo = packageManager.getApplicationInfo(packageName, 0)
-                    packageManager.getApplicationLabel(appInfo).toString()
-                } catch (e: PackageManager.NameNotFoundException) {
-                    null
-                }
-
-                val notificationKeyHash = sha256(notificationKey).take(32)
-                val captureResult = withContext(NonCancellable) {
-                    intakeCoordinator.capture(
+                    val notificationKeyHash = sha256(notificationKey).take(32)
+                    val captureResult = intakeCoordinator.capture(
                         packageName = packageName,
                         appName = appName,
                         notificationKey = notificationKey,
@@ -552,52 +586,53 @@ class NotificationCaptureService : NotificationListenerService() {
                         correlationId = correlationId,
                         source = source.name.lowercase()
                     )
-                }
 
-                var pipelineOutcome: NotificationPipelineOutcome? = null
+                    var pipelineOutcome: NotificationPipelineOutcome? = null
 
-                when (captureResult) {
-                    is NotificationIntakeCaptureResult.Enqueued -> {
-                        Timber.d("Notification captured via coordinator: intakeId=${captureResult.intakeId}")
-                        // Keep dedupe key — the async worker handles processing
-                    }
-                    is NotificationIntakeCaptureResult.Duplicate -> {
-                        deduper.remove(dedupeKey)
-                        // Duplicate diagnostic already emitted by coordinator
-                    }
-                    is NotificationIntakeCaptureResult.RequiresSynchronousProcessing -> {
-                        // DO_NOT_STORE: process synchronously with ephemeral raw text,
-                        // persist only sanitized storage (handled by repository's sanitizeForStorage).
-                        Timber.d("DO_NOT_STORE: processing synchronously for $packageName")
-                        pipelineOutcome = processNotification(sbn, packageName, parts, extras, correlationId)
-                        // On success, keep dedupe key; on error, remove it
-                        if (pipelineOutcome == null || pipelineOutcome is NotificationPipelineOutcome.Error) {
+                    when (captureResult) {
+                        is NotificationIntakeCaptureResult.Enqueued -> {
+                            Timber.d("Notification captured via coordinator: intakeId=${captureResult.intakeId}")
+                            // Keep dedupe key — the async worker handles processing
+                        }
+                        is NotificationIntakeCaptureResult.Duplicate -> {
+                            deduper.remove(dedupeKey)
+                            // Duplicate diagnostic already emitted by coordinator
+                        }
+                        is NotificationIntakeCaptureResult.RequiresSynchronousProcessing -> {
+                            // DO_NOT_STORE: process synchronously with ephemeral raw text,
+                            // persist only sanitized storage (handled by repository's sanitizeForStorage).
+                            Timber.d("DO_NOT_STORE: processing synchronously for $packageName")
+                            // NEW-P1-009: Pass already-fetched settings to prevent TOCTOU
+                            pipelineOutcome = processNotification(sbn, packageName, parts, extras, correlationId, settings)
+                            // On success, keep dedupe key; on error, remove it
+                            if (pipelineOutcome == null || pipelineOutcome is NotificationPipelineOutcome.Error) {
+                                deduper.remove(dedupeKey)
+                            }
+                        }
+                        is NotificationIntakeCaptureResult.Dropped -> {
                             deduper.remove(dedupeKey)
                         }
                     }
-                    is NotificationIntakeCaptureResult.Dropped -> {
-                        deduper.remove(dedupeKey)
-                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Timber.e(e, "Failed to capture notification via coordinator from $packageName")
+                    val retryable = e is java.io.IOException ||
+                        e.message?.contains("database is locked", ignoreCase = true) == true
+                    notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                        stage = "intake",
+                        outcome = if (retryable) com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE
+                                  else com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                        correlationId = correlationId,
+                        sourceType = "notification",
+                        exception = e,
+                        isTerminal = true
+                    ))
+                    // Remove dedupe key on error so notification can be re-processed
+                    deduper.remove(dedupeKey)
                 }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.e(e, "Failed to capture notification via coordinator from $packageName")
-                val retryable = e is java.io.IOException ||
-                    e.message?.contains("database is locked", ignoreCase = true) == true
-                notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
-                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
-                    stage = "intake",
-                    outcome = if (retryable) com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE
-                              else com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
-                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.UNKNOWN_ERROR,
-                    severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
-                    correlationId = correlationId,
-                    sourceType = "notification",
-                    exception = e,
-                    isTerminal = true
-                ))
-                // Remove dedupe key on error so notification can be re-processed
-                deduper.remove(dedupeKey)
             }
         }
     }
@@ -615,19 +650,21 @@ class NotificationCaptureService : NotificationListenerService() {
         }
     }
 
+    /**
+     * NEW-P1-009: [settings] is passed from [captureNotification] to prevent a TOCTOU
+     * race where privacy settings could change between extras JSON construction
+     * (in captureNotification) and storage notification construction (here).
+     */
     private suspend fun processNotification(
         sbn: StatusBarNotification,
         packageName: String,
         parts: NotificationTextParts,
         extras: android.os.Bundle,
-        correlationId: String
+        correlationId: String,
+        settings: PrivacySettings
     ): com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome? {
         // Note: Package-block and privacy checks are done pre-extraction via NotificationCaptureGate.
         // The DB and privacy gate checks below are defense-in-depth for cache staleness.
-
-        // NEW-07: Get storage mode BEFORE building extras JSON to avoid
-        // materializing sensitive extras when raw storage is disabled.
-        val settings = privacySettingsRepository.getSettings()
 
         val extrasJson = when (settings.rawNotificationStorageMode) {
             RawStorageMode.STORE_RAW -> try {
@@ -770,19 +807,11 @@ class NotificationCaptureService : NotificationListenerService() {
         }
     }
 
-    private fun buildExtrasJson(extras: android.os.Bundle): String {
+    @VisibleForTesting
+    internal fun buildExtrasJson(extras: android.os.Bundle): String {
         return try {
             val json = org.json.JSONObject()
-            val sensitiveKeys = setOf(
-                // Android system keys that contain personal data
-                "android.largeIcon", "android.picture", "android.icon",
-                "android.wearable.EXTENSIONS", "android.people.list",
-                // Financial/personal data keys
-                "account_number", "account", "card_number", "card_last_four", 
-                "balance", "amount", "cvv", "pin", "password",
-                "iban", "transaction_id", "reference_number",
-                "full_name", "email", "phone", "address"
-            )
+            val sensitiveKeys = SENSITIVE_EXTRAS_KEYS
             for (key in extras.keySet()) {
                 if (sensitiveKeys.any { key.equals(it, ignoreCase = true) }) continue
                 @Suppress("DEPRECATION")
@@ -810,9 +839,9 @@ class NotificationCaptureService : NotificationListenerService() {
         diagnostics.recordServiceKilled()
         Timber.d("Service destroyed")
         // Durable intake is active via NotificationIntakeCoordinator + Worker.
-        // withContext(NonCancellable) protects the insert+enqueue section.
-        // Intake is still inserted after gate/extract/filter in serviceScope,
-        // so P1-P1-07 full durability requires app-scope handoff (future PR).
+        // withContext(NonCancellable) protects the entire path from filter-pass
+        // through intake insert+enqueue, preventing service-shutdown notification
+        // loss (P1-P1-07).
         // Cancel all in-flight work without blocking the main thread.
         // Previously used runBlocking { workTracker.stopAcceptingAndDrain() } which could
         // cause ForegroundServiceDidNotStopInTimeException by blocking the main thread
@@ -857,9 +886,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
     /** SHA-256 content fingerprint — stable across JVM runs, unlike hashCode(). */
     private fun computeNotificationContentFingerprint(combinedBody: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        val hashBytes = digest.digest(combinedBody.toByteArray(Charsets.UTF_8))
-        return hashBytes.joinToString("") { "%02x".format(it) }
+        return combinedBody.sha256Fingerprint()
     }
 
     /**
@@ -878,8 +905,5 @@ class NotificationCaptureService : NotificationListenerService() {
         return "${pkgHash}|${keyHash}|${contentFingerprint}"
     }
 
-    private fun sha256(input: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        return digest.digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256(input: String): String = input.sha256()
 }

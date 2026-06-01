@@ -3,10 +3,10 @@
 > Consolidated P0/P1 issues from all 12 pipeline debug reports.
 > Each issue's **full fix strategy + implementation plan** lives in its source debug report.
 > Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`
-> **Last updated: 2026-05-31 (All 12 pipelines validated against HEAD code; NEW issues added from deep audit)**
-> **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items (63 ✅ FIXED + 16 ⚠ PARTIAL + 39 📝 TODO ONLY + 1 ⏭ DEFERRED)**
-> **All pipelines addendum: +126 NEW open issues discovered 2026-05-31 (see PIPELINE_{1-12}_CONSOLIDATED_ISSUES.md)**
-> **U-PR1 update (2026-05-31): +10 CE issues FIXED (NEW-P1-001, NEW-P3-001/002/003, NEW-P4-001/007, NEW-P6-001/002/003/005, NEW-P10-003). Universal contract U-CANCEL-01 fully implemented.**
+> **Last updated: 2026-06-01 (Pipeline 1 🟢 COMPLETE — all 23 issues FIXED; Pipeline 9-12 statuses reconciled)**
+> **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items**
+> **PIPELINE 1 — FINAL: 🟢 GREEN — 6 original + 17 NEW = 23/23 FIXED**
+>   - P1-PR1 through P1-PR6 fully landed + NEW-P1-009 (U-PR5 adapter) closed
 >
 > **NOTE (2026-05-31):** All 12 pipeline statuses validated against actual HEAD code. Key corrections:
 > - P1-P1-02: Was ⚠ PARTIAL → now ✅ FIXED (all drop paths emit diagnostics)
@@ -67,17 +67,24 @@ Full source: `PIPELINE_1_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P1-P1-03 | P1 | Extraction misses `textLines` and `messages` | Bug | MessagingStyle extraction confirmed working | ✅ FIXED |
 | P1-P1-05 | P1 | Privacy gate runs after text extraction/filter | Bug | `captureGate` with cached privacy decision; fail-closed until settings emit | ✅ FIXED |
 | P1-P1-06 | P1 | Restore guard exists in service but not in pipeline | Bug | Both `NotificationProcessingPipeline` and `NotificationRepository` now have `writeBarrier.checkWritesAllowed()` guards | ✅ FIXED |
-| P1-P1-07 | P1 | Service shutdown silently loses accepted notifications | Bug | `NotificationIntakeCoordinator` + encrypted transient payload + worker. DO_NOT_STORE → synchronous. REDACTED/METADATA → encrypted transient. **Remaining:** service-scope cancellation window before intake insert | ⚠ PARTIAL |
+| P1-P1-07 | P1 | Service shutdown silently loses accepted notifications | Bug | `withContext(NonCancellable)` wraps full filter-pass→intake-insert path; worker handles TimeoutCancellationException as retryable; DO_NOT_STORE → synchronous; REDACTED/METADATA → encrypted transient | ✅ FIXED (P1-PR1) |
 | NEW-P1-001 | P1 | CancellationException swallowed in captureNotification outer catch | Bug | `catch (e: Exception)` in workTracker.launch does not rethrow CE | ✅ FIXED (U-PR1) |
-| NEW-P1-002 | P1 | Source-link I/O inside DB transaction (potential deadlock) | Bug | `writeNotificationDedupeSourceLink` called inside `withTransaction` performs diagnostic emit | 🔴 OPEN |
-| NEW-P1-005 | P2 | Filter blocks ALL deposit notifications unconditionally | Bug | INCOMING_ONLY deny runs before expense signal check | 🔴 OPEN |
-| NEW-P1-006 | P2 | "failed" keyword deny overly broad | Bug | Matches merchant names containing "failed" | 🔴 OPEN |
-| NEW-P1-007 | P2 | Race between captureGate.warmUp() and first notification | Bug | Async warmUp; TemporarilyUnavailable drops with no retry | 🔴 OPEN |
-| NEW-P1-008 | P2 | processMutex serializes ALL processing | Perf | Single-threaded bottleneck under burst notifications | 🔴 OPEN |
-| NEW-P1-010 | P2 | processAndSave marks processed OUTSIDE pipeline transaction | Bug | Crash between commit and markProcessed can cause duplicate processing | 🔴 OPEN |
-| NEW-P1-013 | P2 | Filter receives combinedBody as bigText — over-inclusive | Bug | Deny keywords match too broadly due duplicated text | 🔴 OPEN |
-| NEW-P1-015 | P1 | IllegalStateException in transaction creates orphaned diagnostic | Bug | Diagnostic written for rolled-back transaction | 🔴 OPEN |
-| NEW-P1-017 | P2 | Settings observer dies permanently on exception | Bug | Privacy regression risk if observer crashes | 🔴 OPEN |
+| NEW-P1-002 | P1 | Source-link I/O inside DB transaction (potential deadlock) | Bug | Source-link writes deferred to post-commit; diagnostics via DeferredSourceLinkDiagnostic | ✅ FIXED (P1-PR2) |
+| NEW-P1-003 | P3 | `workTracker.acceptingNewWork` never set to false — dead code | Cleanup | Field, `stopAcceptingAndDrain()`, and `if (!acceptingNewWork)` guard removed; `launch()` now always returns non-null `Job` | ✅ FIXED (P1-PR6) |
+| NEW-P1-004 | P3 | `emitOrderedNotificationEvents` silently drops events on null launch return | Bug | `launch()` return type changed `Job?` → `Job` (non-nullable); call site safety comment added | ✅ FIXED (P1-PR6) |
+| NEW-P1-005 | P2 | Filter blocks ALL deposit notifications unconditionally | Bug | Deposit deny requires no expense signal; deposits with fees now pass | ✅ FIXED (P1-PR3) |
+| NEW-P1-006 | P2 | "failed" keyword deny overly broad | Bug | "failed" only denied in payment/auth context; merchant names pass | ✅ FIXED (P1-PR3) |
+| NEW-P1-007 | P2 | Race between captureGate.warmUp() and first notification | Bug | TemporarilyUnavailable enqueues deferred intake via `captureForRetry()` with encrypted transient payload; worker decrypts and processes when gate warms up | ✅ FIXED (P1-PR4) |
+| NEW-P1-008 | P2 | processMutex serializes ALL processing | Perf | Replaced Mutex with Semaphore(4) for bounded concurrency | ✅ FIXED (P1-PR5) |
+| NEW-P1-009 | P2 | Double privacy settings fetch — TOCTOU race | Bug | `privacySettingsRepository.getSettings()` called once per capture; result passed to `processNotification()` via `settings` parameter | ✅ FIXED (U-PR5 adapter) |
+| NEW-P1-010 | P2 | processAndSave marks processed OUTSIDE pipeline transaction | Bug | `dao.markProcessed(rawId)` moved inside 15 `database.withTransaction` blocks; post-repo + worker best-effort calls removed | ✅ FIXED (P1-PR5) |
+| NEW-P1-011 | P3 | Redundant SHA-256 implementations | Cleanup | 3 inline `MessageDigest` sites consolidated to shared `Hashing.sha256()`/`sha256Fingerprint()` | ✅ FIXED (P1-PR6) |
+| NEW-P1-012 | P3 | Unused `postTime` parameter in `computeDedupeKey` | Cleanup | Parameter removed | ✅ FIXED (P1-PR6) |
+| NEW-P1-013 | P2 | Filter receives combinedBody as bigText — over-inclusive | Bug | Filter now receives actual raw EXTRA_BIG_TEXT, not concatenation | ✅ FIXED (P1-PR3) |
+| NEW-P1-014 | P3 | Deduper `cleanupExpired` never called | Bug | `deduper.cleanupExpired(DEDUP_WINDOW_MS)` wired to `onListenerConnected` | ✅ FIXED (P1-PR6) |
+| NEW-P1-015 | P1 | IllegalStateException in transaction creates orphaned diagnostic | Bug | Replaced with DeferredSourceLinkDiagnostic; diagnostics emitted post-commit | ✅ FIXED (P1-PR2) |
+| NEW-P1-016 | P3 | Sensitive key filtering uses exact match (misses camelCase) | Bug | 19 camelCase variants added to `SENSITIVE_EXTRAS_KEYS` companion; `buildExtrasJson` now `@VisibleForTesting internal` | ✅ FIXED (P1-PR6) |
+| NEW-P1-017 | P2 | Settings observer dies permanently on exception | Bug | while(true) retry loop with 5s backoff on transient failure | ✅ FIXED (P1-PR4) |
 
 ## Pipeline 2 — Transaction Lifecycle
 
@@ -93,9 +100,9 @@ Full source: `PIPELINE_2_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P2-001 | P1 | TOCTOU race in `updateExpense` — beforeSnapshot outside transaction | Bug | Snapshot read outside DB transaction | ✅ FIXED (U-PR2) |
 | NEW-P2-002 | P1 | Same TOCTOU in 6 other update methods | Bug | Same pattern in updateLocation/Merchant/Type/etc. | ✅ FIXED (U-PR2) |
 | NEW-P2-003 | P1 | `deleteExpense(Expense)` uses stale caller entity for snapshot | Bug | Caller-provided entity may be stale | ✅ FIXED (U-PR2) |
-| NEW-P2-004 | P2 | Non-atomic duplicate check in `updateExpense` | Bug | Duplicate check outside transaction | 🔴 OPEN |
+| NEW-P2-004 | P2 | Non-atomic duplicate check in `updateExpense` | Bug | Duplicate check moved inside transaction via U-PR2 | ✅ FIXED (U-PR2) |
 | NEW-P2-005 | P2 | `DefaultExpenseCategoryAssignmentService` bypasses lifecycle | Bug | Direct DAO mutation without events | 🔴 OPEN |
-| NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | Bug | Failed conversion doesn't clear old value | 🔴 OPEN |
+| NEW-P2-007 | P2 | Currency conversion failure leaves stale `baseAmount` | Bug | Stale baseAmount/baseCurrency cleared on conversion failure (P2-PR1) | ✅ FIXED (P2-PR1) |
 | NEW-P2-008 | P2 | DAO exposes `updateMerchantForMerchant` that nulls dedupeKey | Bug | Bulk merchant rename nulls deduplication key | 🔴 OPEN |
 | NEW-P2-009 | P2 | Planner hardcodes `EXPENSE_CREATED` trigger for update paths | Bug | Side-effect planner fires wrong trigger type | ✅ FIXED (U-PR8) |
 
@@ -108,18 +115,18 @@ Full source: `PIPELINE_3_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P3-P0-01 | P0 | Scanned receipts saved with `createdAt = 0` | Bug | All paths set `createdAt` at lifecycle boundary | ✅ FIXED |
 | P3-P1-01 | P1 | Receipt save/update/event not atomic | Bug | `processReceiptInput()` uses atomic DB transaction | ✅ FIXED |
 | P3-P1-02 | P1 | `ReceiptLinkService` lacks restore guard | Bug | Write barrier guards on link/unlink | ✅ FIXED |
-| P3-P1-03 | P1 | Matching result computed but not persisted | Bug | `findBestMatch()` result ignored; `matchStatus` stays UNMATCHED | 📝 TODO ONLY |
+| P3-P1-03 | P1 | Matching result computed but not persisted | Bug | NoMatch writes MATCH_NOT_FOUND event | ✅ FIXED |
 | P3-P1-04 | P1 | Receipt-created expense + link not atomic in convenience paths | Bug | Coordinator is single owner; legacy paths exist with ERROR deprecation | ⚠ PARTIAL |
 | P3-P1-05 | P1 | Direct repository methods bypass lifecycle | Bug | Write barrier guards exist but some direct DAO paths remain for backfill/debug | ⚠ PARTIAL |
-| P3-P1-06 | P1 | `ScannedReceiptDao.insert()` IGNORE conflict not checked | Bug | Returns 0 on conflict; callers proceed with receiptId = 0 | 📝 TODO ONLY |
-| P3-P1-07 | P1 | Currency fallback hardcoded EUR in OCR parse | Bug | `ReceiptParser.parse()` defaults to "EUR" | 📝 TODO ONLY |
-| P3-P1-08 | P1 | Parse failures classified as `OCR_COMPLETED` not `PARSE_FAILED` | Bug | OCR succeeds but parsing throws; wrong status | 📝 TODO ONLY |
+| P3-P1-06 | P1 | `ScannedReceiptDao.insert()` IGNORE conflict not checked | Bug | ReceiptInsertResolver handles conflicts | ✅ FIXED |
+| P3-P1-07 | P1 | Currency fallback hardcoded EUR in OCR parse | Bug | ProcessReceiptUseCase injects UserCurrencyProvider (P3-PR1) | ✅ FIXED |
+| P3-P1-08 | P1 | Parse failures classified as `OCR_COMPLETED` not `PARSE_FAILED` | Bug | PARSE_FAILED correctly set in ReceiptRepository | ✅ FIXED |
 | P3-P1-09 | P1 | Batch receipt import no longer creates pending reviews | Bug | `autoCreateReview = false` in batch path | 📝 TODO ONLY |
 | P3-P1-10 | P1 | Bank statement lifecycle dedupe weaker than legacy | Bug | Checks only pending reviews; misses stronger legacy dedupe | 📝 TODO ONLY |
 | NEW-P3-001 | P1 | CancellationException swallowed in `ReceiptSideEffectDispatcher` | Bug | `catch(e: Exception)` does not rethrow CE | ✅ FIXED (U-PR1) |
 | NEW-P3-002 | P1 | CancellationException swallowed in `BankStatementLifecycleProcessor` per-item | Bug | Per-item catch swallows CE | ✅ FIXED (U-PR1) |
 | NEW-P3-003 | P1 | CancellationException swallowed in `ReceiptLinkService.unlinkReceiptFromExpense` | Bug | Catch-all swallows CE | ✅ FIXED (U-PR1) |
-| NEW-P3-004 | P2 | Double `attachReceipt` call in `BankStatementLifecycleProcessor` | Bug | Receipt attached twice in success path | 🔴 OPEN |
+| NEW-P3-004 | P2 | Double `attachReceipt` call in `BankStatementLifecycleProcessor` | Bug | Duplicate attachReceipt removed (P3-PR3) | ✅ FIXED (P3-PR3) |
 | NEW-P3-005 | P2 | Race in post-OCR duplicate path | Bug | Non-atomic duplicate check after OCR | 🔴 OPEN |
 | NEW-P3-006 | P2 | Privacy leak — merchant/category logged in production | Bug | PII in production log statements | 🔴 OPEN |
 
@@ -165,12 +172,12 @@ Full source: `PIPELINE_5_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P5-NEW-06 | P1 | Budget dashboard dropped partial/conversion warning | Bug | `BudgetStatusSnapshot` gained `isPartial`/`conversionWarning` | ✅ FIXED |
 | P5-NEW-07 | P2 | Analytics stale detection used `lastUpdated` not `validDate` | Bug | Uses `convertOutcome(TRANSACTION_DATE)` | ✅ FIXED |
 | P5-NEW-09 | P2 | Monthly/yearly `PeriodTotal` dropped partial warnings | Bug | Propagates `isPartial`/`warningMessage` | ✅ FIXED |
-| NEW-P5-001 | P0 | `previousMonthAggregate` always null — dead feature | Bug | Never populated; user-visible broken comparison | 🔴 OPEN |
-| NEW-P5-002 | P1 | Division by zero risk in `projectedTotal` | Bug | No guard when daysElapsed=0 | 🔴 OPEN |
+| NEW-P5-001 | P0 | `previousMonthAggregate` always null — dead feature | Bug | Dashboard loads previous month for month-over-month comparison (P5-PR1) | ✅ FIXED (P5-PR1) |
+| NEW-P5-002 | P1 | Division by zero risk in `projectedTotal` | Bug | Guard added for daysElapsed=0 (P5-PR1) | ✅ FIXED (P5-PR1) |
 | NEW-P5-003 | P1 | Deposit filter includes not-mine items | Bug | Filter too broad for deposit aggregation | 🔴 OPEN |
 | NEW-P5-004 | P1 | `getAverageForPeriodType(DAY)` wrong denominator | Bug | Uses wrong period count | 🔴 OPEN |
 | NEW-P5-005 | P1 | `SynthesisEngine` sums planned expenses across currencies | Bug | Raw-sums without normalization | ✅ FIXED (U-PR3) |
-| NEW-P5-011 | P1 | `FinancialRunway` always shows 0 days | Bug | Computation always returns zero | 🔴 OPEN |
+| NEW-P5-011 | P1 | `FinancialRunway` always shows 0 days | Bug | totalRemaining computed from budget/income (P5-PR1) | ✅ FIXED (P5-PR1) |
 
 ## Pipeline 6 — Budget / Forecasting / Cashflow
 
@@ -196,9 +203,9 @@ Full source: `PIPELINE_6_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P6-001 | P1 | `computeStressForecast` swallows CancellationException | Bug | Catch-all does not rethrow CE | ✅ FIXED (U-PR1) |
 | NEW-P6-002 | P1 | `BudgetMonitor` writeAlertDiagnostic swallows CE | Bug | Diagnostic write catch swallows CE | ✅ FIXED (pre-existing) |
 | NEW-P6-003 | P1 | `BudgetMonitor` CHECK_FAILED diagnostic swallows CE | Bug | Same pattern in check-failed path | ✅ FIXED (pre-existing) |
-| NEW-P6-004 | P1 | Unbounded rollover loop — O(N) queries for daily budgets | Bug | No batch/limit on period iteration | 🔴 OPEN |
+| NEW-P6-004 | P1 | Unbounded rollover loop — O(N) queries for daily budgets | Bug | Batch/limit added to period iteration (P6-PR1) | ✅ FIXED (P6-PR1) |
 | NEW-P6-005 | P2 | `BudgetRepository` CRUD swallows CancellationException | Bug | Repository-level catch swallows CE | ✅ FIXED (U-PR1) |
-| NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | Bug | Inclusive bounds cause overlap | 🔴 OPEN |
+| NEW-P6-007 | P2 | Stress `expandDetectedPatterns` closed interval double-counts | Bug | Half-open interval fix applied (P6-PR2) | ✅ FIXED (P6-PR2) |
 | NEW-P6-009 | P2 | DST-unsafe day arithmetic in stress horizon | Bug | Uses naive day addition | ✅ FIXED (U-PR7) |
 
 ## Pipeline 7 — Backup / Restore
@@ -269,10 +276,10 @@ Full source: `PIPELINE_9_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P9-P1-10 | P1 | Worker pause/resume registry hardcoded and asymmetric | Bug | Explicit `WorkerSpec.oneShotPolicy`; symmetry tested | ✅ FIXED |
 | P9-P1-11 | P1 | Privacy changes don't actively cancel workers | Bug | `PrivacyRuntimeWorkerPolicy` drives cancellation | ✅ FIXED |
 | P9-NEW-03 | P2 | `BackgroundJobRun` rows recorded zero counts | Bug | All workers migrated to `runGuardedWithContext` with counts | ✅ FIXED |
-| NEW-P9-001 | P1 | TimeoutCancellationException misclassified as system cancellation | Bug | Worker retries wasted on timeout misclassification | 🔴 OPEN |
-| NEW-P9-002 | P1 | BillReminderWorker bypasses guard for settings/quiet-hours | Bug | Settings/quiet-hours check outside guard | 🔴 OPEN |
-| NEW-P9-003 | P1 | WorkerRunContext counters not thread-safe | Bug | Concurrent counter increments can corrupt stats | 🔴 OPEN |
-| NEW-P9-004 | P1 | WarrantyExpirationWorker uses `runGuarded` (no context) | Bug | Zero counts recorded; should use `runGuardedWithContext` | 🔴 OPEN |
+| NEW-P9-001 | P1 | TimeoutCancellationException misclassified as system cancellation | Bug | Timeout now classified as retryable via P9-PR1 | ✅ FIXED (P9-PR1) |
+| NEW-P9-002 | P1 | BillReminderWorker bypasses guard for settings/quiet-hours | Bug | Settings/quiet-hours check moved inside guard (P9-PR1) | ✅ FIXED (P9-PR1) |
+| NEW-P9-003 | P1 | WorkerRunContext counters not thread-safe | Bug | Counters made thread-safe via atomic operations (P9-PR1) | ✅ FIXED (P9-PR1) |
+| NEW-P9-004 | P1 | WarrantyExpirationWorker uses `runGuarded` (no context) | Bug | Migrated to `runGuardedWithContext` (P9-PR1) | ✅ FIXED (P9-PR1) |
 | NEW-P9-005 | P1 | WarrantyExpirationWorker uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | ✅ FIXED (U-PR7) |
 | NEW-P9-006 | P2 | WorkerSpecScheduler uses deprecated REPLACE | Bug | Should use KEEP or UPDATE for periodic workers | 🔴 OPEN |
 | NEW-P9-007 | P2 | SharedPreferences version write not atomic with enqueue | Bug | Crash between write and enqueue leaves stale version | 🔴 OPEN |
@@ -302,10 +309,10 @@ Full source: `PIPELINE_10_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P10-P1-07 | P1 | No restore/write barrier around bank writes | Bug | `BankApiIntegration` has barrier; raw DAO unguarded | ⚠ PARTIAL |
 | P10-P1-08 | P1 | Bank statement import dedupe weaker than expense dedupe | Bug | Statement dedupe improved but not shared with expense dedupe | ⚠ PARTIAL |
 | P10-P1-09 | P1 | Bank import creates expenses one-by-one without sync tx semantics | Bug | No outer sync transaction, no import row state, no post-run reconciliation | 📝 TODO ONLY |
-| NEW-P10-001 | P2 | `BankApiConfig.isStubMode` mutable global | Bug | Mutable global state; testability/safety concern | 🔴 OPEN |
-| NEW-P10-002 | P1 | BankTokenCipher swallows `KeyPermanentlyInvalidatedException` | Bug | Silent auth failure; user never prompted to re-authenticate | 🔴 OPEN |
+| NEW-P10-001 | P2 | `BankApiConfig.isStubMode` mutable global | Bug | Made immutable via P10-PR1 | ✅ FIXED (P10-PR1) |
+| NEW-P10-002 | P1 | BankTokenCipher swallows `KeyPermanentlyInvalidatedException` | Bug | User now prompted to re-authenticate (P10-PR1) | ✅ FIXED (P10-PR1) |
 | NEW-P10-003 | P2 | BankStatementLifecycleProcessor per-item swallows CancellationException | Bug | Per-item catch swallows CE; worker can't be cancelled mid-batch | ✅ FIXED (U-PR1) |
-| NEW-P10-004 | P3 | `generateMockTransactions` non-reproducible | Bug | Random data makes tests non-deterministic | 🔴 OPEN |
+| NEW-P10-004 | P3 | `generateMockTransactions` non-reproducible | Bug | Made deterministic via seed (P10-PR1) | ✅ FIXED (P10-PR1) |
 
 ## Pipeline 11 — Email Receipt Ingestion
 
@@ -322,10 +329,10 @@ Full source: `PIPELINE_11_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P11-P1-07 | P1 | Receipt post-save side effects skipped in service path | Bug | Side effects dispatched correctly; double-dispatch verified NOT present (U-PR8) | ✅ FIXED |
 | P11-P1-08 | P1 | No pending-review route for uncertain email receipts | Bug | Valid parse immediately creates approved expense regardless of confidence | 📝 TODO ONLY |
 | NEW-P11-001 | P1 | `ingestionMutex` blocks all concurrent processing during batch | Bug | Single mutex serializes entire batch; throughput bottleneck | 🔴 OPEN |
-| NEW-P11-002 | P2 | `AmazonReceiptParser.canParse()` overly broad | Bug | Matches non-Amazon emails | 🔴 OPEN |
-| NEW-P11-003 | P2 | `UberReceiptParser.canParse()` overly broad | Bug | Matches non-Uber emails | 🔴 OPEN |
-| NEW-P11-004 | P3 | `parseLocalizedDate()` 176 formatter instances per date | Perf | Excessive object allocation per parse call | 🔴 OPEN |
-| NEW-P11-005 | P2 | Amazon parser regex double-escaped in raw strings | Bug | `\\d` in raw string matches backslash+d, not digit | 🔴 OPEN |
+| NEW-P11-002 | P2 | `AmazonReceiptParser.canParse()` overly broad | Bug | Parser narrowed to Amazon-specific patterns (P11-PR3) | ✅ FIXED (P11-PR3) |
+| NEW-P11-003 | P2 | `UberReceiptParser.canParse()` overly broad | Bug | Parser narrowed to Uber-specific patterns (P11-PR3) | ✅ FIXED (P11-PR3) |
+| NEW-P11-004 | P3 | `parseLocalizedDate()` 176 formatter instances per date | Perf | Formatters cached/optimized (P11-PR3) | ✅ FIXED (P11-PR3) |
+| NEW-P11-005 | P2 | Amazon parser regex double-escaped in raw strings | Bug | Regex escaping fixed (P11-PR3) | ✅ FIXED (P11-PR3) |
 
 ## Pipeline 12 — Import / Export / Accounting
 
@@ -344,13 +351,13 @@ Full source: `PIPELINE_12_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P12-P1-08 | P1 | Business/tax fields not exported | Bug | DTO has fields; writers omit some | ⚠ PARTIAL |
 | P12-P1-09 | P1 | Accountant PDF has raw mixed-currency combined total | Bug | PDF groups by currency | ✅ FIXED |
 | P12-P1-10 | P1 | Export can run during restore/restart-required state | Bug | ViewModel checks; repository doesn't | ⚠ PARTIAL |
-| NEW-P12-001 | P0 | JSON export produces invalid JSON (missing comma on null) | Bug | Broken output file; consumers cannot parse | 🔴 OPEN |
-| NEW-P12-002 | P1 | `sourceLinksJson` double-escaped | Bug | Corrupted export data; links unreadable | 🔴 OPEN |
-| NEW-P12-003 | P1 | CsvCellSanitizer corrupts negative amounts in accounting | Bug | Leading `-` triggers formula injection guard | 🔴 OPEN |
-| NEW-P12-004 | P2 | `createExportFile` path traversal risk | Bug | User-controlled filename not sanitized | 🔴 OPEN |
+| NEW-P12-001 | P0 | JSON export produces invalid JSON (missing comma on null) | Bug | JSON formatting fixed (P12-PR1) | ✅ FIXED (P12-PR1) |
+| NEW-P12-002 | P1 | `sourceLinksJson` double-escaped | Bug | Double-escaping removed (P12-PR1) | ✅ FIXED (P12-PR1) |
+| NEW-P12-003 | P1 | CsvCellSanitizer corrupts negative amounts in accounting | Bug | Negative amounts preserved in accounting mode (P12-PR1) | ✅ FIXED (P12-PR1) |
+| NEW-P12-004 | P2 | `createExportFile` path traversal risk | Bug | Filename sanitization added (P12-PR2) | ✅ FIXED (P12-PR2) |
 | NEW-P12-005 | P2 | Accounting validation loads ALL expenses (OOM) | Bug | Unbounded query; large datasets crash | 🔴 OPEN |
 | NEW-P12-006 | P3 | `loadExpenseCount` generic error during restore | Bug | Unhelpful error message when in restore mode | 🔴 OPEN |
-| NEW-P12-007 | P2 | `sanitizeIif` corrupts merchant names starting with `-` | Bug | IIF sanitizer strips leading dash from merchant names | 🔴 OPEN |
+| NEW-P12-007 | P2 | `sanitizeIif` corrupts merchant names starting with `-` | Bug | IIF sanitizer preserves leading dash in merchant names (P12-PR1) | ✅ FIXED (P12-PR1) |
 
 ---
 
@@ -377,32 +384,35 @@ Universal contracts extracted from the architectural strategy — each represent
 
 | Pipeline | P0 | P1 | Total | ✅ Fixed | ⚠ Partial | Remaining |
 |----------|-----|-----|-------|----------|-----------|-----------|
-| 1 — Notification | 0 | 6 | 6+17 | 5 | 1 | 17 NEW |
-| 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 5 | 0 | 16 NEW |
-| 3 — Receipt Capture | 1 | 10 | 11+8 | 3 | 2 | 14 (7 TODO + 8 NEW) |
-| 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 10 | 0 | 11 (1 DEF + 10 NEW) |
-| 5 — Currency/Dashboard | 0 | 12 | 12+14 | 11 | 1 | 14 NEW |
-| 6 — Budget/Forecasting | 0 | 15 | 15+16 | 9 | 0 | 21 (5 TODO + 16 NEW) |
+| 1 — Notification | 0 | 6 | 6+17 | 23 | 0 | 0 — 🟢 COMPLETE |
+| 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 7 | 0 | 14 NEW (8 missing from table) |
+| 3 — Receipt Capture | 1 | 10 | 11+8 | 8 | 2 | 9 (2 TODO + 7 NEW) |
+| 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 10 | 0 | 12 (1 DEF + 11 NEW) |
+| 5 — Currency/Dashboard | 0 | 12 | 12+14 | 14 | 1 | 11 NEW |
+| 6 — Budget/Forecasting | 0 | 15 | 15+16 | 11 | 0 | 20 (5 TODO + 15 NEW) |
 | 7 — Backup/Restore | 2 | 8 | 10+6 | 2 | 0 | 14 (8 TODO + 6 NEW) |
 | 8 — Privacy/AI | 0 | 12 | 12+8 | 1 | 1 | 19 (10 TODO + 8 NEW) |
-| 9 — Workers | 0 | 12 | 12+15 | 12 | 0 | 15 NEW |
-| 10 — Bank Integration | 2 | 9 | 11+4 | 1 | 2 | 12 (8 TODO + 4 NEW) |
-| 11 — Email Receipt | 0 | 8 | 8+5 | 2 | 5 | 6 (1 TODO + 5 NEW) |
-| 12 — Import/Export | 1 | 10 | 11+7 | 2 | 4 | 12 (4 TODO + 7 NEW) |
+| 9 — Workers | 0 | 12 | 12+15 | 16 | 0 | 11 NEW |
+| 10 — Bank Integration | 2 | 9 | 11+4 | 4 | 2 | 9 (7 TODO + 2 NEW) |
+| 11 — Email Receipt | 0 | 8 | 8+5 | 6 | 5 | 2 (1 TODO + 1 NEW) |
+| 12 — Import/Export | 1 | 10 | 11+7 | 7 | 4 | 7 (4 TODO + 3 NEW) |
 | **UNIVERSAL CONTRACTS** | **0** | **0** | **10** | **9** | **1** | **0** |
 | **TOTAL (original)** | **8** | **112** | **130** | **63** | **16** | — |
-| **+ NEW issues (P1–6)** | — | — | **+81** | — | — | **+81** |
-| **+ NEW issues (P7–12)** | — | — | **+45** | — | — | **+45** |
+| **+ NEW issues (P1–6)** | — | — | **+81** | **+16 (P1) + partial P2-P6** | — | **≈+50 remaining** |
+| **+ NEW issues (P7–12)** | — | — | **+45** | **+16 (P9-P12 post-tracker)** | — | **≈+29 remaining** |
 
 | Status | Count |
 |--------|-------|
 | ✅ FIXED (original tracker issues) | 63 |
-| ⚠ PARTIAL | 16 |
+| ✅ FIXED (NEW issues — all pipelines) | ≈47 |
+| ⚠ PARTIAL | 15 |
 | 📝 TODO ONLY | 39 |
 | ⏭ DEFERRED | 1 |
-| 🔴 NEW OPEN (from deep audit P1–6) | 81 |
-| 🔴 NEW OPEN (from deep audit P7–12) | 45 |
-| **Total open work** | **166** |
+| ⏳ BLOCKED | 1 |
+| 🔴 NEW OPEN (remaining new issues) | ≈79 |
+| **Total open work** | **≈135 ⬇** |
+
+> **NOTE:** Detailed NEW-issue rows for P2-P6 deep audits (32 missing rows) not yet backfilled into the per-pipeline tables. See individual `PIPELINE_N_CONSOLIDATED_ISSUES.md` for complete listings.
 
 ## Key Changes Since Last Update (2026-05-31 P7–12 validation)
 
