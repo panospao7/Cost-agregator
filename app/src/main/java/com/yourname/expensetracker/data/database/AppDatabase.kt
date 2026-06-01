@@ -8596,6 +8596,14 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                         "index_warranty_reminder_deliveries_warrantyId " +
                         "ON warranty_reminder_deliveries (warrantyId)"
                 )
+
+                // Normalize raw_notifications indices to match Room entity expectations.
+                // Old migration paths may leave stale/extra indices that cause validation failure.
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp")
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_isRelevant")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications (capturedAt)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
             }
         }
 
