@@ -59,7 +59,12 @@ import javax.inject.Singleton
 @Singleton
 class DatabaseBackupRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val database: AppDatabase,
+    /**
+     * P7-P1-01: Hot-swap Room singleton after file swap to prevent stale-closed
+     * instance reads before process restart. Mutable so restore/reset flows can
+     * reassign [database] to a fresh Room instance after [replaceDatabaseFiles].
+     */
+    private var database: AppDatabase,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     private val privacyGate: PrivacyGate,
     private val privacySettingsRepository: PrivacySettingsRepository,
@@ -929,6 +934,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     Exception("Database swap failed and was rolled back: ${e.message}")
                 )
             }
+
+            // P7-P1-01: Hot-swap Room singleton after file swap to prevent stale-closed
+            // instance reads before process restart.
+            database = AppDatabase.fileBuilder(context).build()
+
             // F6: After live DB swap, do NOT use run handle for Room writes — DB is replaced.
             // All further diagnostics go to the restore journal only.
 
@@ -1474,6 +1484,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     targetWalFile = liveDbWalFile,
                     targetShmFile = liveDbShmFile
                 )
+
+                // P7-P1-01: Hot-swap Room singleton after file swap to prevent stale-closed
+                // instance reads before process restart.
+                database = AppDatabase.fileBuilder(context).build()
 
                 Timber.d("Verified database staged and swapped from: ${sourceFile.absolutePath}")
 
@@ -2177,6 +2191,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 runCatching { freshDb.close() }
             }
         }.onSuccess {
+            // P7-P1-01: Hot-swap Room singleton after rollback restore to prevent
+            // stale-closed instance reads before process restart.
+            // P7-P1-01 NOTE: This hot-swap only updates this repository's database reference.
+            // Other Hilt-injected AppDatabase consumers still hold the stale singleton.
+            // The forceRestartRequired=true pattern remains the authoritative fix for full invalidation.
+            database = AppDatabase.fileBuilder(context).build()
             Timber.w("Import rollback succeeded using safety backup: ${safetyBackupFile.absolutePath}")
         }.onFailure {
             Timber.e(it, "Import rollback failed using safety backup: ${safetyBackupFile.absolutePath}")
@@ -2318,6 +2338,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 liveDbFile.delete()
                 dbWalFile.delete()
                 dbShmFile.delete()
+
+                // P7-P1-01: Hot-swap Room singleton after DB deletion to prevent stale-closed
+                // instance reads before process restart. A fresh Room instance will lazily
+                // create an empty database on first access.
+                database = AppDatabase.fileBuilder(context).build()
 
                 // DDL-F876-01: RESTART_REQUIRED must be in journal before commitJournal
                 resetEvents.event("LIVE_DB_DELETED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,

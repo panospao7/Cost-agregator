@@ -21,6 +21,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.verifyOrder
 import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -917,6 +918,45 @@ class DatabaseBackupRepositoryImplTest {
             }
         } finally {
             db.close()
+        }
+    }
+
+    @Test
+    fun `database is hot-swapped after import via AppDatabase fileBuilder`() = runTest(testDispatcher) {
+        // Setup: create destination and source databases
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_backup.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            expenseCount = 3,
+            categoryCount = 2,
+            merchantCount = 4,
+            pendingCount = 1,
+            budgetCount = 2
+        )
+
+        // Mock AppDatabase.fileBuilder so we can verify it's called for the P7-P1-01 hot-swap
+        val freshDatabase = mockk<AppDatabase>(relaxed = true)
+        mockkObject(AppDatabase.Companion)
+        try {
+            every { AppDatabase.fileBuilder(any()).build() } returns freshDatabase
+
+            val result = repository.importDatabase(sourceBackup)
+
+            assertTrue(result.isSuccess)
+
+            // P7-P1-01: Verify hot-swap occurred — AppDatabase.fileBuilder was called
+            // to create a fresh Room instance after the file swap
+            verify(atLeast = 1) { AppDatabase.fileBuilder(any()) }
+        } finally {
+            unmockkObject(AppDatabase.Companion)
         }
     }
 
