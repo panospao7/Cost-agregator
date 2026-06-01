@@ -184,13 +184,16 @@ class EmailReceiptIngestionService @Inject constructor(
                 parsedReceipt.merchant
             ).canonical.normalizedName
 
+            // P11-P1-01: extract sender domain for finer dedup granularity
+            val senderDomain = sender.substringAfterLast("@").substringBefore(">").trim().lowercase(Locale.US)
             val fingerprint = createFingerprint(
                 provider = provider,
                 merchant = normalizedMerchant,
                 amount = parsedReceipt.amount,
                 currency = parsedReceipt.currency,
                 date = parsedReceipt.date,
-                orderNumber = parsedReceipt.orderNumber
+                orderNumber = parsedReceipt.orderNumber,
+                senderDomain = senderDomain
             )
             // PRIV-FB58-01: fail closed if HMAC fails — never fall back to plaintext messageId
             val messageIdHash = hashingService.hmacSha256Prefix(messageId, "emailMessageId")
@@ -371,7 +374,7 @@ class EmailReceiptIngestionService @Inject constructor(
      * Create a hashed fingerprint for content-based deduplication.
      *
      * Composition (all normalized, then hashed — never stored as plaintext):
-     *   provider + normalized_merchant + rounded_amount + currency + 5-minute date bucket + orderNumber
+     *   provider + normalized_merchant + rounded_amount + currency + 1-hour date bucket + orderNumber
      *
      * P11-CURRENT-007: The previous fingerprint used only merchant + amount + date
      * bucket, which collapsed two DISTINCT orders from the same merchant for the
@@ -391,14 +394,19 @@ class EmailReceiptIngestionService @Inject constructor(
         amount: Double,
         currency: String,
         date: Long,
-        orderNumber: String?
+        orderNumber: String?,
+        senderDomain: String
     ): String {
         val roundedAmount = String.format(Locale.US, "%.2f", amount)
-        val dateBucket = date / 300_000L
+        // P11-P1-01: 1-hour date bucket (was 5-minute) for consistent dedup granularity
+        val dateBucket = date / 3_600_000L
         val normalizedCurrency = currency.trim().uppercase(Locale.US)
         val normalizedProvider = provider.trim().lowercase(Locale.US)
         val normalizedOrder = orderNumber?.trim()?.lowercase(Locale.US).orEmpty()
-        val raw = "${normalizedProvider}_${merchant.lowercase(Locale.US)}_${roundedAmount}_${normalizedCurrency}_${dateBucket}_${normalizedOrder}"
+        val normalizedDomain = senderDomain.trim().lowercase(Locale.US)
+        // P11-P1-01: include senderDomain so receipts from different domains
+        // (e.g. amazon.com vs amazon.co.uk) produce distinct fingerprints
+        val raw = "${normalizedProvider}_${merchant.lowercase(Locale.US)}_${roundedAmount}_${normalizedCurrency}_${normalizedDomain}_${dateBucket}_${normalizedOrder}"
         return hashingService.sha256Prefix(raw, 32) ?: ""
     }
 

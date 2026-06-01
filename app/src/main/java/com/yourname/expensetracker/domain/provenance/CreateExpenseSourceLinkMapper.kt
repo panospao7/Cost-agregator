@@ -92,6 +92,8 @@ object CreateExpenseSourceLinkMapper {
             val metadataMap = mutableMapOf<String, Any?>()
             request.bankProviderTransactionIdHash?.let { metadataMap["providerTransactionHash"] = it }
             request.bankAccountIdHash?.let { metadataMap["accountHash"] = it }
+            request.bankConnectionId?.let { metadataMap["bankConnectionId"] = it }
+            request.accountId?.let { metadataMap["accountId"] = it }
             val metadata = if (metadataMap.isNotEmpty()) {
                 SafeProvenanceMetadata.fromMap(metadataMap)
             } else {

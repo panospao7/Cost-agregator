@@ -754,6 +754,66 @@ class EmailReceiptIngestionServiceTest {
             typed.availablePermits >= 3)
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // P11-P1-01: Fingerprint must distinguish different sender domains
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `fingerprint_distinguishes_different_sender_domain`() = runTest {
+        val fingerprints = mutableListOf<String>()
+        // Same merchant, amount, currency, date, order — different sender domains
+        every { amazonParser.parse(any(), any()) } returnsMany listOf(
+            ParsedEmailReceipt(
+                merchant = "Amazon",
+                amount = 50.00,
+                currency = "USD",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "ORDER-SAME",
+                confidence = 0.9
+            ),
+            ParsedEmailReceipt(
+                merchant = "Amazon",
+                amount = 50.00,
+                currency = "USD",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "ORDER-SAME",
+                confidence = 0.9
+            )
+        )
+
+        coEvery {
+            receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            fingerprints.add(secondArg())
+            EmailReceiptProcessResult.Success(1L, emptyList())
+        }
+
+        // Same merchant/amount/currency/date/order but different sender domains
+        service.processEmailReceipt(
+            emailBody = "Order Total: \$50.00 Order # ORDER-SAME",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-domain-us"
+        )
+        service.processEmailReceipt(
+            emailBody = "Order Total: €50.00 Order # ORDER-SAME",
+            sender = "auto-confirm@amazon.co.uk",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-domain-uk"
+        )
+
+        assertEquals(2, fingerprints.size)
+        assertNotEquals(
+            "Different sender domains must produce distinct fingerprints",
+            fingerprints[0],
+            fingerprints[1]
+        )
+    }
+
     companion object {
         private const val FIXED_NOW = 1_730_000_000_000L
     }

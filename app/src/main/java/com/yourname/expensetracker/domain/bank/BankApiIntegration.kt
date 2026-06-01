@@ -2,12 +2,18 @@ package com.yourname.expensetracker.domain.bank
 
 import androidx.annotation.VisibleForTesting
 import com.yourname.expensetracker.BuildConfig
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.BankConnectionDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.entity.BankConnection
+import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.SyncFrequency
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.security.BankTokenCipher
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
@@ -35,7 +41,9 @@ data class BankTransaction(
     val description: String,
     val reference: String?,
     val movementType: BankMovementType? = null,
-    val transferDirection: TransferDirection? = null
+    val transferDirection: TransferDirection? = null,
+    /** P10-P1-04: Confidence score (0.0–1.0). Below-threshold transactions route to PendingReview. */
+    val confidence: Float = 1.0f
 )
 
 enum class BankMovementType {
@@ -70,10 +78,16 @@ class BankApiIntegration @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder,
     private val hashingService: SensitiveHashingService,
-    private val privacySettingsRepository: PrivacySettingsRepository
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val bankConnectionDao: BankConnectionDao,
+    private val pendingReviewDao: PendingReviewDao,
+    private val database: AppDatabase
 ) {
     
     companion object {
+        /** P10-P1-04: Confidence below this threshold routes bank transactions to PendingReview. */
+        const val BANK_REVIEW_CONFIDENCE_THRESHOLD = 0.75f
+
         // Supported bank APIs (placeholders for actual implementations)
         val SUPPORTED_BANKS = listOf(
             BankInfo("nbg", "National Bank of Greece", "GR", "Open Banking API"),
@@ -124,7 +138,7 @@ class BankApiIntegration @Inject constructor(
 
         val bank = SUPPORTED_BANKS.find { it.id == bankId } ?: return@withContext null
         
-        BankConnection(
+        val connection = BankConnection(
             bankId = bankId,
             bankName = bank.name,
             countryCode = bank.countryCode,
@@ -136,6 +150,9 @@ class BankApiIntegration @Inject constructor(
             tokenExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L),
             createdAt = timeProvider.now()
         )
+        // P10-P1-01: Persist connection so it survives process death
+        val id = bankConnectionDao.insert(connection)
+        connection.copy(id = id)
     }
     
     @StubForDemo
@@ -211,62 +228,133 @@ class BankApiIntegration @Inject constructor(
             val syncRunId = run.runId  // PR6: capture sync run ID for provenance linking
             for (transaction in mockTransactions) {
                 try {
-                    val request = mapTransactionToExpense(transaction, connection, syncRunId)
-                        .copy(correlationId = run.correlationId)  // DDL-016-15: propagate bank sync correlation
-                    when (val result = coordinator.createExpenseStandaloneV2(request)) {
-                        is CreateExpenseResult.Created -> {
-                            importedCount++
-                            run.event("TRANSACTION_IMPORTED",
-                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
-                                entityType = "expense", entityId = result.expenseId,
+                    // P10-P1-04: Route low-confidence transactions to PendingReview
+                    if (transaction.confidence < BANK_REVIEW_CONFIDENCE_THRESHOLD) {
+                        val transactionType = transaction.movementType?.toTransactionType()
+                            ?: inferTransactionType(transaction)
+                        val normalizedMerchant = DuplicateDetectionPolicy.normalizeMerchant(transaction.merchant)
+                        val dedupWindow = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+                        val amountTolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+                        val startDate = transaction.date - dedupWindow
+                        val endDate = DuplicateDetectionPolicy.windowEndExclusive(transaction.date)
+                        val minAmount = kotlin.math.abs(transaction.amount) - amountTolerance
+                        val maxAmount = kotlin.math.abs(transaction.amount) + amountTolerance
+
+                        // P10-P1-08: Check existing pending reviews before creating one
+                        val existingPending = pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
+                            merchantKey = normalizedMerchant,
+                            merchantName = transaction.merchant,
+                            startDate = startDate,
+                            endDate = endDate,
+                            minAmount = minAmount,
+                            maxAmount = maxAmount,
+                            currency = transaction.currency,
+                            transactionType = transactionType.name
+                        )
+                        if (existingPending != null) {
+                            skippedCount++
+                            run.event("TRANSACTION_DUPLICATE_SKIPPED",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
                                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
                                     .putHashed("providerTransactionId", transaction.id)
+                                    .put("reason", "PendingReview already exists").build())
+                            run.increment(processed = 1, skipped = 1)
+                        } else {
+                            // Create PendingReview for low-confidence bank transaction
+                            database.withTransaction {
+                                writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions.pendingReview")
+                                val review = PendingReview(
+                                    rawNotificationId = null,
+                                    scannedReceiptId = null,
+                                    suggestedAmount = kotlin.math.abs(transaction.amount),
+                                    suggestedCurrency = transaction.currency,
+                                    suggestedMerchant = transaction.merchant,
+                                    suggestedMerchantKey = normalizedMerchant,
+                                    suggestedType = transactionType.name,
+                                    suggestedCategoryId = connection.defaultCategoryId,
+                                    suggestedDate = transaction.date,
+                                    confidence = transaction.confidence,
+                                    matchType = null,
+                                    explanation = "Low-confidence bank transaction from ${connection.bankId}",
+                                    packageName = "bank.sync.${connection.bankId}",
+                                    notificationTitle = "Bank Transaction: ${transaction.merchant}",
+                                    notificationText = "Imported from ${connection.bankName}: ${transaction.description}",
+                                    createdAt = timeProvider.now()
+                                )
+                                val reviewId = pendingReviewDao.insert(review)
+                                require(reviewId > 0) { "PendingReview insert failed" }
+                            }
+                            importedCount++
+                            run.event("TRANSACTION_SENT_FOR_REVIEW",
+                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
+                                entityType = "pending_review",
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("providerTransactionId", transaction.id)
+                                    .put("confidence", transaction.confidence.toString())
                                     .put("currency", transaction.currency)
                                     .build())
                             run.increment(processed = 1, succeeded = 1)
                         }
-                        is CreateExpenseResult.DuplicateSkipped -> {
-                            skippedCount++
-                            run.event("TRANSACTION_DUPLICATE_SKIPPED",
-                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
-                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
-                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .putHashed("providerTransactionId", transaction.id).build())
-                            run.increment(processed = 1, skipped = 1)
-                        }
-                        is CreateExpenseResult.ValidationFailed -> {
-                            val hashId = transaction.id.sha256Prefix(8)
-                            errors.add("Transaction validation failed [hash=$hashId, errors=${result.errors.size}]")
-                            run.event("TRANSACTION_FAILED",
-                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
-                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
-                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .putHashed("providerTransactionId", transaction.id)
-                                    .put("errorCount", result.errors.size).build())
-                            run.increment(processed = 1, failed = 1, errors = 1)
-                        }
-                        is CreateExpenseResult.InsertConflict -> {
-                            skippedCount++
-                            run.event("TRANSACTION_DUPLICATE_SKIPPED",
-                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
-                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
-                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .putHashed("providerTransactionId", transaction.id)
-                                    .put("currency", transaction.currency)
-                                    .build())
-                            run.increment(processed = 1, skipped = 1)
-                        }
-                        is CreateExpenseResult.Error -> {
-                            val hashId = transaction.id.sha256Prefix(8)
-                            errors.add("Transaction import failed [hash=$hashId, reason=ERROR]")
-                            run.event("TRANSACTION_FAILED",
-                                com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
-                                exception = result.exception,
-                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .putHashed("providerTransactionId", transaction.id)
-                                    .put("currency", transaction.currency)
-                                    .build())
-                            run.increment(processed = 1, failed = 1, errors = 1)
+                    } else {
+                        // High-confidence transactions go through the standard coordinator pipeline
+                        val request = mapTransactionToExpense(transaction, connection, syncRunId)
+                            .copy(correlationId = run.correlationId)  // DDL-016-15: propagate bank sync correlation
+                        when (val result = coordinator.createExpenseStandaloneV2(request)) {
+                            is CreateExpenseResult.Created -> {
+                                importedCount++
+                                run.event("TRANSACTION_IMPORTED",
+                                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.CREATED,
+                                    entityType = "expense", entityId = result.expenseId,
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("providerTransactionId", transaction.id)
+                                        .put("currency", transaction.currency)
+                                        .build())
+                                run.increment(processed = 1, succeeded = 1)
+                            }
+                            is CreateExpenseResult.DuplicateSkipped -> {
+                                skippedCount++
+                                run.event("TRANSACTION_DUPLICATE_SKIPPED",
+                                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("providerTransactionId", transaction.id).build())
+                                run.increment(processed = 1, skipped = 1)
+                            }
+                            is CreateExpenseResult.ValidationFailed -> {
+                                val hashId = transaction.id.sha256Prefix(8)
+                                errors.add("Transaction validation failed [hash=$hashId, errors=${result.errors.size}]")
+                                run.event("TRANSACTION_FAILED",
+                                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("providerTransactionId", transaction.id)
+                                        .put("errorCount", result.errors.size).build())
+                                run.increment(processed = 1, failed = 1, errors = 1)
+                            }
+                            is CreateExpenseResult.InsertConflict -> {
+                                skippedCount++
+                                run.event("TRANSACTION_DUPLICATE_SKIPPED",
+                                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.DUPLICATE,
+                                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DUPLICATE,
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("providerTransactionId", transaction.id)
+                                        .put("currency", transaction.currency)
+                                        .build())
+                                run.increment(processed = 1, skipped = 1)
+                            }
+                            is CreateExpenseResult.Error -> {
+                                val hashId = transaction.id.sha256Prefix(8)
+                                errors.add("Transaction import failed [hash=$hashId, reason=ERROR]")
+                                run.event("TRANSACTION_FAILED",
+                                    com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
+                                    exception = result.exception,
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("providerTransactionId", transaction.id)
+                                        .put("currency", transaction.currency)
+                                        .build())
+                                run.increment(processed = 1, failed = 1, errors = 1)
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -320,16 +408,33 @@ class BankApiIntegration @Inject constructor(
     }
 
     /**
-     * Refresh access token (placeholder).
+     * Refresh access token (stub with persistence).
+     *
+     * P10-P1-06: When decryption succeeds, generates new stub tokens, encrypts them,
+     * and persists via [BankConnectionDao.updateToken].  In a real implementation,
+     * this would call the provider's OAuth refresh endpoint.
      */
     @StubForDemo
     private suspend fun refreshToken(connection: BankConnection): RefreshOutcome {
         requireStubMode()
 
-        // In real implementation, this would use refresh_token to get new access_token.
         // NEW-P10-002: use decryptWithResult so key invalidation is not collapsed to null.
         return when (BankTokenCipher.decryptWithResult(connection.refreshToken)) {
-            is BankTokenCipher.DecryptResult.Success -> RefreshOutcome.Success
+            is BankTokenCipher.DecryptResult.Success -> {
+                // P10-P1-06: Generate fresh stub tokens and persist
+                val newAccessToken = BankTokenCipher.encryptIfNeeded("demo_token_${connection.bankId}_refreshed")
+                val newRefreshToken = BankTokenCipher.encryptIfNeeded("demo_refresh_${connection.bankId}_refreshed")
+                val newExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L)
+                bankConnectionDao.updateToken(
+                    id = connection.id,
+                    accessToken = newAccessToken ?: "",
+                    refreshToken = newRefreshToken,
+                    encryptionVersion = 1,
+                    expiry = newExpiry
+                )
+                Timber.i("Token refreshed and persisted for bank %s", connection.bankId)
+                RefreshOutcome.Success
+            }
             is BankTokenCipher.DecryptResult.KeyInvalidated -> {
                 // Keystore key permanently invalidated (e.g. biometric / lock-screen change):
                 // the stored refresh token can never be decrypted again, so the user must
@@ -415,6 +520,8 @@ class BankApiIntegration @Inject constructor(
             idempotencyKey = providerTxHash ?: transaction.id,
             notes = notes,
             bankSyncRunId = syncRunId,
+            bankConnectionId = connection.id.takeIf { it > 0L },
+            accountId = connection.bankId,
             bankProviderTransactionIdHash = providerTxHash,
             bankAccountIdHash = accountHash,
             // P10-CURRENT-006: bank API imports must dedupe on the provider transaction
@@ -463,6 +570,12 @@ class BankApiIntegration @Inject constructor(
         for (i in 0 until count) {
             val date = startTime + ((now - startTime) * i / count)
             val merchant = merchants[rng.nextInt(merchants.size)]
+            // P10-P1-04: Assign varied confidence — some below threshold to exercise review route
+            val confidence = when (rng.nextInt(10)) {
+                in 0..6 -> 0.85f + rng.nextFloat() * 0.15f  // 70% high confidence
+                in 7..8 -> 0.50f + rng.nextFloat() * 0.25f  // 20% medium confidence (below threshold)
+                else -> 0.10f + rng.nextFloat() * 0.40f     // 10% low confidence
+            }.coerceIn(0f, 1f)
             transactions.add(
                 BankTransaction(
                     id = "${bankId}_tx_${i}_${date}",
@@ -472,7 +585,8 @@ class BankApiIntegration @Inject constructor(
                     merchant = merchant,
                     description = "Purchase from $merchant",
                     reference = "REF${rng.nextInt(1000, 10000)}",
-                    movementType = BankMovementType.PURCHASE
+                    movementType = BankMovementType.PURCHASE,
+                    confidence = confidence
                 )
             )
         }

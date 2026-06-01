@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 import android.net.Uri
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -108,7 +107,6 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val sideEffectDispatcher: ReceiptSideEffectDispatcher,
     private val duplicateDetector: ReceiptDuplicateDetector,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val postCommitActionRunner: PostCommitActionRunner,
@@ -468,258 +466,32 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
             }
 
-            // 5. Update receipt with lifecycle metadata and fingerprints,
+            // 5. Save receipt with lifecycle metadata and fingerprints,
             //    and carry the taxInclusive flag for downstream consumers.
             val now = timeProvider.now()
-            val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-            val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
-            val updated = ReceiptTimestampPolicy.forUpdate(receipt.copy(
-                imagePath = receipt.imagePath,
-                imageHash = fileHash ?: receipt.imageHash,
+            val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
                 processingStatus = processingStatus,
+                imageHash = fileHash ?: receipt.imageHash,
                 textFingerprint = textFingerprint,
-                semanticFingerprint = semanticFingerprint,
-                rawOcrText = sanitizedOcrText
+                semanticFingerprint = semanticFingerprint
             ), now).also { it.taxInclusive = taxInclusive }
-
-            // 5+6. Atomically persist the receipt update, all lifecycle events,
-            // and optionally the pending review. P3-P1-01: wrap update+events+review
-            // in a single transaction so a partial write cannot leave the database
-            // in an inconsistent state.
-            var createdReviewId: Long = 0
-            var savedReceipt: ScannedReceipt = updated
-            database.withTransaction {
-                // P3-BLOCKER-B: Use ReceiptInsertResolver for centralized conflict handling.
-                val saved = when (val insert = receiptInsertResolver.insertOrResolve(updated)) {
-                    is ReceiptInsertResult.Inserted -> updated.copy(id = insert.receiptId)
-                    is ReceiptInsertResult.Duplicate -> {
-                        throw DuplicateReceiptInsertException(
-                            existingReceipt = insert.existingReceipt,
-                            reason = insert.reason,
-                            attemptedAssetPath = updated.imagePath
-                        )
-                    }
-                    is ReceiptInsertResult.ConflictUnresolved -> {
-                        throw IllegalStateException(
-                            "Receipt insert conflict unresolved: ${insert.reason}")
-                    }
-                }
-                savedReceipt = saved
-
-                // 6. Write receipt lifecycle event
-                receiptEventDao.insert(
-                    ReceiptEvent(
-                        receiptId = savedReceipt.id,
-                        sourceType = savedReceipt.sourceType,
-                        documentType = savedReceipt.documentType,
-                        eventType = "RECEIPT_SAVED",
-                        occurredAt = now,
-                        oldStatus = null,
-                        newStatus = savedReceipt.processingStatus,
-                        actor = "system:coordinator",
-                        message = "Receipt processed via lifecycle coordinator",
-                        metadata = null,
-                        errorDetails = null
-                    )
-                )
-
-                // P3-P1-08: Write PARSE_FAILED event when parsing failed
-                if (processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name) {
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = savedReceipt.id,
-                            sourceType = savedReceipt.sourceType,
-                            documentType = savedReceipt.documentType,
-                            eventType = "PARSE_FAILED",
-                            occurredAt = now,
-                            oldStatus = null,
-                            newStatus = ReceiptProcessingStatus.PARSE_FAILED.name,
-                            actor = "system:coordinator",
-                            message = "OCR succeeded but receipt parsing failed",
-                            metadata = null,
-                            errorDetails = savedReceipt.parseFailureReason
-                        )
-                    )
-                }
-
-                if (isOcrFailure) {
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = savedReceipt.id,
-                            sourceType = savedReceipt.sourceType,
-                            documentType = savedReceipt.documentType,
-                            eventType = "OCR_FAILED",
-                            occurredAt = now,
-                            oldStatus = null,
-                            newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
-                            actor = "system:coordinator",
-                            message = "OCR failed for receipt input",
-                            metadata = null,
-                            errorDetails = null
-                        )
-                    )
-                }
-
-                // P2-15: Write PDF_PARTIAL event when only a subset of pages were processed
-                val pagesProcessed = processResult.pagesProcessed
-                val totalPages = processResult.totalPages
-                if (pagesProcessed != null && totalPages != null && pagesProcessed < totalPages) {
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = savedReceipt.id,
-                            sourceType = savedReceipt.sourceType,
-                            documentType = savedReceipt.documentType,
-                            eventType = "PDF_PARTIAL",
-                            occurredAt = now,
-                            oldStatus = null,
-                            newStatus = savedReceipt.processingStatus,
-                            actor = "system:coordinator",
-                            message = "PDF partially processed: $pagesProcessed of $totalPages pages",
-                            metadata = "{\"pagesProcessed\":$pagesProcessed,\"totalPages\":$totalPages}",
-                            errorDetails = null
-                        )
-                    )
-                }
-
-                // P3-P1-09 / P3-NEW-01: Create PendingReview only AFTER dedupe
-                // passes and the receipt is confirmed non-duplicate. This prevents
-                // ghost/actionable reviews for duplicate receipt scans.
-                // P3-PR2: Also create a review when the parsed confidence is below
-                // the batch threshold, even if the caller did not explicitly request
-                // review.  Low-confidence parses need human verification.
-                val needsReview = options.createReview ||
-                    (parsed.confidence < BATCH_REVIEW_CONFIDENCE_THRESHOLD)
-                if (needsReview) {
-                    val suggestedMerchant = receipt.parsedMerchant
-                        ?: parsed.merchantName
-                        ?: if (processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name) "Parsing Failed"
-                          else "Unknown Merchant"
-                    val safeReviewSnippet = RawContentSanitizer.sanitizedOcrReviewSnippet(
-                        processResult.ephemeralRawOcrText ?: sanitizedOcrText,
-                        ocrStorageMode
-                    )
-                    val review = PendingReview(
-                        rawNotificationId = null,
-                        scannedReceiptId = savedReceipt.id,
-                        suggestedAmount = parsed.total,
-                        suggestedCurrency = updated.currency,
-                        suggestedMerchant = suggestedMerchant,
-                        suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
-                        suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                        suggestedDate = parsed.date,
-                        confidence = parsed.confidence,
-                        packageName = when (processingStatus) {
-                            ReceiptProcessingStatus.PARSE_FAILED.name -> "receipt.scan.error"
-                            ReceiptProcessingStatus.OCR_FAILED.name -> "receipt.scan.ocr_failed"
-                            else -> "receipt.scan"
-                        },
-                        notificationTitle = "Scanned Receipt",
-                        notificationText = safeReviewSnippet,
-                        suggestedCategoryId = receipt.parsedMerchant?.let {
-                            hybridClassifier.classify(it, parsed.total ?: 0.0).categoryId.takeIf { id -> id > 0 }
-                        }
-                    )
-                    val reviewId = pendingReviewDao.insert(review)
-                    require(reviewId > 0) { "PendingReview insert failed for receiptId=${savedReceipt.id}" }
-
-                    val persistedReview = review.copy(id = reviewId)
-
-                    // P3-CUR-01: Use the generated reviewId, NOT review.id (which is 0 after insert)
-                    pendingReviewSourceLinkService.linkSourcesForReview(
-                        review = persistedReview,
-                        reviewId = reviewId,
-                        sourceType = ExpenseSource.REVIEW_APPROVAL,
-                        correlationId = null,
-                        context = PendingReviewSourceContext(
-                            stage = "receipt_scan_review",
-                            reason = "Receipt scan needs review (after dedupe)",
-                            confidence = review.confidence,
-                            extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER.name
-                        )
-                    )
-
-                    createdReviewId = reviewId
-                }
-            }
-
-            // 7. Plan and run post-save side effects with ephemeral raw input
-            val receiptActions = receiptSideEffectPlanner.planAfterReceiptSaved(
-                input = ReceiptSideEffectInput(
-                    receipt = savedReceipt,
-                    ephemeralRawOcrText = processResult.ephemeralRawOcrText,
-                    rawStorageMode = ocrStorageMode,
-                    correlationId = correlationId
-                )
-            )
-            postCommitActionRunner.runBestEffortAfterCommit(
-                batch = receiptActions,
-                logMessage = "Post-save side effects failed for receipt",
-                targetId = savedReceipt.id
-            )
-
-            // NEW-P3-006: Redact imagePath — never log file system paths
-            Timber.d("Receipt processed via coordinator: id=%d, imagePath=[REDACTED]", savedReceipt.id)
-            Result.success(savedReceipt)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: DuplicateReceiptInsertException) {
-            // P3-EB0-02: Delete only the attempted draft asset, NEVER the existing receipt asset.
-            e.attemptedAssetPath?.takeIf { it.isNotBlank() }?.let { assetStore.deleteAsset(it) }
-            Timber.d("Duplicate receipt detected during insert: existingId=%d, reason=%s", e.existingReceipt.id, e.reason)
-            return Result.success(e.existingReceipt)
-        } catch (e: SecurityException) {
-            // U-PR5: Cloud OCR blocked by privacy policy — return failure instead of fallback manual record
-            Timber.w(e, "Cloud OCR blocked by privacy policy")
-            emitIntakeDiagnostic("policy", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
-                correlationId, "CLOUD_OCR_BLOCKED",
-                mimeType = validation.mimeType, fileSizeBytes = validation.fileSizeBytes,
-                message = e.message ?: "Cloud OCR blocked by privacy policy")
-            return Result.failure(e)
-        } catch (e: Exception) {
-            Timber.e(e, "processReceipt failed, falling back to manual record")
-
-            // OCR/parse failed catastrophically — save manual record
-            // Use the original URI string as a fallback image reference
-            // NEW-P3-008: Wrap homeCurrency() with a 3s timeout — DataStore reads
-            // can block indefinitely if the underlying SharedPreferences migration
-            // or disk I/O stalls. Return FALLBACK_CURRENCY on timeout.
-            val fallbackCurrency = kotlinx.coroutines.withTimeoutOrNull(3_000L) {
-                currencySettingsRepository.homeCurrency().first()
-            } ?: FALLBACK_CURRENCY
-
-            val now = timeProvider.now()
-            val manualReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
-                imagePath = null, // P3-EB0-07: don't persist raw URI
-                rawOcrText = "[OCR Failed or Skipped]",
-                parsedTotal = null,
-                parsedMerchant = null,
-                parsedDate = null,
-                parsedItems = null,
-                parsedTaxAmount = null,
-                currency = fallbackCurrency,
-                confidence = 0f,
-                sourceType = ReceiptSourceType.CAMERA.name,
-                documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
-                processingStatus = ReceiptProcessingStatus.OCR_FAILED.name,
-                imageHash = null
-            ), now)
 
             // P3-BLOCKER-04: Use resolver for fallback insert.
             val savedId = database.withTransaction {
-                when (val res = receiptInsertResolver.insertOrResolve(manualReceipt)) {
+                when (val res = receiptInsertResolver.insertOrResolve(updated)) {
                     is ReceiptInsertResult.Inserted -> {
                         receiptEventDao.insert(ReceiptEvent(
                             receiptId = res.receiptId,
-                            sourceType = manualReceipt.sourceType,
-                            documentType = manualReceipt.documentType,
-                            eventType = "OCR_FAILED",
+                            sourceType = updated.sourceType,
+                            documentType = updated.documentType,
+                            eventType = "RECEIPT_SAVED",
                             occurredAt = now,
                             oldStatus = null,
-                            newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
+                            newStatus = processingStatus,
                             actor = "system:coordinator",
-                            message = "OCR failed for receipt input",
+                            message = "Receipt saved via lifecycle coordinator",
                             metadata = null, errorDetails = null
                         ))
                         res.receiptId
@@ -729,7 +501,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
             }
 
-            Result.success(manualReceipt.copy(id = savedId))
+            Result.success(updated.copy(id = savedId))
         }
     }
 
@@ -785,8 +557,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResult {
     writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.saveEmailReceipt")
     val now = timeProvider.now()
-    val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-    val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
+    // P11-P1-04: Email receipts must use emailReceiptStorageMode, not rawOcrStorageMode
+    val emailStorageMode = privacySettingsRepository.getSettings().emailReceiptStorageMode
+    val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, emailStorageMode)
     val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
         sourceType = ReceiptSourceType.EMAIL.name,
         documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
@@ -821,8 +594,9 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
 suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.saveEmailReceipt")
         val now = timeProvider.now()
-        val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-        val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
+        // P11-P1-04: Email receipts must use emailReceiptStorageMode, not rawOcrStorageMode
+        val emailStorageMode = privacySettingsRepository.getSettings().emailReceiptStorageMode
+        val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, emailStorageMode)
         val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
             sourceType = ReceiptSourceType.EMAIL.name,
             documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
@@ -1033,16 +807,15 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
             if (sourceId == -1L) {
                 // P3-CUR-03 / P3-NEW-03: Email source insert conflicted.
-                // Resolve by fingerprint, raw messageId, and messageIdHash
-                // in descending order of reliability. If nothing matches,
-                // throw to rollback the transaction — we must never continue
-                // with sourceId <= 0.
-                val existing = when {
-                    fingerprint.isNotBlank() -> emailReceiptDao.getByFingerprint(fingerprint)
-                    else -> null
-                } ?: emailReceiptDao.getByMessageId(messageId)
-                  ?: messageIdHash.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByMessageIdHash(it) }
-                  ?: fingerprint.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByContentFingerprintHash(it) }
+                // Resolve by raw messageId (P11-P1-06), then fingerprint,
+                // messageIdHash, and contentFingerprintHash.
+                // P11-P1-06: messageId is the primary conflict key since the
+                // unique constraint is on emailMessageId; try it first so the
+                // conflict is correctly resolved to the existing source.
+                val existing = emailReceiptDao.getByMessageId(messageId)
+                    ?: (if (fingerprint.isNotBlank()) emailReceiptDao.getByFingerprint(fingerprint) else null)
+                    ?: messageIdHash.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByMessageIdHash(it) }
+                    ?: fingerprint.takeIf { it.isNotBlank() }?.let { emailReceiptDao.getByContentFingerprintHash(it) }
 
                 if (existing != null) {
                     throw DuplicateEmailReceiptException(
@@ -1153,18 +926,24 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                         }
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
                             val vf = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed
+                            // P11-P1-02: emit diagnostic event for non-duplicate failure
+                            emitEmailReceiptDiagnostic("expense_create", "FAILED_FINAL", "validation_failed", "ScannedReceipt", savedId, correlationId)
                             // NEW-P3-006: Redact errors — may contain PII
                             Timber.w("Email receipt %d validation failed: [REDACTED]", savedId)
                             needsReviewReason = "validation_failed"
                         }
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.InsertConflict -> {
                             val ic = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.InsertConflict
+                            // P11-P1-02: emit diagnostic event for non-duplicate failure
+                            emitEmailReceiptDiagnostic("expense_create", "FAILED_FINAL", "insert_conflict", "ScannedReceipt", savedId, correlationId)
                             // NEW-P3-006: Redact dedupeKey — may contain merchant/amount
                             Timber.w("Email receipt %d insert conflict: [REDACTED]", savedId)
                             needsReviewReason = "insert_conflict"
                         }
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Error -> {
                             val err = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Error
+                            // P11-P1-02: emit diagnostic event for non-duplicate failure
+                            emitEmailReceiptDiagnostic("expense_create", "FAILED_FINAL", "create_error", "ScannedReceipt", savedId, correlationId)
                             // createExpenseDbOnlyV2 returns the failure as a value (does not throw);
                             // a CancellationException would have propagated already, so just log.
                             Timber.w(err.exception, "Email receipt %d create error", savedId)

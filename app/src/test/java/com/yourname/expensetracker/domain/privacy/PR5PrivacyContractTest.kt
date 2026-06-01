@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.privacy
 
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.BankConnectionDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
 import com.yourname.expensetracker.domain.bank.BankApiIntegration
 import com.yourname.expensetracker.domain.bank.BankMovementType
@@ -115,7 +118,10 @@ class PR5PrivacyContractTest {
             hashingService = DefaultSensitiveHashingService(),
             privacySettingsRepository = mockk(relaxed = true) {
                 coEvery { getSettings() } returns settings
-            }
+            },
+            bankConnectionDao = mockk<BankConnectionDao>(relaxed = true),
+            pendingReviewDao = mockk<PendingReviewDao>(relaxed = true),
+            database = mockk<AppDatabase>(relaxed = true)
         )
 
         val request = integration.mapTransactionToExpense(
@@ -150,7 +156,10 @@ class PR5PrivacyContractTest {
             hashingService = DefaultSensitiveHashingService(),
             privacySettingsRepository = mockk(relaxed = true) {
                 coEvery { getSettings() } returns settings
-            }
+            },
+            bankConnectionDao = mockk<BankConnectionDao>(relaxed = true),
+            pendingReviewDao = mockk<PendingReviewDao>(relaxed = true),
+            database = mockk<AppDatabase>(relaxed = true)
         )
 
         val request = integration.mapTransactionToExpense(

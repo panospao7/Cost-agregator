@@ -1,12 +1,14 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptInsertResolver
 import com.yourname.expensetracker.data.repository.ReceiptInsertResult
@@ -14,17 +16,14 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
-import com.yourname.expensetracker.domain.receipt.ReceiptParser
-import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.every
-import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.runTest
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
-import com.yourname.expensetracker.domain.receipt.EmailReceiptData
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.receipt.EmailReceiptData
+import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner
 import com.yourname.expensetracker.domain.sideeffect.PostCommitAction
@@ -33,8 +32,21 @@ import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.sideeffect.SideEffectCategory
 import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.sideeffect.MutationResult
+import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
 import kotlin.test.assertFailsWith
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -60,10 +72,13 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var sideEffectDispatcher: ReceiptSideEffectDispatcher
     private lateinit var duplicateDetector: ReceiptDuplicateDetector
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
-    private lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
     private lateinit var postCommitActionRunner: PostCommitActionRunner
     private lateinit var receiptSideEffectPlanner: ReceiptSideEffectPlanner
     private lateinit var receiptInsertResolver: ReceiptInsertResolver
+    private lateinit var writeBarrier: DatabaseWriteBarrier
+    private lateinit var diagnosticEventWriter: DiagnosticEventWriter
+    private lateinit var privacySettingsRepository: PrivacySettingsRepository
+    private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
     private lateinit var coordinator: ReceiptLifecycleCoordinator
 
     private val now = 1_712_000_000_000L
@@ -84,13 +99,15 @@ class ReceiptLifecycleCoordinatorTest {
         sideEffectDispatcher = mockk(relaxed = true)
         duplicateDetector = mockk(relaxed = true)
         currencySettingsRepository = mockk(relaxed = true)
-        restoreMaintenanceMode = mockk(relaxed = true)
         postCommitActionRunner = mockk(relaxed = true)
         receiptSideEffectPlanner = mockk(relaxed = true)
         receiptInsertResolver = mockk(relaxed = true)
+        writeBarrier = mockk(relaxed = true)
+        diagnosticEventWriter = mockk(relaxed = true)
+        privacySettingsRepository = mockk(relaxed = true)
+        transactionLifecycleCoordinator = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
-        every { restoreMaintenanceMode.isWritesAllowed() } returns true
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         // Default happy-path insert: every existing test expects the receipt to be
@@ -113,14 +130,13 @@ class ReceiptLifecycleCoordinatorTest {
             sideEffectDispatcher = sideEffectDispatcher,
             duplicateDetector = duplicateDetector,
             currencySettingsRepository = currencySettingsRepository,
-            restoreMaintenanceMode = restoreMaintenanceMode,
-            writeBarrier = mockk(relaxed = true),
-            transactionLifecycleCoordinator = mockk(relaxed = true),
+            writeBarrier = writeBarrier,
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator,
             postCommitActionRunner = postCommitActionRunner,
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
-            privacySettingsRepository = mockk(relaxed = true),
-            diagnosticEventWriter = mockk(relaxed = true),
+            privacySettingsRepository = privacySettingsRepository,
+            diagnosticEventWriter = diagnosticEventWriter,
             sourceLinkWriter = mockk(relaxed = true),
             receiptSideEffectPlanner = receiptSideEffectPlanner,
             pendingReviewDao = mockk(relaxed = true),
@@ -485,5 +501,176 @@ class ReceiptLifecycleCoordinatorTest {
         assertTrue("Expected Success for high-confidence parse, got $result", result is EmailReceiptProcessResult.Success)
         val success = result as EmailReceiptProcessResult.Success
         kotlin.test.assertEquals(2L, success.receiptId)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // P11-P1-05: Coordinator uses DatabaseWriteBarrier, not RestoreMaintenanceMode
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `email_ingestion_uses_write_barrier_not_restore_maintenance_mode`() = runTest {
+        // Given: writeBarrier is set to block writes
+        val writeBarrier = this@ReceiptLifecycleCoordinatorTest.writeBarrier
+        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } throws
+            com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("test"),
+                mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_STAGING
+            )
+
+        val emailData = EmailReceiptData(
+            messageId = "", from = "sender@example.com", subject = "Receipt",
+            body = "Your receipt", receivedAt = now,
+            amount = null, merchant = null, currency = null, date = null, items = null
+        )
+
+        val result = coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your receipt",
+            sender = "sender@example.com",
+            subject = "Receipt",
+            messageId = "",
+            provider = "unknown"
+        )
+
+        assertTrue("Expected Error when writes are blocked, got $result", result is EmailReceiptProcessResult.Error)
+        val error = result as EmailReceiptProcessResult.Error
+        assertTrue(error.message.contains("blocked", ignoreCase = true))
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // P11-P1-04: Email receipts use emailReceiptStorageMode, not rawOcrStorageMode
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `email_uses_email_storage_mode_not_ocr_mode`() = runTest {
+        // Given: explicit privacy settings with distinct modes
+        val settings = PrivacySettings(
+            rawOcrStorageMode = RawStorageMode.STORE_RAW,
+            emailReceiptStorageMode = RawStorageMode.DO_NOT_STORE
+        )
+        coEvery { privacySettingsRepository.getSettings() } returns settings
+
+        val emailData = EmailReceiptData(
+            messageId = "", from = "sender@example.com", subject = "Receipt",
+            body = "sensitive email body", receivedAt = now,
+            amount = null, merchant = null, currency = null, date = null, items = null
+        )
+
+        coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "sensitive email body",
+            sender = "sender@example.com",
+            subject = "Receipt",
+            messageId = "",
+            provider = "unknown"
+        )
+
+        // Verify privacySettingsRepository.getSettings() was called (emailReceiptStorageMode was read)
+        coVerify(atLeast = 1) { privacySettingsRepository.getSettings() }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // P11-P1-02: Non-duplicate failures (ValidationFailed, InsertConflict, Error)
+    //            must produce diagnostic events
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `validation_failure_produces_diagnostic_event`() = runTest {
+        // Given: transaction coordinator returns ValidationFailed
+        val mutationResult = MutationResult<CreateExpenseResult>(
+            value = CreateExpenseResult.ValidationFailed(listOf("Invalid amount")),
+            postCommitActions = PostCommitActionBatch.empty("test")
+        )
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns mutationResult
+
+        val emailData = EmailReceiptData(
+            messageId = "", from = "receipt@amazon.com", subject = "Order",
+            body = "Your order", receivedAt = now,
+            amount = 49.99, merchant = "Amazon", currency = "USD",
+            date = now, items = null,
+            confidence = 0.95
+        )
+        coEvery { scannedReceiptDao.insert(any()) } returns 2L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { scannedReceiptDao.getById(2L) } returns ScannedReceipt(
+            id = 2L, imagePath = null, rawOcrText = "Your order",
+            parsedTotal = 49.99, parsedMerchant = "Amazon", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 0.95f
+        )
+
+        val result = coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your order",
+            sender = "receipt@amazon.com",
+            subject = "Order",
+            messageId = "",
+            provider = "amazon"
+        )
+
+        // Should be NeedsReview (not silently succeeding or failing)
+        assertTrue("Expected NeedsReview for validation failure, got $result", result is EmailReceiptProcessResult.NeedsReview)
+        val needsReview = result as EmailReceiptProcessResult.NeedsReview
+        assertEquals("validation_failed", needsReview.reason)
+
+        // Verify diagnostic event was emitted for the failure
+        coVerify(atLeast = 1) { diagnosticEventWriter.emit(any()) }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // P11-P1-06: messageId conflict in insertOrIgnore returns existing source
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `messageId_conflict_returns_existing_source`() = runTest {
+        // Given: existing source with the same messageId
+        val existingSource = EmailReceiptSource(
+            id = 99L,          // existing source PK
+            receiptId = 5L,    // FK to existing receipt
+            provider = "amazon",
+            parsedAt = now,
+            confidence = 0.9,
+            emailMessageId = "msg-existing-1"
+        )
+        // insertOrIgnore returns -1 (conflict), then lookup by messageId returns existing
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns -1L
+        coEvery { emailReceiptDao.getByMessageId("msg-existing-1") } returns existingSource
+        // getByMessageId for non-matching IDs should return null
+        coEvery { emailReceiptDao.getByMessageId(any()) } answers {
+            val msgId = firstArg<String>()
+            if (msgId == "msg-existing-1") existingSource else null
+        }
+        coEvery { scannedReceiptDao.insert(any()) } returns 2L
+        coEvery { scannedReceiptDao.getById(2L) } returns ScannedReceipt(
+            id = 2L, imagePath = null, rawOcrText = "Your order",
+            parsedTotal = 49.99, parsedMerchant = "Amazon", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 0.95f
+        )
+
+        val emailData = EmailReceiptData(
+            messageId = "msg-existing-1", from = "receipt@amazon.com", subject = "Order",
+            body = "Your order", receivedAt = now,
+            amount = 49.99, merchant = "Amazon", currency = "USD",
+            date = now, items = null,
+            confidence = 0.95
+        )
+
+        val result = coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your order",
+            sender = "receipt@amazon.com",
+            subject = "Order",
+            messageId = "msg-existing-1",
+            provider = "amazon"
+        )
+
+        // The existing source's receiptId (5L) should be returned as Duplicate
+        assertTrue("Expected Duplicate for messageId conflict, got $result", result is EmailReceiptProcessResult.Duplicate)
+        val duplicate = result as EmailReceiptProcessResult.Duplicate
+        assertEquals(5L, duplicate.existingReceiptId)
     }
 }

@@ -49,6 +49,8 @@ import com.yourname.expensetracker.domain.provenance.SourceLinkPayload
  * @property emailReceiptSourceId Optional. Linked email receipt source ID.
  * @property groupId Optional. Linked expense group ID.
  * @property bankSyncRunId Optional. Linked bank sync run ID.
+ * @property bankConnectionId Optional. Bank connection ID for provenance traceability to the originating connection.
+ * @property accountId Optional. Bank account identifier (account number or IBAN suffix) for provenance.
  * @property bankProviderTransactionIdHash Optional. Hashed provider transaction ID for bank provenance identity.
  * @property bankAccountIdHash Optional. Hashed bank account ID for provenance traceability.
  * @property fileImportRunId Optional. Linked file import run ID (CSV/JSON import provenance).
@@ -107,6 +109,10 @@ data class CreateExpenseRequest(
     val emailReceiptSourceId: Long? = null,
     val groupId: Long? = null,
     val bankSyncRunId: Long? = null,
+    /** P10-P1-05: Bank connection ID for provenance traceability to the originating connection. */
+    val bankConnectionId: Long? = null,
+    /** P10-P1-05: Bank account identifier (account number or IBAN suffix) for provenance. */
+    val accountId: String? = null,
     /** P0: Hashed provider transaction ID for deterministic bank provenance identity. */
     val bankProviderTransactionIdHash: String? = null,
     /** P0: Hashed bank account ID for provenance traceability. */
