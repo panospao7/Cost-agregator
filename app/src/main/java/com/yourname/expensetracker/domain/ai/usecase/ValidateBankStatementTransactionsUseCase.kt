@@ -53,9 +53,11 @@ data class CleanTransaction(
  *   the user has explicitly enabled cloud AI in settings.
  * - All cloud requests pass through the [PrivacyGate] before sending data.
  *
- * RESOLVED (P8-P1-07): Redaction is handled at the service layer —
- * [CloudReceiptAssistService.suggestFromText] checks AiSettings.redactBeforeCloud
- * and applies [CloudPayloadRedactor.redactText] before sending to cloud.
+ * IMPLEMENTED (P8-P1-07): Redaction is handled at the service layer —
+ * [CloudReceiptAssistService.suggestFromText] calls
+ * [CloudPayloadPolicy.prepareBankStatementValidation] which always applies
+ * [CloudPayloadRedactor.redactText] before sending to cloud. The raw prompt
+ * never reaches the cloud API unredacted for bank statement validation.
  */
 @Singleton
 class ValidateBankStatementTransactionsUseCase @Inject constructor(

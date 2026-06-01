@@ -338,10 +338,37 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
     }
     
+    /**
+     * Legacy raw database export (debug-only).
+     *
+     * ## Privacy gates (P8-P1-11)
+     * 1. **BuildConfig.DEBUG** — this export is completely disabled in release builds.
+     *    Production exports must use [createCostBackup] which produces a .costbackup
+     *    bundle with encryption and manifest.
+     * 2. **PrivacyCapability.RAW_DATABASE_EXPORT** — the user must have consented to
+     *    raw database export in privacy settings. If denied, the export is blocked
+     *    before any file I/O occurs.
+     * 3. **PrivacyCapability.ENCRYPTED_BACKUP / RAWBACKUP_EXPORT** — depending on
+     *    whether encrypted backup is enabled, the corresponding capability is checked
+     *    before the export proceeds.
+     */
     @Deprecated("Use createCostBackup() for production. Raw DB export is debug-only.")
     override suspend fun exportDatabase(): Result<File> = withContext(ioDispatcher) {
         // P1-11: Raw DB export is disabled in release builds
         if (!BuildConfig.DEBUG) throw UnsupportedOperationException("Raw DB export disabled in release")
+
+        // P8-P1-11: Privacy gate for raw database export capability
+        val rawDbExportDecision = privacyGate.check(
+            PrivacyCapability.RAW_DATABASE_EXPORT,
+            mapOf("operation" to "exportDatabase")
+        )
+        if (rawDbExportDecision.blocksExecution()) {
+            Timber.d("exportDatabase: RAW_DATABASE_EXPORT denied by privacy gate: ${rawDbExportDecision.reason()}")
+            return@withContext Result.failure(
+                Exception("Raw database export denied by privacy gate: ${rawDbExportDecision.reason()}")
+            )
+        }
+
         // Enter maintenance mode + drain workers before copying live DB (debug path)
         try {
             maintenanceOperationRunner.enterAndDrain(
