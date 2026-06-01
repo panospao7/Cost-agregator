@@ -1,6 +1,6 @@
 # Backend Map - Test Coverage & Cross-References
 
-**Generated:** 2026-04-06
+**Generated:** 2026-06-01
 
 ---
 
@@ -53,7 +53,7 @@
 
 ## Critical Dependency Chains
 
-### Chain 1: Expense Ingestion → Storage
+### Chain 1: Expense Ingestion → Storage (via TransactionLifecycleCoordinator)
 
 ```
 Notification/SMS Input
@@ -62,16 +62,22 @@ Parser (GenericTransactionParser or specialized)
     ↓
 ParsedTransaction
     ↓
-Expense Entity
+CreateExpenseRequest
     ↓
-ExpenseDao.insert()
+TransactionLifecycleCoordinator.createExpense()
+    ├─ [validate → normalize → dedupe → insertAtomic]
     ↓
-ExpenseRepository.saveExpense()
+TransactionEvent (event log) + Expense (stored in DB)
     ↓
-SQLite (Expense table)
+TransactionSideEffectDispatcher.dispatchOnCreated()
+    ├─→ budget check
+    ├─→ anomaly alert
+    └─→ merchant-category learning
+    ↓
+ExpenseRepository (read layer)
 ```
 
-**Files:** `parser/*`, `data/database/entity/Expense.kt`, `data/database/dao/ExpenseDao.kt`, `data/repository/ExpenseRepository.kt`
+**Files:** `parser/*`, `transaction/CreateExpenseRequest.kt`, `transaction/lifecycle/TransactionLifecycleCoordinator.kt`, `transaction/lifecycle/TransactionSideEffectDispatcher.kt`, `data/database/entity/Expense.kt`, `data/database/entity/TransactionEvent.kt`, `data/database/dao/ExpenseDao.kt`
 
 ### Chain 2: Categorization Pipeline
 
@@ -225,6 +231,103 @@ UI Navigation
 
 **Files:** `naturallanguage/*`, `usecase/expense/*`, `ai/usecase/*QueryUseCase.kt`
 
+### Chain 8: Transaction Lifecycle Coordinator
+
+```
+CreateExpenseRequest (from any source)
+    ↓
+TransactionLifecycleCoordinator.createExpense()
+    ├─ Validation (required fields, types)
+    ├─ Normalization (merchant, currency, amount)
+    ├─ Deduplication (DeduplicationMode)
+    └─ Atomic insert + TransactionEvent log
+    ↓
+TransactionSideEffectDispatcher.dispatchOnCreated()
+    ├─→ BudgetMonitor.checkBudget()
+    ├─→ AnomalyAlertOrchestrator.assess()
+    └─→ MerchantCategoryRepository.learn()
+    ↓
+Expense stored in DB + event audit trail
+```
+
+**Files:** `transaction/lifecycle/TransactionLifecycleCoordinator.kt`, `transaction/lifecycle/TransactionSideEffectDispatcher.kt`, `transaction/CreateExpenseRequest.kt`, `transaction/CreateExpenseResult.kt`, `transaction/DeduplicationMode.kt`, `transaction/SideEffectMode.kt`, `data/database/dao/TransactionEventDao.kt`
+
+### Chain 9: Privacy Gate
+
+```
+Feature Request
+    ↓
+CompositePrivacyGate.check(capability, context)
+    ↓
+┌───────────────────────────────────────────────────────────┐
+│ 1. NotificationPrivacyGate: NOTIFICATION_CAPTURE, etc.   │
+│ 2. CloudAiPrivacyGate: CLOUD_AI_*, RECEIPT_IMAGE_CLOUD  │
+│ 3. LocationPrivacyGate: EXTERNAL_GEOCODING, GPS, etc.   │
+│ 4. BackupPrivacyGate: RAWBACKUP_EXPORT, ENCRYPTED_BACKUP│
+└───────────────────────────────────────────────────────────┘
+    ↓ (first Denied wins, or Allowed if all pass)
+PrivacyDecision (Allowed | Denied(reason))
+    ↓
+PrivacyAuditLogger.log(capability, decision, reason, caller)
+    ↓
+Proceed or Block operation
+```
+
+**Files:** `privacy/PrivacyGate.kt`, `privacy/CompositePrivacyGate.kt`, `privacy/NotificationPrivacyGate.kt`, `privacy/CloudAiPrivacyGate.kt`, `privacy/LocationPrivacyGate.kt`, `privacy/BackupPrivacyGate.kt`, `privacy/PrivacyDecision.kt`, `privacy/PrivacyBlocked.kt`, `privacy/PrivacyCapability.kt`, `privacy/PrivacyAuditLogger.kt`, `privacy/PrivacySettings.kt`, `privacy/EffectiveCloudAiPolicy.kt`, `privacy/CloudPayloadPolicy.kt`, `privacy/RawStorageMode.kt`, `privacy/RawContentSanitizer.kt`
+
+### Chain 10: Worker Infrastructure
+
+```
+WorkerSpec (configuration)
+    ↓
+WorkerSpecScheduler.schedule(workerName)
+    ├─ Reads WorkerSpec.DEFAULTS[name]
+    ├─ Detects version changes → force REPLACE
+    └─ Delegates to WorkManager
+    ↓
+WorkerExecutionGuard.acquire(workerName)
+    ├─ Prevents concurrent execution
+    └─ Timeout-based locking
+    ↓
+WorkerRunLogger.runStarted(workerName, runId)
+    ↓
+Worker execution (domain logic)
+    ↓
+WorkerRunLogger.runCompleted/runFailed(workerName, runId, result)
+    ↓
+PrivacyRuntimeWorkerPolicy (gates execution at runtime)
+```
+
+**Files:** `workers/WorkerSpec.kt`, `workers/WorkerSpecScheduler.kt`, `workers/WorkerExecutionGuard.kt`, `workers/WorkerRunLogger.kt`, `workers/WorkerRegistry.kt`, `workers/RetryableWorkerException.kt`, `workers/PrivacyRuntimeWorkerPolicy.kt`, `workers/NotificationPermissionChecker.kt`, `workers/WorkerRunContext.kt`
+
+### Chain 11: Receipt Match Lifecycle
+
+```
+Receipt captured/imported
+    ↓
+ReceiptLifecycleCoordinator (orchestrates)
+    ├─ ReceiptInputValidator (URI/MIME/size)
+    ├─ ReceiptDuplicateDetector (3-signal dedup)
+    └─ ReceiptAssetStore (file persistence)
+    ↓
+ReceiptLinkService.linkReceiptToExpense()
+    ├─ Creates receipt_expense_link row
+    └─ Writes receipt_events audit event
+    ↓
+ReceiptMatchLifecycleService (lifecycle-aware mutations)
+    ├─ DatabaseWriteBarrier check
+    ├─ ScannedReceiptDao status update
+    └─ ReceiptEventDao event recording
+    ↓
+ReceiptSideEffectDispatcher (document-type-gated)
+    ├─ AutoCreateWarrantyFromReceiptUseCase
+    ├─ CategorizeReceiptItemsUseCase
+    ├─ ReceiptTransactionMatcher
+    └─ PriceProtectionTracker
+```
+
+**Files:** `receipt/lifecycle/ReceiptLifecycleCoordinator.kt`, `receipt/lifecycle/ReceiptLinkService.kt`, `receipt/lifecycle/ReceiptMatchLifecycleService.kt`, `receipt/lifecycle/ReceiptSideEffectDispatcher.kt`, `receipt/lifecycle/ReceiptDuplicateDetector.kt`, `receipt/lifecycle/ReceiptAssetStore.kt`, `receipt/lifecycle/ReceiptInputValidator.kt`, `receipt/lifecycle/ReceiptDebugExporter.kt`
+
 ---
 
 ## Repository → DAO → Entity Dependencies
@@ -272,13 +375,35 @@ Budget (main entity)
 ### Recurring Expenses Graph
 
 ```
-ManualRecurringExpense / RecurringExpense
+ManualRecurringExpense / RecurringExpense / RecurringOccurrence / RecurringLifecycleEvent
     ├─ Repository: ManualRecurringExpenseRepository / RecurringExpenseRepository
-    ├─ DAO: ManualRecurringExpenseDao / RecurringExpenseDao
+    ├─ DAO: ManualRecurringExpenseDao / RecurringExpenseDao / RecurringOccurrenceDao / RecurringLifecycleEventDao
     └─ Used by:
         ├→ RecurringExpenseEngine
         ├→ BudgetCalculator
-        └→ HistoricalSpendingDistribution
+        ├→ HistoricalSpendingDistribution
+        ├→ RecurringLifecycleCoordinator
+        └→ BillReminderWorker
+```
+
+### Operation Run Graph
+
+```
+OperationRun / OperationRunEvent
+    ├─ DAO: OperationRunDao / OperationRunEventDao
+    └─ Used by:
+        ├→ OperationRunRecorder
+        └→ DiagnosticsRepository
+```
+
+### Warranty Reminder Delivery Graph
+
+```
+WarrantyReminderDelivery
+    ├─ DAO: WarrantyReminderDeliveryDao
+    └─ Related:
+        ├→ Warranty (via warranty_id)
+        └→ WarrantyLifecycleEvent
 ```
 
 ### AI Artifact Storage Graph
@@ -370,12 +495,27 @@ ReceiptItemCategorizationService
 
 ```
 DatabaseModule (root)
-    ├─ Provides: AppDatabase
+    ├─ Provides: AppDatabase (v143, 69 entities)
     ├─ Uses: DaoModule
     └─ Provides: GroupTransactionCoordinator
 
 DaoModule
-    └─ Provides: All 54 DAOs
+    └─ Provides: All 67 DAOs
+
+DiagnosticsModule
+    └─ Provides: DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository
+
+ProvenanceModule
+    └─ Provides: Provenance event recording
+
+ReminderSettingsModule
+    └─ Provides: BillReminderSettingsRepository
+
+RetentionModule
+    └─ Provides: RetentionRegistry with 5 targets
+
+WorkerModule
+    └─ Provides: WorkerRunLogger → WorkerRunLoggerImpl
 
 RepositoryModules (multiple)
     ├─ SavingsRepositoryBindingsModule
@@ -388,6 +528,7 @@ ServiceModule
 AiModule
     ├─ Provides: All AI services
     ├─ AiCapabilityRouter
+    ├─ 3 AI DAOs
     └─ AI policy implementation
 
 LocationResolverPortsModule
@@ -400,10 +541,10 @@ LocationResolverPortsModule
         └─ OverpassNearbyService
 
 NetworkModule
-    └─ Provides: Retrofit, OkHttp
+    └─ Provides: @LocationHttpClient, @CloudAiHttpClient OkHttpClient
 
 DispatchersModule
-    └─ Provides: IO, Default, Main dispatchers
+    └─ Provides: IO, Default, Main dispatchers, ApplicationScope
 
 CurrencyModule
     ├─ CurrencyConverter
@@ -417,6 +558,27 @@ EmailIngestionModule
 
 TimeModule
     └─ TimeProvider implementations
+
+SecurityModule
+    └─ Provides: SecureKeyStorage
+
+PrivacyModule
+    └─ Provides: CompositePrivacyGate, PrivacyAuditLogger, PrivacySettingsRepository, Backups
+
+GroupsModule
+    └─ Provides: GroupsRepository, SharedExpenseDataPort, Use cases
+
+DashboardAnomalyModule
+    └─ Provides: AnomalyAlertRepository
+
+ParserModule
+    └─ Provides: GreekBankParser
+
+TaxModule
+    └─ Provides: TaxConfiguration → GreeceTaxConfiguration
+
+CashFlowModule
+    └─ Provides: CashFlowCalculator
 ```
 
 ---
@@ -430,10 +592,13 @@ TimeModule
 | **Nominatim (OSM)** | `NominatimGeocodingService.kt` | Geocoding |
 | **Photon** | `PhotonGeocodingService.kt` | Geocoding |
 | **Overpass API** | `OverpassNearbyService.kt` | POI lookup |
-| **Cloud AI** | `Cloud*Service.kt` | AI services |
-| **On-Device ML** | `OnDevice*Service.kt` | ML models |
+| **Cloud AI (Gemini)** | `Cloud*Service.kt` | AI services |
+| **On-Device ML (ML Kit GenAI)** | `OnDevice*Service.kt` | ML models |
 | **Email (IMAP)** | `EmailReceiptIngestionService.kt` | Email receipts |
 | **Bank APIs** | `BankApiIntegration.kt` | Bank connections |
+| **Android Keystore** | `AtRestEncryptionService.kt`, `SecureKeyStorage.kt` | Hardware-backed encryption |
+| **Google Geocoding API** | `CompositeGeocodingService.kt` | Geocoding |
+| **WorkManager** | `WorkerSpecScheduler.kt` | Background scheduling |
 
 ---
 
@@ -501,6 +666,14 @@ TimeModule
 | Merchant normalization | `MerchantKeyGenerator.kt` | `domain/util/` |
 | Financial arithmetic | `FinancialArithmeticPrecisionTest.kt` | Tests |
 | Date/time logic | `TemporalConsistencyTest.kt` | Tests |
+
+### Database Barriers
+
+| Barrier | Purpose | File |
+|---------|---------|------|
+| `DatabaseReadBarrier` | Blocks reads during restore/maintenance mode | `data/database/barrier/` |
+| `DatabaseWriteBarrier` | Blocks writes during restore/maintenance mode | `data/database/barrier/` |
+| `RestoreMaintenanceMode` | 8-state maintenance mode coordinator, pauses workers via WorkManager | `data/backup/RestoreMaintenanceMode.kt` |
 
 ### Cross-Source Deduplication
 

@@ -166,17 +166,37 @@ class BankApiIntegration @Inject constructor(
             // I3: Token refresh with finalization
             if (connection.tokenExpiry != null && connection.tokenExpiry < timeProvider.now()) {
                 run.event("TOKEN_REFRESH_STARTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED)
-                val refreshed = refreshToken(connection)
-                if (!refreshed) {
-                    run.event("TOKEN_REFRESH_FAILED",
-                        com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
-                        reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TOKEN_INVALID)
-                    run.failedFinal("Token expired and refresh failed")
-                    syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 1,
-                        errors = listOf("Token expired and refresh failed"))
-                    return@runOperation
+                when (refreshToken(connection)) {
+                    RefreshOutcome.Success -> {
+                        run.event("TOKEN_REFRESHED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
+                    }
+                    RefreshOutcome.ReauthRequired -> {
+                        // NEW-P10-002: keystore key was permanently invalidated, so the stored
+                        // refresh token can never be decrypted again. Record a DISTINCT, durable
+                        // re-authentication-required signal (dedicated event name + metadata flag +
+                        // reason message) so this is no longer indistinguishable from a generic
+                        // token refresh failure / null decrypt.
+                        run.event("TOKEN_REAUTH_REQUIRED",
+                            com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TOKEN_INVALID,
+                            severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .put("refreshOutcome", "REAUTH_REQUIRED").build())
+                        run.failedFinal("REAUTH_REQUIRED: bank token key invalidated, user must re-authenticate")
+                        syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 1,
+                            errors = listOf("REAUTH_REQUIRED: bank token key invalidated, user must re-authenticate"))
+                        return@runOperation
+                    }
+                    RefreshOutcome.Failed -> {
+                        run.event("TOKEN_REFRESH_FAILED",
+                            com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.TOKEN_INVALID)
+                        run.failedFinal("Token expired and refresh failed")
+                        syncResult = SyncResult(success = false, importedCount = 0, skippedCount = 0, errorCount = 1,
+                            errors = listOf("Token expired and refresh failed"))
+                        return@runOperation
+                    }
                 }
-                run.event("TOKEN_REFRESHED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
             }
 
             val mockTransactions = generateMockTransactions(connection.bankId, since)
@@ -286,23 +306,48 @@ class BankApiIntegration @Inject constructor(
     }
     
     /**
+     * Outcome of a token refresh attempt.
+     *
+     * NEW-P10-002: a permanently-invalidated keystore key ([RefreshOutcome.ReauthRequired])
+     * is surfaced distinctly from a generic decryption failure ([RefreshOutcome.Failed]) so the
+     * caller can record a durable re-authentication-required signal instead of collapsing key
+     * invalidation into an indistinguishable generic failure (the old `decryptIfNeeded` -> null).
+     */
+    private sealed interface RefreshOutcome {
+        object Success : RefreshOutcome
+        object ReauthRequired : RefreshOutcome
+        object Failed : RefreshOutcome
+    }
+
+    /**
      * Refresh access token (placeholder).
      */
     @StubForDemo
-    private suspend fun refreshToken(connection: BankConnection): Boolean {
+    private suspend fun refreshToken(connection: BankConnection): RefreshOutcome {
         requireStubMode()
 
-        // In real implementation, this would use refresh_token to get new access_token
-        val decryptedRefresh = BankTokenCipher.decryptIfNeeded(connection.refreshToken)
-        if (decryptedRefresh == null) {
-            Timber.w(
-                "Refresh token is missing/invalid for bank %s; explicit re-auth required",
-                connection.bankId
-            )
-            return false
+        // In real implementation, this would use refresh_token to get new access_token.
+        // NEW-P10-002: use decryptWithResult so key invalidation is not collapsed to null.
+        return when (BankTokenCipher.decryptWithResult(connection.refreshToken)) {
+            is BankTokenCipher.DecryptResult.Success -> RefreshOutcome.Success
+            is BankTokenCipher.DecryptResult.KeyInvalidated -> {
+                // Keystore key permanently invalidated (e.g. biometric / lock-screen change):
+                // the stored refresh token can never be decrypted again, so the user must
+                // explicitly re-authenticate. Distinct from a generic decryption failure.
+                Timber.w(
+                    "Bank token key permanently invalidated for bank %s; re-authentication required",
+                    connection.bankId
+                )
+                RefreshOutcome.ReauthRequired
+            }
+            is BankTokenCipher.DecryptResult.Failed -> {
+                Timber.w(
+                    "Refresh token is missing/invalid for bank %s; explicit re-auth required",
+                    connection.bankId
+                )
+                RefreshOutcome.Failed
+            }
         }
-
-        return true
     }
     
     /**

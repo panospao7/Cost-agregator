@@ -1,6 +1,6 @@
 {
   "schema": "dependency-graph-v1",
-  "generated": "2026-05-12",
+  "generated": "2026-06-01",
   "source": "Manual analysis of ExpenseTracker codebase",
   "nodes": {
     "NotificationCaptureService": {
@@ -21,12 +21,12 @@
     "RestoreMaintenanceMode": {
       "type": "data",
       "package": "com.yourname.expensetracker.data.backup",
-      "depends_on": ["RestoreJournal"]
+      "depends_on": ["RestoreJournal", "WorkerRegistry"]
     },
     "NotificationProcessingPipeline": {
       "type": "repository",
       "package": "com.yourname.expensetracker.data.repository",
-      "depends_on": ["AppParserRegistry", "ConfidenceRouter", "CategorizationEngine", "TransactionClassifier", "NotificationRepository"]
+      "depends_on": ["AppParserRegistry", "ConfidenceRouter", "CategorizationEngine", "TransactionClassifier", "NotificationRepository", "PipelineDiagnosticEventDao"]
     },
     "NotificationRepository": {
       "type": "repository",
@@ -41,7 +41,7 @@
     "TransactionLifecycleCoordinator": {
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.transaction.lifecycle",
-      "depends_on": ["ExpenseDao", "TransactionEventDao", "TransactionSideEffectDispatcher", "DuplicateDetectionPolicy", "MerchantNormalizer", "CurrencySettingsRepository"]
+      "depends_on": ["AppDatabase", "ExpenseDao", "TransactionEventDao", "TransactionSideEffectDispatcher", "DuplicateDetectionPolicy", "CurrencyConverter", "CurrencySettingsRepository", "DatabaseWriteBarrier", "RecurringLifecycleCoordinator", "TimeProvider"]
     },
     "TransactionSideEffectDispatcher": {
       "type": "domain",
@@ -51,7 +51,7 @@
     "ReceiptLifecycleCoordinator": {
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.receipt.lifecycle",
-      "depends_on": ["ReceiptInputValidator", "ReceiptAssetStore", "ReceiptOcrService", "ReceiptParser", "ReceiptDuplicateDetector", "ScannedReceiptDao", "ReceiptEventDao", "ReceiptSideEffectDispatcher"]
+      "depends_on": ["ReceiptInputValidator", "ReceiptAssetStore", "ReceiptOcrService", "ReceiptParser", "ReceiptDuplicateDetector", "ScannedReceiptDao", "ReceiptEventDao", "ReceiptSideEffectDispatcher", "RawContentSanitizer"]
     },
     "ReceiptSideEffectDispatcher": {
       "type": "domain",
@@ -81,12 +81,12 @@
     "DatabaseBackupRepositoryImpl": {
       "type": "repository",
       "package": "com.yourname.expensetracker.data.repository",
-      "depends_on": ["CostbackupBundle", "BackupEncryptionService", "ExportAnonymizer", "PrivacyGate", "RestoreJournal", "RestoreMaintenanceMode", "TransactionLifecycleCoordinator"]
+      "depends_on": ["CostbackupBundle", "BackupEncryptionService", "ExportAnonymizer", "PrivacyGate", "RestoreJournal", "RestoreMaintenanceMode", "TransactionLifecycleCoordinator", "DatabaseReadBarrier"]
     },
     "AppStartupCoordinator": {
       "type": "startup",
       "package": "com.yourname.expensetracker.startup",
-      "depends_on": ["RestoreJournal", "RestoreMaintenanceMode", "AppBackgroundLifecycleObserver", "WorkerSpecScheduler"]
+      "depends_on": ["RestoreJournal", "RestoreMaintenanceMode", "AppBackgroundLifecycleObserver", "WorkerSpecScheduler", "WorkerRegistry"]
     },
     "CompositePrivacyGate": {
       "type": "domain",
@@ -121,7 +121,7 @@
     "ReceiptRepository": {
       "type": "repository",
       "package": "com.yourname.expensetracker.data.repository",
-      "depends_on": ["ScannedReceiptDao", "ExpenseDao", "PendingReviewDao", "ReceiptLifecycleCoordinator", "ReceiptLinkService", "TransactionLifecycleCoordinator", "CategorizationEngine", "AutoCreateWarrantyFromReceiptUseCase"]
+      "depends_on": ["ScannedReceiptDao", "ExpenseDao", "PendingReviewDao", "ReceiptLifecycleCoordinator", "ReceiptLinkService", "TransactionLifecycleCoordinator", "CategorizationEngine", "AutoCreateWarrantyFromReceiptUseCase", "ReceiptMatchLifecycleService"]
     },
     "ExpenseRepository": {
       "type": "repository",
@@ -246,12 +246,12 @@
     "MerchantNormalizationDao": {
       "type": "dao",
       "package": "com.yourname.expensetracker.data.database.dao",
-      "entity": "MerchantNormalization"
+      "entity": "MerchantAlias, MerchantCanonical"
     },
     "AiArtifactDao": {
       "type": "dao",
       "package": "com.yourname.expensetracker.data.database.dao",
-      "entity": "AiArtifact"
+      "entity": "AiArtifactEntity"
     },
     "ManualRecurringExpenseDao": {
       "type": "dao",
@@ -266,22 +266,22 @@
     "NotificationPrivacyGate": {
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.privacy",
-      "depends_on": ["PrivacySettingsRepository"]
+      "depends_on": ["PrivacySettingsRepository", "PrivacyBlocked"]
     },
     "LocationPrivacyGate": {
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.privacy",
-      "depends_on": ["PrivacySettingsRepository"]
+      "depends_on": ["PrivacySettingsRepository", "PrivacyBlocked"]
     },
     "CloudAiPrivacyGate": {
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.privacy",
-      "depends_on": ["PrivacySettingsRepository"]
+      "depends_on": ["PrivacySettingsRepository", "PrivacyBlocked"]
     },
     "BackupPrivacyGate": {
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.privacy",
-      "depends_on": ["PrivacySettingsRepository"]
+      "depends_on": ["PrivacySettingsRepository", "PrivacyBlocked"]
     },
     "RedactionSanitizer": {
       "type": "domain",
@@ -356,27 +356,42 @@
     "HybridCategorizationAssistService": {
       "type": "service",
       "package": "com.yourname.expensetracker.data.ai.provider",
-      "depends_on": ["AiCapabilityRouter", "CategorizationAssistService", "PrivacyGate", "RedactionSanitizer"]
+      "depends_on": ["AiCapabilityRouter", "CategorizationAssistService", "PrivacyGate", "RedactionSanitizer", "CloudPayloadPolicy"]
     },
     "HybridDashboardBriefingService": {
       "type": "service",
       "package": "com.yourname.expensetracker.data.ai.provider",
-      "depends_on": ["AiCapabilityRouter", "DashboardBriefingService", "PrivacyGate", "RedactionSanitizer"]
+      "depends_on": ["AiCapabilityRouter", "DashboardBriefingService", "PrivacyGate", "RedactionSanitizer", "CloudPayloadPolicy"]
     },
     "HybridDedupeJudgeService": {
       "type": "service",
       "package": "com.yourname.expensetracker.data.ai.provider",
-      "depends_on": ["AiCapabilityRouter", "DedupeJudgeService", "PrivacyGate", "RedactionSanitizer"]
+      "depends_on": ["AiCapabilityRouter", "DedupeJudgeService", "PrivacyGate", "RedactionSanitizer", "CloudPayloadPolicy"]
     },
     "HybridQueryInterpretationService": {
       "type": "service",
       "package": "com.yourname.expensetracker.data.ai.provider",
-      "depends_on": ["AiCapabilityRouter", "QueryInterpretationService", "PrivacyGate", "RedactionSanitizer"]
+      "depends_on": ["AiCapabilityRouter", "QueryInterpretationService", "PrivacyGate", "RedactionSanitizer", "CloudPayloadPolicy"]
     },
     "SmartReceiptAssistService": {
       "type": "service",
       "package": "com.yourname.expensetracker.data.ai.provider",
-      "depends_on": ["ReceiptAssistService", "PrivacyGate"]
+      "depends_on": ["ReceiptAssistService", "PrivacyGate", "CloudPayloadPolicy"]
+    },
+    "HybridReviewExplanationService": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.data.ai.provider",
+      "depends_on": ["AiCapabilityRouter", "ReviewExplanationService", "PrivacyGate", "RedactionSanitizer", "CloudPayloadPolicy"]
+    },
+    "HybridWarrantyExtractionService": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.data.ai.provider",
+      "depends_on": ["AiCapabilityRouter", "WarrantyExtractionService", "PrivacyGate", "RedactionSanitizer", "CloudPayloadPolicy"]
+    },
+    "HybridReceiptItemCategorizationService": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.data.ai.provider",
+      "depends_on": ["AiCapabilityRouter", "ReceiptItemCategorizationService", "PrivacyGate", "RedactionSanitizer", "CloudPayloadPolicy"]
     },
     "CloudCategorizationAssistService": {
       "type": "service",
@@ -448,37 +463,37 @@
     "LocationBackfillWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.data.location",
-      "depends_on": ["CompositeGeocodingService", "ExpenseDao", "RestoreMaintenanceMode", "PrivacyGate"]
+      "depends_on": ["CompositeGeocodingService", "ExpenseDao", "RestoreMaintenanceMode", "PrivacyGate", "WorkerExecutionGuard"]
     },
     "MerchantKeyBackfillWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.data.location",
-      "depends_on": ["ExpenseDao", "MerchantNormalizationDao", "RestoreMaintenanceMode"]
+      "depends_on": ["ExpenseDao", "MerchantNormalizationDao", "RestoreMaintenanceMode", "WorkerExecutionGuard"]
     },
     "DailyBriefingWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.data.ai.worker",
-      "depends_on": ["AiArtifactDao", "RestoreMaintenanceMode", "PrivacyGate"]
+      "depends_on": ["AiArtifactDao", "RestoreMaintenanceMode", "PrivacyGate", "WorkerExecutionGuard"]
     },
     "BillReminderWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.service.reminder",
-      "depends_on": ["RecurringLifecycleCoordinator", "RecurringReminderDeliveryDao", "RestoreMaintenanceMode"]
+      "depends_on": ["RecurringLifecycleCoordinator", "RecurringReminderDeliveryDao", "RestoreMaintenanceMode", "WorkerExecutionGuard", "BillReminderSettingsRepository"]
     },
     "ReceiptMatchingWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.service.receiptmatching",
-      "depends_on": ["ReceiptRepository", "ExpenseRepository", "RestoreMaintenanceMode"]
+      "depends_on": ["ReceiptRepository", "ExpenseRepository", "RestoreMaintenanceMode", "WorkerExecutionGuard", "ReceiptMatchLifecycleService"]
     },
     "WarrantyExpirationWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.service.warranty",
-      "depends_on": ["WarrantyDao", "RestoreMaintenanceMode"]
+      "depends_on": ["WarrantyDao", "WarrantyReminderDeliveryDao", "RestoreMaintenanceMode", "WorkerExecutionGuard"]
     },
     "DataRetentionWorker": {
       "type": "worker",
       "package": "com.yourname.expensetracker.data.privacy",
-      "depends_on": ["RawNotificationDao", "ScannedReceiptDao", "PrivacyAuditDao", "RestoreMaintenanceMode"]
+      "depends_on": ["RawNotificationDao", "ScannedReceiptDao", "PrivacyAuditDao", "RestoreMaintenanceMode", "WorkerExecutionGuard"]
     },
     "AppParserRegistry": {
       "type": "service",
@@ -620,6 +635,10 @@
       "type": "service",
       "package": "com.yourname.expensetracker.domain.ai"
     },
+    "ReviewExplanationService": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.domain.ai"
+    },
     "SyncProactiveBriefingWorkUseCase": {
       "type": "usecase",
       "package": "com.yourname.expensetracker.domain.ai"
@@ -678,7 +697,7 @@
     "WorkerExecutionGuard": {
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.workers",
-      "depends_on": ["RestoreMaintenanceMode", "WorkerRunLogger"]
+      "depends_on": ["RestoreMaintenanceMode", "WorkerRunLogger", "NotificationPermissionChecker"]
     },
     "DatabaseReadBarrier": {
       "type": "data",
@@ -704,6 +723,46 @@
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.privacy",
       "depends_on": ["PrivacySettingsRepository"]
+    },
+    "NotificationIntakeDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "NotificationIntakeEntity"
+    },
+    "EntitySourceLinkDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "EntitySourceLink"
+    },
+    "BankStatementImportRunDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "BankStatementImportRun"
+    },
+    "BankStatementImportItemDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "BankStatementImportItem"
+    },
+    "SourceLinkDebugViewModel": {
+      "type": "ui",
+      "package": "com.yourname.expensetracker.ui.screens.debug",
+      "depends_on": ["SourceLinkQueryService"]
+    },
+    "SourceLinkBackfillViewModel": {
+      "type": "ui",
+      "package": "com.yourname.expensetracker.ui.screens.settings",
+      "depends_on": ["SourceLinkBackfillWorker"]
+    },
+    "ReceiptDebugExporter": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.debug",
+      "depends_on": ["ScannedReceiptDao", "ReceiptEventDao"]
+    },
+    "AiRuntimeDiagnostics": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.debug",
+      "depends_on": []
     },
     "RawStorageMode": {
       "type": "domain",
@@ -757,6 +816,51 @@
       "type": "ui",
       "package": "com.yourname.expensetracker.ui.components",
       "depends_on": []
+    },
+    "ReceiptMatchLifecycleService": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.receipt.lifecycle",
+      "depends_on": ["ScannedReceiptDao", "ReceiptEventDao", "ReceiptExpenseLinkDao", "DatabaseWriteBarrier", "TimeProvider"]
+    },
+    "GroupLifecycleCoordinator": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.groups",
+      "depends_on": ["GroupLifecycleEventDao", "GroupBalanceCalculator", "GroupTransactionCoordinator", "TimeProvider", "CurrencySettingsRepository"]
+    },
+    "RecurringLifecycleEventWriter": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.recurring.lifecycle",
+      "depends_on": ["RecurringLifecycleEventDao", "TimeProvider"]
+    },
+    "ReceiptDebugExporter": {
+      "type": "util",
+      "package": "com.yourname.expensetracker.util",
+      "depends_on": ["ScannedReceiptDao", "ReceiptEventDao"]
+    },
+    "HybridRouter": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.ai",
+      "depends_on": ["AiCapabilityRouter", "AiSettingsRepository", "CloudPayloadPolicy"]
+    },
+    "CloudPayloadPolicy": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.privacy",
+      "depends_on": ["EffectiveCloudAiPolicy"]
+    },
+    "NotificationPermissionChecker": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.workers",
+      "depends_on": []
+    },
+    "AtRestEncryptionService": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.data.privacy",
+      "depends_on": ["SecureKeyStorage"]
+    },
+    "BillReminderSettingsRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.domain.reminder",
+      "depends_on": []
     }
   },
   "edges": [
@@ -778,10 +882,12 @@
     { "from": "ReceiptLifecycleCoordinator", "to": "ScannedReceiptDao", "type": "dao" },
     { "from": "ReceiptLifecycleCoordinator", "to": "ReceiptEventDao", "type": "dao" },
     { "from": "ReceiptLifecycleCoordinator", "to": "ReceiptSideEffectDispatcher", "type": "dispatches-to" },
+    { "from": "ReceiptLifecycleCoordinator", "to": "RawContentSanitizer", "type": "sanitizes" },
     { "from": "ReceiptRepository", "to": "ScannedReceiptDao", "type": "dao" },
     { "from": "ReceiptRepository", "to": "ExpenseDao", "type": "dao" },
     { "from": "ReceiptRepository", "to": "ReceiptLifecycleCoordinator", "type": "delegates-to" },
     { "from": "ReceiptRepository", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "ReceiptRepository", "to": "ReceiptMatchLifecycleService", "type": "depends-on" },
     { "from": "ExpenseRepository", "to": "ExpenseDao", "type": "dao" },
     { "from": "ExpenseRepository", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
     { "from": "BudgetRepository", "to": "BudgetDao", "type": "dao" },
@@ -796,8 +902,10 @@
     { "from": "AppStartupCoordinator", "to": "RestoreJournal", "type": "restore-check" },
     { "from": "AppStartupCoordinator", "to": "RestoreMaintenanceMode", "type": "maintenance" },
     { "from": "AppStartupCoordinator", "to": "WorkerSpecScheduler", "type": "schedules" },
+    { "from": "AppStartupCoordinator", "to": "WorkerRegistry", "type": "depends-on" },
     { "from": "DatabaseBackupRepositoryImpl", "to": "PrivacyGate", "type": "gate-check" },
     { "from": "DatabaseBackupRepositoryImpl", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "DatabaseBackupRepositoryImpl", "to": "DatabaseReadBarrier", "type": "guard" },
     { "from": "CompositePrivacyGate", "to": "NotificationPrivacyGate", "type": "composes" },
     { "from": "CompositePrivacyGate", "to": "LocationPrivacyGate", "type": "composes" },
     { "from": "CompositePrivacyGate", "to": "CloudAiPrivacyGate", "type": "composes" },
@@ -812,28 +920,52 @@
     { "from": "ReceiptLinkService", "to": "ReturnWindowDao", "type": "dao" },
     { "from": "ReceiptLinkService", "to": "TimeProvider", "type": "depends-on" },
     { "from": "NotificationPrivacyGate", "to": "PrivacySettingsRepository", "type": "gate-config" },
+    { "from": "NotificationPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
     { "from": "LocationPrivacyGate", "to": "PrivacySettingsRepository", "type": "gate-config" },
+    { "from": "LocationPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
     { "from": "CloudAiPrivacyGate", "to": "PrivacySettingsRepository", "type": "gate-config" },
+    { "from": "CloudAiPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
     { "from": "BackupPrivacyGate", "to": "PrivacySettingsRepository", "type": "gate-config" },
+    { "from": "BackupPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
     { "from": "PrivacyAuditLogger", "to": "PrivacyAuditDao", "type": "dao" },
     { "from": "HybridCategorizationAssistService", "to": "AiCapabilityRouter", "type": "depends-on" },
     { "from": "HybridCategorizationAssistService", "to": "CategorizationAssistService", "type": "depends-on" },
     { "from": "HybridCategorizationAssistService", "to": "PrivacyGate", "type": "gate-check" },
     { "from": "HybridCategorizationAssistService", "to": "RedactionSanitizer", "type": "sanitizes" },
+    { "from": "HybridCategorizationAssistService", "to": "CloudPayloadPolicy", "type": "depends-on" },
     { "from": "HybridDashboardBriefingService", "to": "AiCapabilityRouter", "type": "depends-on" },
     { "from": "HybridDashboardBriefingService", "to": "DashboardBriefingService", "type": "depends-on" },
     { "from": "HybridDashboardBriefingService", "to": "PrivacyGate", "type": "gate-check" },
     { "from": "HybridDashboardBriefingService", "to": "RedactionSanitizer", "type": "sanitizes" },
+    { "from": "HybridDashboardBriefingService", "to": "CloudPayloadPolicy", "type": "depends-on" },
     { "from": "HybridDedupeJudgeService", "to": "AiCapabilityRouter", "type": "depends-on" },
     { "from": "HybridDedupeJudgeService", "to": "DedupeJudgeService", "type": "depends-on" },
     { "from": "HybridDedupeJudgeService", "to": "PrivacyGate", "type": "gate-check" },
     { "from": "HybridDedupeJudgeService", "to": "RedactionSanitizer", "type": "sanitizes" },
+    { "from": "HybridDedupeJudgeService", "to": "CloudPayloadPolicy", "type": "depends-on" },
     { "from": "HybridQueryInterpretationService", "to": "AiCapabilityRouter", "type": "depends-on" },
     { "from": "HybridQueryInterpretationService", "to": "QueryInterpretationService", "type": "depends-on" },
     { "from": "HybridQueryInterpretationService", "to": "PrivacyGate", "type": "gate-check" },
     { "from": "HybridQueryInterpretationService", "to": "RedactionSanitizer", "type": "sanitizes" },
+    { "from": "HybridQueryInterpretationService", "to": "CloudPayloadPolicy", "type": "depends-on" },
+    { "from": "HybridReviewExplanationService", "to": "AiCapabilityRouter", "type": "depends-on" },
+    { "from": "HybridReviewExplanationService", "to": "ReviewExplanationService", "type": "depends-on" },
+    { "from": "HybridReviewExplanationService", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "HybridReviewExplanationService", "to": "RedactionSanitizer", "type": "sanitizes" },
+    { "from": "HybridReviewExplanationService", "to": "CloudPayloadPolicy", "type": "depends-on" },
+    { "from": "HybridWarrantyExtractionService", "to": "AiCapabilityRouter", "type": "depends-on" },
+    { "from": "HybridWarrantyExtractionService", "to": "WarrantyExtractionService", "type": "depends-on" },
+    { "from": "HybridWarrantyExtractionService", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "HybridWarrantyExtractionService", "to": "RedactionSanitizer", "type": "sanitizes" },
+    { "from": "HybridWarrantyExtractionService", "to": "CloudPayloadPolicy", "type": "depends-on" },
+    { "from": "HybridReceiptItemCategorizationService", "to": "AiCapabilityRouter", "type": "depends-on" },
+    { "from": "HybridReceiptItemCategorizationService", "to": "ReceiptItemCategorizationService", "type": "depends-on" },
+    { "from": "HybridReceiptItemCategorizationService", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "HybridReceiptItemCategorizationService", "to": "RedactionSanitizer", "type": "sanitizes" },
+    { "from": "HybridReceiptItemCategorizationService", "to": "CloudPayloadPolicy", "type": "depends-on" },
     { "from": "SmartReceiptAssistService", "to": "ReceiptAssistService", "type": "depends-on" },
     { "from": "SmartReceiptAssistService", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "SmartReceiptAssistService", "to": "CloudPayloadPolicy", "type": "depends-on" },
     { "from": "CloudCategorizationAssistService", "to": "SecureKeyStorage", "type": "depends-on" },
     { "from": "CloudCategorizationAssistService", "to": "CloudJsonParser", "type": "depends-on" },
     { "from": "CloudCategorizationAssistService", "to": "CloudRetryPolicy", "type": "depends-on" },
@@ -853,24 +985,34 @@
     { "from": "LocationBackfillWorker", "to": "ExpenseDao", "type": "dao" },
     { "from": "LocationBackfillWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
     { "from": "LocationBackfillWorker", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "LocationBackfillWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
     { "from": "MerchantKeyBackfillWorker", "to": "ExpenseDao", "type": "dao" },
     { "from": "MerchantKeyBackfillWorker", "to": "MerchantNormalizationDao", "type": "dao" },
     { "from": "MerchantKeyBackfillWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "MerchantKeyBackfillWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
     { "from": "DailyBriefingWorker", "to": "AiArtifactDao", "type": "dao" },
     { "from": "DailyBriefingWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
     { "from": "DailyBriefingWorker", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "DailyBriefingWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
     { "from": "BillReminderWorker", "to": "RecurringLifecycleCoordinator", "type": "depends-on" },
     { "from": "BillReminderWorker", "to": "RecurringReminderDeliveryDao", "type": "dao" },
     { "from": "BillReminderWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "BillReminderWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
+    { "from": "BillReminderWorker", "to": "BillReminderSettingsRepository", "type": "depends-on" },
     { "from": "ReceiptMatchingWorker", "to": "ReceiptRepository", "type": "depends-on" },
     { "from": "ReceiptMatchingWorker", "to": "ExpenseRepository", "type": "depends-on" },
     { "from": "ReceiptMatchingWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "ReceiptMatchingWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
+    { "from": "ReceiptMatchingWorker", "to": "ReceiptMatchLifecycleService", "type": "depends-on" },
     { "from": "WarrantyExpirationWorker", "to": "WarrantyDao", "type": "dao" },
+    { "from": "WarrantyExpirationWorker", "to": "WarrantyReminderDeliveryDao", "type": "dao" },
     { "from": "WarrantyExpirationWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "WarrantyExpirationWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
     { "from": "DataRetentionWorker", "to": "RawNotificationDao", "type": "dao" },
     { "from": "DataRetentionWorker", "to": "ScannedReceiptDao", "type": "dao" },
     { "from": "DataRetentionWorker", "to": "PrivacyAuditDao", "type": "dao" },
     { "from": "DataRetentionWorker", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "DataRetentionWorker", "to": "WorkerExecutionGuard", "type": "guarded-execution" },
     { "from": "WorkerSpecScheduler", "to": "WorkerSpec", "type": "schedules" },
     { "from": "BackupEncryptionService", "to": "SecureKeyStorage", "type": "depends-on" },
     { "from": "CostbackupBundle", "to": "BackupEncryptionService", "type": "depends-on" },
@@ -879,6 +1021,7 @@
     { "from": "WorkerModule", "to": "WorkerRunLogger", "type": "binds" },
     { "from": "WorkerExecutionGuard", "to": "RestoreMaintenanceMode", "type": "guard" },
     { "from": "WorkerExecutionGuard", "to": "WorkerRunLogger", "type": "depends-on" },
+    { "from": "WorkerExecutionGuard", "to": "NotificationPermissionChecker", "type": "depends-on" },
     { "from": "DatabaseReadBarrier", "to": "RestoreMaintenanceMode", "type": "guard" },
     { "from": "DatabaseWriteBarrier", "to": "RestoreMaintenanceMode", "type": "guard" },
     { "from": "GroupBalanceCalculator", "to": "ExpenseGroupDao", "type": "dao" },
@@ -887,6 +1030,9 @@
     { "from": "GroupBalanceCalculator", "to": "GroupSettlementDao", "type": "dao" },
     { "from": "GroupLifecycleCoordinator", "to": "GroupLifecycleEventDao", "type": "dao" },
     { "from": "GroupLifecycleCoordinator", "to": "GroupBalanceCalculator", "type": "depends-on" },
+    { "from": "GroupLifecycleCoordinator", "to": "GroupTransactionCoordinator", "type": "depends-on" },
+    { "from": "GroupLifecycleCoordinator", "to": "TimeProvider", "type": "depends-on" },
+    { "from": "GroupLifecycleCoordinator", "to": "CurrencySettingsRepository", "type": "depends-on" },
     { "from": "EffectiveCloudAiPolicyResolver", "to": "PrivacySettingsRepository", "type": "depends-on" },
     { "from": "RawContentSanitizer", "to": "RawStorageMode", "type": "depends-on" },
     { "from": "ReceiptLifecycleCoordinator", "to": "RawContentSanitizer", "type": "sanitizes" },
@@ -914,7 +1060,28 @@
     { "from": "NetCashflowBalanceProvider", "to": "TimeProvider", "type": "depends-on" },
     { "from": "FinancialStressForecastEngine", "to": "NetCashflowBalanceProvider", "type": "depends-on" },
     { "from": "SubscriptionManagerEngine", "to": "DatabaseWriteBarrier", "type": "guard" },
-    { "from": "EnhancedSplitManager", "to": "DatabaseWriteBarrier", "type": "guard" }
+    { "from": "EnhancedSplitManager", "to": "DatabaseWriteBarrier", "type": "guard" },
+    { "from": "ReceiptMatchLifecycleService", "to": "ScannedReceiptDao", "type": "dao" },
+    { "from": "ReceiptMatchLifecycleService", "to": "ReceiptEventDao", "type": "dao" },
+    { "from": "ReceiptMatchLifecycleService", "to": "AppDatabase", "type": "transactional" },
+    { "from": "ReceiptMatchLifecycleService", "to": "DatabaseWriteBarrier", "type": "guard" },
+    { "from": "ReceiptMatchLifecycleService", "to": "TimeProvider", "type": "depends-on" },
+    { "from": "RecurringLifecycleEventWriter", "to": "RecurringLifecycleEventDao", "type": "dao" },
+    { "from": "RecurringLifecycleEventWriter", "to": "TimeProvider", "type": "depends-on" },
+    { "from": "RecurringLifecycleCoordinator", "to": "RecurringLifecycleEventWriter", "type": "depends-on" },
+    { "from": "ReceiptDebugExporter", "to": "ScannedReceiptDao", "type": "dao" },
+    { "from": "ReceiptDebugExporter", "to": "ReceiptEventDao", "type": "dao" },
+    { "from": "HybridRouter", "to": "AiCapabilityRouter", "type": "depends-on" },
+    { "from": "HybridRouter", "to": "AiSettingsRepository", "type": "depends-on" },
+    { "from": "HybridRouter", "to": "CloudPayloadPolicy", "type": "depends-on" },
+    { "from": "CloudPayloadPolicy", "to": "EffectiveCloudAiPolicy", "type": "depends-on" },
+    { "from": "HybridCategorizationAssistService", "to": "HybridRouter", "type": "routing" },
+    { "from": "HybridDashboardBriefingService", "to": "HybridRouter", "type": "routing" },
+    { "from": "HybridDedupeJudgeService", "to": "HybridRouter", "type": "routing" },
+    { "from": "HybridQueryInterpretationService", "to": "HybridRouter", "type": "routing" },
+    { "from": "HybridWarrantyExtractionService", "to": "HybridRouter", "type": "routing" },
+    { "from": "HybridReceiptItemCategorizationService", "to": "HybridRouter", "type": "routing" },
+    { "from": "AtRestEncryptionService", "to": "SecureKeyStorage", "type": "depends-on" }
   ],
   "entry_points": [
     "MainApplication",
@@ -937,11 +1104,17 @@
     ["AppStartupCoordinator", "RestoreJournal"],
     ["AppStartupCoordinator", "RestoreMaintenanceMode"],
     ["AppStartupCoordinator", "WorkerSpecScheduler", "WorkerSpec"],
+    ["AppStartupCoordinator", "WorkerRegistry"],
     ["DailyBriefingWorker", "AiArtifactDao"],
     ["DailyBriefingWorker", "PrivacyGate"],
+    ["DailyBriefingWorker", "WorkerExecutionGuard", "RestoreMaintenanceMode"],
+    ["DailyBriefingWorker", "WorkerExecutionGuard", "WorkerRunLogger"],
     ["BillReminderWorker", "RecurringLifecycleCoordinator", "ExpenseDao"],
+    ["BillReminderWorker", "WorkerExecutionGuard"],
     ["ReceiptMatchingWorker", "ReceiptRepository", "ReceiptLifecycleCoordinator", "ScannedReceiptDao"],
+    ["ReceiptMatchingWorker", "ReceiptMatchLifecycleService", "DatabaseWriteBarrier"],
     ["WarrantyExpirationWorker", "WarrantyDao"],
+    ["WarrantyExpirationWorker", "WarrantyReminderDeliveryDao"],
     ["DataRetentionWorker", "RawNotificationDao"],
     ["DataRetentionWorker", "PrivacyAuditDao"],
     ["LocationBackfillWorker", "CompositeGeocodingService", "PrivacyGate"],
@@ -949,6 +1122,7 @@
     ["MerchantKeyBackfillWorker", "ExpenseDao"],
     ["HybridCategorizationAssistService", "PrivacyGate"],
     ["HybridCategorizationAssistService", "CategorizationAssistService"],
+    ["HybridCategorizationAssistService", "CloudPayloadPolicy", "EffectiveCloudAiPolicy"],
     ["HybridDashboardBriefingService", "PrivacyGate"],
     ["HybridDashboardBriefingService", "DashboardBriefingService"],
     ["NotificationPrivacyGate", "PrivacySettingsRepository"],
@@ -956,11 +1130,18 @@
     ["CloudAiPrivacyGate", "PrivacySettingsRepository"],
     ["BackupPrivacyGate", "PrivacySettingsRepository"],
     ["DatabaseBackupRepositoryImpl", "CostbackupBundle", "BackupEncryptionService", "SecureKeyStorage"],
-    ["DailyBriefingWorker", "WorkerExecutionGuard", "RestoreMaintenanceMode"],
-    ["DailyBriefingWorker", "WorkerExecutionGuard", "WorkerRunLogger"],
+    ["DatabaseBackupRepositoryImpl", "DatabaseReadBarrier", "RestoreMaintenanceMode"],
     ["NotificationProcessingPipeline", "PipelineDiagnosticEventDao"],
     ["GroupLifecycleCoordinator", "GroupLifecycleEventDao"],
-    ["GroupLifecycleCoordinator", "GroupBalanceCalculator", "GroupMemberDao"]
+    ["GroupLifecycleCoordinator", "GroupBalanceCalculator", "GroupMemberDao"],
+    ["GroupLifecycleCoordinator", "GroupBalanceCalculator", "GroupSettlementDao"],
+    ["RecurringRuleLifecycleCoordinator", "ManualRecurringExpenseDao"],
+    ["RecurringRuleLifecycleCoordinator", "RecurringLifecycleEventDao"],
+    ["RecurringRuleLifecycleCoordinator", "DatabaseWriteBarrier"],
+    ["ReceiptMatchLifecycleService", "ScannedReceiptDao"],
+    ["ReceiptMatchLifecycleService", "DatabaseWriteBarrier"],
+    ["RecurringLifecycleCoordinator", "RecurringLifecycleEventWriter", "RecurringLifecycleEventDao"],
+    ["HybridRouter", "CloudPayloadPolicy", "EffectiveCloudAiPolicy", "PrivacySettingsRepository"]
   ],
   "impact_zones": {
     "ExpenseDao": {
@@ -1012,7 +1193,8 @@
         "Bill Reminder Delivery (guards during restore)",
         "Receipt Matching (guards during restore)",
         "Warranty Expiration Checks (guards during restore)",
-        "Data Retention & Cleanup (guards during restore)"
+        "Data Retention & Cleanup (guards during restore)",
+        "All workers via WorkerRegistry (unified pause/resume)"
       ]
     },
     "RecurringLifecycleCoordinator": {
@@ -1044,7 +1226,8 @@
       "impacted_flows": [
         "Cloud AI Provider Key Management",
         "Bank Token Encryption/Decryption",
-        "Backup Encryption Key Storage"
+        "Backup Encryption Key Storage",
+        "AtRestEncryptionService ML model data at rest"
       ]
     },
     "AiCapabilityRouter": {
@@ -1065,7 +1248,8 @@
     "WorkerExecutionGuard": {
       "impacted_flows": [
         "All 7 background workers (restore check + logging)",
-        "Worker run lifecycle tracking"
+        "Worker run lifecycle tracking",
+        "Notification permission enforcement"
       ]
     },
     "WorkerRunLogger": {
@@ -1082,7 +1266,11 @@
     },
     "DatabaseWriteBarrier": {
       "impacted_flows": [
-        "All database write operations during restore"
+        "All database write operations during restore",
+        "Recurring rule mutations (via RecurringRuleLifecycleCoordinator)",
+        "Receipt match mutations (via ReceiptMatchLifecycleService)",
+        "Subscription manager mutations",
+        "Split manager mutations"
       ]
     },
     "EffectiveCloudAiPolicy": {
@@ -1131,6 +1319,45 @@
         "All privacy-gated operations (30+ callers)",
         "Fail-closed behavior for backup, geocoding, AI, notification, location",
         "Consistent blocksExecution() semantics across all privacy checks"
+      ]
+    },
+    "ReceiptMatchLifecycleService": {
+      "impacted_flows": [
+        "Receipt match lifecycle (suggest/approve/reject/clear)",
+        "Receipt matching worker auto-match flow",
+        "Receipt match UI operations"
+      ]
+    },
+    "GroupLifecycleCoordinator": {
+      "impacted_flows": [
+        "Group lifecycle operations (create/update/delete)",
+        "Balance-aware group operations",
+        "Group settlement recording"
+      ]
+    },
+    "RecurringLifecycleEventWriter": {
+      "impacted_flows": [
+        "Recurring lifecycle audit event recording (critical + diagnostic)",
+        "P4 recurring rule event propagation"
+      ]
+    },
+    "HybridRouter": {
+      "impacted_flows": [
+        "Consolidated AI routing across all 6 hybrid services",
+        "Cloud/OnDevice/NoOp provider selection",
+        "Cloud payload policy enforcement"
+      ]
+    },
+    "CloudPayloadPolicy": {
+      "impacted_flows": [
+        "Cloud AI payload field-level filtering",
+        "Replaces CloudPayloadRedactor across all cloud AI services"
+      ]
+    },
+    "AtRestEncryptionService": {
+      "impacted_flows": [
+        "ML model data at-rest encryption",
+        "Sensitive data encryption before disk write"
       ]
     }
   }

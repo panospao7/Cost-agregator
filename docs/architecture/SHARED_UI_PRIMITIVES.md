@@ -31,7 +31,7 @@ Global UI components used across all screens. Changes here have high blast radiu
 | `EmptyState` | Simple empty screen | ✅ verticalScroll | Primary + secondary button |
 | `EnhancedEmptyState` | Empty with contextual chips | ✅ adaptive | Chips from ContextualActionRegistry |
 | `ErrorState` | Error with retry | ✅ verticalScroll | Retry + dismiss |
-| `InlineErrorBanner` | Inline error card | N/A | Retry button |
+| `InlineErrorBanner` | Inline error card (in `ErrorState.kt`) | N/A | Retry button |
 
 ### Button Behavior
 
@@ -90,3 +90,4 @@ Uses `SemanticColors.SurfaceLight` (acceptable — loading state is always dark-
 - Empty-state action strings are hardcoded English (S2-007) — ✅ FIXED: @StringRes
 - Form amount input lacks proper money sanitization (S2-008) — ✅ FIXED: AmountInputSanitizer
 - `EmptyState` and `EnhancedEmptyState` duplicate layout logic (S2-004) — ✅ FIXED: EmptyState delegates
+- Some contextual screen keys lack registered actions — partially addressed

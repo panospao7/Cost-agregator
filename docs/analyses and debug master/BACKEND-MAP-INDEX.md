@@ -1,9 +1,9 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
-**Generated:** 2026-05-07 (last stats refresh: 2026-05-30)  
-**Total Files Documented:** ~926 source files (388 domain + 280 data + 31 DI + ~227 other) + ~500+ test files  
+**Generated:** 2026-06-01  
+**Total Files Documented:** 1044 source files (518 domain + 298 data + 167 UI + 34 DI + 17 Service + 3 Startup + 2 Receiver + 1 Worker + 3 Util)  
 **Scope:** ExpenseTracker domain, data, and DI packages  
-**Current DB Version:** v141 · **DAOs:** 62 · **Entities:** 64 · **Hilt @Module files:** 31
+**Current DB Version:** v143 · **DAOs:** 67 · **Entities:** 69 · **Hilt @Module files:** 32
 
 ---
 
@@ -12,7 +12,7 @@
 ### Primary Maps (NEW)
 
 1. **[COMPLETE-BACKEND-MAP.md](./COMPLETE-BACKEND-MAP.md)** ⭐ START HERE
-   - Exhaustive list of ALL ~926 backend files
+    - Exhaustive list of ALL 1044 backend files
    - Organized by package and subpackage
    - File type, purpose, dependencies for each
    - Data flow diagrams
@@ -20,7 +20,7 @@
    - **Size:** ~8000 lines
 
 2. **[BACKEND-DEPENDENCIES.md](./BACKEND-DEPENDENCIES.md)** ⭐ DEPENDENCY CHAINS
-   - Test coverage summary (475 tests)
+    - Test coverage summary (475+ tests)
    - 7 critical dependency chains with visualizations
    - Repository → DAO → Entity relationships
    - Service → Engine → Utility stacks
@@ -48,10 +48,10 @@
 
 ### By Package Type
 
-#### Domain Package (344 files)
+#### Domain Package (518 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/domain/`
 
-- **AI Subsystem** (58 files)
+- **AI Subsystem** (64 files)
   - Models, policies, services, use cases
   - 24 use cases covering AI capabilities
 
@@ -140,71 +140,75 @@
   - Notification fingerprinting — `domain/notification/RawNotificationFingerprint`
   - Shared hashing — `domain/common/Hashing.kt`
 
-#### Data Package (253 files)
+#### Data Package (298 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/data/`
 
-- **Database** (89 files)
-   - 1 main database (AppDatabase.kt, v141)
-   - 62 DAOs (data access objects)
-   - 64 Entities (Room-managed tables, all registered in AppDatabase)
+- **Database** (109 files)
+   - 1 main database (AppDatabase.kt, v143)
+   - 67 DAOs (data access objects)
+   - 69 Entities (Room-managed tables, all registered in AppDatabase)
    - 6 composite models
 
 - **Repositories** (65 files)
-  - 52 data-layer implementations + 13 domain-layer interfaces
-  - Expense, budget, analytics, currency
-  - Merchant, location, notification
-  - Savings, subscription, warranty
-  - AutomatedSavingsRuleStateRepository, SavingsContributionHistoryRepository, SpendingChallengeRepository
-  - DeterministicExpenseExportPager, GroupsRepository (interface), AnomalyAlertRepositoryImpl, SharedExpenseDataPortAdapter
+   - 52 data-layer implementations + 13 domain-layer interfaces
+   - Expense, budget, analytics, currency
+   - Merchant, location, notification
+   - Savings, subscription, warranty
+   - AutomatedSavingsRuleStateRepository, SavingsContributionHistoryRepository, SpendingChallengeRepository
+   - DeterministicExpenseExportPager, GroupsRepository (interface), AnomalyAlertRepositoryImpl, SharedExpenseDataPortAdapter
+   - TaxSettingsRepository
 
-- **AI Providers** (38+ files)
-  - Cloud, OnDevice, Hybrid, NoOp implementations
-  - 8 capability types × 4 implementations
-  - SmartReceiptAssistService, StrictAiJsonParsing, DashboardBriefingPromptFormatter, DashboardBriefingResponseParser
-  - Several NoOp* services
-  - OnDevice notification parser, review priority scorer, semantic duplicate detector
-  - All Cloud*Service implementations (8+ files)
-  - Several Hybrid*Service implementations
+- **AI Providers** (44 files)
+   - Cloud, OnDevice, Hybrid, NoOp implementations
+   - 8 capability types × 4 implementations (+ SmartReceiptAssistService)
+   - SmartReceiptAssistService, StrictAiJsonParsing, DashboardBriefingPromptFormatter, DashboardBriefingResponseParser
+   - Several NoOp* services
+   - OnDevice notification parser, review priority scorer, semantic duplicate detector
+   - All Cloud*Service implementations (8+ files)
+   - Several Hybrid*Service implementations
 
-- **AI Provider Internals** (4 files)
-  - `data/ai/provider/internal/` — CloudCorrelation, CloudJsonParser, CloudPiiSanitizer, CloudRetryPolicy
+- **AI Provider Internals** (7 files)
+   - `data/ai/provider/internal/` — CloudCorrelation, CloudJsonParser, CloudPiiSanitizer, CloudRetryPolicy, DashboardBriefingPromptFormatter, DashboardBriefingResponseParser, StrictAiJsonParsing
 
-- **Email Parsers** (4 files)
-  - `data/email/provider/` — AmazonReceiptParser, AppleReceiptParser, EmailReceiptParser, UberReceiptParser
+- **Email Parsers** (5 files)
+   - `data/email/EmailReceiptIngestionService.kt`
+   - `data/email/provider/` — AmazonReceiptParser, AppleReceiptParser, EmailReceiptParser, UberReceiptParser
 
-- **Location Services** (9 files)
-  - `data/location/` — CompositeGeocodingService, NominatimGeocodingService, GeoapifyGeocodingService, GooglePlacesGeocodingService, PhotonGeocodingService, OverpassNearbyService, AndroidForegroundLocationProvider, LocationBackfillWorker, MerchantKeyBackfillWorker
+- **Location Services** (11 files)
+   - `data/location/` — CompositeGeocodingService, NominatimGeocodingService, GeoapifyGeocodingService, GooglePlacesGeocodingService, PhotonGeocodingService, OverpassNearbyService, AndroidForegroundLocationProvider, LocationBackfillWorker, MerchantKeyBackfillWorker
+   - `data/location/internal/` — CancellableHttpCall, LogSanitizer
 
 - **Privacy** (7 files)
-  - `data/privacy/` — PrivacySettingsRepositoryImpl, BackupEncryptionService, ExportAnonymizer, DataRetentionWorker, AtRestEncryptionService, PrivacyAuditLoggerImpl, DefaultCloudPayloadRedactor
+   - `data/privacy/` — PrivacySettingsRepositoryImpl, BackupEncryptionService, ExportAnonymizer, DataRetentionWorker, AtRestEncryptionService, PrivacyAuditLoggerImpl, DefaultCloudPayloadRedactor
 
 - **Security** (2 files)
-  - `data/security/` — BankTokenCipher, SecureKeyStorage
+   - `data/security/` — BankTokenCipher, SecureKeyStorage
 
 - **Service Layer** (2 files)
-  - `data/service/` — AndroidNotificationService
-  - `data/speech/` — AndroidSpeechInputGateway
+   - `data/service/` — AndroidNotificationService
+   - `data/speech/` — AndroidSpeechInputGateway
 
 - **CSV Import** (1 file)
-  - `util/CsvExpenseImporter.kt` — Bulk CSV expense import via TransactionLifecycleCoordinator
-  - Supports date, amount, merchant, category, description columns
-  - Routes every row through full lifecycle: validate → normalize → dedupe → insert
+   - `util/CsvExpenseImporter.kt` — Bulk CSV expense import via TransactionLifecycleCoordinator
+   - Supports date, amount, merchant, category, description columns
+   - Routes every row through full lifecycle: validate → normalize → dedupe → insert
 
 - **Backup** (4 files)
-  - `data/backup/` — BackupVerifier, CostbackupBundle, RestoreJournal, RestoreMaintenanceMode
+   - `data/backup/` — BackupVerifier, CostbackupBundle, RestoreJournal, RestoreMaintenanceMode
 
-#### DI Package (31 Hilt @Module files)
+#### DI Package (34 Hilt @Module files)
 
 **Location:** `com.yourname.expensetracker.di`
 
-- 31 Hilt @Module files (30 in `di/` + `EmptyStatePresentationModule` in `ui/`)
+- 34 Hilt @Module files (31 in `di/` + `EmptyStatePresentationModule` in `ui/` + `AppStartupDelegate` in `startup/`)
 - 1 `@EntryPoint` (`AppStartupDelegate`)
 - Database, DAO, Repository bindings
 - AI, services, location provider modules
 - Network, time, currency, parsing modules
 - Email ingestion, export, security modules
+- Diagnostics, provenance, reminder settings, retention, worker logging
 
-#### App Services Package (16 files)
+#### App Services Package (17 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/service/`
 
 - **Notification Capture** (2 files)
@@ -244,9 +248,9 @@
 ## 🎯 By Architecture Layer
 
 ### Database Layer
-- **Core:** `AppDatabase.kt` (Room database, v141)
-- **Access:** 62 DAOs for direct table access
-- **Entities:** 64 Room-managed entities (all registered in AppDatabase)
+- **Core:** `AppDatabase.kt` (Room database, v143)
+- **Access:** 67 DAOs for direct table access
+- **Entities:** 69 Room-managed entities (all registered in AppDatabase)
 - **Models:** 6 composite query result models
 - **Coordinator:** `GroupTransactionCoordinator.kt`
 
@@ -257,13 +261,13 @@
 - Manage database transactions
 
 ### Domain/Business Logic Layer
-- **344 files** implementing business rules
+- **518 files** implementing business rules
 - Engines, services, use cases, value objects
 - No database dependencies
 - Clean separation from infrastructure
 
 ### DI/Infrastructure Layer
-- **31 Hilt @Module files + 1 @EntryPoint** managing dependencies
+- **34 Hilt @Module files + 1 @EntryPoint** managing dependencies
 - Database, network, geocoding setup
 - AI capability routing
 - Service configuration
@@ -272,19 +276,19 @@
 
 ## 🔍 Files by Type
 
-### Database-Related (161 files)
-- DAOs (62), Entities (64), Models (6), Converters (1), Coordinator (1), Database (1)
+### Database-Related (178 files)
+- DAOs (67), Entities (69), Models (6), Converters (1), Coordinator (1), Database (1), BackgroundJobRun (1)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
 
 ### Repository-Related (65 files)
 - Data-layer repositories (52), Domain interfaces (13)
 - **Key files:** `ExpenseRepository.kt`, `BudgetRepository.kt`, `CategoryRepository.kt`
 
-### AI-Related (78+ files)
-- Domain services (32), Data providers (38+), Workers (7)
+### AI-Related (108+ files)
+- Domain services (32), Data providers (44), Workers (7)
 - **Key files:** `AiCapabilityRouter.kt`, `CloudCategorizationAssistService.kt`
 
-### Engine/Business Logic (50+ files)
+### Engine/Business Logic (70+ files)
 - Calculation, analysis, decision engines
 - **Key files:** `CategorizationEngine.kt`, `BudgetCalculator.kt`, `InsightsEngine.kt`
 
@@ -292,12 +296,12 @@
 - Text processing, math, time, geo utilities
 - **Key files:** `MerchantKeyGenerator.kt`, `AmountUtils.kt`
 
-### Models & Data Structures (30+ files)
+### Models & Data Structures (40+ files)
 - Request/response models, value objects
 - **Key files:** `AiModels.kt`, `DashboardPrimitives.kt`
 
-### ViewModels (39 files)
-- UI state management
+### ViewModels (41 files)
+- UI state management (40 @HiltViewModel + 1 inline @HiltViewModel)
 - **Key files:** `DashboardViewModel.kt`, `ExpenseListViewModel.kt`
 
 ---
@@ -306,23 +310,24 @@
 
 | Metric | Count |
 |--------|-------|
-| **Total Source Files** | 804 |
-| Domain files | 344 |
-| Data files | 253 |
-| DI files | 30 |
-| Hilt @Module files | 31 |
-| **Database Entities** | 64 |
-| **DAOs** | 62 |
+| **Total Source Files** | 1044 |
+| Domain files | 518 |
+| Data files | 298 |
+| UI files | 167 |
+| DI files | 34 |
+| Hilt @Module files | 32 |
+| **Database Entities** | 69 |
+| **DAOs** | 67 |
 | **Repositories** | 65 (52 data + 13 domain interfaces) |
 | **Use Cases** | 41 |
-| **ViewModels** | 39 |
+| **ViewModels** | 41 |
 | **Workers** | 7 |
-| **Engines** | 50+ |
+| **Engines** | 70+ |
 | **AI Services** | 32 |
 | **Parsers** | 8 |
 | **Geocoders** | 5 |
 | **Email Receipt Parsers** | 4 |
-| **Test Files** | 475 |
+| **Test Files** | 475+ |
 
 ---
 
@@ -388,14 +393,17 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 |-----------|---------|------|
 | **Token Encryption** | Bank token protection | `BankTokenCipher.kt` |
 | **Key Storage** | Secure key management | `SecureKeyStorage.kt` |
+| **At-Rest Encryption** | AES-256-GCM via Android Keystore | `AtRestEncryptionService.kt` |
 | **PII Sanitization** | Privacy protection | `CloudPiiSanitizer.kt` |
 | **Log Sanitizer** | Safe logging | `LogSanitizer.kt` |
+| **Backup Encryption** | AES-256-GCM + PBKDF2 for backups | `BackupEncryptionService.kt` |
+| **Export Anonymizer** | PII stripping for exports | `ExportAnonymizer.kt` |
 
 ---
 
 ## 🧪 Test Coverage
 
-**Total Tests:** 475 (449 test + 26 androidTest)
+**Total Tests:** 475+ (historical; coverage expanding)
 
 ### High-Coverage Areas
 - Consistency tests (15+ files)
@@ -462,7 +470,7 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 4. Review specific provider implementations
 
 ### For Database Schema Changes
-1. Review all 62 entities in `COMPLETE-BACKEND-MAP.md`
+1. Review all 69 entities in `COMPLETE-BACKEND-MAP.md`
 2. Check DAOs and repositories that use them
 3. Consider migrations
 4. Review existing tests
@@ -499,9 +507,9 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 ## ✅ Completeness Checklist
 
-- ✅ ALL 344 domain files listed
-- ✅ ALL 253 data files listed
-- ✅ ALL 31 Hilt @Module files + @EntryPoint listed
+- ✅ ALL 518 domain files listed
+- ✅ ALL 298 data files listed
+- ✅ ALL 34 Hilt @Module files + @EntryPoint listed
 - ✅ File-by-file breakdown with:
   - ✅ File path
   - ✅ Class name
@@ -540,6 +548,6 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 ---
 
-**Last Updated:** 2026-05-07  
-**Version:** 2.0 - Complete Exhaustive Map  
+**Last Updated:** 2026-06-01  
+**Version:** 2.1 - Complete Exhaustive Map  
 **Status:** ✅ Production-Ready Documentation

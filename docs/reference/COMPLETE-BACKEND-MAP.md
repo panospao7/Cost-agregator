@@ -1,14 +1,14 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-05-04 (⚠️ STALE — see `docs/analyses and debug master/COMPLETE-BACKEND-MAP.md` for current)  
-**Total Files Mapped:** 490+ (historical; current is ~926)  
-**Test Coverage:** 317+ test files (historical; current is ~500+)
+**Generated:** 2026-06-01  
+**Total Files Mapped:** 1044 (518 domain + 298 data + 167 UI + 34 DI + 17 Service + 3 Startup + 2 Receiver + 1 Worker + 3 Util)  
+**Test Coverage:** 475+ test files (historical; expanding)
 
 ---
 
 ## Table of Contents
 
-1. [Domain Package (244 files)](#domain-package)
+1. [Domain Package (518 files)](#domain-package)
    - [AI/ML Subsystem](#ai-subsystem)
    - [Analytics & Insights](#analytics--insights)
    - [Budget Management](#budget-management)
@@ -16,12 +16,12 @@
    - [Data Models](#data-models)
    - [Use Cases](#use-cases)
    - [Utilities](#utilities)
-2. [Data Package (206 files)](#data-package)
+2. [Data Package (298 files)](#data-package)
    - [Database Layer](#database-layer)
    - [Repositories](#repositories)
    - [AI Providers](#ai-providers)
    - [Services](#services)
-3. [DI/Modules Package (27 files)](#dimodules-package)
+3. [DI/Modules Package (34 files)](#dimodules-package)
 4. [Dependency Graph & Data Flow](#dependency-graph--data-flow)
 
 ---
@@ -542,7 +542,7 @@
 
 ## DATA PACKAGE
 
-### Database Layer (89 files)
+### Database Layer (109 files)
 
 **Location:** `com.yourname.expensetracker.data.database`
 
@@ -550,7 +550,7 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `database/AppDatabase.kt` | AppDatabase | Room database definition | Database | All entities, DAOs | No |
+| `database/AppDatabase.kt` | AppDatabase | Room database definition (v143, 69 entities) | Database | All entities, DAOs | No |
 | `database/GroupTransactionCoordinator.kt` | GroupTransactionCoordinator | Coordinates group transactions | Engine | GroupExpenseDao, GroupMemberDao | No |
 
 #### Type Converters (1 file)
@@ -898,38 +898,41 @@
 
 ## DI/MODULES PACKAGE
 
-**Location:** `com.yourname.expensetracker.di`
+**Location:** `com.yourname.expensetracker.di` — 34 Hilt @Module files + qualifier annotations
 
 | File | Class | Purpose | Type | Provides | Tests |
 |------|-------|---------|------|----------|-------|
-| `AiModule.kt` | AiModule | AI service binding | Module | All AI services | No |
-| `ApplicationScope.kt` | ApplicationScope | App scope annotation | Annotation | - | No |
+| `AiModule.kt` | AiModule | AI service binding | Module | All AI services, 3 AI DAOs, RedactionSanitizer, AiPolicy | No |
 | `BackupRepositoryModule.kt` | BackupRepositoryModule | Backup binding | Module | DatabaseBackupRepository | No |
 | `CashFlowModule.kt` | CashFlowModule | Cash flow binding | Module | CashFlowCalculator | No |
-| `CurrencyModule.kt` | CurrencyModule | Currency binding | Module | CurrencyConverter, ExchangeRates | No |
-| `DaoModule.kt` | DaoModule | DAO injection | Module | All DAOs | No |
+| `CurrencyModule.kt` | CurrencyModule | Currency binding | Module | CurrencySettingsRepository, CurrencyRatesRepository, ExchangeRateStore | No |
+| `DaoModule.kt` | DaoModule | DAO injection (67 DAOs) | Module | All DAOs except AiModule-provided | No |
+| `DashboardAnomalyModule.kt` | DashboardAnomalyModule | Anomaly alert binding | Module | AnomalyAlertRepository (domain + dashboard) | No |
 | `DashboardContractsModule.kt` | DashboardContractsModule | Dashboard contracts | Module | DashboardRepositoryContracts | No |
 | `DatabaseModule.kt` | DatabaseModule | Database initialization | Module | AppDatabase, GroupTransactionCoordinator | No |
-| `DispatchersModule.kt` | DispatchersModule | Coroutine dispatchers | Module | IO, Default, Main | No |
-| `EmailIngestionModule.kt` | EmailIngestionModule | Email parsing | Module | Email receipt parsers | No |
-| `EmptyStateModule.kt` | EmptyStateModule | Empty state registry | Module | Empty state configurations | No |
-| `EmptyStateRegistryInitializer.kt` | EmptyStateRegistryInitializer | Empty state init | Initializer | - | No |
-| `ExportModule.kt` | ExportModule | Export binding | Module | AccountingExporters | No |
-| `GroupsModule.kt` | GroupsModule | Groups binding | Module | GroupTransactionCoordinator | No |
-| `LocationResolverPortsModule.kt` | LocationResolverPortsModule | Location ports | Module | All geocoding services | No |
-| `NaturalLanguageModule.kt` | NaturalLanguageModule | NL binding | Module | Speech, NL search | No |
-| `NetworkModule.kt` | NetworkModule | Network client | Module | Retrofit, OkHttp | No |
-| `NetworkQualifiers.kt` | NetworkQualifiers | Network qualifiers | Qualifier | - | No |
-| `OcrImprovementsModule.kt` | OcrImprovementsModule | OCR binding | Module | OCR preprocessors | No |
-| `PrivacyModule.kt` | PrivacyModule | **NEW — Privacy gate binding** | Module | All 4 gate implementations + CompositePrivacyGate + BackupEncryptionService + ExportAnonymizer + DataRetentionWorker + PrivacyAuditLogger | No |
-| `ReceiptParsingModule.kt` | ReceiptParsingModule | Receipt parsing | Module | All receipt parsers | No |
-| `SavingsModule.kt` | SavingsModule | Savings binding | Module | Savings engines | No |
-| `SavingsRepositoryBindingsModule.kt` | SavingsRepositoryBindingsModule | Savings repos | Module | Savings repositories | No |
-| `SecurityModule.kt` | SecurityModule | Security binding | Module | Token cipher, Key storage | No |
-| `ServiceModule.kt` | ServiceModule | Services binding | Module | All domain services | No |
-| `SubscriptionModule.kt` | SubscriptionModule | Subscription binding | Module | Subscription detection | No |
-| `TaxModule.kt` | TaxModule | Tax binding | Module | Tax estimator | No |
-| `TimeModule.kt` | TimeModule | Time provider | Module | TimeProvider, SystemTimeProvider | No |
+| `DiagnosticsModule.kt` | DiagnosticsModule | Diagnostic writers binding | Module | DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository | No |
+| `DispatchersModule.kt` | DispatchersModule | Coroutine dispatchers | Module | IO, Default, Main, ApplicationScope | No |
+| `EmailIngestionModule.kt` | EmailIngestionModule | Email parsing | Module | Amazon, Uber, Apple receipt parsers | No |
+| `EmptyStateModule.kt` | EmptyStateModule | Empty state registry | Module | Empty state configurations (multibind) | No |
+| `ExportModule.kt` | ExportModule | Export binding | Module | QuickBooksIIF, XeroCSV, FreshBooks exporters | No |
+| `GroupsModule.kt` | GroupsModule | Groups binding | Module | GroupsRepository, SharedExpenseDataPort, Use cases | No |
+| `LocationResolverPortsModule.kt` | LocationResolverPortsModule | Location ports | Module | LocationCachePort, MerchantClusterPort | No |
+| `NaturalLanguageModule.kt` | NaturalLanguageModule | NL binding | Module | NaturalLanguageExpenseQueryRepository | No |
+| `NetworkModule.kt` | NetworkModule | Network client | Module | @LocationHttpClient, @CloudAiHttpClient OkHttpClient | No |
+| `OcrImprovementsModule.kt` | OcrImprovementsModule | OCR binding | Module | EnhancedMerchantExtractor, OcrLanguageProcessor, OcrPreprocessingPipeline | No |
+| `ParserModule.kt` | ParserModule | Bank parser binding | Module | GreekBankParser | No |
+| `PrivacyModule.kt` | PrivacyModule | Privacy gate binding | Module | CompositePrivacyGate, PrivacyAuditLogger, PrivacySettingsRepository | No |
+| `ProvenanceModule.kt` | ProvenanceModule | Provenance tracking | Module | Provenance event recording | No |
+| `ReceiptParsingModule.kt` | ReceiptParsingModule | Receipt parsing | Module | MerchantRulesPolicy binding | No |
+| `ReminderSettingsModule.kt` | ReminderSettingsModule | Reminder settings binding (P4) | Module | BillReminderSettingsRepository | No |
+| `RetentionModule.kt` | RetentionModule | Data retention policy | Module | RetentionRegistry with 5 targets | No |
+| `SavingsModule.kt` | SavingsModule | Savings binding | Module | SmartSavingsEngine, AutomatedSavingsRule*, SavingsGamificationEngine | No |
+| `SavingsRepositoryBindingsModule.kt` | SavingsRepositoryBindingsModule | Savings repos | Module | DomainSavingsGoalRepository binding | No |
+| `SecurityModule.kt` | SecurityModule | Security binding | Module | SecureKeyStorage | No |
+| `ServiceModule.kt` | ServiceModule | Services binding | Module | Gson, NotificationService, GeocodingService, NearbyPoi, Location, Widget, Speech | No |
+| `TaxModule.kt` | TaxModule | Tax binding | Module | TaxConfiguration → GreeceTaxConfiguration | No |
+| `TimeModule.kt` | TimeModule | Time provider | Module | TimeProvider → SystemTimeProvider | No |
+| `WorkerModule.kt` | WorkerModule | Worker logging | Module | WorkerRunLogger → WorkerRunLoggerImpl | No |
 
 ---
 
@@ -1086,22 +1089,23 @@ Engine (integration with other domain logic)
 
 ---
 
-## Summary Statistics (⚠️ STALE — current values in parentheses)
+## Summary Statistics
 
-| Metric | Historical Count | Current Count |
-|--------|-----------------|---------------|
-| **Domain Files** | 283 | 344 |
-| **Data Files** | 222 | 253 |
-| **DI / @Module Files** | 28 | 31 |
-| **Total Backend Files** | 533+ | ~926 |
-| **Test Files** | 317+ | ~500+ |
-| **Database Entities** | 56 | 64 |
-| **DAOs** | 54 | 62 |
-| **DB Version** | 113 | 141 |
-| **Repositories** | 56 | 65 |
-| **Use Cases** | ~30 | 41 |
-| **Engines** | ~50 | ~70 |
-| **AI Providers** | 32 | 44 |
+| Metric | Count |
+|--------|-------|
+| **Domain Files** | 518 |
+| **Data Files** | 298 |
+| **DI / @Module Files** | 34 |
+| **Total Source Files** | 1044 |
+| **Test Files** | 475+ |
+| **Database Version** | 143 |
+| **Database Entities** | 69 |
+| **DAOs** | 67 |
+| **Repositories** | 65 (52 data + 13 domain interfaces) |
+| **Use Cases** | 41 |
+| **ViewModels** | 41 |
+| **Engines** | 70+ |
+| **AI Providers** | 44 |
 
 ---
 

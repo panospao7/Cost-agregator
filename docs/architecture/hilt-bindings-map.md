@@ -1,6 +1,6 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 30 Hilt @Module files (+ 1 @EntryPoint).
+> Complete interface → implementation binding map for all 31 Hilt @Module files (+ 1 @EntryPoint).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -21,33 +21,34 @@ Dependencies:
 
 ### `DaoModule` — `di/DaoModule.kt`
 ```
-Provides (58 DAOs):
-  PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, BlockedPackageDao,
-  ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao, MerchantCategoryDao,
-  PendingReviewDao, UserCorrectionDao, SourceStatsDao, SourceStatsEventDao, RecurringExpenseDao,
+Provides (~63 DAOs):
+  PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, NotificationIntakeDao,
+  BlockedPackageDao, ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao,
+  MerchantCategoryDao, PendingReviewDao, UserCorrectionDao, SourceStatsDao,
+  SourceStatsEventDao, RecurringExpenseDao (deprecated),
   ManualRecurringExpenseDao, MerchantNormalizationDao, MerchantLocationDao,
   RecommendationDao, ReceiptItemCategorizationDao, WarrantyDao, ReturnWindowDao,
   WarrantyLifecycleEventDao, WarrantyReminderDeliveryDao,
   SubscriptionPriceHistoryDao, SubscriptionUsageDao, MileageTrackingDao,
   ExchangeRateDao, ExpenseGroupDao, GroupMemberDao, GroupExpenseDao,
-  GroupSettlementDao,
-  BudgetForecastDao, InvestmentDao, InvestmentValueDao,
-  InvestmentTransactionDao,
-  BankConnectionDao, BackgroundJobRunDao,
+  GroupSettlementDao, BudgetForecastDao, InvestmentDao, InvestmentValueDao,
+  InvestmentTransactionDao, BankConnectionDao, BackgroundJobRunDao,
   SplitTemplateDao, SplitItemAssignmentDao, SubscriptionCandidateDao,
   BudgetAdjustmentDao, EmailReceiptDao, AnomalyAlertDao, HealthScoreHistoryDao,
   PromptStateDao, SpendingPersonalityProfileDao, StressForecastSnapshotDao,
   SavingsSweepPlanDao, SpendingChallengeDao, TransactionEventDao,
   ReceiptEventDao, ReceiptExpenseLinkDao, RecurringOccurrenceDao,
   RecurringReminderDeliveryDao, RecurringLifecycleEventDao, PrivacyAuditDao,
-  GroupLifecycleEventDao, PipelineDiagnosticEventDao, OperationRunDao, OperationRunEventDao
+  GroupLifecycleEventDao, PipelineDiagnosticEventDao, OperationRunDao,
+  OperationRunEventDao, EntitySourceLinkDao, BankStatementImportRunDao,
+  BankStatementImportItemDao
 Dependencies:
   AppDatabase
 
 Additional DAOs provided via AiModule (3):
   AiArtifactDao, AiChatSessionDao, AiChatMessageDao
 
-Total DAOs: 59 (56 + 3)
+Total DAOs: ~69 (~63 DaoModule + 3 AiModule + ~3 unbound/auto-provided)
 ```
 
 ### `DispatchersModule` — `di/DispatchersModule.kt`
@@ -124,6 +125,7 @@ Binds:
   AiChatRepository                            → AiChatRepositoryImpl
   AiPolicy                                    → AiPolicyImpl
   AiCapabilityRouter                          → DefaultAiCapabilityRouter
+  HybridRouter                                → DefaultHybridRouter
   AiEnvironmentMonitor                        → DefaultAiEnvironmentMonitor
   AiWorkScheduler                             → AiWorkSchedulerImpl
   DashboardBriefingService                    → HybridDashboardBriefingService
@@ -143,8 +145,8 @@ Provides:
   AiChatSessionDao                            → database.aiChatSessionDao()
   AiChatMessageDao                            → database.aiChatMessageDao()
   OnDeviceReceiptItemCategorizationService    → new instance
-  CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadRedactor
-  CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadRedactor
+  CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy
+  CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy
 ```
 
 ### `OcrImprovementsModule` — `di/OcrImprovementsModule.kt`
@@ -267,6 +269,7 @@ Auto-provided:
   NetCashflowBalanceProvider                  → @Singleton @Inject (domain/forecasting/NetCashflowBalanceProvider.kt)
   ReceiptMatchLifecycleService                → @Singleton @Inject (domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt)
   RecurringPlanProjectionService              → @Singleton @Inject (domain/recurring/RecurringPlanProjectionService.kt)
+  AtRestEncryptionService                     → @Singleton @Inject (data/privacy/AtRestEncryptionService.kt)
 ```
 
 ### `TaxModule` — `di/TaxModule.kt`
@@ -315,10 +318,14 @@ Provides:
 ```
 Binds:
   PrivacySettingsRepository                   → PrivacySettingsRepositoryImpl
+  CloudPayloadRedactor                        → DefaultCloudPayloadRedactor
+  SensitiveHashingService                     → DefaultSensitiveHashingService
+  CloudPayloadPolicy                          → DefaultCloudPayloadPolicy
 
 Provides:
   PrivacyGate                                 → CompositePrivacyGate(
-      NotificationPrivacyGate, LocationPrivacyGate, CloudAiPrivacyGate, BackupPrivacyGate)
+      NotificationPrivacyGate, LocationPrivacyGate, CloudAiPrivacyGate,
+      BackupPrivacyGate, ExportPrivacyGate)
   PrivacyAuditLogger                          → PrivacyAuditLoggerImpl
 ```
 
@@ -393,6 +400,12 @@ Binds:
 
 ---
 
+### `ProvenanceModule` — `di/ProvenanceModule.kt`
+`@Module @InstallIn(SingletonComponent::class)` providing:
+- Provenance event recording bindings for audit trail tracking
+
+---
+
 ## 5. Entry Points
 
 ### `AppStartupDelegate` — `startup/AppStartupDelegate.kt`
@@ -423,4 +436,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 31 Hilt @Module files · 65+ repositories · 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound) · 64 entities · DB v141
+**Stats:** 31 Hilt @Module files · 65+ repositories · ~69 DAOs (~63 DaoModule + 3 AiModule + ~3 unbound) · 64+ entities · DB v143

@@ -30,10 +30,10 @@
 
 ## Current Project Metrics
 - Database version: v143 (`APP_DATABASE_SCHEMA_VERSION = 143`). Migration 142→143 adds `warranty_reminder_deliveries` (durable warranty-reminder sent-state; replaces the old SharedPreferences flag). Earlier: v131 through v139–v141 for recurring lifecycle hardening, occurrence status typing, and reminder delivery FK enforcement; 141→142 relaxed `budget_forecasts.budgetId` FK to CASCADE.
-- 926 Kotlin source files (388 domain, 280 data, 164 ui, 31 di, 63 other/util)
-- 62 DAOs (58 in DaoModule + 3 in AiModule + 1 unbound), 64 entities registered in AppDatabase
-- 39 @HiltViewModel (38 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
-- 30 @Module Hilt modules
+- 1636 Kotlin source files across domain, data, ui, di, util, service, startup, and worker packages
+- 67 DAOs (63 in DaoModule + 3 in AiModule + 1 unbound), 69 entities registered in AppDatabase
+- 41 @HiltViewModel (40 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
+- 32 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
 - Bank statement AI parsing: **complete** (on-device→cloud→parser 3-tier validation with per-transaction source tracking)
@@ -180,13 +180,38 @@
 - **BillReminderSettings + BillReminderSettingsRepository** created (`domain/reminder/BillReminderSettings.kt`, `domain/reminder/BillReminderSettingsRepository.kt`) — runtime dispatch settings (enabled/disabled, quiet hours). SharedPreferences-backed impl bound via new **ReminderSettingsModule** (`di/ReminderSettingsModule.kt`).
 - **BillReminderWorker** — enhanced with post-claim revalidation (`getDispatchableClaimedReminder()`), `NotificationSendResult` sealed interface (Sent/Failed), runtime settings check, `ReminderSettingsRepository` injection.
 - **TransactionUpdateKind** — expanded with `AMOUNT`, `DATE`, `CURRENCY`, `OWNERSHIP`, `PAYMENT_CORE`. New `affectsRecurringMatch()` centralizes which update kinds trigger reconciliation.
-- **RecurringArchitectureGuardTest** created — 14 static architecture guard tests enforcing single-writer principal: no direct DAO mutation outside coordinator, no legacy `markBillPaid`, no raw `updateOccurrenceStatus` outside coordinator, critical events use `eventWriter` not direct DAO.
+- **RecurringArchitectureGuardTest** created — 19 static architecture guard tests enforcing single-writer principal: no direct DAO mutation outside coordinator, no legacy `markBillPaid`, no raw `updateOccurrenceStatus` outside coordinator, critical events use `eventWriter` not direct DAO.
 - **Pipeline4LifecycleGoldenTest** created — golden tests for create → update → deactivate → reactivate → delete lifecycle through repositories.
 - **RecurringOccurrenceDao** — `updateLinkedPaymentSnapshot()` for in-place snapshot updates. `getPlannedIdsBySource()` added.
 - **PlannedExpenseDao** — `fulfillByOccurrenceKey()` takes `expenseId`. `deleteOpenPlannedByRecurringRuleId()` for deactivation cleanup.
 - **RecurringReminderDeliveryDao** — `suppressOpenDeliveriesForOccurrence()` takes `now` + reason. `markSentFromClaimed()`, `markFailedFromClaimed()`, `cancelClaimedDelivery()`, `reopenDeliveryForOccurrenceWindow()`, `recoverStaleClaimedDeliveries()`, `deleteByOccurrenceIds()` added.
 - **Single-writer principal enforced** — `RecurringRuleLifecycleCoordinator` sole writer for rule lifecycle. Legacy `BillReminderManager.markBillPaid()` removed entirely (correct path: create actual expense → `linkExpenseToOccurrence()`).
 - **5 new test files** — `RecurringArchitectureGuardTest`, `Pipeline4LifecycleGoldenTest`, 2 new instrumented migration tests in `MigrationContractTest`.
+
+### Architecture Drift Updates (2026-05-25 — Pipeline 5-12 Completion & Universal PRs)
+
+#### Pipeline Work Completion (P5-P12)
+- **Pipeline 5 (Budget/Forecast):** Currency normalization completed in `BudgetForecastingEngine` — all monetary operations route through `AnalyticsCurrencyNormalizer`. `PeriodKind.toPeriodRange()` extension unified period-to-range conversion. Double-counting fixed in `ForecastInputAssembler` and `MonthlySavingsSweepUseCase` via occurrence-based dedup.
+- **Pipeline 6 (Analytics/Insights):** `DailyBucketEngine` and `BudgetVsActualEngine` hardened with `NormalizedAnalyticsInput` shared normalization pass. All 12+ analytics engines accept `NormalizedAnalyticsInput` with single normalization per period. `DataQualityReport` unified quality contract across analytics, forecasting, currency, and AI.
+- **Pipeline 7 (Backup/Restore/Audit):** `DatabaseReadBarrier`/`DatabaseWriteBarrier` wired into `SubscriptionManagerEngine` and `EnhancedSplitManager`. `RestoreJournal.ASSETS_RESTORING` state added. `BackupVerifier` TIER_1_EXACT for lifecycle/event tables. All 7 workers pause on restore.
+- **Pipeline 8 (Privacy/AI Gating):** `PrivacyDecision.FailClosed` variant — 30+ callers across backup/export/geocoding/location/currency/warranty use `blocksExecution()`. `PrivacyBlockedCard` reusable Compose UI. `PrivacyCapabilityHandlingPolicy` covering all 26 capabilities. `CompositePrivacyGate` fails closed for unhandled sensitive capabilities.
+- **Pipeline 9 (Worker/Notification):** `WorkerExecutionGuard` structured execution with `RetryableWorkerException` retry contract. `NotificationPermissionChecker` gating. `WorkerRegistry` single-source-of-truth for all 7 workers. `PrivacyRuntimeWorkerPolicy` maps privacy toggles to gated workers. Worker guard architecture test asserts all `CoroutineWorker` instances use the guard.
+- **Pipeline 10 (Receipt/Email Lifecycle):** `ReceiptMatchLifecycleService` lifecycle-aware match mutations. `ReceiptDebugExporter` audit instrumentation with privacy-by-default redaction. `DeprecationLevel.ERROR` sweep for legacy receipt methods. Exception message redaction policy for URIs, file paths, URLs, emails, numbers.
+- **Pipeline 11 (Recurring Lifecycle Hardening):** `RecurringRuleLifecycleCoordinator` expanded as single writer for all rule lifecycle mutations (create/activate/update/deactivate/delete). `OccurrenceGenerationOptions`, `RecurringExpenseReconcileResult`, `RecurringOccurrenceStatus` typed domain models. `RecurringLifecycleEventWriter` critical/diagnostic split. `BillReminderSettings` + `ReminderSettingsModule`. 14 static architecture guard tests. DB v131→v141 (8 bumps).
+- **Pipeline 12 (Navigation/Settings/Config):** Destination-driven navigation hardened. Deep link re-application, config-change resilience, back-stack exit handling. Feature settings surfaces (AiSettings, CategoryManagement) routed properly.
+
+#### Universal PRs (U-PR1 through U-PR8)
+- **U-PR1:** Fail-closed propagation sweep — all privacy gate calls updated to `blocksExecution()` pattern. 10+ service files migrated.
+- **U-PR2:** Currency boundary guards — `scripts/verify_money_boundaries.py` (G-MONEY-01 through G-MONEY-21 rules). `CurrencyCode` ASCII validation, `MoneyAggregate` finite guard, `MoneyBucket` finite guard.
+- **U-PR3:** Privacy boundary guards — `scripts/verify_privacy_boundaries.py` (G1-G13 rules). 18 new privacy behavioral test files.
+- **U-PR4:** `WorkerSpecScheduler` centralized scheduling with version-change detection. All 7 workers scheduled via `AppStartupCoordinator.scheduleStartupWork()`.
+- **U-PR5:** `HybridRouter` consolidated routing logic across 6 hybrid AI services. `AtRestEncryptionService` AES-256-GCM for ML model data at rest.
+- **U-PR6:** `AccountingExportPolicy` validation (single-currency, purchase-only, global dataset checks). CSV version metadata comment line. Export format alignment with `ExportTransaction` schema fields.
+- **U-PR7:** `GroupLifecycleCoordinator` post-commit side effects — `BudgetMonitor.checkBudgets()` and `TransactionSideEffectDispatcher.dispatchOnCreated()` for group expenses. Group lifecycle event audit log.
+- **U-PR8:** `ReceiptRepository` heavy refactoring (175 lines): receipt lifecycle fixes, improved deduplication, textLines extraction. `MultiCurrencyRepository` budget-aware aggregation (176 lines added).
+
+#### Completed Pipeline Status
+- **All 12 pipelines (P1-P12) fixed and hardened.** 178+ issues resolved across structured hardening. 7 lifecycle coordinators, 3 normalizer/validator middleware services, 15+ materialized-key constraints deployed.
 
 ### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
 - **Database version upgraded to v129** (from v124) — later superseded by v130→v131 in the currency/privacy overhaul. Migrations 124→129 add durable diagnostics tables (`operation_runs`, `operation_run_events`), expand `pipeline_diagnostic_events` with 9 new columns, add `correlationId`/`causationId` to `transaction_events`, and add `isTerminal`/`eventId` to `operation_run_events`.
@@ -436,7 +461,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v141) — 64 entities registered
+│   ├── AppDatabase.kt          # Room database (v143) — 64 entities registered
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   ├── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -559,7 +584,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v141 |
+| Database | `data/database/AppDatabase.kt` | Room DB v143 |
 | NotificationCaptureService | `service/NotificationCaptureService.kt` | Android notification listener service |
 
 ### Core Engines
@@ -667,7 +692,7 @@ FinancialWeatherRepository
 
 ## Dependency Injection
 
-### Hilt Modules (27 total)
+### Hilt Modules (31 total)
 - **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`, `WorkerModule`
 - **AI:** `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`
 - **Dashboard:** `DashboardContractsModule`, `DashboardAnomalyModule`
@@ -675,6 +700,7 @@ FinancialWeatherRepository
 - **Shared expense / groups:** `GroupsModule`, `BackupRepositoryModule`
 - **Location / network:** `LocationResolverPortsModule`, `NetworkModule`
 - **Security & privacy:** `SecurityModule`, `PrivacyModule`, `ParserModule`, `ReceiptParsingModule`, `EmptyStateModule`, `EmptyStatePresentationModule`, `EmailIngestionModule`
+- **Specialized:** `RetentionModule` (retention targets), `DiagnosticsModule` (pipeline diagnostics), `ProvenanceModule` (data provenance), `ReminderSettingsModule` (bill reminder dispatch settings)
 
 ### Key Bindings
 - `AppDatabase` from `DatabaseModule`
@@ -1315,7 +1341,7 @@ KDoc annotation of EUR defaults applied across 4 analytics engines (`InsightsEng
 
 ## Database Schema
 
-### Version: v141 (current) — see drift entries above for P3/P4 changes
+### Version: v143 (current) — see drift entries above for P3/P4 changes
 ### Historical: v120 (post-hardening; latest migration at that time: 119→120 for InvestmentTransaction, WarrantyLifecycleEvent, GroupSettlementEntity)
 
 The Room schema in v120 includes all tables from v106 plus:

@@ -20,7 +20,7 @@ import java.io.File
  *    artifact with no `.costbackup` manifest/assets and is release-disabled. It is a
  *    debug-only affordance. This guard asserts NO production (non-debug) UI references it,
  *    so a future UI cannot accidentally depend on raw export. The debug screen
- *    (`ui/screens/debug/**`) is the single intended caller and is exempt.
+ *    (`ui/screens/debug/`) is the single intended caller and is exempt.
  */
 class BackupRestoreArchitectureGuardTest {
 

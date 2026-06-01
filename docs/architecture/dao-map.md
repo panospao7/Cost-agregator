@@ -1,8 +1,8 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all 62 DAOs (58 in DaoModule + 3 in AiModule + 1 unbound) to their entities and consuming repositories/services.
+> Complete mapping of all ~69 DAOs (~63 in DaoModule + 3 in AiModule + ~3 unbound) to their entities and consuming repositories/services.
 >
-> Last updated: 2026-05-18
+> Last updated: 2026-06-01
 
 ---
 
@@ -39,6 +39,7 @@
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
+| `NotificationIntakeDao` | `NotificationIntakeEntity` | `NotificationProcessingPipeline` | Notification intake pipeline |
 | `RawNotificationDao` | `RawNotification` | `NotificationRepository`, `ReviewQueueRepository` | TransactionsVM, ReviewVM, DebugVM |
 | `PendingReviewDao` | `PendingReview` | `NotificationRepository`, `ReviewQueueRepository`, `ExpenseRepository`, `ReceiptRepository` | ReviewVM, TransactionsVM |
 | `BlockedPackageDao` | `BlockedPackage` | `NotificationRepository` | Notification filter |
@@ -47,10 +48,10 @@
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
-| `ScannedReceiptDao` | `ScannedReceipt` | `ReceiptRepository`, `DataRetentionWorker`, `ReceiptLifecycleCoordinator`, `ReceiptLinkService` | ReceiptScanVM, ReviewVM |
+| `ScannedReceiptDao` | `ScannedReceipt` | `ReceiptRepository`, `DataRetentionWorker`, `ReceiptLifecycleCoordinator`, `ReceiptLinkService`, `ReceiptMatchLifecycleService` | ReceiptScanVM, ReviewVM |
 | `ReceiptItemCategorizationDao` | `ReceiptItemCategorization` | `ReceiptItemCategorizationRepository`, `ReceiptLinkService` | AI categorization |
-| `ReceiptEventDao` | `ReceiptEvent` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService` | Receipt audit |
-| `ReceiptExpenseLinkDao` | `ReceiptExpenseLink` | `ReceiptLinkService`, `ReceiptLifecycleCoordinator` | Receipt matching |
+| `ReceiptEventDao` | `ReceiptEvent` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService`, `ReceiptMatchLifecycleService` | Receipt audit |
+| `ReceiptExpenseLinkDao` | `ReceiptExpenseLink` | `ReceiptLinkService`, `ReceiptLifecycleCoordinator`, `ReceiptMatchLifecycleService` | Receipt matching |
 
 ## Recurring Domain
 
@@ -106,6 +107,8 @@
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
 | `BankConnectionDao` | `BankConnection` | — | — |
+| `BankStatementImportRunDao` | `BankStatementImportRun` | — | Bank statement import |
+| `BankStatementImportItemDao` | `BankStatementImportItem` | — | Bank statement import |
 
 ## Subscription Domain
 
@@ -154,13 +157,14 @@
 | `HealthScoreHistoryDao` | `HealthScoreHistory` | — | — |
 | `EmailReceiptDao` | `EmailReceiptSource` | `EmailReceiptIngestionService` | Email ingestion |
 | `PromptStateDao` | `PromptState` | `PromptStateRepository` | Savings prompts |
-| `BackgroundJobRunDao` | `BackgroundJobRun` | Workers directly | Worker tracking |
+| `BackgroundJobRunDao` | `BackgroundJobRun` | Workers directly, `WorkerRunLoggerImpl` | Worker tracking |
 | `RecommendationDao` | `RecommendationEntity` | `RecommendationRepository` | AI recommendations |
 | `StressForecastSnapshotDao` | `StressForecastSnapshot` | `FinancialStressForecastEngine` | Cash flow |
 | `SourceStatsEventDao` | `SourceStatsEvent` | — | Source stats event tracking (event-based, v117+) |
 | `PipelineDiagnosticEventDao` | `PipelineDiagnosticEvent` | `NotificationProcessingPipeline` | Cross-pipeline diagnostic tracking |
 | `OperationRunDao` | `OperationRun` | `CompositeOperationRunRecorder` | Durable operation run tracking |
 | `OperationRunEventDao` | `OperationRunEvent` | `CompositeOperationRunRecorder` | Durable operation run events |
+| `EntitySourceLinkDao` | `EntitySourceLink` | Provenance services | Source link tracking |
 
 ---
 
@@ -172,7 +176,7 @@
 | `CategoryDao` | **2+** repositories | 🟡 HIGH — ubiquitous in ViewModels |
 | `PendingReviewDao` | **4** repositories | 🟡 HIGH — review pipeline |
 | `RawNotificationDao` | **2** repositories | 🟡 HIGH — notification pipeline |
-| `ScannedReceiptDao` | **4** consumers | 🟡 HIGH — receipt pipeline |
+| `ScannedReceiptDao` | **5** consumers | 🟡 HIGH — receipt pipeline |
 | `BudgetDao` | **1** repository | 🟢 MEDIUM |
 | `TransactionEventDao` | **1** consumer | 🟢 MEDIUM (append-only log) |
 | `RecurringOccurrenceDao` | **2** consumers | 🟢 MEDIUM |
@@ -188,5 +192,11 @@
 | `PipelineDiagnosticEventDao` | **1** consumer | 🟢 LOW (diagnostic tracking) |
 | `OperationRunDao` | **1** consumer | 🟢 LOW (operation run tracking) |
 | `OperationRunEventDao` | **1** consumer | 🟢 LOW (run events) |
-| **Total: 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound)** | | |
-
+| `BackgroundJobRunDao` | **1** consumer | 🟢 LOW (worker run logging) |
+| `ReceiptExpenseLinkDao` | **3** consumers | 🟡 HIGH — receipt matching |
+| `ReceiptEventDao` | **3** consumers | 🟢 MEDIUM — receipt lifecycle |
+| `NotificationIntakeDao` | **1** consumer | 🟢 MEDIUM — notification intake |
+| `EntitySourceLinkDao` | **1** consumer | 🟢 LOW — source link tracking |
+| `BankStatementImportRunDao` | **0** direct | 🟢 LOW — bank statement import |
+| `BankStatementImportItemDao` | **0** direct | 🟢 LOW — bank statement import |
+| **Total: ~69 DAOs (~63 DaoModule + 3 AiModule + ~3 unbound)** | | |

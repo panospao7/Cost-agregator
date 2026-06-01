@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -20,6 +21,7 @@ class RecurringExpenseRepositoryTest {
 
     private val dao = mockk<ManualRecurringExpenseDao>()
     private val lifecycleEventDao = mockk<RecurringLifecycleEventDao>()
+    private val ruleLifecycleCoordinator = mockk<RecurringRuleLifecycleCoordinator>()
 
     private lateinit var repository: RecurringExpenseRepository
 
@@ -30,7 +32,12 @@ class RecurringExpenseRepositoryTest {
             dao,
             lifecycleEventDao,
             mockk<TimeProvider>(relaxed = true),
-            ruleLifecycleCoordinator = mockk(relaxed = true)
+            // Production wraps the coordinator in dagger.Lazy<> to break a Hilt
+            // dependency cycle. The test must stub the wrapper so that .get()
+            // returns a real mock of the inner coordinator type — a relaxed mock
+            // of dagger.Lazy returns a bare java.lang.Object (type erasure) that
+            // fails the cast at RecurringExpenseRepository.addRecurringExpense.
+            ruleLifecycleCoordinator = dagger.Lazy { ruleLifecycleCoordinator }
         )
     }
 
@@ -54,7 +61,7 @@ class RecurringExpenseRepositoryTest {
         lastDate: Long
     ) {
         val expenseSlot = slot<ManualRecurringExpense>()
-        coEvery { dao.insert(capture(expenseSlot)) } returns 1L
+        coEvery { ruleLifecycleCoordinator.createRule(capture(expenseSlot)) } returns 1L
 
         repository.addRecurringExpense(
             merchant = "Merchant",
@@ -67,7 +74,7 @@ class RecurringExpenseRepositoryTest {
             RecurrenceCalculator.calculateNextDate(lastDate, frequency),
             expenseSlot.captured.nextDate
         )
-        coVerify(exactly = 1) { dao.insert(any()) }
+        coVerify(exactly = 1) { ruleLifecycleCoordinator.createRule(any()) }
     }
 
     private fun date(year: Int, month: Int, day: Int): Long {

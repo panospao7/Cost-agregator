@@ -74,9 +74,8 @@ class BankApiIntegrationTest {
 
     @Before
     fun setUp() {
-        // BankApiConfig.isStubMode is a mutable global; pin it true so syncTransactions()
-        // passes requireStubMode() regardless of test execution order.
-        BankApiConfig.isStubMode = true
+        // isStubMode is immutable and already true under BuildConfig.DEBUG (unit tests),
+        // so syncTransactions() passes requireStubMode() without any assignment.
         coordinator = mockk(relaxed = true)
         integration = BankApiIntegration(
             timeProvider = FakeTimeProvider(),

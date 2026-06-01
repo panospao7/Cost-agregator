@@ -44,11 +44,13 @@ Every destination has a `toSaveToken()` / `destinationFromSaveToken()` pair for 
 |--------|-------------|-------------------|
 | FULL | Most features | Restores exactly |
 | DEGRADED | `BudgetForecasting`, `VisualSplitEditor` | Restores without entity payload |
-| EPHEMERAL | `AddExpense`, `ScanReceipt`, `Assistant` | Not persisted (returns to previous) |
+| EPHEMERAL | `AddExpense`, `ScanReceipt`, `Assistant`, `Debug` | Not persisted (returns to previous) |
 
 ## Feature Config
 
 `FeatureConfig.allFeatures` is the canonical list of menu-accessible features. Each entry has:
+
+> **Note**: `PrivacySettings` has no standalone `NavigationDestination` — it is accessed from the Settings gear icon on the home screen, not through `FeatureConfig`.
 - `id` — unique string identifier
 - `destination` — `NavigationDestination` to navigate to
 - `titleRes` / `descriptionRes` — display strings

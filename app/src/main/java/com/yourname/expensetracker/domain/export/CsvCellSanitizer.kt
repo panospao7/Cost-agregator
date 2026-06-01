@@ -32,13 +32,16 @@ object CsvCellSanitizer {
         val stripped = field.replace("\u0000", "").replace("\u000B", "")
 
         // 2. Formula injection: prefix with single-quote if leading char is dangerous.
-        // P12-PR1 (NEW-P12-003): Don't trigger for "-" followed by digit (negative number)
-        // or "-" followed by letter (merchant name like "-Pizza").
+        // P12-PR1 (NEW-P12-003): A leading "-" is safe ONLY when the entire trimmed
+        // value is a plain number (genuine negative amount). Any other leading "-"
+        // (e.g. "-2+3+cmd|'/C calc'!A0", "-cmd|'/C calc'!A0", "-Pizza Place") is treated
+        // as potentially dangerous and neutralized, same as =, +, @.
         val formulaFixed = if (formulaSafe) {
             val trimmed = stripped.trimStart()
-            val isDangerousFormula = trimmed.startsWith("=") || trimmed.startsWith("+") ||
-                trimmed.startsWith("@") ||
-                (trimmed.startsWith("-") && trimmed.length > 1 && !trimmed[1].isLetterOrDigit() && trimmed[1] != '.')
+            val isPlainNumber = trimmed.matches(Regex("^-?\\d+(\\.\\d+)?$"))
+            val isDangerousFormula = !isPlainNumber && (
+                trimmed.startsWith("=") || trimmed.startsWith("+") ||
+                    trimmed.startsWith("@") || trimmed.startsWith("-"))
             if (isDangerousFormula) {
                 "'$stripped"
             } else {
@@ -73,10 +76,14 @@ object CsvCellSanitizer {
             .replace("\r", "")
             .trim()
         val trimmed = stripped.trimStart()
-        // P12-PR1 (NEW-P12-007): Don't corrupt merchant names starting with "-"
-        val isDangerousFormula = trimmed.startsWith("=") || trimmed.startsWith("+") ||
-            trimmed.startsWith("@") ||
-            (trimmed.startsWith("-") && trimmed.length > 1 && !trimmed[1].isLetterOrDigit() && trimmed[1] != '.')
+        // P12-PR1 (NEW-P12-007): A leading "-" is safe ONLY when the entire trimmed
+        // value is a plain number (genuine negative amount). Any other leading "-"
+        // (e.g. "-2+3+cmd|'/C calc'!A0", "-cmd|'/C calc'!A0", "-Burger Joint") is treated
+        // as potentially dangerous and neutralized, same as =, +, @.
+        val isPlainNumber = trimmed.matches(Regex("^-?\\d+(\\.\\d+)?$"))
+        val isDangerousFormula = !isPlainNumber && (
+            trimmed.startsWith("=") || trimmed.startsWith("+") ||
+                trimmed.startsWith("@") || trimmed.startsWith("-"))
         return if (isDangerousFormula) {
             "'$stripped"
         } else {

@@ -1822,7 +1822,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
         }
 
-        return db.rawQuery("SELECT COUNT(*) FROM $tableName", null).use { cursor ->
+        // NEW-P7-006: quote the table identifier (SQLite uses double-quotes) and escape any
+        // embedded double-quotes so a table name can never be interpolated as raw SQL.
+        val safe = "\"" + tableName.replace("\"", "\"\"") + "\""
+        return db.rawQuery("SELECT COUNT(*) FROM $safe", null).use { cursor ->
             if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
     }

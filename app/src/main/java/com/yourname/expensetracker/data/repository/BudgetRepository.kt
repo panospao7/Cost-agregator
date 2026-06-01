@@ -251,16 +251,29 @@ class BudgetRepository @Inject constructor(
         // When false (default), only surplus is carried forward (surplus-only mode).
         if (budget.rollover && !initialLimitAggregate.isPartial) {
             val budgetFirstStart = budget.startDate
-            val periods = mutableListOf<PeriodRange>()
+            // Sliding window of retained periods. ArrayDeque keeps insertion order
+            // (head = oldest, tail = newest) so the carryover accumulator below still
+            // folds periods in chronological order.
+            val periods = ArrayDeque<PeriodRange>()
             // Use explicit evaluation times so every completed anchored cycle is
             // visited in order, regardless of where the evaluation time falls.
             var currentWindow = budgetCalculator.calculatePeriodWindowForTime(
                 budget.period, budgetFirstStart, budgetFirstStart
             )
-            // P6-PR1 (NEW-P6-004): Bound rollover loop to prevent O(N) queries for
-            // daily budgets with years of history. Beyond this limit, older surplus is lost.
-            while (currentWindow.end <= window.start && periods.size < MAX_ROLLOVER_PERIODS) {
-                periods.add(currentWindow)
+            // P6-PR1 (NEW-P6-004): Bound the rollover history to the MOST RECENT
+            // MAX_ROLLOVER_PERIODS completed periods so the per-period spend queries in
+            // the accumulator below stay O(MAX_ROLLOVER_PERIODS) (a daily budget with
+            // years of history would otherwise issue thousands). We still iterate
+            // forward (oldest -> newest) over every completed cycle — that is cheap
+            // in-memory calendar math — but slide the RETAINED set so it always ends at
+            // the current period: when it would exceed the cap we drop the OLDEST period,
+            // because the most recent periods are the ones that determine the current
+            // effective limit. Only the oldest surplus beyond the cap is dropped.
+            while (currentWindow.end <= window.start) {
+                periods.addLast(currentWindow)
+                if (periods.size > MAX_ROLLOVER_PERIODS) {
+                    periods.removeFirst()
+                }
                 currentWindow = budgetCalculator.calculatePeriodWindowForTime(
                     budget.period, budgetFirstStart, currentWindow.end
                 )

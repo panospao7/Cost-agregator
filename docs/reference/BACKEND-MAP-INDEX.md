@@ -1,7 +1,7 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
-**Generated:** 2026-04-06 (⚠️ STALE — see `docs/analyses and debug master/BACKEND-MAP-INDEX.md` for current)  
-**Total Files Documented:** 477 backend files + 317 test files (historical; current is ~926 + ~500+)  
+**Generated:** 2026-06-01  
+**Total Files Documented:** 1044 source files (518 domain + 298 data + 167 UI + 34 DI + 17 Service + 3 Startup + 2 Receiver + 1 Worker + 3 Util)  
 **Scope:** ExpenseTracker domain, data, and DI packages
 
 ---
@@ -11,7 +11,7 @@
 ### Primary Maps (NEW)
 
 1. **[COMPLETE-BACKEND-MAP.md](./COMPLETE-BACKEND-MAP.md)** ⭐ START HERE
-   - Exhaustive list of ALL 477 backend files
+    - Exhaustive list of ALL 1044 backend files
    - Organized by package and subpackage
    - File type, purpose, dependencies for each
    - Data flow diagrams
@@ -19,7 +19,7 @@
    - **Size:** ~8000 lines
 
 2. **[BACKEND-DEPENDENCIES.md](./BACKEND-DEPENDENCIES.md)** ⭐ DEPENDENCY CHAINS
-   - Test coverage summary (317 tests)
+    - Test coverage summary (475+ tests)
    - 7 critical dependency chains with visualizations
    - Repository → DAO → Entity relationships
    - Service → Engine → Utility stacks
@@ -47,10 +47,10 @@
 
 ### By Package Type
 
-#### Domain Package (244 files)
+#### Domain Package (518 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/domain/`
 
-- **AI Subsystem** (58 files)
+- **AI Subsystem** (64 files)
   - Models, policies, services, use cases
   - 24 use cases covering AI capabilities
 
@@ -81,44 +81,51 @@
   - Forecasting, location, parsing, receipt
   - Health, savings, subscriptions, tax
 
-#### Data Package (206 files)
+#### Data Package (298 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/data/`
 
-- **Database** (89 files)
-  - 1 main database (AppDatabase.kt)
-  - 62 DAOs (data access objects)
-  - 64 Entities (Room-managed tables)
-  - 6 composite models
+- **Database** (109 files)
+   - 1 main database (AppDatabase.kt, v143)
+   - 67 DAOs (data access objects)
+   - 69 Entities (Room-managed tables)
+   - 6 composite models
 
-- **Repositories** (56 files)
-  - Expense, budget, analytics, currency
-  - Merchant, location, notification
-  - Savings, subscription, warranty
+- **Repositories** (65 files)
+   - Expense, budget, analytics, currency
+   - Merchant, location, notification
+   - Savings, subscription, warranty
 
-- **AI Providers** (38 files)
-  - Cloud, OnDevice, Hybrid, NoOp implementations
-  - 8 capability types × 4 implementations
+- **AI Providers** (44 files)
+   - Cloud, OnDevice, Hybrid, NoOp implementations
+   - 8 capability types × 4 implementations
 
 - **Services & Adapters** (23 files)
-  - Email parsing, location geocoding
-  - Security, notifications, speech
+   - Email parsing, location geocoding
+   - Security, notifications, speech
 
-#### DI Package (31 modules)
+- **Backup** (4 files)
+   - `data/backup/` — BackupVerifier, CostbackupBundle, RestoreJournal, RestoreMaintenanceMode
+
+- **Privacy** (7 files)
+   - `data/privacy/` — PrivacySettingsRepositoryImpl, BackupEncryptionService, ExportAnonymizer, DataRetentionWorker, AtRestEncryptionService, PrivacyAuditLoggerImpl, DefaultCloudPayloadRedactor
+
+#### DI Package (34 modules)
 **Location:** `app/src/main/java/com/yourname/expensetracker/di/`
 
 - Database, DAO, Repository bindings
 - AI, services, location provider modules
 - Network, time, currency, parsing modules
 - Email ingestion, export, security modules
+- Diagnostics, provenance, reminder settings, retention, worker logging
 
 ---
 
 ## 🎯 By Architecture Layer
 
 ### Database Layer
-- **Core:** `AppDatabase.kt` (Room database)
-- **Access:** 62 DAOs for direct table access
-- **Entities:** 64 Room-managed entities
+- **Core:** `AppDatabase.kt` (Room database, v143)
+- **Access:** 67 DAOs for direct table access
+- **Entities:** 69 Room-managed entities
 - **Models:** 6 composite query result models
 - **Coordinator:** `GroupTransactionCoordinator.kt`
 
@@ -129,13 +136,13 @@
 - Manage database transactions
 
 ### Domain/Business Logic Layer
-- **244 files** implementing business rules
+- **518 files** implementing business rules
 - Engines, services, use cases
 - No database dependencies
 - Clean separation from infrastructure
 
 ### DI/Infrastructure Layer
-- **31 modules** managing dependencies
+- **34 modules** managing dependencies
 - Database, network, geocoding setup
 - AI capability routing
 - Service configuration
@@ -144,19 +151,19 @@
 
 ## 🔍 Files by Type
 
-### Database-Related (145 files)
-- DAOs (62), Entities (64), Models (6), Converters (1), Coordinator (1), Database (1)
+### Database-Related (178 files)
+- DAOs (67), Entities (69), Models (6), Converters (1), Coordinator (1), Database (1)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
 
-### Repository-Related (57 files)
-- Repositories (56), Adapters (1)
+### Repository-Related (65 files)
+- Repositories (52 data + 13 domain interfaces)
 - **Key files:** `ExpenseRepository.kt`, `BudgetRepository.kt`, `CategoryRepository.kt`
 
-### AI-Related (62 files)
-- Domain services (32), Data providers (32), Workers (2)
+### AI-Related (108+ files)
+- Domain services (32), Data providers (44), Workers (7)
 - **Key files:** `AiCapabilityRouter.kt`, `CloudCategorizationAssistService.kt`
 
-### Engine/Business Logic (50+ files)
+### Engine/Business Logic (70+ files)
 - Calculation, analysis, decision engines
 - **Key files:** `CategorizationEngine.kt`, `BudgetCalculator.kt`, `InsightsEngine.kt`
 
@@ -164,7 +171,7 @@
 - Text processing, math, time, geo utilities
 - **Key files:** `MerchantKeyGenerator.kt`, `AmountUtils.kt`
 
-### Models & Data Structures (30+ files)
+### Models & Data Structures (40+ files)
 - Request/response models, value objects
 - **Key files:** `AiModels.kt`, `DashboardPrimitives.kt`
 
@@ -174,20 +181,23 @@
 
 | Metric | Count |
 |--------|-------|
-| **Total Backend Files** | 477 |
-| Domain files | 244 |
-| Data files | 206 |
-| DI modules | 31 (⚠️ historical: 27) |
-| **Database Entities** | 64 (⚠️ historical: 55) |
-| **DAOs** | 62 (⚠️ historical: 54) |
-| **Repositories** | 56 |
-| **Use Cases** | 30+ |
-| **Engines** | 50+ |
+| **Total Source Files** | 1044 |
+| Domain files | 518 |
+| Data files | 298 |
+| UI files | 167 |
+| DI modules | 34 |
+| **Database Entities** | 69 |
+| **DAOs** | 67 |
+| **Repositories** | 65 (52 data + 13 domain interfaces) |
+| **Use Cases** | 41 |
+| **ViewModels** | 41 |
+| **Workers** | 7 |
+| **Engines** | 70+ |
 | **AI Services** | 32 |
 | **Parsers** | 8 |
 | **Geocoders** | 5 |
 | **Email Receipt Parsers** | 4 |
-| **Test Files** | 317 |
+| **Test Files** | 475+ |
 
 ---
 
@@ -253,14 +263,17 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 |-----------|---------|------|
 | **Token Encryption** | Bank token protection | `BankTokenCipher.kt` |
 | **Key Storage** | Secure key management | `SecureKeyStorage.kt` |
+| **At-Rest Encryption** | AES-256-GCM via Android Keystore | `AtRestEncryptionService.kt` |
 | **PII Sanitization** | Privacy protection | `CloudPiiSanitizer.kt` |
 | **Log Sanitizer** | Safe logging | `LogSanitizer.kt` |
+| **Backup Encryption** | AES-256-GCM + PBKDF2 for backups | `BackupEncryptionService.kt` |
+| **Export Anonymizer** | PII stripping for exports | `ExportAnonymizer.kt` |
 
 ---
 
 ## 🧪 Test Coverage
 
-**Total Tests:** 317
+**Total Tests:** 475+ (historical; coverage expanding)
 
 ### High-Coverage Areas
 - Consistency tests (15+ files)
@@ -364,9 +377,9 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 ## ✅ Completeness Checklist
 
-- ✅ ALL 244 domain files listed
-- ✅ ALL 206 data files listed
-- ✅ ALL 27 DI modules listed
+- ✅ ALL 518 domain files listed
+- ✅ ALL 298 data files listed
+- ✅ ALL 34 DI modules listed
 - ✅ File-by-file breakdown with:
   - ✅ File path
   - ✅ Class name
@@ -405,7 +418,7 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 ---
 
-**Last Updated:** 2026-04-06  
+**Last Updated:** 2026-06-01  
 **Version:** 1.0 - Complete Exhaustive Map  
 **Status:** ✅ Production-Ready Documentation
 

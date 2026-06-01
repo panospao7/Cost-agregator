@@ -1,6 +1,6 @@
 # ExpenseTracker Frontend UI/UX - Quick Reference Index
 
-**Scout Analysis Complete** | Generated: May 18, 2026
+**Scout Analysis Complete** | Generated: June 1, 2026
 
 ---
 
@@ -42,7 +42,7 @@ Index 4  Analytics/Insights  (AnalyticsScreen.kt)
 Index 5  Map/Spending Map    (SpendingMapScreen.kt)
 ```
 
-### Feature Screens (23 Config-Driven)
+### Feature Screens (23 Config-Driven + Debug/Management sub-screens)
 Accessible from: Home widgets, Features Menu, or deep links
 
 ```
@@ -79,6 +79,7 @@ Debug / Support Screens:
 - DebugScreen                (DebugScreen)
 - CategorizationDebugScreen  (CategorizationDebugScreen)
 - DebugViewerScreen          (DebugViewerScreen)
+- SourceLinkDebugScreen      (SourceLinkDebugScreen)
 - DebugIssueDetector         (debug support)
 ```
 
@@ -131,7 +132,7 @@ ui/screens/budget/                     ← Budget management & forecasting
 ui/screens/analytics/                  ← Analytics & advanced analytics
 ui/screens/map/                        ← Geo-visualization
 
-ui/components/                          ← 52 reusable components (incl. PrivacyBlockedCard)
+ui/components/                          ← 59 reusable components (incl. PrivacyBlockedCard)
 ui/theme/Theme.kt                       ← Color scheme (Midnight Navy)
 ui/theme/Dimens.kt                      ← Spacing & sizing constants
 ```
@@ -354,10 +355,10 @@ Scaffold(
 
 | Metric | Count |
 |--------|-------|
-| Screen Packages | 35 |
-| Screen Files | 38 |
+| Screen Packages | 36 |
+| Screen Files | 39 |
 | Component Files | 59 |
-| ViewModels | 38 (incl. MainViewModel) |
+| ViewModels | 40 (incl. MainViewModel) |
 | Navigation Files | 5 |
 | Feature Destinations | 23 |
 | Management Screens | 3 |
@@ -533,9 +534,9 @@ Column {
 
 ## 📝 SUMMARY
 
-**Total UI Files**: 164 (38 screen files, 59 components, 3 mappers, 7 utils, 5 nav/theme, 4 model, 2 theme, 3 sheets, 3 integration/debug)
+**Total UI Files**: 167 (39 screen files, 59 components, 3 mappers, 7 utils, 5 nav, 4 model, 2 theme, 7 util, 1 integration, 2 root)
 
-**Features**: 23 config-driven features + 3 management screens  
+**Features**: 23 config-driven features + 3 management screens + 4 debug screens  
 **Accessibility**: Material 3 standards compliant  
 **State Management**: ViewModel + StateFlow pattern  
 **Navigation**: Sealed class + CompositionLocal  

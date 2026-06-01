@@ -1,5 +1,5 @@
 # ExpenseTracker Frontend - Visual Navigation Map
-*Last refreshed: May 7, 2026*
+*Last refreshed: June 1, 2026*
 
 ## APPLICATION FLOW DIAGRAM
 
@@ -26,7 +26,7 @@
    │            │          │                    │
 ┌──▼──┐  ┌────▼───┐ ┌────▼───┐  ┌───────────────▼──────────┐
 │Tabs │  │Overlays│ │Features│  │NavigationDestination     │
-│0-5  │  │(Sheets)│ │(22)    │  │Sealed Class Router       │
+│0-5  │  │(Sheets)│ │(23)    │  │Sealed Class Router       │
 └──┬──┘  └────┬───┘ └────┬───┘  └───────────────┬──────────┘
    │          │          │                      │
    │     ┌────┴──┐       │                      │
@@ -64,9 +64,10 @@
                               ├─► ExportOptions
                               ├─► RecurringExpenses
                               ├─► ManualRecurringExpense
-                              ├─► SharedExpenseGroups
-                              ├─► AiSettings
-                              └─► CategoryManagement
+                                ├─► SharedExpenseGroups
+                               ├─► BackupRestore
+                               ├─► AiSettings
+                               └─► CategoryManagement
 ```
 
 ---
@@ -521,14 +522,15 @@ Modal Sheet (Bottom-up animation)
 │  │  ├─ Analytics                                               │
 │  │  └─ SpendingMap                                             │
 │  │                                                              │
-│  ├─ Overlay Screens (5)                                        │
-│  │  ├─ AddExpense                                              │
-│  │  ├─ ScanReceipt                                             │
-│  │  ├─ RecurringExpenses                                       │
-│  │  ├─ ManualRecurringExpense                                  │
-│  │  └─ Assistant                                               │
-│  │                                                              │
-│  ├─ Feature Screens (23)                                       │
+    │   ├─ Overlay Screens (6)                                        │
+    │  │  ├─ AddExpense                                              │
+    │  │  ├─ ScanReceipt                                             │
+    │  │  ├─ RecurringExpenses                                       │
+    │  │  ├─ ManualRecurringExpense                                  │
+    │  │  ├─ Assistant                                               │
+    │  │  └─ BudgetForecasting                                       │
+    │  │                                                              │
+    │  ├─ Feature Screens (22 + 3 management)                       │
 │  │  ├─ SavingsGoals                                            │
 │  │  ├─ CarbonFootprint                                         │
 │  │  ├─ WarrantyTracker                                         │
@@ -787,6 +789,8 @@ ui/
 │       ├── DebugViewerScreen.kt
 │       ├── CategorizationDebugScreen.kt
 │       ├── CategorizationDebugViewModel.kt
+│       ├── SourceLinkDebugScreen.kt
+│       ├── SourceLinkDebugViewModel.kt
 │       ├── DebugIssueDetector.kt
 │       └── DebugDataStorage.kt
 │

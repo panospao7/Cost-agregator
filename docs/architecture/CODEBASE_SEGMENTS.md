@@ -178,8 +178,14 @@ Owns recurring pattern detection, future recurring item planning, and the **recu
 - `domain/recurring/OccurrenceConflictResolver.kt` — Resolves candidates against actual expenses (PLANNED/PAID/SKIPPED)
 - `domain/recurring/RecurringPlanProjectionService.kt` — Materialises PlannedExpense rows from occurrences
 - `domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt` — **Primary entry point** for occurrence generation and management
-- `domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` — Rule-level lifecycle (deactivate/delete with atomic cleanup of occurrences, reminders, planned expenses)
+- `domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` — Single writer for rule CRUD (create/activate/update/deactivate/delete) with atomic cleanup of occurrences, reminders, planned expenses
+- `domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt` — Dual-channel event writing: `writeCritical()` (provenance, returns eventId) + `writeDiagnostic()` (best-effort informational)
+- `domain/recurring/lifecycle/OccurrenceGenerationOptions.kt` — Data class controlling reminder creation, windows, generation source, and past-due allowance during occurrence generation
+- `domain/recurring/lifecycle/RecurringExpenseReconcileResult.kt` — Sealed interface with 6 variants (Linked, Unlinked, Relinked, UpdatedLinkedSnapshot, NoMatch, Skipped) for link/unlink/reconcile ops
+- `domain/recurring/lifecycle/RecurringOccurrenceStatus.kt` — Typed enum (PLANNED, PAID, SKIPPED, MISSED, CANCELLED, IGNORED) replacing raw status strings
 - `domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt` — Persists occurrences and creates reminder deliveries
+- `domain/reminder/BillReminderSettings.kt` — Runtime dispatch settings (enabled/disabled, quiet hours)
+- `domain/reminder/BillReminderSettingsRepository.kt` — Repository for bill reminder dispatch control
 - `data/database/entity/RecurringOccurrence.kt` — Occurrence entity (table: `recurring_occurrences`)
 - `data/database/dao/RecurringOccurrenceDao.kt` — DAO for recurring occurrences
 - `data/database/entity/RecurringReminderDelivery.kt` — Reminder delivery entity (table: `recurring_reminder_deliveries`)
@@ -281,12 +287,19 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `data/location/LocationBackfillWorker.kt`
 - `data/location/MerchantKeyBackfillWorker.kt`
 - `data/privacy/DataRetentionWorker.kt`
-- `domain/workers/WorkerSpec.kt`
-- `domain/workers/WorkerSpecScheduler.kt`
+- `domain/workers/WorkerSpec.kt` — Worker default specs (interval, constraints, backoff, oneShotPolicy); DEFAULTS map with all 7 workers
+- `domain/workers/WorkerSpecScheduler.kt` — Centralized scheduling with version-change detection (force REPLACE on version bump)
 - `domain/workers/WorkerRunLogger.kt` — Per-run lifecycle tracking (start/success/skipped/retry/failure)
-- `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check
-- `domain/workers/WorkerRegistry.kt` — Centralized registry for all 7 workers (specName + schedule lambda); replaces hardcoded lists
-- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl
+- `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check, `RetryableWorkerException` retry contract, and notification-permission gate
+- `domain/workers/WorkerRegistry.kt` — Single-source-of-truth registry for all 7 workers (specName + schedule lambda); replaces hardcoded lists in RestoreMaintenanceMode/AppStartupCoordinator
+- `domain/workers/RetryableWorkerException.kt` — Typed retry signal; guard catch precedence: CancellationException → RetryableWorkerException (Retry) → classifyTransient → otherwise permanent Failed
+- `domain/workers/NotificationPermissionChecker.kt` — Guard-enforced notification-permission gate for WarrantyExpirationWorker
+- `domain/workers/PrivacyRuntimeWorkerPolicy.kt` — Maps privacy toggles to gated workers; PrivacySettingsRepositoryImpl.applyPrivacyChange() is policy-driven
+- `domain/workers/WorkerDrainController.kt` — Worker drain lifecycle controller
+- `domain/workers/WorkerLease.kt` / `WorkerLeaseRegistry.kt` / `WorkerLeaseRegistryImpl.kt` — Worker lease acquisition for exclusive execution
+- `domain/workers/WorkerRunContext.kt` — Per-run context with rowsScanned/rowsUpdated/notificationsSent tracking
+- `domain/workers/NoOpWorkerDrainController.kt` — No-op drain controller for testing/staging
+- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl, NotificationPermissionChecker → AndroidNotificationPermissionChecker
 - `service/reminder/BillReminderWorker.kt`
 - `service/receiptmatching/ReceiptMatchingWorker.kt`
 - `service/warranty/WarrantyExpirationWorker.kt`
@@ -331,17 +344,31 @@ Owns holdings, portfolio tracking, and investment metrics.
 
 Owns currency normalization, exchange-rate handling, multi-currency calculations, and type-safe money primitives.
 
-**Representative files — domain/core/money/**
-- `domain/core/money/CurrencyCode.kt` — Type-safe ISO 4217 value class
-- `domain/core/money/MoneyAmount.kt` — Amount + currency pair with safe arithmetic
+**Representative files — domain/core/money/** (24 files)
+- `domain/core/money/CurrencyCode.kt` — Type-safe ISO 4217 value class with ASCII validation
+- `domain/core/money/MoneyAmount.kt` — Amount + currency pair with safe arithmetic; ★ APPROVED TYPE ★
 - `domain/core/money/ConvertedMoney.kt` — Conversion result with rate metadata
-- `domain/core/money/MoneyBucket.kt` — Per-currency subtotal bucket
-- `domain/core/money/MoneyAggregate.kt` — Primary aggregation return type (replaces raw Double)
-- `domain/core/money/ConversionFailure.kt` — Failed conversion record
+- `domain/core/money/MoneyBucket.kt` — Per-currency subtotal bucket; finite guard against NaN/Infinity
+- `domain/core/money/MoneyBucketInput.kt` — Input for bucket computation
+- `domain/core/money/MoneyAggregate.kt` — Primary aggregation return type; ★ APPROVED TYPE ★; rateBasis, quality, metadata counters
+- `domain/core/money/MoneyAggregateBuilder.kt` — Builds `MoneyAggregate` from per-expense normalized amounts; `fromBuckets()` enforces RequireBucketDate
+- `domain/core/money/MoneyAggregateMetadata.kt` — Metadata counters for aggregate (expenseCount, currencyCount, etc.)
+- `domain/core/money/MoneyAggregateResult.kt` — Sealed: Available / Unavailable
+- `domain/core/money/ConversionFailure.kt` — Failed conversion record with FailureReason
+- `domain/core/money/ConversionFailureType.kt` — Enum: MISSING_RATE, INVALID_AMOUNT, RATE_STALE, UNKNOWN
+- `domain/core/money/ConversionOutcome.kt` — Sealed: Converted / Failed
+- `domain/core/money/ConversionPath.kt` — Records the conversion path (direct, via EUR cross-rate, etc.)
+- `domain/core/money/ConversionQuality.kt` — Quality metadata for conversion results
 - `domain/core/money/CurrencyAssumption.kt` — Why a currency was assigned (UNKNOWN, ASSUMED_LEGACY_EUR, etc.)
 - `domain/core/money/MoneyMappers.kt` — Bridge from legacy ConversionResult → ConvertedMoney
 - `domain/core/money/MoneyFormatUtils.kt` — MoneyAmount extension formatting functions
-- `domain/core/money/MoneyAggregateBuilder.kt` — Builds `MoneyAggregate` from per-expense normalized amounts
+- `domain/core/money/MoneyNormalizationEngine.kt` — Multi-expense normalization engine
+- `domain/core/money/NormalizationResult.kt` — Result type for normalization operations
+- `domain/core/money/RateBasis.kt` — Enum: LATEST_AVAILABLE, TRANSACTION_DATE, PERIOD_START, PERIOD_END, FORECAST_DATE, PERIOD_MIDPOINT_ESTIMATE
+- `domain/core/money/StaleRatePolicy.kt` — Policy for handling stale exchange rates
+- `domain/core/money/BucketDatePolicy.kt` — Policy for bucket date assignment
+- `domain/core/money/HomeCurrencyForMoneyMath.kt` — Home currency resolution for money math
+- `domain/core/money/TransactionTypeFilter.kt` — Filter for transaction type in aggregates
 
 **Representative files — legacy + new**
 - `domain/currency/CurrencyConverter.kt` — Currency conversion engine
@@ -378,16 +405,16 @@ Owns tax allocation and tax-aware reporting logic.
 Owns export pipelines, backup/restore flows, and file packaging.
 
 **Representative files**
-- `domain/export/CsvCellSanitizer.kt` — Kotlin `object` preventing CSV formula injection (neutralizes =, +, -, @, strips tabs/newlines)
-- `domain/export/AccountingExportPolicy.kt` — Export policy validation (single-currency, purchase-only, global dataset checks)
+- `domain/export/CsvCellSanitizer.kt` — Kotlin `object` preventing CSV formula injection (neutralizes =, +, -, @, single-quote prefix, strips tabs/newlines)
+- `domain/export/AccountingExportPolicy.kt` — Export policy validation (single-currency, purchase-only, global dataset checks via `validateGlobalDataset()`)
 - `data/repository/AccountingExportRepository.kt`
 - `data/repository/DatabaseBackupRepositoryImpl.kt`
-- `data/backup/BackupVerifier.kt`
-- `data/backup/CostbackupBundle.kt`
-- `data/backup/RestoreJournal.kt`
-- `data/backup/RestoreMaintenanceMode.kt`
-- `data/backup/DatabaseReadBarrier.kt` — Operation-level read blocking during restore
-- `data/backup/DatabaseWriteBarrier.kt` — Operation-level write blocking during restore
+- `data/backup/BackupVerifier.kt` — 57-entity 3-tier verification (TIER_1_EXACT / TIER_2_VALIDITY / TIER_3_OPTIONAL)
+- `data/backup/CostbackupBundle.kt` — AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
+- `data/backup/RestoreJournal.kt` — Crash-safe 8-state restore journal; ASSETS_RESTORING state for asset recovery
+- `data/backup/RestoreMaintenanceMode.kt` — 8-state mode manager; pauses 7 workers; BACKUP_EXPORTING mode
+- `data/backup/DatabaseReadBarrier.kt` — Operation-level read blocking during restore (allows NORMAL/BACKUP_EXPORTING)
+- `data/backup/DatabaseWriteBarrier.kt` — Operation-level write blocking during restore (throws IllegalStateException in non-NORMAL/BACKUP_EXPORTING modes)
 - `domain/backup/BackupPrivacyMode.kt` — enum defining 4 backup privacy levels
 - `domain/backup/DatabaseBackupRepository.kt`
 - `domain/export/AccountingExporters.kt`
@@ -416,9 +443,9 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 **Representative files**
 - `di/AiModule.kt`
 - `domain/ai/policy/AiPolicy.kt`
-- `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across provider services
+- `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across 6 hybrid AI services (cloud/on-device/fallback routing; AID-4)
 - `ui/screens/assistant/AssistantSheet.kt`
-- `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction
+- `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`
 - `data/ai/provider/StrictAiJsonParsing.kt`
@@ -522,18 +549,20 @@ Owns encrypted key storage and security/network bindings.
 - `di/SecurityModule.kt`
 - `di/NetworkModule.kt`
 - `di/NetworkQualifiers.kt`
-- `domain/privacy/CloudPayloadRedactor.kt` — unified cloud AI payload redaction interface
-- `data/privacy/DefaultCloudPayloadRedactor.kt` — wraps CloudPiiSanitizer (ARCH-04 Stage 1)
+- `domain/privacy/CloudPayloadRedactor.kt` — Unified cloud AI payload redaction interface
+- `data/privacy/DefaultCloudPayloadRedactor.kt` — Wraps CloudPiiSanitizer (ARCH-04 Stage 1)
+- `domain/privacy/CloudPayloadPolicy.kt` — Interface + `DefaultCloudPayloadPolicy`; `PreparedCloudPayload` contract for all 7 cloud providers; replaces `CloudPayloadRedactor` entirely
+- `data/privacy/CloudPayloadPolicy.kt` — Data-layer implementation of cloud payload policy
 - `domain/privacy/RawStorageMode.kt` — Enum: STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE
-- `domain/privacy/RawContentSanitizer.kt` — Write-time sanitizer applying RawStorageMode to OCR/email content
-- `domain/privacy/EffectiveCloudAiPolicy.kt` — Resolves effective cloud AI policy from privacy + AI settings, used by hybrid services for pre-flight checks
-- `domain/privacy/PrivacyBlocked.kt` — Sealed interface standardizing privacy-denied states (CloudAiDisabled, ReceiptImageUploadDisabled, etc.); returned by all privacy gates
-- `domain/privacy/PrivacyDecision.kt` — Now includes `FailClosed(reason)` variant; `blocksExecution()` and `reason()` methods; 30+ callers use for fail-closed propagation
-- `ui/components/PrivacyBlockedCard.kt` — Reusable Compose card for privacy-blocked state display
+- `domain/privacy/RawContentSanitizer.kt` — Write-time sanitizer applying RawStorageMode to OCR/email content; HMAC-safe variants (removed String.hashCode())
+- `domain/privacy/EffectiveCloudAiPolicy.kt` — Resolves effective cloud AI policy from privacy + AI settings (`cloudAllowed`, `redactBeforeCloud`, `receiptImageUploadAllowed`, `bankStatementCloudAllowed` flags)
+- `domain/privacy/PrivacyBlocked.kt` — Sealed interface standardizing privacy-denied states: CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled, NotificationCaptureDisabled, RawExportDisabled, Custom
+- `domain/privacy/PrivacyDecision.kt` — Sealed interface: `Allowed`, `Denied(reason)`, `FailClosed(reason)`; `blocksExecution()` returns true for both Denied and FailClosed; `reason()` for all variants; 30+ callers use for fail-closed propagation
+- `ui/components/PrivacyBlockedCard.kt` — Reusable Compose card for privacy-blocked state with lock icon, "Feature disabled" title, and specific PrivacyBlocked reason
 
 ## SEGMENT 29: Debug & Diagnostics
 
-Owns debug surfaces, issue detectors, and test data helpers.
+Owns debug surfaces, diagnostics pipeline, pipeline diagnostics, data integrity scanning, and retention system.
 
 **Representative files**
 - `ui/screens/debug/DebugScreen.kt`
@@ -541,6 +570,18 @@ Owns debug surfaces, issue detectors, and test data helpers.
 - `ui/screens/debug/DebugViewerScreen.kt`
 - `domain/debug/ServiceDiagnostics.kt`
 - `domain/debug/NotificationSeeder.kt`
+- `domain/diagnostics/DatabaseIntegrityScanner.kt` — Scans for 11 invariant violations (duplicate active budgets, current user per group, fingerprint collisions, etc.)
+- `domain/diagnostics/DiagnosticsModule.kt` — Diagnostics DI wiring
+- `data/database/entity/PipelineDiagnosticEvent.kt` — Cross-pipeline diagnostic event (table: `pipeline_diagnostic_events`)
+- `data/database/dao/PipelineDiagnosticEventDao.kt` — DAO for pipeline diagnostic events
+- `data/database/entity/OperationRunEvent.kt` — Operation run event record
+- `data/database/dao/OperationRunEventDao.kt` — DAO for operation run events
+- `data/database/entity/OperationRun.kt` — Operation run record
+- `data/database/dao/OperationRunDao.kt` — DAO for operation runs
+- `domain/diagnostics/RetentionTarget.kt` — Interface for retention-purgeable targets
+- `domain/diagnostics/RetentionRegistry.kt` — Registry with 5 registered retention targets
+- `domain/diagnostics/RetentionPurgeResult.kt` — Result type for retention purge operations
+- `di/RetentionModule.kt` — DI bindings for retention targets
 
 ## SEGMENT 30: Dependency Injection
 
@@ -551,11 +592,15 @@ Owns Hilt module wiring and app-wide providers.
 - `di/BackupRepositoryModule.kt`
 - `di/DatabaseModule.kt`
 - `di/DaoModule.kt`
+- `di/DiagnosticsModule.kt` — Pipeline diagnostics bindings (OperationRunDao, OperationRunEventDao)
 - `di/DispatchersModule.kt`
 - `di/PrivacyModule.kt`
+- `di/ProvenanceModule.kt` — Data provenance bindings
+- `di/ReminderSettingsModule.kt` — BillReminderSettingsRepository binding
+- `di/RetentionModule.kt` — Retention target registry bindings (5 registered targets)
 - `di/ServiceModule.kt`
 - `di/TimeModule.kt`
-- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl
+- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl, NotificationPermissionChecker → AndroidNotificationPermissionChecker
 - `MainApplication.kt`
 
 **Boundary note:** `BackupRepositoryModule.kt` is also listed under Segment 18 (Export & Backup) as it cross-cuts DI wiring with backup infrastructure. `PrivacyModule.kt` cross-cuts with Segment 28 (Security & API Key Management).
@@ -674,20 +719,20 @@ File-to-segment mapping for all 38 segments:
 | 4 | Receipt Scanning (OCR) & Lifecycle | `domain/receipt/`, `receipt_events`, `receipt_expense_links`, OCR lifecycle |
 | 5 | AI Receipt Item Categorization | `domain/ai/usecase/CategorizeReceiptItems`, `ReceiptItemCategorization` |
 | 6 | Merchant Categorization | `domain/categorization/`, `MerchantCanonicalizer`, `HybridExpenseClassifier` |
-| 7 | Recurring Expenses | `domain/recurring/`, `recurring_occurrences`, recurring lifecycle |
-| 8 | Analytics & Insights | `domain/analytics/`, `InsightsEngine`, `AnomalyDetector`, `PipelineDiagnosticEvent` |
+| 7 | Recurring Expenses | `domain/recurring/`, `recurring_occurrences`, recurring lifecycle, `RecurringRuleLifecycleCoordinator`, `RecurringLifecycleEventWriter`, `RecurringOccurrenceStatus`, `BillReminderSettings` |
+| 8 | Analytics & Insights | `domain/analytics/`, `InsightsEngine`, `AnomalyDetector`, `PipelineDiagnosticEvent`, `DailyBucketEngine`, `BudgetVsActualEngine`, `DataQualityReport` |
 | 9 | Core Expense Management | `domain/transaction/`, `TransactionLifecycleCoordinator`, `transaction_events`, expense CRUD, `ImportCoordinator`, `JsonExpenseImporter` |
-| 10 | Dashboard Totals & Widgets | `TotalsAggregationEngine`, `DashboardRepository`, totals UI |
+| 10 | Dashboard Totals & Widgets | `TotalsAggregationEngine`, `DashboardRepository`, `DataQualityReport`, totals UI |
 | 11 | Notifications & Alerts | `NotificationService` |
-| 12 | Startup & Background Runtime | `startup/`, workers, `AppStartupCoordinator`, `WorkerRunLogger`, `WorkerExecutionGuard`, `WorkerModule` |
+| 12 | Startup & Background Runtime | `startup/`, workers, `AppStartupCoordinator`, `WorkerRunLogger`, `WorkerExecutionGuard`, `WorkerRegistry`, `WorkerSpecScheduler`, `PrivacyRuntimeWorkerPolicy`, `WorkerModule` |
 | 13 | Cash Flow Planning | `domain/cashflow/`, `CashFlowCalculator` |
 | 14 | Bank Integration | `domain/bank/`, `BankConnection` |
 | 15 | Investment Tracking | `domain/investment/`, `InvestmentTracker`, `InvestmentDataQuality`, `InvestmentPerformance` |
-| 16 | Currency & Exchange | `domain/core/money/`, `CurrencyConverter`, `MultiCurrencyRepository` |
+| 16 | Currency & Exchange | `domain/core/money/` (14 files), `CurrencyConverter`, `MultiCurrencyRepository`, `AnalyticsCurrencyNormalizer` |
 | 17 | Tax Calculation & Reporting | `domain/tax/`, `TaxEstimator`, `TaxRateProvider`, `DemoTaxRateProvider` |
-| 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport`, `CsvCellSanitizer`, `DatabaseReadBarrier`, `DatabaseWriteBarrier` |
+| 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport`, `CsvCellSanitizer`, `AccountingExportPolicy`, `DatabaseReadBarrier`, `DatabaseWriteBarrier` |
 | 19 | Location Enrichment | `domain/location/`, `CompositeGeocodingService` |
-| 20 | AI Platform, Assistant & Follow-Through | `domain/ai/policy/`, `AiModule`, assistant, briefing |
+| 20 | AI Platform, Assistant & Follow-Through | `domain/ai/policy/`, `domain/ai/HybridRouter`, `AiModule`, assistant, briefing, `AssistantHistoryMode` |
 | 21 | Enhanced Split Transactions | `domain/split/`, `VisualSplitEditor`, `SplitTemplate` |
 | 22 | Lifestyle Inflation Detector | `domain/lifestyle/`, `LifestyleInflationDetector` |
 | 23 | Savings Prompts & Nudges | `domain/usecase/savings/`, `PromptState` |
@@ -695,17 +740,17 @@ File-to-segment mapping for all 38 segments:
 | 25 | Shared Expense Budget Offset | `SharedExpenseBudgetOffsetEngine` |
 | 26 | Natural Language Search | `domain/naturallanguage/` |
 | 27 | Carbon Footprint Tracking | `domain/carbon/` |
-| 28 | Security & API Key Management | `data/security/`, `SecurityModule`, `CloudPayloadRedactor`, `RawStorageMode`, `RawContentSanitizer`, `EffectiveCloudAiPolicy` |
-| 29 | Debug & Diagnostics | `DebugScreen`, `ServiceDiagnostics` |
-| 30 | Dependency Injection | `di/` modules, `MainApplication.kt`, `WorkerModule` |
+| 28 | Security & API Key Management | `data/security/`, `SecurityModule`, `CloudPayloadPolicy`, `CloudPayloadRedactor`, `RawStorageMode`, `RawContentSanitizer`, `EffectiveCloudAiPolicy`, `PrivacyBlocked`, `PrivacyDecision`, `PrivacyBlockedCard` |
+| 29 | Debug & Diagnostics | `DebugScreen`, `ServiceDiagnostics`, `DatabaseIntegrityScanner`, `PipelineDiagnosticEvent`, `RetentionTarget` |
+| 30 | Dependency Injection | `di/` modules, `MainApplication.kt`, `WorkerModule`, `RetentionModule`, `DiagnosticsModule`, `ProvenanceModule`, `ReminderSettingsModule` |
 | 31 | Use Cases | `domain/usecase/` |
 | 32 | Utilities & Shared Helpers | `domain/util/`, `domain/core/time/` |
 | 33 | Configuration, Performance & Accessibility | `domain/config/`, accessibility components |
-| 34 | Warranty, Subscription & Offers | `WarrantyTracker`, `SubscriptionManagement`, `PriceProtection` |
+| 34 | Warranty, Subscription & Offers | `WarrantyTracker`, `SubscriptionManagement`, `PriceProtection`, `MarketRateProvider`, `StaticMarketRateProvider` |
 | 35 | Savings Optimization & Health | `domain/savings/`, `FinancialHealthScore` |
-| 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager` |
+| 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager`, `BillReminderSettings`, `ReminderSettingsModule` |
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
-| 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher` |
+| 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
 
 ### Quick checks
 - Forecast issues → Segment 1
@@ -721,6 +766,9 @@ File-to-segment mapping for all 38 segments:
 - Startup / background worker issues → Segment 12
 - Multi-currency issues → Segment 16
 - Privacy settings issues → Segment 28 / Segment 6 (merchant cat.)
+- Cloud AI policy issues → Segment 20 / Segment 28
+- Export / backup failures → Segment 18
+- Diagnostics / pipeline issues → Segment 29
 - Smart savings / health score issues → Segment 35
 - Bill reminder issues → Segment 36
 - Spending challenge issues → Segment 37

@@ -28,48 +28,48 @@ class UberReceiptParser : BaseEmailParser() {
 
         // Amount extraction patterns for different Uber receipt types
         private val RIDE_AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""You paid\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Charged\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Amount charged\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("""Total\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""You paid\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Charged\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Amount charged\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
         )
 
         private val EATS_AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Order Total\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""You paid\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("""Total\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Order Total\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""You paid\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
         )
 
         // Trip/Order ID patterns
         private val TRIP_ID_PATTERNS = listOf(
-            Pattern.compile("""Trip ID\\s*:?\\s*([A-Za-z0-9-]+)""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Order ID\\s*:?\\s*([A-Za-z0-9-]+)""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Receipt #\\s*:?\\s*([A-Za-z0-9-]+)""", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("""Trip ID\s*:?\s*([A-Za-z0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Order ID\s*:?\s*([A-Za-z0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Receipt #\s*:?\s*([A-Za-z0-9-]+)""", Pattern.CASE_INSENSITIVE)
         )
 
         // Date patterns specific to Uber receipts
         private val DATE_PATTERNS = listOf(
             DatePattern(
                 Pattern.compile(
-                    """(?:Trip|Order) date\\s*:?\\s*([\\p{L}]+\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\s+[\\p{L}]+\\s+\\d{4})""",
+                    """(?:Trip|Order) date\s*:?\s*([\p{L}]+\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+[\p{L}]+\s+\d{4})""",
                     Pattern.CASE_INSENSITIVE
                 )
             ),
             DatePattern(
                 Pattern.compile(
-                    """(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\\s+([\\p{L}]+\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\s+[\\p{L}]+\\s+\\d{4})""",
+                    """(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+([\p{L}]+\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+[\p{L}]+\s+\d{4})""",
                     Pattern.CASE_INSENSITIVE
                 )
             ),
             DatePattern(
                 Pattern.compile(
-                    """\\d{1,2}:\\d{2}\\s+(?:AM|PM)?[^\\d]*([\\p{L}]+\\s+\\d{1,2}|\\d{1,2}\\s+[\\p{L}]+)""",
+                    """\d{1,2}:\d{2}\s+(?:AM|PM)?[^\d]*([\p{L}]+\s+\d{1,2}|\d{1,2}\s+[\p{L}]+)""",
                     Pattern.CASE_INSENSITIVE
                 )
             ),
             DatePattern(
                 Pattern.compile(
-                    """([\\p{L}]+\\s+\\d{1,2}|\\d{1,2}\\s+[\\p{L}]+)\\s+at\\s+\\d""",
+                    """([\p{L}]+\s+\d{1,2}|\d{1,2}\s+[\p{L}]+)\s+at\s+\d""",
                     Pattern.CASE_INSENSITIVE
                 )
             )
@@ -150,7 +150,7 @@ class UberReceiptParser : BaseEmailParser() {
         
         // Fallback: look for amount near "total" keyword
         val fallbackPattern = Pattern.compile(
-            """total[^\\d]{0,30}(${amountCapturePattern})""",
+            """total[^\d]{0,30}(${amountCapturePattern})""",
             Pattern.CASE_INSENSITIVE
         )
         val matcher = fallbackPattern.matcher(text)
@@ -256,7 +256,7 @@ class UberReceiptParser : BaseEmailParser() {
         return if (isEats) {
             // Try to extract restaurant name for Eats
             val restaurantPattern = Pattern.compile(
-                """(?:Restaurant|From|Ordered from)\\s*:?\\s*([^\\n]{2,50})""",
+                """(?:Restaurant|From|Ordered from)\s*:?\s*([^\n]{2,50})""",
                 Pattern.CASE_INSENSITIVE
             )
             val matcher = restaurantPattern.matcher(text)
@@ -268,7 +268,7 @@ class UberReceiptParser : BaseEmailParser() {
         } else {
             // For rides, try to get driver name or just return "Uber Ride"
             val driverPattern = Pattern.compile(
-                """(?:Your driver|Driver)\\s*:?\\s*([A-Za-z]+)""",
+                """(?:Your driver|Driver)\s*:?\s*([A-Za-z]+)""",
                 Pattern.CASE_INSENSITIVE
             )
             val matcher = driverPattern.matcher(text)

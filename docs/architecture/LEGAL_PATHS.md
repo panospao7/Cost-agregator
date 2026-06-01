@@ -188,22 +188,37 @@ FORBIDDEN:
 
 ```
 CLOUD AI call:
-  → Check EffectiveCloudAiPolicy via CloudAiPrivacyGate
-  → If redactBeforeCloud: apply CloudPayloadPolicy via DefaultCloudPayloadPolicy.prepare(payload, purpose)
-  → Send only PreparedCloudPayload (all 7 cloud providers use this contract)
+  → Check EffectiveCloudAiPolicy via CloudAiPrivacyGate (covers CLOUD_AI_GENERAL,
+    DAILY_BRIEFING, RECEIPT_ASSIST, BANK_STATEMENT, etc.)
+  → If redactBeforeCloud: apply CloudPayloadPolicy via DefaultCloudPayloadPolicy.prepareText()
+    / prepareReceiptAssist() / prepareBankStatementValidation() (no generic prepare())
+  → PreparedCloudPayload contract used by all 7 cloud providers
   → Audit via CompositePrivacyGate final decision
 
 RAW DATA storage:
-  → Check RawStorageMode / emailReceiptStorageMode
-  → Processing uses EPHEMERAL in-memory text
-  → DB stores SANITIZED version per mode
+  → Check RawStorageMode (STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE)
+  → RawContentSanitizer applies per-mode sanitization for every source:
+    email, notification, bank statement, OCR text
+  → Processing uses EPHEMERAL in-memory text; DB stores SANITIZED version per mode
   → DO_NOT_STORE = no raw text persisted, processing still works
 
+PRIVACY BLOCKED states:
+  → PrivacyBlocked sealed interface with typed subclasses:
+    CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled,
+    NotificationCaptureDisabled, RawExportDisabled, DeviceGpsDisabled,
+    BackgroundLocationDisabled, BankStatementAiDisabled, EncryptedBackupDisabled,
+    OverpassDisabled, DebugDataPersistenceDisabled, Custom
+  → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
+  → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
+  → 30+ callers use blocksExecution() before proceeding
+
 FORBIDDEN:
-  ❌ Cloud HTTP without privacy gate check
+  ❌ Cloud HTTP without privacy gate check (must pass through CompositePrivacyGate)
   ❌ Using AiSettings.redactBeforeCloud directly (use EffectiveCloudAiPolicy)
-  ❌ Storing raw text when mode is DO_NOT_STORE/METADATA_ONLY
+  ❌ Storing raw text when mode is DO_NOT_STORE / METADATA_ONLY
   ❌ Parsing from stored (sanitized) text instead of ephemeral
+  ❌ Using raw strings instead of typed PrivacyBlocked for UI states
+  ❌ Silently proceeding when PrivacyDecision.FailClosed is returned
 ```
 
 ---
@@ -212,26 +227,58 @@ FORBIDDEN:
 
 ```
 BACKUP:
-  → Enter BACKUP_EXPORTING mode (blocks all writes)
+  → Enter BACKUP_EXPORTING mode (blocks all writes, pauses workers)
   → Checkpoint WAL (TRUNCATE)
   → Delete stale WAL/SHM
   → Copy DB file
-  → Exit mode
+  → Exit BACKUP_EXPORTING mode (workers rescheduled)
 
 RESTORE:
-  → Enter RESTORE_PREPARING
-  → Journal every state transition (atomic write: temp+rename)
-  → Maintenance mode persisted with commit() (not apply())
+  → 11 maintenance modes, persisted via SharedPreferences (commit() not apply()):
+    NORMAL / BACKUP_EXPORTING / RESTORE_PREPARING / RESTORE_STAGING /
+    RESTORE_SWAPPING / RESTORE_VERIFYING / RESTORE_ROLLING_BACK /
+    ASSETS_RESTORING / RESETTING_DATABASE /
+    RESTORE_COMPLETE_RESTART_REQUIRED / CRITICAL_RECOVERY_REQUIRED
+  → 9-state RestoreJournal (append-only file, atomic temp+rename):
+    PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING →
+    VERIFYING → ASSETS_RESTORING → COMPLETE
+    (on failure: ROLLING_BACK → FAILED)
   → Delete WAL/SHM before installing restored DB
   → On rollback failure: enter CRITICAL_RECOVERY_REQUIRED (fail-closed, persists across restarts)
   → On startup crash-recovery failure: enter CRITICAL_RECOVERY_REQUIRED (NOT reset on later restarts)
   → Forced restart after success (RESTORE_COMPLETE_RESTART_REQUIRED; auto-reset to NORMAL on next clean start)
+  → DatabaseReadBarrier / DatabaseWriteBarrier gate all reads and writes during backup/restore
 
 FORBIDDEN:
-  ❌ Any DB write during restore (DatabaseWriteBarrier blocks all)
+  ❌ Any DB write outside NORMAL mode (DatabaseWriteBarrier blocks all non-NORMAL modes)
+  ❌ Any DB read during restore stages (DatabaseReadBarrier denies during restore)
   ❌ Using stale Room instance after DB swap (forced restart)
   ❌ Exiting maintenance to NORMAL after failed rollback
   ❌ Raw .db export in release builds
+```
+
+---
+
+## Accounting Export
+
+```
+EXPORT expenses:
+  → AccountingExportPolicy determines allowed formats (CSV, QIF, IIF)
+  → ExportPrivacyGate checks typed capabilities:
+       EXPENSE_EXPORT (plain CSV — always allowed)
+       EXPENSE_EXPORT_ENCRYPTED (requires encryptedBackupEnabled)
+       EXPENSE_EXPORT_REDACTED (always safe — sensitive fields stripped)
+       EXPENSE_EXPORT_RAW (requires debugDataPersistenceEnabled)
+       DEBUG_RAW_EXPORT (debug build + consent)
+       RAW_DATABASE_EXPORT (debug build + consent — release-denied)
+  → CsvCellSanitizer neutralizes formula injection (=, +, -, @) for every CSV/IIF cell
+  → ExportOptionsViewModel orchestrates gate + export + diagnostics
+
+FORBIDDEN:
+  ❌ EXPENSE_EXPORT_RAW without debugDataPersistenceEnabled consent
+  ❌ RAWBACKUP_EXPORT for normal expense export (use EXPENSE_EXPORT)
+  ❌ Unsanitized CSV cells (must use CsvCellSanitizer.sanitize / sanitizeIif)
+  ❌ Encrypted export privacy check bypass
 ```
 
 ---
@@ -241,11 +288,12 @@ FORBIDDEN:
 ```
 EVERY worker:
   → WorkerExecutionGuard.runGuarded() / runGuardedWithContext()
-       [checks barrier FIRST, then logs run]
+       [checks write barrier FIRST, then logs run]
   → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
-  → Checkpoint before long loops (ensureActive/writeBarrier)
+  → Checkpoint before long loops (ensureActive / writeBarrier.checkWritesAllowed)
   → Guard enforces requiresNotificationPermission via NotificationPermissionChecker
        (durable skip: NOTIFICATION_PERMISSION_DENIED)
+  → PrivacyRuntimeWorkerPolicy checks per-worker privacy consent
 
 RETRY CONTRACT:
   → To request a WorkManager retry, THROW RetryableWorkerException.
@@ -272,6 +320,7 @@ FORBIDDEN:
   ❌ runBlocking inside suspend worker code
   ❌ Writing BackgroundJobRun before checking write barrier
   ❌ Throwing a plain RuntimeException to mean "retry" (it is PERMANENT)
+  ❌ Bypassing WorkerExecutionGuard in any CoroutineWorker
 ```
 
 ---
@@ -308,9 +357,16 @@ EVERY pipeline exit must write a durable event:
   → RecurringLifecycleEvent (recurring lifecycle)
   → BackgroundJobRun (worker lifecycle)
 
+Exception messages sanitized via EventMetadataSanitizer.sanitizeExceptionMessage():
+  → Digit sequences (12+), IBANs, JWT tokens, Bearer tokens → [REDACTED]
+  → File paths → [PATH] (not [REDACTED])
+  → Messages truncated to MAX_STRING_LENGTH (256 chars)
+  → URLs and email addresses are NOT explicitly matched (may be caught incidentally)
+
 FORBIDDEN:
   ❌ Timber-only logging for pipeline decisions (must also write durable event)
   ❌ Swallowing CancellationException (always rethrow)
+  ❌ Logging unsanitized exception messages to durable storage
 ```
 
 ---

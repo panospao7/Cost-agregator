@@ -15,7 +15,8 @@ import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
-import com.yourname.expensetracker.domain.transaction.SideEffectMode
+import com.yourname.expensetracker.domain.sideeffect.MutationResult
+import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
@@ -120,7 +121,8 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(100L)
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(100L), PostCommitActionBatch.empty(""))
 
         // Act
         val result = repository.approveReview(reviewId)
@@ -129,7 +131,7 @@ class ReviewQueueRepositoryTest {
         assertTrue(result is Result.Success)
         assertEquals(100L, (result as Result.Success).data)
         
-        coVerify { transactionLifecycleCoordinator.createExpense(match { it.merchant == "Test Merchant" && it.amount == 50.0 }, any()) }
+        coVerify { transactionLifecycleCoordinator.createExpenseDbOnlyV2(match { it.merchant == "Test Merchant" && it.amount == 50.0 }) }
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
         coVerify { userCorrectionDao.insert(any()) }
         coVerify { classifier.retrainFromCorrections() }
@@ -165,7 +167,8 @@ class ReviewQueueRepositoryTest {
             )
         } returns 1
         val requestSlot = slot<com.yourname.expensetracker.domain.transaction.CreateExpenseRequest>()
-        coEvery { transactionLifecycleCoordinator.createExpense(capture(requestSlot), any()) } returns CreateExpenseResult.Created(150L)
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(capture(requestSlot)) } returns
+            MutationResult(CreateExpenseResult.Created(150L), PostCommitActionBatch.empty(""))
 
         val result = repository.approveReview(
             reviewId = reviewId,
@@ -211,18 +214,13 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        // Canonical currency+type-aware policy detects duplicate before insert
-        coEvery {
-            expenseDao.isDuplicateCurrencyAware(
-                amount = 10.0,
-                merchant = "Dup",
-                date = any(),
-                currency = "EUR",
-                transactionType = "PURCHASE",
-                merchantKey = any(),
-                dedupeKey = any()
+        // Dedup is now owned by the coordinator: it returns DuplicateSkipped instead of
+        // the repository performing a pre-insert isDuplicateCurrencyAware check.
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(
+                CreateExpenseResult.DuplicateSkipped(existingExpenseId = 99L, reason = "canonical-duplicate"),
+                PostCommitActionBatch.empty("")
             )
-        } returns true
 
         // Act
         val result = repository.approveReview(reviewId)
@@ -230,8 +228,6 @@ class ReviewQueueRepositoryTest {
         // Assert
         assertEquals(Result.Duplicate, result)
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE) }
-        // coordinator.createExpense must NOT be called when the pre-check already detected a duplicate
-        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpense(any(), any()) }
     }
 
     @Test
@@ -261,10 +257,10 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        // Pre-check says no duplicate (race window), but the coordinator detects a
-        // concurrently inserted canonical duplicate and returns InsertConflict.
-        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
-        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.InsertConflict(dedupeKey = "race-key")
+        // The coordinator (single dedup owner) detects a concurrently inserted
+        // canonical duplicate and returns InsertConflict.
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.InsertConflict(dedupeKey = "race-key"), PostCommitActionBatch.empty(""))
 
         // Act
         val result = repository.approveReview(reviewId)
@@ -369,27 +365,18 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        // The currency+type-aware policy returns false: DEPOSIT vs PURCHASE types differ
-        coEvery {
-            expenseDao.isDuplicateCurrencyAware(
-                amount = 10.0,
-                merchant = "Acme",
-                date = any(),
-                currency = "EUR",
-                transactionType = "DEPOSIT",
-                merchantKey = any(),
-                dedupeKey = any()
-            )
-        } returns false
-        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(200L)
+        // Dedup is owned by the coordinator. An incompatible-type DEPOSIT is not a
+        // duplicate of an existing PURCHASE, so the coordinator returns Created.
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(200L), PostCommitActionBatch.empty(""))
 
         val result = repository.approveReview(reviewId)
 
         assertTrue("DEPOSIT with incompatible type to existing PURCHASE must be approved, got $result",
             result is Result.Success)
         assertEquals(200L, (result as Result.Success).data)
-        // createExpense must be called -- not short-circuited by a type-blind key check
-        coVerify { transactionLifecycleCoordinator.createExpense(match { it.transactionType == TransactionType.DEPOSIT }, any()) }
+        // coordinator must be called with the DEPOSIT request -- not short-circuited
+        coVerify { transactionLifecycleCoordinator.createExpenseDbOnlyV2(match { it.transactionType == TransactionType.DEPOSIT }) }
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
     }
 
@@ -422,19 +409,10 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        // The currency-aware policy returns false: EUR ≠ USD
-        coEvery {
-            expenseDao.isDuplicateCurrencyAware(
-                amount = 50.0,
-                merchant = "Shop",
-                date = reviewDate,
-                currency = "EUR",
-                transactionType = "PURCHASE",
-                merchantKey = any(),
-                dedupeKey = any()
-            )
-        } returns false
-        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(300L)
+        // Dedup is owned by the coordinator. EUR ≠ USD, so the coordinator does not
+        // treat this as a duplicate and returns Created.
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(300L), PostCommitActionBatch.empty(""))
 
         val result = repository.approveReview(reviewId)
 
@@ -442,17 +420,10 @@ class ReviewQueueRepositoryTest {
             result is Result.Success)
         assertEquals(300L, (result as Result.Success).data)
         coVerify {
-            expenseDao.isDuplicateCurrencyAware(
-                amount = 50.0,
-                merchant = "Shop",
-                date = reviewDate,
-                currency = "EUR",
-                transactionType = "PURCHASE",
-                merchantKey = any(),
-                dedupeKey = any()
+            transactionLifecycleCoordinator.createExpenseDbOnlyV2(
+                match { it.currency == "EUR" && it.amount == 50.0 && it.date == reviewDate }
             )
         }
-        coVerify { transactionLifecycleCoordinator.createExpense(match { it.currency == "EUR" && it.amount == 50.0 }, any()) }
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
     }
 
@@ -461,18 +432,23 @@ class ReviewQueueRepositoryTest {
      *
      * Before the fix, approving a DEPOSIT review when a PURCHASE with the same
      * amount/merchant/date/currency already existed would generate an IDENTICAL
-     * type-blind dedupeKey (e.g. "10.00_acme_<bucket>_EUR"). Even though
-     * isDuplicateCurrencyAware correctly returned false, createExpense would detect
-     * with -1 due to the unique-index collision on the persisted key.
+     * type-blind dedupeKey, falsely colliding on the persisted unique index.
      *
-     * After the fix, the DEPOSIT generates key "10.00_acme_<bucket>_EUR_DEPOSIT"
-     * (type suffix included), which is distinct from the existing PURCHASE key
-     * "10.00_acme_<bucket>_EUR_PURCHASE". createExpense therefore never collides
-     * for incompatible-type rows and the approval succeeds.
+     * After the fix, the DEPOSIT generates key "..._EUR_DEPOSIT" (type suffix
+     * included), distinct from the existing PURCHASE key "..._EUR_PURCHASE", so
+     * the approval succeeds for incompatible-type rows.
      *
-     * This test captures the dedupeKey passed to isDuplicateCurrencyAware and verifies that its
-     * dedupeKey includes the transaction-type suffix, proving that the persisted
-     * unique index can no longer falsely block incompatible-type approvals.
+     * Dedup + dedupeKey generation are now owned by the
+     * TransactionLifecycleCoordinator (the repository delegates via
+     * createExpenseDbOnlyV2 and no longer threads a dedupeKey through
+     * CreateExpenseRequest). This test therefore verifies two surviving facts at
+     * the repository boundary:
+     *   1. The repository delegates the DEPOSIT to the coordinator and surfaces
+     *      Success — it does NOT short-circuit incompatible-type rows.
+     *   2. The type-aware dedupeKey policy itself is sound (DEPOSIT key differs
+     *      from PURCHASE key and carries the type suffix). The end-to-end
+     *      persisted-key collision guard is covered directly in
+     *      DuplicateDetectionPolicyDedupeKeyTest / DedupeKeyProducerConsistencyTest.
      */
     @Test
     fun `approveReview dedupeKey includes transaction type suffix to prevent false unique-index collision`() = runTest {
@@ -512,30 +488,23 @@ class ReviewQueueRepositoryTest {
         coEvery {
             pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
         } returns 1
-        // Policy says not a duplicate (incompatible type with existing PURCHASE)
-        val dedupeKeySlot = slot<String>()
-        coEvery {
-            expenseDao.isDuplicateCurrencyAware(
-                amount = any(),
-                merchant = any(),
-                date = any(),
-                currency = any(),
-                transactionType = any(),
-                windowMs = any(),
-                merchantKey = any(),
-                dedupeKey = capture(dedupeKeySlot)
-            )
-        } returns false
 
-        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(400L)
+        val requestSlot = slot<com.yourname.expensetracker.domain.transaction.CreateExpenseRequest>()
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(capture(requestSlot)) } returns
+            MutationResult(CreateExpenseResult.Created(400L), PostCommitActionBatch.empty(""))
 
         val result = repository.approveReview(reviewId)
 
         assertTrue("DEPOSIT approval must succeed, got $result", result is Result.Success)
 
-        // Verify the dedupeKey passed to isDuplicateCurrencyAware is type-aware.
-        // The expected key includes "_DEPOSIT" suffix so it does NOT collide with
-        // the "_PURCHASE" key that a PURCHASE row for the same transaction would have.
+        // 1. Repository delegated the DEPOSIT to the coordinator (not short-circuited).
+        assertEquals(TransactionType.DEPOSIT, requestSlot.captured.transactionType)
+        assertEquals(currency, requestSlot.captured.currency)
+        assertEquals(amount, requestSlot.captured.amount, 0.0)
+
+        // 2. The type-aware dedupeKey policy is sound: the DEPOSIT key differs from
+        // the PURCHASE key and carries the type suffix, so the persisted unique
+        // index can no longer falsely block incompatible-type approvals.
         val expectedDepositKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
             amount, merchant, date, currency, TransactionType.DEPOSIT
         )
@@ -543,21 +512,14 @@ class ReviewQueueRepositoryTest {
             amount, merchant, date, currency, TransactionType.PURCHASE
         )
 
-        val actualKey = dedupeKeySlot.captured
-        assertNotNull("dedupeKey must not be null", actualKey)
-        assertEquals(
-            "Persisted dedupeKey must match the type-aware DEPOSIT key",
-            expectedDepositKey,
-            actualKey
-        )
         assertNotEquals(
             "DEPOSIT dedupeKey must differ from PURCHASE dedupeKey to prevent unique-index collision",
             expectedPurchaseKey,
-            actualKey
+            expectedDepositKey
         )
         assertTrue(
             "Type-aware dedupeKey must end with the transaction type suffix",
-            actualKey!!.endsWith("_DEPOSIT")
+            expectedDepositKey.endsWith("_DEPOSIT")
         )
     }
 
@@ -588,10 +550,10 @@ class ReviewQueueRepositoryTest {
         coEvery {
             pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
         } returns 1
-        // Policy says no duplicate before insert, but the coordinator detects a conflict.
-        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
-        // The coordinator returns InsertConflict because a concurrent PURCHASE for the same tx won the race
-        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.InsertConflict(dedupeKey = "race-key")
+        // Dedup is owned by the coordinator; it returns InsertConflict because a
+        // concurrent PURCHASE for the same tx won the race.
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.InsertConflict(dedupeKey = "race-key"), PostCommitActionBatch.empty(""))
 
         val result = repository.approveReview(reviewId)
 

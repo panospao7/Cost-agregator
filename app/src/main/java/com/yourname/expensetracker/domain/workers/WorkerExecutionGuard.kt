@@ -270,6 +270,11 @@ class WorkerExecutionGuard @Inject constructor(
                 }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
+                // P9-PR1 (NEW-P9-001): TimeoutCancellationException is retryable, not system cancel.
+                if (e is kotlinx.coroutines.TimeoutCancellationException) {
+                    withContext(NonCancellable) { run.retry("Timed out: ${e.message}", e) }
+                    return WorkerGuardResult.Retry("Timed out: ${e.message}", e)
+                }
                 if (e is kotlinx.coroutines.CancellationException) {
                     withContext(NonCancellable) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
                     throw e

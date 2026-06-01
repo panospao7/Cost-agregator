@@ -21,8 +21,9 @@ class ProcessReceiptUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(source: ReceiptSource): Result<ProcessedReceipt> {
         return try {
-            // P3-PR1 (P3-P1-07): Use actual home currency instead of hardcoded EUR default
-            val homeCurrency = userCurrencyProvider.getHomeCurrency()
+            // P3-PR1 (P3-P1-07): Use actual home currency instead of hardcoded EUR default.
+            // Coerce to non-null so it matches ReceiptParser.parse(homeCurrency: String).
+            val homeCurrency = userCurrencyProvider.getHomeCurrency() ?: "EUR"
             val processedSource = when (source) {
                 is ReceiptSource.UriRef -> {
                     val ocrResult = ocrService.processUri(source.value)

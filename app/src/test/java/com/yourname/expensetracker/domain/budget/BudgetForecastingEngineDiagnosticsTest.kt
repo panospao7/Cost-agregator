@@ -23,7 +23,6 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
-import io.mockk.capture
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk

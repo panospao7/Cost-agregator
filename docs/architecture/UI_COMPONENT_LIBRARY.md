@@ -1,6 +1,6 @@
 # ExpenseTracker UI Component Library
 
-**Generated:** May 18, 2026  
+**Generated:** June 1, 2026  
 **Total Components:** 59 across 9 categories + root level  
 **Framework:** Jetpack Compose with Material 3
 
@@ -148,7 +148,7 @@
 
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
-| **PrivacyBlockedCard** | `PrivacyBlockedCard.kt` | Typed privacy-blocked card with `PrivacyBlocked` sealed interface, semantics, testTag, optional settings button. Shows capability label + reason. | PrivacySettingsScreen | Cross-cutting (privacy UI) |
+| **PrivacyBlockedCard** | `components/PrivacyBlockedCard.kt` | Typed privacy-blocked card with `PrivacyBlocked` sealed interface, semantics, testTag, optional settings button. Shows capability label + reason. | PrivacySettingsScreen | Cross-cutting (privacy UI) |
 
 ---
 
@@ -169,10 +169,10 @@
 
 | Component | # Screens Using | Risk Level |
 |-----------|----------------|------------|
-| **EmptyState** | ALL (35 packages) | 🔴 CRITICAL — breaking this breaks every screen |
+| **EmptyState** | ALL (36+ packages) | 🔴 CRITICAL — breaking this breaks every screen |
 | **EnhancedEmptyState** | 15+ screens | 🔴 HIGH — widely adopted |
-| **ErrorState** | ALL (35 packages) | 🔴 CRITICAL — every screen uses it |
-| **LoadingSkeleton** | ALL (35 packages) | 🔴 CRITICAL — every screen uses it |
+| **ErrorState** | ALL (36+ packages) | 🔴 CRITICAL — every screen uses it |
+| **LoadingSkeleton** | ALL (36+ packages) | 🔴 CRITICAL — every screen uses it |
 | **AppNavigationBar** | 1 (MainActivity) | 🔴 HIGH — the entire app chrome |
 | **PeriodNavigationBar** | 3 (Home, Analytics, Budget) | 🟡 MEDIUM — cross-screen |
 | **CategoryDonutChart** | 2 (Analytics, Home) | 🟢 LOW — isolated |

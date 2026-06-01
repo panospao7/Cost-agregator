@@ -74,7 +74,6 @@ ReviewQueueRepository                    [data/repository/ReviewQueueRepository.
   ├──► ReceiptLinkService
   ├──► TransactionLifecycleCoordinator
   ├──► BudgetMonitor
-  ├──► AppParserRegistry
   └──► HybridExpenseClassifier
        │
        ▼
@@ -207,6 +206,7 @@ ReceiptLifecycleCoordinator              [domain/receipt/lifecycle/ReceiptLifecy
        ├──► ReceiptDuplicateDetector     — 3-signal dedup (hash/text/semantic)
        ├──► ScannedReceiptDao            — Save entity
        ├──► ReceiptEventDao              — Lifecycle event log
+       ├──► RawContentSanitizer          — Sanitizes raw OCR text
        │
        ▼
 ReceiptSideEffectDispatcher              [domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt]
@@ -264,12 +264,11 @@ ReceiptMatchLifecycleService              [domain/receipt/lifecycle/ReceiptMatch
   │    rejectMatchSuggestion(receiptId)                      → ReceiptEvent.MATCH_REJECTED
   │    clearMatch(receiptExpenseLinkId)                      → ReceiptEvent.MATCH_CLEARED
   │
-  ├──► AppDatabase (withTransaction for atomicity)
-  ├──► DatabaseWriteBarrier (restore-safety gate)
-  ├──► ScannedReceiptDao (update matchedExpenseId)
-  ├──► ReceiptEventDao (insert lifecycle event)
-  ├──► ReceiptExpenseLinkDao (link management)
-  └──► TimeProvider (timestamps)
+   ├──► AppDatabase (withTransaction for atomicity)
+   ├──► DatabaseWriteBarrier (restore-safety gate)
+   ├──► ScannedReceiptDao (update matchedExpenseId)
+   ├──► ReceiptEventDao (insert lifecycle event)
+   └──► TimeProvider (timestamps)
        │
        ▼
   Consumed by:
@@ -414,9 +413,12 @@ DatabaseBackupRepositoryImpl              [data/repository/DatabaseBackupReposit
   ├──► BackupEncryptionService            — AES-256-GCM / PBKDF2
   ├──► ExportAnonymizer                   — Strips raw OCR/notification text
   ├──► PrivacyGate.check(RAWBACKUP_EXPORT | ENCRYPTED_BACKUP)
-  ├──► RestoreJournal                     — Crash-safe 9-state journal (added ASSETS_RESTORING)
-  └──► RestoreMaintenanceMode             — Pauses 7 workers during restore (uses WORKER_REGISTRY;
-        new BACKUP_EXPORTING mode; pauseAllWorkers()/resumeAllWorkers() via WorkerRegistry.entries)
+  ├──► RestoreJournal                     — Crash-safe 9-state journal (ASSETS_RESTORING,
+  │     EXPORTING, RESTORING_DATABASE, RESTORING_ASSETS, FINALIZING, COMPLETED, FAILED,
+  │     CANCELLING, CANCELLED)
+  └──► RestoreMaintenanceMode             — Pauses 7 workers during restore (uses
+        WORKER_REGISTRY; new BACKUP_EXPORTING mode; pauseAllWorkers()/resumeAllWorkers()
+        via WorkerRegistry.entries)
        │
        ▼
   TransactionLifecycleCoordinator         — Restore uses SKIP_FOR_DEBUG_RESTORE dedup mode
@@ -432,9 +434,9 @@ AppStartupCoordinator
 | Consumer | File | Dependency |
 |----------|------|------------|
 | `BackupRestoreViewModel` | `ui/screens/backup/BackupRestoreViewModel.kt` | `DatabaseBackupRepository` |
-| `AppStartupCoordinator` | `startup/AppStartupCoordinator.kt` | `RestoreJournal`, `RestoreMaintenanceMode` |
+| `AppStartupCoordinator` | `startup/AppStartupCoordinator.kt` | `RestoreJournal`, `RestoreMaintenanceMode`, `WorkerRegistry` |
 | `NotificationCaptureService` | `service/NotificationCaptureService.kt` | `RestoreMaintenanceMode.isActive()` |
-| All 7 workers | Various | `RestoreMaintenanceMode` pause check |
+| All 7 workers | Various | `RestoreMaintenanceMode` pause check via `WorkerExecutionGuard` |
 
 ### AccountBalanceProvider Dependency Chain (2026-05-12)
 
@@ -474,7 +476,7 @@ RecurringRuleLifecycleCoordinator          [domain/recurring/lifecycle/Recurring
   └──► BillReminderManager                — Rule lifecycle integration
 ```
 
-### PrivacyDecision Fail-Closed Chain (2026-05-12)
+### PrivacyDecision Fail-Closed Chain (2026-06-01)
 
 ```
 PrivacyDecision.FailClosed(reason)         [domain/privacy/PrivacyDecision.kt]
@@ -504,7 +506,7 @@ PrivacyDecision.FailClosed(reason)         [domain/privacy/PrivacyDecision.kt]
   └──► AndroidForegroundLocationProvider
 ```
 
-### AccountingExportPolicy Dependency Chain (2026-05-11)
+### AccountingExportPolicy Dependency Chain (2026-06-01)
 
 ```
 AccountingExportPolicy                    [domain/export/AccountingExportPolicy.kt]
@@ -569,7 +571,7 @@ CompositePrivacyGate                      [domain/privacy/CompositePrivacyGate.k
   └──► BackupPrivacyGate                  — RAWBACKUP_EXPORT, ENCRYPTED_BACKUP
        │
        ▼
-  PrivacyDecision (Allowed | Denied)
+  PrivacyDecision (Allowed | Denied | FailClosed)
 
 PrivacyAuditLogger                        [domain/privacy/PrivacyAuditLogger.kt]
   │  (logs every gate check → PrivacyAuditEvent entity → PrivacyAuditDao)
@@ -599,6 +601,22 @@ RedactionSanitizer                        [domain/privacy/RedactionSanitizer.kt]
   │
   ▼
   Used by: CloudReceiptItemCategorizationService, CloudDashboardBriefingService, etc.
+
+RawContentSanitizer                       [domain/privacy/RawContentSanitizer.kt]
+  │  (Sanitizes raw OCR text and notification content based on RawStorageMode)
+  │  (Used by ReceiptLifecycleCoordinator and EmailReceiptIngestionService)
+  │
+  ▼
+RawStorageMode                            [domain/privacy/RawStorageMode.kt]
+  │  (Enum: STORE_RAW, REDACT, STRIP)
+
+EffectiveCloudAiPolicy                    [domain/privacy/EffectiveCloudAiPolicy.kt]
+  │  (Resolves effective cloud AI policy based on settings + capability)
+  │  (Used by HybridRouter via CloudPayloadPolicy)
+
+CloudPayloadPolicy                        [domain/privacy/CloudPayloadPolicy.kt]
+  │  (Replaces CloudPayloadRedactor — controls which fields are sent to cloud AI)
+  │  (Used by all hybrid cloud AI services)
 ```
 
 ### Gate Consumers (who calls PrivacyGate.check())
@@ -707,7 +725,7 @@ MainApplication (@HiltAndroidApp)
                     │     └──► ExpenseDao, MerchantNormalizationDao
                     │
                     ├── WarrantyExpirationWorker          [service/warranty/WarrantyExpirationWorker.kt]
-                    │     └──► WarrantyDao, NotificationService
+                    │     └──► WarrantyDao, WarrantyReminderDeliveryDao, NotificationService
                     │
                     ├── DataRetentionWorker               [data/privacy/DataRetentionWorker.kt]
                     │     └──► RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao
@@ -775,8 +793,8 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 
 | Worker | DAO Dependencies | Also Injects |
 |--------|-----------------|--------------|
-| `DailyBriefingWorker` | AiArtifactDao | RestoreMaintenanceMode, WorkerExecutionGuard |
-| `LocationBackfillWorker` | ExpenseDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `DailyBriefingWorker` | AiArtifactDao | RestoreMaintenanceMode, WorkerExecutionGuard, PrivacyGate |
+| `LocationBackfillWorker` | ExpenseDao | RestoreMaintenanceMode, WorkerExecutionGuard, PrivacyGate |
 | `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `WarrantyExpirationWorker` | WarrantyDao, WarrantyReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
@@ -794,18 +812,17 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
 | `DatabaseModule` | `di/DatabaseModule.kt` | `AppDatabase`, `GroupTransactionCoordinator` | All DAOs, group operations |
-| `DaoModule` | `di/DaoModule.kt` | 56 DAO singletons | All repositories |
+| `DaoModule` | `di/DaoModule.kt` | ~62 DAO singletons | All repositories |
 | `DispatchersModule` | `di/DispatchersModule.kt` | `@IoDispatcher`, `@DefaultDispatcher`, `ApplicationScope` | 50+ classes |
 | `TimeModule` | `di/TimeModule.kt` | `TimeProvider` → `SystemTimeProvider` | 50+ classes |
 | `ServiceModule` | `di/ServiceModule.kt` | `Gson`, `NotificationService`, `GeocodingService`, `NearbyPoiService`, `ForegroundLocationProvider`, `NavigationTargetResolver`, `WidgetStyleRepository`, `SpeechInputGateway` | Services, geocoding, navigation |
-| `WorkerModule` | `di/WorkerModule.kt` | `WorkerRunLogger` → `WorkerRunLoggerImpl` | All 7 workers via `WorkerExecutionGuard` |
+| `WorkerModule` | `di/WorkerModule.kt` | `WorkerRunLogger` → `WorkerRunLoggerImpl`, `NotificationPermissionChecker` → `AndroidNotificationPermissionChecker` | All 7 workers via `WorkerExecutionGuard` |
 
 #### AI Modules
 
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
-| `AiModule` | `di/AiModule.kt` | AI repositories (6), AI services (10), AI DAOs (3), `RedactionSanitizer`, `AiPolicy`, `AiCapabilityRouter`, `AiWorkScheduler`, semantic detector, priority scorer, notification parser | AI ViewModels, Workers, use cases |
-| *(No module)* | `domain/ai/HybridRouter.kt` | `HybridRouter` (uses `@Inject` constructor, bound via `AiCapabilityRouter` + `AiSettingsRepository`) | AID-4 shared routing across 6 hybrid services |
+| `AiModule` | `di/AiModule.kt` | AI repositories (6), AI services (10), AI DAOs (3), `RedactionSanitizer`, `AiPolicy`, `AiCapabilityRouter`, `AiWorkScheduler`, semantic detector, priority scorer, notification parser, `HybridRouter` (consolidates routing via `AiCapabilityRouter` + `AiSettingsRepository`), `CloudPayloadPolicy` (replaces `CloudPayloadRedactor`) | AI ViewModels, Workers, use cases |
 | `OcrImprovementsModule` | `di/OcrImprovementsModule.kt` | `EnhancedMerchantExtractor`, `OcrLanguageProcessor`, `OcrPreprocessingPipeline` | Receipt OCR pipeline |
 | `NaturalLanguageModule` | `di/NaturalLanguageModule.kt` | `NaturalLanguageExpenseQueryRepository` → impl | `NaturalLanguageSearchViewModel` |
 
@@ -819,7 +836,7 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `DashboardAnomalyModule` | `di/DashboardAnomalyModule.kt` | `AnomalyAlertRepository` (domain + dashboard) | Analytics, dashboard |
 | `SavingsModule` | `di/SavingsModule.kt` | `SmartSavingsEngine`, `AutomatedSavingsRuleStateRepository`, `SavingsContributionHistoryRepository`, `AutomatedSavingsRuleEngine`, `SavingsGamificationEngine` | Savings ViewModels |
 | `SavingsRepositoryBindingsModule` | `di/SavingsRepositoryBindingsModule.kt` | `DomainSavingsGoalRepository` binding | Savings engines |
-| `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3); auto-provided: `GroupLifecycleCoordinator` | Groups ViewModel |
+| `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3); auto-provided: `GroupLifecycleCoordinator`, `GroupBalanceCalculator` | Groups ViewModel |
 | `TaxModule` | `di/TaxModule.kt` | `TaxConfiguration` → `GreeceTaxConfiguration`, auto-provided: `DemoTaxRateProvider` | Tax ViewModel |
 | `ExportModule` | `di/ExportModule.kt` | `QuickBooksIIFExporter`, `XeroCSVExporter`, `FreshBooksExporter` | Export ViewModel |
 | `ReminderSettingsModule` | `di/ReminderSettingsModule.kt` | `BillReminderSettingsRepository` → impl (P4) | BillReminderWorker, BillRemindersViewModel |
@@ -860,8 +877,8 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `RecurringOccurrence` | `RecurringOccurrenceDao` | `RecurringLifecycleCoordinator` | Recurring coordinator, BillReminderWorker |
 | `PlannedExpense` | `PlannedExpenseDao` | `PlannedExpenseRepository` | HomeVM, FinancialWeatherRepository |
 | `TransactionEvent` | `TransactionEventDao` | `TransactionLifecycleCoordinator` | Audit log (append-only) |
-| `ReceiptEvent` | `ReceiptEventDao` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService` | Receipt audit log |
-| `ReceiptExpenseLink` | `ReceiptExpenseLinkDao` | `ReceiptLinkService` | Receipt matching |
+| `ReceiptEvent` | `ReceiptEventDao` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService`, `ReceiptMatchLifecycleService` | Receipt audit log |
+| `ReceiptExpenseLink` | `ReceiptExpenseLinkDao` | `ReceiptLinkService`, `ReceiptMatchLifecycleService` | Receipt matching |
 | `SavingsGoal` | `SavingsGoalDao` | `SavingsGoalRepository` | SavingsGoalsVM |
 | `ExchangeRate` | `ExchangeRateDao` | `CurrencyConverter`, `MultiCurrencyRepository` | Currency conversion |
 | `Investment` | `InvestmentDao` | (Direct DAO usage) | InvestmentVM |
@@ -876,10 +893,11 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `AiChatMessage` | `AiChatMessageDao` | `AiChatRepositoryImpl` | Assistant |
 | `AssistantHistorySettings` | *(enum)* | `AiChatRepositoryImpl` | Assistant (history redaction: OFF/REDACTED/RAW) |
 | `ReceiptItemCategorization` | `ReceiptItemCategorizationDao` | `ReceiptItemCategorizationRepository` | AI categorization |
-| `RecurringLifecycleEvent` | `RecurringLifecycleEventDao` | `RecurringLifecycleCoordinator` | Recurring audit log |
+| `RecurringLifecycleEvent` | `RecurringLifecycleEventDao` | `RecurringLifecycleCoordinator`, `RecurringLifecycleEventWriter` | Recurring audit log |
 | `RecurringReminderDelivery` | `RecurringReminderDeliveryDao` | `RecurringLifecycleCoordinator` | Reminder delivery |
 | `Warranty` | `WarrantyDao` | `WarrantyTrackerRepository` | WarrantyTrackerVM |
 | `ReturnWindow` | `ReturnWindowDao` | `WarrantyTrackerRepository` | WarrantyTrackerVM |
+| `WarrantyLifecycleEvent` | `WarrantyLifecycleEventDao` | `WarrantyTrackerRepository` | WarrantyTrackerVM |
 | `WarrantyReminderDelivery` | `WarrantyReminderDeliveryDao` | `WarrantyExpirationWorker` | Durable reminder sent-state (v143; claim-before-notify) |
 | `SubscriptionCandidate` | `SubscriptionCandidateDao` | `SubscriptionManagementRepository` | SubscriptionVM |
 | `SubscriptionPriceHistory` | `SubscriptionPriceHistoryDao` | `SubscriptionManagementRepository` | SubscriptionVM |
@@ -890,13 +908,15 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `GroupExpense` | `GroupExpenseDao` | `GroupsRepositoryImpl`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
 | `GroupSettlementEntity` | `GroupSettlementDao` | `GroupLifecycleCoordinator` → recordSettlement(), `GroupBalanceCalculator` | SharedExpenseGroupsVM |
 | `GroupLifecycleEventEntity` | `GroupLifecycleEventDao` | `GroupLifecycleCoordinator` | Group lifecycle audit log |
-| `PipelineDiagnosticEvent` | `PipelineDiagnosticEventDao` | `NotificationProcessingPipeline` | Cross-pipeline diagnostics |
 | *(n/a)* | *(n/a)* | `GroupLifecycleCoordinator` → `GroupTransactionCoordinator` (domain interface), `TimeProvider`, `CurrencySettingsRepository` | Groups ViewModel |
 | `SplitTemplate` | `SplitTemplateDao` | (Direct usage) | VisualSplitVM |
 | `SplitItemAssignment` | `SplitItemAssignmentDao` | (Direct usage) | VisualSplitVM |
 | `SpendingChallengeEntity` | `SpendingChallengeDao` | `SpendingChallengeRepository` | SpendingChallengesVM |
 | `PromptState` | `PromptStateDao` | `PromptStateRepository` | Savings prompts |
-| `BackgroundJobRun` | `BackgroundJobRunDao` | Workers directly | Worker tracking |
+| `BackgroundJobRun` | `BackgroundJobRunDao` | Workers directly, `WorkerRunLoggerImpl` | Worker tracking |
+| `PipelineDiagnosticEvent` | `PipelineDiagnosticEventDao` | `NotificationProcessingPipeline` | Cross-pipeline diagnostics |
+| `OperationRun` | `OperationRunDao` | `CompositeOperationRunRecorder` | Durable operation run tracking |
+| `OperationRunEvent` | `OperationRunEventDao` | `CompositeOperationRunRecorder` | Durable operation run events |
 
 ---
 
@@ -984,9 +1004,9 @@ Domain AI Services (interfaces)
         └──► HybridReceiptItemCategorizationService
 
 All Hybrid services use:
-  ├──► AiCapabilityRouter            — Routes to Cloud/OnDevice/NoOp
+  ├──► HybridRouter (consolidates AiCapabilityRouter + CloudPayloadPolicy)
   ├──► PrivacyGate.check()           — Respects user privacy settings
-  └──► RedactionSanitizer            — PII redaction before cloud calls
+  └──► CloudPayloadPolicy            — Replaces CloudPayloadRedactor, controls field-level payload filtering
 ```
 
 ---
@@ -995,20 +1015,20 @@ All Hybrid services use:
 
 | ViewModel | Injected Dependencies |
 |-----------|----------------------|
-| `HomeViewModel` | DashboardRepository, DashboardDataProvider, CategoryRepository, PlannedExpenseRepository, DashboardAnalyticsRepository, ExpenseRepository, ComputeDashboardWidgetsUseCase, TotalsAggregationEngine, AdvancedAnalyticsEngine, AiSettingsRepository, AiArtifactRepository, AiEngagementRepository, AiEnvironmentMonitor, WidgetStyleRepository, TimeProvider, RecommendationStateManager, NavigationTargetResolver, RecommendationDismissalHandler, CurrencySettingsRepository |
+| `HomeViewModel` | Application, DashboardRepository, DashboardDataProvider, CategoryRepository, PlannedExpenseRepository, DashboardAnalyticsRepository, ExpenseRepository, ComputeDashboardWidgetsUseCase, AiSettingsRepository, AiArtifactRepository, AiEnvironmentMonitor, AiEngagementRepository, WidgetStyleRepository, TimeProvider, RecommendationStateManager, NavigationTargetResolver, RecommendationDismissalHandler, TotalsAggregationEngine, AdvancedAnalyticsEngine, CurrencySettingsRepository |
 | `TransactionsViewModel` | NotificationRepository, ExpenseRepository, CategoryRepository, RecurringExpenseRepository, MerchantLocationRepository, TimeProvider, GeocodingService, CurrencySettingsRepository |
-| `ReviewViewModel` | NotificationRepository, ReviewQueueRepository, CategoryRepository, ReceiptRepository, ReceiptLifecycleCoordinator, TransactionLifecycleCoordinator, AiArtifactRepository, AiSettingsRepository, ExplainPendingReviewUseCase, JudgePendingReviewDuplicateUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase |
+| `ReviewViewModel` | NotificationRepository, ReviewQueueRepository, CategoryRepository, ReceiptRepository, ExpenseRepository, DebugDataStorage, GeocodingService, PrivacyGate, ExplainPendingReviewUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase, JudgePendingReviewDuplicateUseCase, AiArtifactRepository, AiSettingsRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptDebugExporter |
 | `BudgetViewModel` | BudgetRepository, CategoryRepository, SharedExpenseBudgetOffsetEngine, BudgetAutopilotEngine, TimeProvider, CurrencySettingsRepository, AppDatabase |
 | `AddExpenseViewModel` | ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository |
-| `ReceiptScanViewModel` | CategoryRepository, ReceiptRepository, ReceiptItemCategorizationRepository, ReceiptLifecycleCoordinator, ReceiptLinkService, TransactionLifecycleCoordinator, CategorizeReceiptItemsUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase, AiArtifactRepository, AiSettingsRepository, HybridExpenseClassifier, MerchantNormalizer, ReceiptParser, TimeProvider, CurrencySettingsRepository |
-| `AnalyticsViewModel` | ExpenseRepository, CategoryRepository, BudgetRepository, InsightsEngine, RecurringExpenseEngine, AnalyticsRepository, AdvancedAnalyticsEngine, AnalyticsCurrencyNormalizer, LocationInsightsEngine, AreaSpendingEngine, TravelDetectionEngine, SpendingPersonalityClassifier, TimeProvider, CurrencyConverter, CurrencySettingsRepository |
+| `ReceiptScanViewModel` | ReceiptRepository, CategoryRepository, CurrencySettingsRepository, AiSettingsRepository, SavedStateHandle, TimeProvider, SuggestReceiptExtractionUseCase, SuggestCategoryFallbackUseCase, CategorizeReceiptItemsUseCase, ReceiptItemCategorizationRepository, AiArtifactRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptParser, TransactionLifecycleCoordinator, ReceiptLinkService, MerchantNormalizer, HybridExpenseClassifier |
+| `AnalyticsViewModel` | ExpenseRepository, CategoryRepository, BudgetRepository, InsightsEngine, RecurringExpenseEngine, AnalyticsRepository, AdvancedAnalyticsEngine, AnalyticsCurrencyNormalizer, LocationInsightsEngine, AreaSpendingEngine, TravelDetectionEngine, SpendingPersonalityClassifier, TimeProvider, AnalyticsInputAssembler, CurrencyConverter, CurrencySettingsRepository, BudgetVsActualEngine, DailyBucketEngine |
 | `AdvancedAnalyticsViewModel` | AnalyticsRepository, CategoryRepository |
 | `BackupRestoreViewModel` | DatabaseBackupRepository |
 | `SavingsGoalsViewModel` | SavingsGoalRepository, SmartSavingsEngine, AutomatedSavingsRuleEngine, SavingsGamificationEngine |
 | `SubscriptionManagementViewModel` | SubscriptionManagementRepository |
 | `CurrencyManagementViewModel` | CurrencySettingsRepository, CurrencyRatesRepository, MultiCurrencyRepository |
 | `CarbonFootprintViewModel` | ExpenseRepository, CategoryRepository |
-| `CashFlowCalendarViewModel` | CashFlowCalculator, ExpenseRepository, CategoryRepository |
+| `CashFlowCalendarViewModel` | CashFlowCalculator, TimeProvider, CurrencySettingsRepository |
 | `DebugViewModel` | NotificationRepository, ExpenseRepository, BudgetRepository, CategoryRepository |
 | `PrivacySettingsViewModel` | PrivacySettingsRepository |
 | `VisualSplitViewModel` | SplitTemplateDao, SplitItemAssignmentDao |
@@ -1020,14 +1040,20 @@ All Hybrid services use:
 | `AiSettingsViewModel` | AiSettingsRepository |
 | `AssistantViewModel` | AiChatRepository, QueryInterpretationService |
 | `BillRemindersViewModel` | BillReminderManager, RecurringLifecycleCoordinator |
+| `RecurringExpensesViewModel` | RecurringExpenseRepository |
+| `ManualRecurringExpenseViewModel` | ManualRecurringExpenseRepository |
+| `SourceLinkDebugViewModel` | SourceLinkQueryService |
+| `SourceLinkBackfillViewModel` | SourceLinkBackfillWorker |
 
 ---
 
-> **Generated:** Manual analysis of 926 source files across 3 layers (UI/Domain/Data),  
-> 31 Hilt @Module files, 39 @HiltViewModel, 65+ repositories, 62 DAOs (58 DaoModule + 3 AiModule + 1 unbound), 64 entities.  
+> **Generated:** Manual analysis of 926+ source files across 3 layers (UI/Domain/Data),  
+> 31 Hilt @Module files, 41 @HiltViewModel, 65+ repositories, ~69 DAOs, 64+ entities.  
+> DB schema version: v143  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---
+
 ---
 
 ## 13. Stage 1 Architecture Foundations
@@ -1037,10 +1063,9 @@ Enum with 4 values controlling backup privacy:
 FULL_ENCRYPTED, REDACT_RAW_TEXT, REDACT_RAW_TEXT_EXCLUDE_IMAGES, ANONYMIZED_EXPORT.
 Added as nullable field on BackupManifest.
 
-### CloudPayloadRedactor (Segment 28)
-DefaultCloudPayloadRedactor wraps CloudPiiSanitizer. First provider migrated:
-CloudQueryInterpretationService redacts query text before API call.
-Remaining 6 providers deferred.
+### CloudPayloadPolicy (Segment 28)
+Replaces CloudPayloadRedactor. Controls field-level payload filtering for cloud AI calls.
+Implemented via HybridRouter consolidation in AiModule.
 
 ### ForecastDataQuality (Segment 1)
 Additive data class (no consumer break) with fields: isPartial,

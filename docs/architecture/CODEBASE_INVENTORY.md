@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-05-18 (snapshot)  
-**Database Version:** v141  
+**Generated:** 2026-06-01 (snapshot)  
+**Database Version:** v143  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -10,26 +10,28 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
-### Drift Sync (2026-05-06 / P3-P4 Additions)
+### Drift Sync (2026-06-01 / Pipeline 5-12 Completion + Universal PRs)
+
+All 12 pipelines (P1-P12) are hardened and complete. Universal PRs U-PR1 through U-PR8 addressed cross-cutting concerns: fail-closed propagation, currency/privacy boundary guards, centralized worker scheduling, hybrid AI routing, export policy validation, group lifecycle side effects, receipt lifecycle refactoring.
 
 ### P3: Receipt Match Lifecycle
-- **`ReceiptMatchLifecycleService`** added — lifecycled match mutations with DatabaseWriteBarrier, typed `MATCH_SUGGESTED`/`MATCH_APPROVED`/`MATCH_REJECTED`/`MATCH_CLEARED` events.
-- **`ReceiptDebugExporter`** reworked — expanded audit coverage with `DiagnosticEvent` dedup, exception redaction, privacy-by-default consent gate.
+- **`ReceiptMatchLifecycleService`** — lifecycled match mutations with DatabaseWriteBarrier, typed `MATCH_SUGGESTED`/`MATCH_APPROVED`/`MATCH_REJECTED`/`MATCH_CLEARED` events.
+- **`ReceiptDebugExporter`** — expanded audit coverage with `DiagnosticEvent` dedup, exception redaction, privacy-by-default consent gate.
 - **`DeprecationLevel.ERROR` sweep** — legacy `LegacyReceiptLinkService`, `LegacyMatchSuggestion`, `LegacyApproval` removed.
 
 ### P4: Recurring Lifecycle Hardening + Single Writer
-- **`RecurringRuleLifecycleCoordinator`** added — single-writer for rule CRUD (create, update, activate, deactivate, delete). Uses `DatabaseWriteBarrier`. All rule mutations enforce 19 static architecture guard tests.
-- **`RecurringLifecycleEventWriter`** added — dual-channel `writeCritical()` (returns eventId) + `writeDiagnostic()`.
-- **`OccurrenceGenerationOptions`**, **`RecurringExpenseReconcileResult`**, **`RecurringOccurrenceStatus`** added — typed domain models for generation control, reconcile results, and state transitions.
-- **`BillReminderSettings`** + **`BillReminderSettingsRepository`** added — runtime dispatch config (enabled, quiet hours). Bound via `ReminderSettingsModule`.
-- **`BillReminderWorker`** now checks runtime settings before dispatching.
+- **`RecurringRuleLifecycleCoordinator`** — single-writer for rule CRUD (create, update, activate, deactivate, delete). Uses `DatabaseWriteBarrier`. All rule mutations enforce 19 static architecture guard tests.
+- **`RecurringLifecycleEventWriter`** — dual-channel `writeCritical()` (returns eventId) + `writeDiagnostic()`.
+- **`OccurrenceGenerationOptions`**, **`RecurringExpenseReconcileResult`**, **`RecurringOccurrenceStatus`** — typed domain models for generation control, reconcile results, and state transitions.
+- **`BillReminderSettings`** + **`BillReminderSettingsRepository`** — runtime dispatch config (enabled, quiet hours). Bound via `ReminderSettingsModule`.
+- **`BillReminderWorker`** — checks runtime settings before dispatching.
 - **`TransactionUpdateKind`** expanded — `AMOUNT`, `DATE`, `CURRENCY`, `OWNERSHIP`, `PAYMENT_CORE`. `affectsRecurringMatch()` centralizes reconciliation triggers.
 - **DB v131 → v141** — 8 version bumps for new tables/columns.
-- **`AppDatabase`** now references 64 entities (was 56).
+- **`AppDatabase`** — 69 entities.
 - **Single-writer principal** enforced for `RecurringRuleLifecycleCoordinator` — no direct DAO mutations outside coordinator.
-- `TransactionLifecycleCoordinator` now depends on `CurrencySettingsRepository` to resolve the user's home currency for base snapshot conversion metadata.
-- Reminder action receivers (`SnoozeReminderReceiver`, `DismissReminderReceiver`) are Hilt entry points and no longer construct raw database instances; both enforce `RestoreMaintenanceMode` write gating and use `TimeProvider`.
-- `BackupVerifier` now classifies lifecycle/event tables as exact-restore critical (`TIER_1_EXACT`) rather than validity-only.
+- `TransactionLifecycleCoordinator` — depends on `CurrencySettingsRepository` to resolve the user's home currency for base snapshot conversion metadata.
+- Reminder action receivers (`SnoozeReminderReceiver`, `DismissReminderReceiver`) are Hilt entry points; both enforce `RestoreMaintenanceMode` write gating and use `TimeProvider`.
+- `BackupVerifier` classifies lifecycle/event tables as exact-restore critical (`TIER_1_EXACT`) rather than validity-only.
 - Generic `CSV`/`JSON` exports use `Expense.effectiveAmount` (not raw `amount`) in `ExportOptionsViewModel`.
 
 ---
@@ -152,7 +154,10 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - Review: ReviewViewModel
 - AI Settings: AiSettingsViewModel
 - Category: CategoryViewModel
-- Debug: DebugViewModel, CategorizationDebugViewModel
+- Debug: DebugViewModel, CategorizationDebugViewModel, SourceLinkDebugViewModel
+- Settings: SourceLinkBackfillViewModel
+- Privacy: PrivacySettingsViewModel
+- Backup: BackupRestoreViewModel
 
 ---
 
@@ -195,10 +200,12 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - SubscriptionManagement
 - TaxConfiguration
 - ExportOptions
+- BackupRestore
 - ManualRecurringExpense
 - SharedExpenseGroups
 - BudgetForecasting (parameterized: budget)
 - BudgetDetail (parameterized: categoryId/categoryName)
+- BudgetCreate
 - AiSettings
 - CategoryManagement
 - Debug (BuildConfig.DEBUG gated)
@@ -409,7 +416,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 
 ---
 
-## 6. DATABASE (Version 120)
+## 6. DATABASE (Version 143)
 
 ### Entities
 
@@ -450,6 +457,13 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - PrivacyAuditEvent
 - GroupLifecycleEventEntity — Group lifecycle transitions (table: `group_lifecycle_events`)
 - PipelineDiagnosticEvent — Cross-pipeline diagnostics (table: `pipeline_diagnostic_events`)
+- OperationRun — Operation run record (table: `operation_runs`)
+- OperationRunEvent — Operation run event record (table: `operation_run_events`)
+- EntitySourceLink — Entity provenance links (table: `entity_source_links`)
+- NotificationIntakeEntity — Notification intake queue (table: `notification_intake`)
+- BankStatementImportRun — Bank statement import run metadata
+- BankStatementImportItem — Bank statement import line items
+- WarrantyReminderDelivery — Durable warranty reminder delivery tracking (table: `warranty_reminder_deliveries`)
 
 ### DAOs
 One DAO per entity (mostly 1-to-1 mapping)
@@ -462,9 +476,16 @@ One DAO per entity (mostly 1-to-1 mapping)
 - InvestmentTransactionDao, WarrantyLifecycleEventDao, GroupSettlementDao
 - **GroupLifecycleEventDao** — Group lifecycle event audit log (table: `group_lifecycle_events`)
 - **PipelineDiagnosticEventDao** — Cross-pipeline diagnostic event tracking (table: `pipeline_diagnostic_events`)
+- **OperationRunDao** — Operation run records
+- **OperationRunEventDao** — Operation run event records
+- **EntitySourceLinkDao** — Entity provenance links
+- **NotificationIntakeDao** — Notification intake queue
+- **BankStatementImportRunDao** — Bank statement import run metadata
+- **BankStatementImportItemDao** — Bank statement import line items
+- **WarrantyReminderDeliveryDao** — Warranty reminder delivery tracking
 
 ### Migration History
-- Database Version: 124 (incremental: 120→121→122→123→124)
+- Database Version: 143 (incremental: 120→121→122→...→143). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table.
 - Migration methods: current chain in `AppDatabase.kt`
 - Export schema: Enabled
 - Type converters: Defined in `converter/Converters.kt`
@@ -498,6 +519,10 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **TaxModule** - Tax estimation
 - **NaturalLanguageModule** - Natural language search bindings
 - **EmailIngestionModule** - Email receipt ingestion
+- **RetentionModule** - Retention target bindings
+- **DiagnosticsModule** - Pipeline diagnostics wiring
+- **ProvenanceModule** - Data provenance
+- **ReminderSettingsModule** - Bill reminder dispatch settings
 
 ### Specialized / Support
 - **BackupRepositoryModule** - Backup/restore
@@ -595,14 +620,18 @@ One DAO per entity (mostly 1-to-1 mapping)
  12. **RecommendationLifecycleManager** - Lifecycle: expiration, cleanup, threshold refresh
  13. **RecommendationStateManager** - Reactive StateFlow, max 5 limit, user-specific
 
-### Workers (all 7 paused during restore via RestoreMaintenanceMode)
- 14. **DailyBriefingWorker** - Proactive briefing delivery
- 15. **LocationBackfillWorker** - Location enrichment backfill
- 16. **MerchantKeyBackfillWorker** - Merchant key backfill
- 17. **WarrantyExpirationWorker** - Warranty expiry tracking
- 18. **ReceiptMatchingWorker** - Receipt matching background work
- 19. **BillReminderWorker** - Bill reminder delivery
- 20. **DataRetentionWorker** - Privacy data purging
+### Workers (all 7 paused during restore via RestoreMaintenanceMode; all use WorkerSpecScheduler for centralized scheduling)
+  14. **DailyBriefingWorker** - Proactive briefing delivery (privacy-gated, midnight one-shot reschedule chain)
+  15. **LocationBackfillWorker** - Location enrichment backfill (overwrite guard, RetryableWorkerException)
+  16. **MerchantKeyBackfillWorker** - Merchant key backfill (one-shot, RetryableWorkerException, REPLACE policy)
+  17. **WarrantyExpirationWorker** - Warranty expiry tracking (requiresNotificationPermission, room-backed delivery)
+  18. **ReceiptMatchingWorker** - Receipt matching background work (atomic claim-for-auto-match)
+  19. **BillReminderWorker** - Bill reminder delivery (disabled by default, runtime settings check)
+  20. **DataRetentionWorker** - Privacy data purging (RetentionRegistry-based)
+
+### Non-Registry Workers
+  21. **NotificationIntakeWorker** (`worker/NotificationIntakeWorker.kt`) — Pipeline-1 notification intake worker. Not in WorkerRegistry; explicitly allowlisted from WorkerExecutionGuard requirement. Drains single queued intake rows using DatabaseWriteBarrier + attempt/backoff state machine.
+  22. **SourceLinkBackfillWorker** (`domain/provenance/SourceLinkBackfillWorker.kt`) — PR8 backfill worker migrating legacy source data into entity_source_links. Not a CoroutineWorker — @Singleton injected helper exposing `runBackfill()` suspend function.
 
 ### Utilities
  21. TransactionFilterSerializer - Serializes filters for dedup signatures
@@ -690,7 +719,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 124 with current migration chain (120→121→122→123→124)  
+✅ Version 143 with current migration chain (120→121→122→...→143)  
 ✅ Export schema enabled  
 ✅ Type converters defined
 
@@ -717,4 +746,4 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ## End of Inventory
 
-**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-05-11.**
+**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-06-01.**

@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.receipt
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
-import kotlinx.coroutines.flow.first
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -30,10 +29,8 @@ class BankStatementParserTest {
         timeProvider = io.mockk.mockk {
             io.mockk.every { now() } returns System.currentTimeMillis()
         }
-        val homeCurrencyFlow = io.mockk.mockk<kotlinx.coroutines.flow.Flow<String>>(relaxed = true)
-        io.mockk.coEvery { homeCurrencyFlow.first() } returns "EUR"
         currencySettingsRepository = io.mockk.mockk {
-            io.mockk.every { homeCurrency() } returns homeCurrencyFlow
+            io.mockk.every { homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
             io.mockk.coEvery { resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
         parser = BankStatementParser(currencyNormalizer, merchantCleaner, timeProvider, currencySettingsRepository)

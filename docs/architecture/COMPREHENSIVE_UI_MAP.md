@@ -1,8 +1,8 @@
 # ExpenseTracker Frontend UI/UX Comprehensive Mapping
 
-**Refreshed**: May 18, 2026  
+**Refreshed**: June 1, 2026  
 **Scope**: Current frontend inventory including screens, components, navigation, integration, and theming
-**Total Files**: 164 UI source files (38 ViewModels, 59 components, 38 screens, 5 nav, 3 mappers, 2 theme, 4 model, 7 util, 8 other)
+**Total Files**: 167 UI source files (40 ViewModels, 59 components, 39 screens, 5 nav, 3 mappers, 2 theme, 4 model, 7 util, 1 integration, 2 root)
 
 ---
 
@@ -37,7 +37,7 @@ ExpenseTrackerApp
 │   └── Accessed from Home widgets + Features Menu
 │
 ├── Debug / Support Screens
-│   └── Debug, categorization debug, runtime diagnostics
+│   └── Debug, categorization debug, runtime diagnostics, source link debugging
 │
 └── Settings/Management Screens
     ├── AI Settings
@@ -337,7 +337,7 @@ These appear over main tabs via `NavigationDestination` sealed class.
 
 ---
 
-## 4. FEATURE SCREENS (23 Config-Driven Features)
+## 4. FEATURE SCREENS (22 Config-Driven Features)
 
 All features accessible from:
 1. Home screen widgets/cards
@@ -722,12 +722,23 @@ All features accessible from:
 - **CategorizationDebugScreen**: ML model debugging
 - **DebugViewerScreen**: Raw data viewer
 - **DebugIssueDetector**: runtime issue inspection
+- **SourceLinkDebugScreen**: Source link provenance debug viewer
 
 #### Sub-Components (Dialogs):
 - **ImportDatabaseDialog**: Database restore
 - **CsvImportDialog**: CSV import tool
 
 **Access**: Hidden in production, accessible via Settings → Debug
+
+---
+
+### Source Link Debug Screen
+**File**: `ui/screens/debug/SourceLinkDebugScreen.kt` + `SourceLinkDebugViewModel.kt`
+
+#### Features:
+- Source link provenance querying by expense ID
+- Backfill progress and history display
+- Source link status inspection
 
 ---
 
@@ -1138,10 +1149,10 @@ All screens are navigated to via NavigationDestination with one exception:
 | **Overlay Screens** | 6 |
 | **Management Screens** | 3 (AiSettings, CategoryManagement, PrivacySettings—settings-only) |
 | **Debug Screens** | 3 |
-| **Total Screen Files** | 38 |
+| **Total Screen Files** | 39 |
 | **Component Files** | 59 |
-| **Total UI Files** | 164 |
-| **ViewModels** | 38 (incl. MainViewModel) |
+| **Total UI Files** | 167 |
+| **ViewModels** | 40 (incl. MainViewModel) |
 | **Navigation Files** | 5 |
 | **Deep Link Hosts** | 8 |
 | **UI Mapper Files** | 3 |

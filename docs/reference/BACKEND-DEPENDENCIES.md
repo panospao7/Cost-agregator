@@ -1,15 +1,12 @@
 # Backend Map - Test Coverage & Cross-References
 
-> **⚠️ STALE DOCUMENT** — Generated 2026-04-06. This document has NOT been updated for ~30 days of active development. The following are missing entirely: 3 lifecycle coordinators (Transaction/Receipt/Recurring), 7 background workers, the Hybrid* AI service layer (7 files), 15+ Hilt modules, HybridRouter, WorkerSpecScheduler, AtRestEncryptionService, and the privacy gate system.  
-> **See `docs/architecture/DEPENDENCY_MAP.md` and `docs/architecture/hilt-bindings-map.md` for current, verified dependency chains.**
-
-**Generated:** 2026-04-06
+**Generated:** 2026-06-01
 
 ---
 
 ## Test Coverage Summary
 
-**Total Test Files:** 392+
+**Total Test Files:** 475+
 
 ### Test Categories
 
@@ -56,7 +53,7 @@
 
 ## Critical Dependency Chains
 
-### Chain 1: Expense Ingestion → Storage
+### Chain 1: Expense Ingestion → Storage (via TransactionLifecycleCoordinator)
 
 ```
 Notification/SMS Input
@@ -65,16 +62,22 @@ Parser (GenericTransactionParser or specialized)
     ↓
 ParsedTransaction
     ↓
-Expense Entity
+CreateExpenseRequest
     ↓
-ExpenseDao.insert()
+TransactionLifecycleCoordinator.createExpense()
+    ├─ [validate → normalize → dedupe → insertAtomic]
     ↓
-ExpenseRepository.saveExpense()
+TransactionEvent (event log) + Expense (stored in DB)
     ↓
-SQLite (Expense table)
+TransactionSideEffectDispatcher.dispatchOnCreated()
+    ├─→ budget check
+    ├─→ anomaly alert
+    └─→ merchant-category learning
+    ↓
+ExpenseRepository (read layer)
 ```
 
-**Files:** `parser/*`, `data/database/entity/Expense.kt`, `data/database/dao/ExpenseDao.kt`, `data/repository/ExpenseRepository.kt`
+**Files:** `parser/*`, `transaction/CreateExpenseRequest.kt`, `transaction/lifecycle/TransactionLifecycleCoordinator.kt`, `transaction/lifecycle/TransactionSideEffectDispatcher.kt`, `data/database/entity/Expense.kt`, `data/database/entity/TransactionEvent.kt`, `data/database/dao/ExpenseDao.kt`
 
 ### Chain 2: Categorization Pipeline
 
@@ -231,7 +234,99 @@ UI Navigation
 
 **Files:** `naturallanguage/*`, `usecase/expense/*`, `ai/usecase/*QueryUseCase.kt`
 
-> **⚠️ MISSING: Lifecycle Coordinators** — This document has zero mention of TransactionLifecycleCoordinator, ReceiptLifecycleCoordinator, or RecurringLifecycleCoordinator. These three coordinators manage the end-to-end lifecycle of expenses, receipts, and recurring transactions respectively, and are critical to the current architecture.
+### Chain 8: Transaction Lifecycle Coordinator
+
+```
+CreateExpenseRequest (from any source)
+    ↓
+TransactionLifecycleCoordinator.createExpense()
+    ├─ Validation (required fields, types)
+    ├─ Normalization (merchant, currency, amount)
+    ├─ Deduplication (DeduplicationMode)
+    └─ Atomic insert + TransactionEvent log
+    ↓
+TransactionSideEffectDispatcher.dispatchOnCreated()
+    ├─→ BudgetMonitor.checkBudget()
+    ├─→ AnomalyAlertOrchestrator.assess()
+    └─→ MerchantCategoryRepository.learn()
+    ↓
+Expense stored in DB + event audit trail
+```
+
+**Files:** `transaction/lifecycle/TransactionLifecycleCoordinator.kt`, `transaction/lifecycle/TransactionSideEffectDispatcher.kt`, `transaction/CreateExpenseRequest.kt`, `transaction/CreateExpenseResult.kt`, `transaction/DeduplicationMode.kt`, `transaction/SideEffectMode.kt`, `data/database/dao/TransactionEventDao.kt`
+
+### Chain 9: Privacy Gate
+
+```
+Feature Request
+    ↓
+CompositePrivacyGate.check(capability, context)
+    ↓
+┌───────────────────────────────────────────────────────────┐
+│ 1. NotificationPrivacyGate: NOTIFICATION_CAPTURE, etc.   │
+│ 2. CloudAiPrivacyGate: CLOUD_AI_*, RECEIPT_IMAGE_CLOUD  │
+│ 3. LocationPrivacyGate: EXTERNAL_GEOCODING, GPS, etc.   │
+│ 4. BackupPrivacyGate: RAWBACKUP_EXPORT, ENCRYPTED_BACKUP│
+└───────────────────────────────────────────────────────────┘
+    ↓
+PrivacyDecision (Allowed | Denied(reason))
+    ↓
+PrivacyAuditLogger.log(capability, decision, reason, caller)
+    ↓
+Proceed or Block operation
+```
+
+**Files:** `privacy/PrivacyGate.kt`, `privacy/CompositePrivacyGate.kt`, `privacy/NotificationPrivacyGate.kt`, `privacy/CloudAiPrivacyGate.kt`, `privacy/LocationPrivacyGate.kt`, `privacy/BackupPrivacyGate.kt`, `privacy/PrivacyDecision.kt`, `privacy/PrivacyCapability.kt`, `privacy/PrivacyAuditLogger.kt`, `privacy/PrivacySettings.kt`, `privacy/EffectiveCloudAiPolicy.kt`, `privacy/RawContentSanitizer.kt`
+
+### Chain 10: Worker Infrastructure
+
+```
+WorkerSpec (configuration)
+    ↓
+WorkerSpecScheduler.schedule(workerName)
+    ├─ Reads WorkerSpec.DEFAULTS[name]
+    └─ Delegates to WorkManager
+    ↓
+WorkerExecutionGuard.acquire(workerName)
+    ├─ Prevents concurrent execution
+    └─ Timeout-based locking
+    ↓
+WorkerRunLogger.runStarted(workerName, runId)
+    ↓
+Worker execution (domain logic)
+    ↓
+WorkerRunLogger.runCompleted/runFailed(workerName, runId, result)
+```
+
+**Files:** `workers/WorkerSpec.kt`, `workers/WorkerSpecScheduler.kt`, `workers/WorkerExecutionGuard.kt`, `workers/WorkerRunLogger.kt`, `workers/WorkerRegistry.kt`, `workers/RetryableWorkerException.kt`, `workers/PrivacyRuntimeWorkerPolicy.kt`, `workers/WorkerRunContext.kt`
+
+### Chain 11: Receipt Match Lifecycle
+
+```
+Receipt captured/imported
+    ↓
+ReceiptLifecycleCoordinator (orchestrates)
+    ├─ ReceiptInputValidator (URI/MIME/size)
+    ├─ ReceiptDuplicateDetector (3-signal dedup)
+    └─ ReceiptAssetStore (file persistence)
+    ↓
+ReceiptLinkService.linkReceiptToExpense()
+    ├─ Creates receipt_expense_link row
+    └─ Writes receipt_events audit event
+    ↓
+ReceiptMatchLifecycleService (lifecycle-aware mutations)
+    ├─ DatabaseWriteBarrier check
+    ├─ ScannedReceiptDao status update
+    └─ ReceiptEventDao event recording
+    ↓
+ReceiptSideEffectDispatcher (document-type-gated)
+    ├─ AutoCreateWarrantyFromReceiptUseCase
+    ├─ CategorizeReceiptItemsUseCase
+    ├─ ReceiptTransactionMatcher
+    └─ PriceProtectionTracker
+```
+
+**Files:** `receipt/lifecycle/ReceiptLifecycleCoordinator.kt`, `receipt/lifecycle/ReceiptLinkService.kt`, `receipt/lifecycle/ReceiptMatchLifecycleService.kt`, `receipt/lifecycle/ReceiptSideEffectDispatcher.kt`, `receipt/lifecycle/ReceiptDuplicateDetector.kt`
 
 ---
 
@@ -277,16 +372,34 @@ Budget (main entity)
         └→ References: Category, Expense (for calculations)
 ```
 
-### Recurring Expenses Graph
+### Recurring Expenses Graph (expanded)
 
 ```
-ManualRecurringExpense / RecurringExpense
+ManualRecurringExpense / RecurringExpense / RecurringOccurrence / RecurringLifecycleEvent
     ├─ Repository: ManualRecurringExpenseRepository / RecurringExpenseRepository
-    ├─ DAO: ManualRecurringExpenseDao / RecurringExpenseDao
+    ├─ DAO: ManualRecurringExpenseDao / RecurringExpenseDao / RecurringOccurrenceDao / RecurringLifecycleEventDao
     └─ Used by:
         ├→ RecurringExpenseEngine
         ├→ BudgetCalculator
-        └→ HistoricalSpendingDistribution
+        ├→ HistoricalSpendingDistribution
+        ├→ RecurringLifecycleCoordinator
+        └→ BillReminderWorker
+```
+
+### Operation Run Graph
+
+```
+OperationRun / OperationRunEvent
+    ├─ DAO: OperationRunDao / OperationRunEventDao
+    └─ Used by: OperationRunRecorder, DiagnosticsRepository
+```
+
+### Warranty Reminder Delivery Graph
+
+```
+WarrantyReminderDelivery
+    ├─ DAO: WarrantyReminderDeliveryDao
+    └─ Related: Warranty (via warranty_id), WarrantyLifecycleEvent
 ```
 
 ### AI Artifact Storage Graph
@@ -378,12 +491,28 @@ ReceiptItemCategorizationService
 
 ```
 DatabaseModule (root)
-    ├─ Provides: AppDatabase
-    ├─ Uses: DaoModule
+    ├─ Provides: AppDatabase (v143, 69 entities)
+    ├─ Uses: DaoModule (67 DAOs)
     └─ Provides: GroupTransactionCoordinator
 
 DaoModule
-    └─ Provides: All 54 DAOs
+    └─ Provides: All 67 DAOs
+
+DiagnosticsModule
+    ├─ DiagnosticEventWriter
+    └─ OperationRunRecorder
+
+ProvenanceModule
+    └─ Provenance event recording
+
+ReminderSettingsModule
+    └─ BillReminderSettingsRepository
+
+RetentionModule
+    └─ RetentionRegistry with 5 targets
+
+WorkerModule
+    └─ WorkerRunLogger → WorkerRunLoggerImpl
 
 RepositoryModules (multiple)
     ├─ SavingsRepositoryBindingsModule
@@ -408,10 +537,10 @@ LocationResolverPortsModule
         └─ OverpassNearbyService
 
 NetworkModule
-    └─ Provides: Retrofit, OkHttp
+    └─ Provides: @LocationHttpClient, @CloudAiHttpClient OkHttpClient
 
 DispatchersModule
-    └─ Provides: IO, Default, Main dispatchers
+    └─ Provides: IO, Default, Main dispatchers, ApplicationScope
 
 CurrencyModule
     ├─ CurrencyConverter
@@ -425,6 +554,12 @@ EmailIngestionModule
 
 TimeModule
     └─ TimeProvider implementations
+
+SecurityModule
+    └─ SecureKeyStorage
+
+PrivacyModule
+    └─ CompositePrivacyGate, PrivacyAuditLogger, etc.
 ```
 
 ---
@@ -442,6 +577,18 @@ TimeModule
 | **On-Device ML** | `OnDevice*Service.kt` | ML models |
 | **Email (IMAP)** | `EmailReceiptIngestionService.kt` | Email receipts |
 | **Bank APIs** | `BankApiIntegration.kt` | Bank connections |
+| **Android Keystore** | `AtRestEncryptionService.kt`, `SecureKeyStorage.kt` | Hardware-backed encryption |
+| **WorkManager** | `WorkerSpecScheduler.kt` | Background scheduling |
+
+---
+
+## Database Barriers
+
+| Barrier | Purpose | File |
+|---------|---------|------|
+| `DatabaseReadBarrier` | Blocks reads during restore/maintenance mode | `data/database/barrier/` |
+| `DatabaseWriteBarrier` | Blocks writes during restore/maintenance mode | `data/database/barrier/` |
+| `RestoreMaintenanceMode` | 8-state maintenance mode, pauses workers | `data/backup/RestoreMaintenanceMode.kt` |
 
 ---
 
@@ -521,13 +668,15 @@ TimeModule
 
 ---
 
-## Missing Components Not Covered
-- **Lifecycle Coordinators**: TransactionLifecycleCoordinator, ReceiptLifecycleCoordinator, RecurringLifecycleCoordinator
-- **Workers**: DailyBriefingWorker, LocationBackfillWorker, MerchantKeyBackfillWorker, WarrantyExpirationWorker, BillReminderWorker, ReceiptMatchingWorker, DataRetentionWorker
-- **Worker Scheduling**: WorkerSpec, WorkerSpecScheduler
-- **AI**: HybridRouter (AID-4), SmartReceiptAssistService, 7 Hybrid*Service wrappers
-- **Privacy**: AtRestEncryptionService, SourceStatsEvent, SourceStatsEventDao
-- **15+ Hilt modules**: See docs/architecture/hilt-bindings-map.md for the full list
+## Key Architecture Decisions
+
+- **All expense CUD → TransactionLifecycleCoordinator**: Single entry point enforcing validation, dedup, event logging.
+- **All receipt processing → ReceiptLifecycleCoordinator**: Centralizes OCR, extraction, linking via ReceiptLinkService.
+- **All recurring ops → RecurringLifecycleCoordinator**: Expand→Resolve→Materialize triad with audit trail.
+- **Privacy Gate Pattern**: Every capability gated through CompositePrivacyGate (fail-closed, audit-logged).
+- **Worker Infrastructure**: WorkerSpec → WorkerSpecScheduler → WorkerExecutionGuard → WorkerRunLogger.
+- **Database Barriers**: Read/write blocking during RestoreMaintenanceMode.
+- **Backup Encryption Pipeline**: AES-256-GCM + PBKDF2 via CostbackupBundle with crash-safe RestoreJournal.
 
 **End of Test Coverage & Cross-References**
 

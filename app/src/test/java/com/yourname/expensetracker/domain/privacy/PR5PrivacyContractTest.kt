@@ -2,7 +2,6 @@ package com.yourname.expensetracker.domain.privacy
 
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.privacy.DefaultSensitiveHashingService
-import com.yourname.expensetracker.domain.bank.BankApiConfig
 import com.yourname.expensetracker.domain.bank.BankApiIntegration
 import com.yourname.expensetracker.domain.bank.BankMovementType
 import com.yourname.expensetracker.domain.bank.BankTransaction
@@ -97,7 +96,7 @@ class PR5PrivacyContractTest {
 
     @Before
     fun setUp() {
-        BankApiConfig.isStubMode = true
+        // isStubMode is immutable and already true under BuildConfig.DEBUG (unit tests).
     }
 
     @Test

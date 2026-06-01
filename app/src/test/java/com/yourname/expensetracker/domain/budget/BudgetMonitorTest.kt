@@ -11,7 +11,6 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.capture
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every

@@ -2,7 +2,7 @@
 
 > Complete mapping of every `NavigationDestination` to its corresponding ViewModel, screen file, and feature segment.
 >
-> *Last updated: 2026-05-10*
+> *Last updated: 2026-06-01*
 
 ---
 
@@ -30,7 +30,7 @@
 |-------|------------------|-----------|-------------|---------|
 | Add Expense | `NavigationDestination.AddExpense` | `AddExpenseViewModel` | `ui/screens/addexpense/AddExpenseSheet.kt` | 9 (Core Expense) |
 | Scan Receipt | `NavigationDestination.ScanReceipt` | `ReceiptScanViewModel` | `ui/screens/receiptscan/ReceiptScanScreen.kt` | 4 (Receipt/OCR) |
-| Recurring Expenses | `NavigationDestination.RecurringExpenses` | `RecurringExpensesViewModel` | `ui/screens/recurring/RecurringExpensesScreen.kt` | 7 (Recurring) |
+| Recurring Expenses | `NavigationDestination.RecurringExpenses` | *(no ViewModel — screen manages state internally)* | `ui/screens/recurring/RecurringExpensesScreen.kt` | 7 (Recurring) |
 | Manual Recurring Expense | `NavigationDestination.ManualRecurringExpense` | `ManualRecurringExpenseViewModel` | `ui/screens/recurringmanual/ManualRecurringExpenseScreen.kt` | 7 (Recurring) |
 
 ## Feature Screens (from FeaturesMenu)
@@ -66,12 +66,12 @@
 
 ### Screens with no NavigationDestination route
 
-> **Note**: `PrivacySettingsViewModel` exists but is only accessible from within the Settings screen, not as a standalone navigation route.
-
 | Route | Destination Class | ViewModel | Screen File | Segment |
 |-------|------------------|-----------|-------------|---------|
 | Privacy Settings | *(no NavigationDestination)* | `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | 6 (Privacy) |
 | Debug | `NavigationDestination.Debug` | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` | BuildConfig.DEBUG gated |
+| Source Link Debug | *(no NavigationDestination)* | `SourceLinkDebugViewModel` | `ui/screens/debug/SourceLinkDebugScreen.kt` | Debug sub-screen |
+| Source Link Backfill | *(no NavigationDestination)* | `SourceLinkBackfillViewModel` | `ui/screens/settings/` (no dedicated route) | Settings sub-screen |
 
 ---
 
@@ -144,4 +144,4 @@ App Chrome (6 tabs)
 | `AnalyticsViewModel` | 15+ dependencies | 🔴 High |
 | Most other VMs | 3-10 dependencies | 🟡 Medium |
 
-**Total ViewModel files:** 38 (across all shell destinations, overlays, and feature screens)
+**Total ViewModel files:** 40 (39 screen ViewModels + MainViewModel)

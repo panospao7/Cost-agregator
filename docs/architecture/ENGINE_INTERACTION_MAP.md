@@ -30,7 +30,14 @@
 | **ReceiptMatchLifecycleService** | 3 (Receipt matching) only | 🟢 LOW |
 | **RecurringRuleLifecycleCoordinator** | 4 (Recurring lifecycle), 2 (Transaction reconcile) | 🟡 HIGH |
 | **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
-| **BillReminderWorker** | 4 (Reminder dispatch) | 🟢 LOW |
+| **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
+| **WorkerExecutionGuard** | ALL workers (9-Notification), 7 (Backup restore gating) | 🟡 HIGH |
+| **WorkerRegistry** | 12 (Startup), 7 (Backup pause/resume) | 🟢 LOW |
+| **GroupLifecycleCoordinator** | Groups, Expenses, Budget offsets, Analytics | 🟡 HIGH |
+| **GroupBalanceCalculator** | Groups, Settlements | 🟢 LOW |
+| **HybridRouter** | 8 (AI cloud/on-device routing), 10 (Bank statement), 3 (Receipt) | 🟡 HIGH |
+| **AccountingExportPolicy** | 12 (Export), Tax reports | 🟢 LOW |
+| **NetCashflowBalanceProvider** | 1 (Forecast), 6 (Budget/Forecast/Cashflow) | 🟢 LOW |
 
 ---
 
@@ -108,6 +115,71 @@ BillReminderWorker.doWork()
   └── BillReminderSettingsRepository (runtime enabled/quiet hours check)
 ```
 
+### WorkerExecutionGuard changes affect:
+```
+WorkerExecutionGuard.runGuardedWithContext()
+  ├── All 7 workers (guard check at entry)
+  │     ├── RestoreMaintenanceMode (block during restore)
+  │     ├── WorkerRunLogger (start/success/skipped/retry/failure)
+  │     ├── RetryableWorkerException (retry contract)
+  │     └── NotificationPermissionChecker (permission gating)
+  └── PrivacyRuntimeWorkerPolicy (privacy-toggle gating)
+```
+
+### WorkerRegistry changes affect:
+```
+WorkerRegistry.scheduleAll() / pauseAllWorkers() / resumeAllWorkers()
+  ├── AppStartupCoordinator (startup scheduling)
+  ├── RestoreMaintenanceMode (pause/resume on backup restore)
+  └── WorkerSpecScheduler (centralized scheduling)
+```
+
+### GroupLifecycleCoordinator changes affect:
+```
+GroupLifecycleCoordinator.createGroup() / addMember() / removeMember() / addExpense() / archiveGroup()
+  ├── GroupTransactionCoordinator (delegation)
+  ├── GroupBalanceCalculator (balance updates)
+  ├── BudgetMonitor.checkBudgets() (post-commit side effect)
+  ├── TransactionSideEffectDispatcher.dispatchOnCreated() (post-commit side effect)
+  └── GroupLifecycleEventDao (audit event logging)
+```
+
+### HybridRouter changes affect:
+```
+HybridRouter.route()
+  ├── HybridDashboardBriefingService (cloud/on-device/fallback)
+  ├── HybridCategorizationAssistService
+  ├── HybridDedupeJudgeService
+  ├── HybridQueryInterpretationService
+  ├── HybridReceiptAssistService
+  ├── HybridReceiptItemCategorizationService
+  ├── HybridReviewExplanationService
+  └── CloudPayloadPolicy (pre-flight policy check)
+```
+
+### AccountingExportPolicy changes affect:
+```
+AccountingExportPolicy.validateGlobalDataset()
+  ├── ExportOptionsViewModel (CSV/JSON export)
+  ├── AccountingExportRepository (export stream)
+  └── ExpenseExportMapper (export field mapping)
+```
+
+### PrivacyGate / CloudPayloadPolicy changes affect:
+```
+PrivacyGate.check(capability, context)
+  ├── NotificationCaptureService (notification privacy)
+  ├── Cloud providers (7 AI services — receipt assist, categorization, dedupe, etc.)
+  ├── CompositeGeocodingService (all 4 geocoding providers)
+  ├── DatabaseBackupRepositoryImpl (backup/export)
+  ├── LocationBackfillWorker (background location)
+  ├── DataRetentionWorker (data purging)
+  └── DailyBriefingWorker (AI briefing)
+  ↑ PrivacyDecision.FailClosed: 30+ callers now use blocksExecution()
+    which returns true for both Denied and FailClosed variants,
+    providing consistent fail-closed behavior across all pipelines.
+```
+
 ---
 
 ## Safe vs Dangerous Changes
@@ -123,6 +195,10 @@ BillReminderWorker.doWork()
 - DailyBucketEngine — isolated daily bucket computation
 - BudgetVsActualEngine — isolated budget comparison
 - RecurringLifecycleEventWriter — isolated event writing
+- WorkerRegistry — isolated worker registry
+- GroupBalanceCalculator — isolated group balance computation
+- AccountingExportPolicy — isolated export validation
+- NetCashflowBalanceProvider — isolated forecast input
 
 ### DANGEROUS to change (shared engines):
 - CurrencyConverter — verify dashboard, budget, forecast, export, cashflow
@@ -131,9 +207,13 @@ BillReminderWorker.doWork()
 - TimeProvider — verify ALL timestamp-dependent logic
 - PrivacyGate — verify ALL privacy-sensitive paths
 - RecurringRuleLifecycleCoordinator — verify recurring, transaction reconciliation, reminder dispatch, backup
+- WorkerExecutionGuard — verify ALL 7 workers, backup restore gating, notification permission checking
+- GroupLifecycleCoordinator — verify groups, expenses, budget offsets, analytics
+- HybridRouter — verify ALL AI hybrid services fed by the router
 
 ### VERY DANGEROUS to change (foundational):
 - MoneyAggregate model — verify every consumer of financial totals
 - ExpenseDao queries — verify every repository and coordinator
 - Room migrations — verify backup/restore compatibility
 - Hilt modules — verify entire DI graph
+- PrivacyDecision sealed interface — adding/modifying variants affects 30+ callers using blocksExecution() and reason() across backup/export/geocoding/location/currency/warranty/AI pipelines
