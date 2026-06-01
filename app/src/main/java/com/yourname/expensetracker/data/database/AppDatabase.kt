@@ -7787,6 +7787,9 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_fresh_semFp_u ON scanned_receipts(semanticFingerprint) WHERE semanticFingerprint IS NOT NULL AND semanticFingerprint != ''")
 
                 // P3-BLOCKER-C: Fresh-install unique partial index on emailMessageIdHash.
+                // Column must exist before index creation (table was created without it in earlier migration).
+                database.execSQL("ALTER TABLE email_receipt_sources ADD COLUMN emailMessageIdHash TEXT")
+                database.execSQL("ALTER TABLE email_receipt_sources ADD COLUMN contentFingerprintHash TEXT")
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_fresh_emailMsgIdHash_u ON email_receipt_sources(emailMessageIdHash) WHERE emailMessageIdHash IS NOT NULL AND emailMessageIdHash != ''")
             }
         }
