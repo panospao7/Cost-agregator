@@ -6,7 +6,7 @@
 
 ## Test Coverage Summary
 
-**Total Test Files:** 475+
+**Total Test Files:** 317
 
 ### Test Categories
 
@@ -93,13 +93,10 @@ CategorizationEngine.categorize()
     ↓
 CategoryResult (with confidence)
     ↓
-ConfidenceRouter (routes confidence-adjusted ParsedTransaction)
-    ├─ sourceStatsRepository: SourceStatsRepository
-    ├─ userCorrectionRepository: UserCorrectionRepository
-    ├─ classifier: TransactionClassifier
-    └─ timeProvider: TimeProvider
-    ↓
-RoutingResult (AUTO_ACCEPT | NEEDS_REVIEW | AUTO_REJECT)
+ConfidenceRouter (if low confidence → AI)
+    ├─→ OnDeviceCategorizationAssistService
+    ├─→ CloudCategorizationAssistService
+    └─→ NoOpCategorizationAssistService
     ↓
 MerchantCategoryRepository.save()
     ↓
@@ -268,7 +265,7 @@ CompositePrivacyGate.check(capability, context)
 │ 3. LocationPrivacyGate: EXTERNAL_GEOCODING, GPS, etc.   │
 │ 4. BackupPrivacyGate: RAWBACKUP_EXPORT, ENCRYPTED_BACKUP│
 └───────────────────────────────────────────────────────────┘
-    ↓
+    ↓ (first Denied wins, or Allowed if all pass)
 PrivacyDecision (Allowed | Denied(reason))
     ↓
 PrivacyAuditLogger.log(capability, decision, reason, caller)
@@ -276,7 +273,7 @@ PrivacyAuditLogger.log(capability, decision, reason, caller)
 Proceed or Block operation
 ```
 
-**Files:** `privacy/PrivacyGate.kt`, `privacy/CompositePrivacyGate.kt`, `privacy/NotificationPrivacyGate.kt`, `privacy/CloudAiPrivacyGate.kt`, `privacy/LocationPrivacyGate.kt`, `privacy/BackupPrivacyGate.kt`, `privacy/PrivacyDecision.kt`, `privacy/PrivacyCapability.kt`, `privacy/PrivacyAuditLogger.kt`, `privacy/PrivacySettings.kt`, `privacy/EffectiveCloudAiPolicy.kt`, `privacy/RawContentSanitizer.kt`
+**Files:** `privacy/PrivacyGate.kt`, `privacy/CompositePrivacyGate.kt`, `privacy/NotificationPrivacyGate.kt`, `privacy/CloudAiPrivacyGate.kt`, `privacy/LocationPrivacyGate.kt`, `privacy/BackupPrivacyGate.kt`, `privacy/PrivacyDecision.kt`, `privacy/PrivacyBlocked.kt`, `privacy/PrivacyCapability.kt`, `privacy/PrivacyAuditLogger.kt`, `privacy/PrivacySettings.kt`, `privacy/EffectiveCloudAiPolicy.kt`, `privacy/CloudPayloadPolicy.kt`, `privacy/RawStorageMode.kt`, `privacy/RawContentSanitizer.kt`
 
 ### Chain 10: Worker Infrastructure
 
@@ -285,6 +282,7 @@ WorkerSpec (configuration)
     ↓
 WorkerSpecScheduler.schedule(workerName)
     ├─ Reads WorkerSpec.DEFAULTS[name]
+    ├─ Detects version changes → force REPLACE
     └─ Delegates to WorkManager
     ↓
 WorkerExecutionGuard.acquire(workerName)
@@ -296,9 +294,11 @@ WorkerRunLogger.runStarted(workerName, runId)
 Worker execution (domain logic)
     ↓
 WorkerRunLogger.runCompleted/runFailed(workerName, runId, result)
+    ↓
+PrivacyRuntimeWorkerPolicy (gates execution at runtime)
 ```
 
-**Files:** `workers/WorkerSpec.kt`, `workers/WorkerSpecScheduler.kt`, `workers/WorkerExecutionGuard.kt`, `workers/WorkerRunLogger.kt`, `workers/WorkerRegistry.kt`, `workers/RetryableWorkerException.kt`, `workers/PrivacyRuntimeWorkerPolicy.kt`, `workers/WorkerRunContext.kt`
+**Files:** `workers/WorkerSpec.kt`, `workers/WorkerSpecScheduler.kt`, `workers/WorkerExecutionGuard.kt`, `workers/WorkerRunLogger.kt`, `workers/WorkerRegistry.kt`, `workers/RetryableWorkerException.kt`, `workers/PrivacyRuntimeWorkerPolicy.kt`, `workers/NotificationPermissionChecker.kt`, `workers/WorkerRunContext.kt`
 
 ### Chain 11: Receipt Match Lifecycle
 
@@ -326,7 +326,7 @@ ReceiptSideEffectDispatcher (document-type-gated)
     └─ PriceProtectionTracker
 ```
 
-**Files:** `receipt/lifecycle/ReceiptLifecycleCoordinator.kt`, `receipt/lifecycle/ReceiptLinkService.kt`, `receipt/lifecycle/ReceiptMatchLifecycleService.kt`, `receipt/lifecycle/ReceiptSideEffectDispatcher.kt`, `receipt/lifecycle/ReceiptDuplicateDetector.kt`
+**Files:** `receipt/lifecycle/ReceiptLifecycleCoordinator.kt`, `receipt/lifecycle/ReceiptLinkService.kt`, `receipt/lifecycle/ReceiptMatchLifecycleService.kt`, `receipt/lifecycle/ReceiptSideEffectDispatcher.kt`, `receipt/lifecycle/ReceiptDuplicateDetector.kt`, `receipt/lifecycle/ReceiptAssetStore.kt`, `receipt/lifecycle/ReceiptInputValidator.kt`, `receipt/lifecycle/ReceiptDebugExporter.kt`
 
 ---
 
@@ -372,7 +372,7 @@ Budget (main entity)
         └→ References: Category, Expense (for calculations)
 ```
 
-### Recurring Expenses Graph (expanded)
+### Recurring Expenses Graph
 
 ```
 ManualRecurringExpense / RecurringExpense / RecurringOccurrence / RecurringLifecycleEvent
@@ -391,7 +391,9 @@ ManualRecurringExpense / RecurringExpense / RecurringOccurrence / RecurringLifec
 ```
 OperationRun / OperationRunEvent
     ├─ DAO: OperationRunDao / OperationRunEventDao
-    └─ Used by: OperationRunRecorder, DiagnosticsRepository
+    └─ Used by:
+        ├→ OperationRunRecorder
+        └→ DiagnosticsRepository
 ```
 
 ### Warranty Reminder Delivery Graph
@@ -399,7 +401,9 @@ OperationRun / OperationRunEvent
 ```
 WarrantyReminderDelivery
     ├─ DAO: WarrantyReminderDeliveryDao
-    └─ Related: Warranty (via warranty_id), WarrantyLifecycleEvent
+    └─ Related:
+        ├→ Warranty (via warranty_id)
+        └→ WarrantyLifecycleEvent
 ```
 
 ### AI Artifact Storage Graph
@@ -429,13 +433,13 @@ CategorizationEngine (main logic)
     ├─ MerchantCanonicalizer (normalization)
     └─ SemanticKeywordMatcher (matching)
     ↓
-ConfidenceRouter (routes based on confidence scoring)
-    ├─ Constructor:
-    │  ├→ sourceStatsRepository: SourceStatsRepository
-    │  ├→ userCorrectionRepository: UserCorrectionRepository
-    │  ├→ classifier: TransactionClassifier
-    │  └→ timeProvider: TimeProvider
-    └─ Produces: RoutingResult(AUTO_ACCEPT | NEEDS_REVIEW | AUTO_REJECT)
+ConfidenceRouter (routes to AI if needed)
+    ├─ Domain: ConfidenceRouter
+    └─ Uses:
+        ├→ CategorizationAssistService (domain interface)
+        ├→ OnDeviceCategorizationAssistService (impl)
+        ├→ CloudCategorizationAssistService (impl)
+        └→ NoOpCategorizationAssistService (impl)
     ↓
 MerchantNormalizer (text processing)
     └─ Uses: MerchantCleaner, GreeklishNormalizer
@@ -492,27 +496,26 @@ ReceiptItemCategorizationService
 ```
 DatabaseModule (root)
     ├─ Provides: AppDatabase (v143, 69 entities)
-    ├─ Uses: DaoModule (67 DAOs)
+    ├─ Uses: DaoModule
     └─ Provides: GroupTransactionCoordinator
 
 DaoModule
     └─ Provides: All 67 DAOs
 
 DiagnosticsModule
-    ├─ DiagnosticEventWriter
-    └─ OperationRunRecorder
+    └─ Provides: DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository
 
 ProvenanceModule
-    └─ Provenance event recording
+    └─ Provides: Provenance event recording
 
 ReminderSettingsModule
-    └─ BillReminderSettingsRepository
+    └─ Provides: BillReminderSettingsRepository
 
 RetentionModule
-    └─ RetentionRegistry with 5 targets
+    └─ Provides: RetentionRegistry with 5 targets
 
 WorkerModule
-    └─ WorkerRunLogger → WorkerRunLoggerImpl
+    └─ Provides: WorkerRunLogger → WorkerRunLoggerImpl
 
 RepositoryModules (multiple)
     ├─ SavingsRepositoryBindingsModule
@@ -525,6 +528,7 @@ ServiceModule
 AiModule
     ├─ Provides: All AI services
     ├─ AiCapabilityRouter
+    ├─ 3 AI DAOs
     └─ AI policy implementation
 
 LocationResolverPortsModule
@@ -556,10 +560,25 @@ TimeModule
     └─ TimeProvider implementations
 
 SecurityModule
-    └─ SecureKeyStorage
+    └─ Provides: SecureKeyStorage
 
 PrivacyModule
-    └─ CompositePrivacyGate, PrivacyAuditLogger, etc.
+    └─ Provides: CompositePrivacyGate, PrivacyAuditLogger, PrivacySettingsRepository, Backups
+
+GroupsModule
+    └─ Provides: GroupsRepository, SharedExpenseDataPort, Use cases
+
+DashboardAnomalyModule
+    └─ Provides: AnomalyAlertRepository
+
+ParserModule
+    └─ Provides: GreekBankParser
+
+TaxModule
+    └─ Provides: TaxConfiguration → GreeceTaxConfiguration
+
+CashFlowModule
+    └─ Provides: CashFlowCalculator
 ```
 
 ---
@@ -573,22 +592,13 @@ PrivacyModule
 | **Nominatim (OSM)** | `NominatimGeocodingService.kt` | Geocoding |
 | **Photon** | `PhotonGeocodingService.kt` | Geocoding |
 | **Overpass API** | `OverpassNearbyService.kt` | POI lookup |
-| **Cloud AI** | `Cloud*Service.kt` | AI services |
-| **On-Device ML** | `OnDevice*Service.kt` | ML models |
+| **Cloud AI (Gemini)** | `Cloud*Service.kt` | AI services |
+| **On-Device ML (ML Kit GenAI)** | `OnDevice*Service.kt` | ML models |
 | **Email (IMAP)** | `EmailReceiptIngestionService.kt` | Email receipts |
 | **Bank APIs** | `BankApiIntegration.kt` | Bank connections |
 | **Android Keystore** | `AtRestEncryptionService.kt`, `SecureKeyStorage.kt` | Hardware-backed encryption |
+| **Google Geocoding API** | `CompositeGeocodingService.kt` | Geocoding |
 | **WorkManager** | `WorkerSpecScheduler.kt` | Background scheduling |
-
----
-
-## Database Barriers
-
-| Barrier | Purpose | File |
-|---------|---------|------|
-| `DatabaseReadBarrier` | Blocks reads during restore/maintenance mode | `data/database/barrier/` |
-| `DatabaseWriteBarrier` | Blocks writes during restore/maintenance mode | `data/database/barrier/` |
-| `RestoreMaintenanceMode` | 8-state maintenance mode, pauses workers | `data/backup/RestoreMaintenanceMode.kt` |
 
 ---
 
@@ -657,6 +667,14 @@ PrivacyModule
 | Financial arithmetic | `FinancialArithmeticPrecisionTest.kt` | Tests |
 | Date/time logic | `TemporalConsistencyTest.kt` | Tests |
 
+### Database Barriers
+
+| Barrier | Purpose | File |
+|---------|---------|------|
+| `DatabaseReadBarrier` | Blocks reads during restore/maintenance mode | `data/database/barrier/` |
+| `DatabaseWriteBarrier` | Blocks writes during restore/maintenance mode | `data/database/barrier/` |
+| `RestoreMaintenanceMode` | 8-state maintenance mode coordinator, pauses workers via WorkManager | `data/backup/RestoreMaintenanceMode.kt` |
+
 ### Cross-Source Deduplication
 
 | Component | Purpose | File |
@@ -667,16 +685,6 @@ PrivacyModule
 | Consistency tests | Validates dedup logic | `consistency/*Test.kt` |
 
 ---
-
-## Key Architecture Decisions
-
-- **All expense CUD → TransactionLifecycleCoordinator**: Single entry point enforcing validation, dedup, event logging.
-- **All receipt processing → ReceiptLifecycleCoordinator**: Centralizes OCR, extraction, linking via ReceiptLinkService.
-- **All recurring ops → RecurringLifecycleCoordinator**: Expand→Resolve→Materialize triad with audit trail.
-- **Privacy Gate Pattern**: Every capability gated through CompositePrivacyGate (fail-closed, audit-logged).
-- **Worker Infrastructure**: WorkerSpec → WorkerSpecScheduler → WorkerExecutionGuard → WorkerRunLogger.
-- **Database Barriers**: Read/write blocking during RestoreMaintenanceMode.
-- **Backup Encryption Pipeline**: AES-256-GCM + PBKDF2 via CostbackupBundle with crash-safe RestoreJournal.
 
 **End of Test Coverage & Cross-References**
 
