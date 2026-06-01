@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -49,6 +51,12 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context
 ) : PrivacySettingsRepository {
     private val workManager = WorkManager.getInstance(context)
+
+    /**
+     * P8-PR1 (NEW-P8-001): Mutex serialising read-modify-write in [updateSettings]
+     * so concurrent callers cannot interleave and cause TOCTOU corruption.
+     */
+    private val settingsMutex = Mutex()
 
     private object Keys {
         val NOTIFICATION_CAPTURE_ENABLED = booleanPreferencesKey("notification_capture_enabled")
@@ -100,33 +108,37 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         }
 
     override suspend fun updateSettings(transform: (PrivacySettings) -> PrivacySettings) {
-        val old = getSettings()
-        context.privacySettingsDataStore.edit { prefs ->
-            // PRIV-6825-04: Use load-state settings as base so corruption cannot resurrect unsafe defaults.
-            // toLoadState().settings() returns FAIL_CLOSED_DEFAULTS on corruption, not normal defaults.
-            val current = prefs.toLoadState().settings()
-            val updated = transform(current)
-            prefs[Keys.NOTIFICATION_CAPTURE_ENABLED] = updated.notificationCaptureEnabled
-            prefs[Keys.CLOUD_AI_ENABLED] = updated.cloudAiEnabled
-            prefs[Keys.REDACT_BEFORE_CLOUD] = updated.redactBeforeCloud
-            prefs[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] = updated.receiptImageCloudEnabled
-            prefs[Keys.BANK_STATEMENT_AI_ENABLED] = updated.bankStatementAiEnabled
-            prefs[Keys.EXTERNAL_GEOCODING_ENABLED] = updated.externalGeocodingEnabled
-            prefs[Keys.BACKGROUND_LOCATION_BACKFILL_ENABLED] = updated.backgroundLocationBackfillEnabled
-            prefs[Keys.DEVICE_GPS_LOCATION_ENABLED] = updated.deviceGpsLocationEnabled
-            prefs[Keys.ENCRYPTED_BACKUP_ENABLED] = updated.encryptedBackupEnabled
-            prefs[Keys.RAW_NOTIFICATION_RETENTION_DAYS] = updated.rawNotificationRetentionDays
-            prefs[Keys.RAW_OCR_RETENTION_DAYS] = updated.rawOcrRetentionDays
-            prefs[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] = updated.debugDataPersistenceEnabled
-            prefs[Keys.RAW_NOTIFICATION_STORAGE_MODE] = updated.rawNotificationStorageMode.name
-            prefs[Keys.RAW_OCR_STORAGE_MODE] = updated.rawOcrStorageMode.name
-            prefs[Keys.EMAIL_RECEIPT_STORAGE_MODE] = updated.emailReceiptStorageMode.name
-            prefs[Keys.RAW_BANK_STATEMENT_STORAGE_MODE] = updated.rawBankStatementStorageMode.name
-            // Mark as initialized so future empty-prefs reads are not misclassified as first-run
-            prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+        // P8-PR1 (NEW-P8-001): Serialise under Mutex so concurrent callers cannot
+        // interleave read-modify-write cycles and cause TOCTOU corruption.
+        settingsMutex.withLock {
+            val old = getSettings()
+            context.privacySettingsDataStore.edit { prefs ->
+                // PRIV-6825-04: Use load-state settings as base so corruption cannot resurrect unsafe defaults.
+                // toLoadState().settings() returns FAIL_CLOSED_DEFAULTS on corruption, not normal defaults.
+                val current = prefs.toLoadState().settings()
+                val updated = transform(current)
+                prefs[Keys.NOTIFICATION_CAPTURE_ENABLED] = updated.notificationCaptureEnabled
+                prefs[Keys.CLOUD_AI_ENABLED] = updated.cloudAiEnabled
+                prefs[Keys.REDACT_BEFORE_CLOUD] = updated.redactBeforeCloud
+                prefs[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] = updated.receiptImageCloudEnabled
+                prefs[Keys.BANK_STATEMENT_AI_ENABLED] = updated.bankStatementAiEnabled
+                prefs[Keys.EXTERNAL_GEOCODING_ENABLED] = updated.externalGeocodingEnabled
+                prefs[Keys.BACKGROUND_LOCATION_BACKFILL_ENABLED] = updated.backgroundLocationBackfillEnabled
+                prefs[Keys.DEVICE_GPS_LOCATION_ENABLED] = updated.deviceGpsLocationEnabled
+                prefs[Keys.ENCRYPTED_BACKUP_ENABLED] = updated.encryptedBackupEnabled
+                prefs[Keys.RAW_NOTIFICATION_RETENTION_DAYS] = updated.rawNotificationRetentionDays
+                prefs[Keys.RAW_OCR_RETENTION_DAYS] = updated.rawOcrRetentionDays
+                prefs[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] = updated.debugDataPersistenceEnabled
+                prefs[Keys.RAW_NOTIFICATION_STORAGE_MODE] = updated.rawNotificationStorageMode.name
+                prefs[Keys.RAW_OCR_STORAGE_MODE] = updated.rawOcrStorageMode.name
+                prefs[Keys.EMAIL_RECEIPT_STORAGE_MODE] = updated.emailReceiptStorageMode.name
+                prefs[Keys.RAW_BANK_STATEMENT_STORAGE_MODE] = updated.rawBankStatementStorageMode.name
+                // Mark as initialized so future empty-prefs reads are not misclassified as first-run
+                prefs[LOAD_STATE_KEY] = LOAD_STATE_NORMAL
+            }
+            val persisted = getSettings()
+            applyPrivacyChange(old, persisted)
         }
-        val persisted = getSettings()
-        applyPrivacyChange(old, persisted)
     }
 
     /**

@@ -44,6 +44,8 @@ import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
@@ -116,7 +118,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
     private val sourceLinkWriter: SourceLinkWriter,
     private val receiptSideEffectPlanner: ReceiptSideEffectPlanner,
-    private val receiptInsertResolver: ReceiptInsertResolver
+    private val receiptInsertResolver: ReceiptInsertResolver,
+    // U-PR5: Authoritative cloud AI gate — checks both PrivacySettings and AiSettings before cloud OCR calls
+    private val effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver
 ) {
 
     companion object {
@@ -255,6 +259,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         //    Ownership boundary: ReceiptRepository/OCR owns file persistence.
         //    The coordinator works with the imagePath from the response, not its own copy.
         return try {
+            // U-PR5: Authoritative cloud AI gate — blocks cloud OCR when privacy or AI settings disable it.
+            val ocrPolicy = effectiveCloudAiPolicyResolver.resolve()
+            ocrPolicy.requireAllowed(PrivacyCapability.CLOUD_AI_RECEIPT_OCR)
+            if (ocrPolicy.redactBeforeCloud) {
+                Timber.d("processReceiptInput: redactBeforeCloud=true — cloud OCR payload redaction active")
+            }
+
             val processResult = receiptRepository.processReceipt(
                 imageUri = uri,
                 autoCreateReview = options.createReview,
@@ -639,6 +650,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             e.attemptedAssetPath?.takeIf { it.isNotBlank() }?.let { assetStore.deleteAsset(it) }
             Timber.d("Duplicate receipt detected during insert: existingId=%d, reason=%s", e.existingReceipt.id, e.reason)
             return Result.success(e.existingReceipt)
+        } catch (e: SecurityException) {
+            // U-PR5: Cloud OCR blocked by privacy policy — return failure instead of fallback manual record
+            Timber.w(e, "Cloud OCR blocked by privacy policy")
+            emitIntakeDiagnostic("policy", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
+                correlationId, "CLOUD_OCR_BLOCKED",
+                mimeType = validation.mimeType, fileSizeBytes = validation.fileSizeBytes,
+                message = e.message ?: "Cloud OCR blocked by privacy policy")
+            return Result.failure(e)
         } catch (e: Exception) {
             Timber.e(e, "processReceipt failed, falling back to manual record")
 

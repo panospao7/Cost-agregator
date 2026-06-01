@@ -29,6 +29,10 @@ data class PrivacyAuditContext(
     /**
      * Convert to the legacy Map<String, String> for backward compatibility with
      * [PrivacyGate.check] and [PrivacyAuditLogger.logDecision].
+     *
+     * P8-PR2 (P8-P1-04): Includes [metadata] serialised as its JSON form.
+     * [SafePrivacyMetadata] applies key-aware sanitisation internally so no
+     * sensitive caller-provided keys/values can leak into the audit trail.
      */
     fun toMap(): Map<String, String> = buildMap {
         put("operation", operation)
@@ -43,6 +47,11 @@ data class PrivacyAuditContext(
         rawTextIncluded?.let { put("rawTextIncluded", it.toString()) }
         rawImageIncluded?.let { put("rawImageIncluded", it.toString()) }
         correlationId?.let { put("correlationId", it) }
+        // P8-PR2 (P8-P1-04): Include SafePrivacyMetadata — it is already sanitised
+        // by its own key-aware put() logic, so no raw sensitive data can leak.
+        if (!metadata.isEmpty()) {
+            put("metadata", metadata.toJson())
+        }
     }
 
     companion object {

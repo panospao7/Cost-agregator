@@ -4,6 +4,7 @@
 package com.yourname.expensetracker.data.privacy
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
@@ -55,6 +56,14 @@ class DataRetentionWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.d(TAG, "Data retention worker started")
 
+        // P8-PR1 (NEW-P8-002): Initialise checkpoint prefs — if we crashed mid-run
+        // on a previous attempt, resume from the last incomplete target.
+        val prefs = checkpointPrefs()
+        val resumeFrom = getLastIncompleteTarget(prefs)
+        if (resumeFrom != null) {
+            Log.w(TAG, "Resuming from last incomplete target: $resumeFrom")
+        }
+
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "data_retention",
@@ -67,44 +76,67 @@ class DataRetentionWorker @AssistedInject constructor(
             val notificationCutoff = now - TimeUnit.DAYS.toMillis(settings.rawNotificationRetentionDays.toLong())
             val ocrCutoff = now - TimeUnit.DAYS.toMillis(settings.rawOcrRetentionDays.toLong())
             val emailCutoff = now - TimeUnit.DAYS.toMillis(30)
-            // AI chat messages use the same 30-day retention as email by default
             val aiChatCutoff = now - TimeUnit.DAYS.toMillis(30)
-            // P8F-06: Diagnostic events carry free-text PII (message/exceptionMessage/metadataJson).
-            // No dedicated diagnostics retention setting exists, so reuse the same 30-day default
-            // the worker applies to other non-configurable data (email, ai_chat_messages).
             val diagnosticsCutoff = now - TimeUnit.DAYS.toMillis(30)
 
             // PRIV-441-12: Use injectable RetentionRegistry instead of inline list
-            val allTargets = retentionRegistry.allTargets()
+            val allTargets = retentionRegistry.allTargets().toList()
+            // P8-PR1 (NEW-P8-002): Order targets deterministically so checkpoint works.
+            val orderedTargets = allTargets.sortedBy { it.name }
             val results = mutableListOf<RetentionPurgeResult>()
 
-            // Notification target uses its own cutoff
-            ctx.checkpoint("data_retention_notifications")
-            allTargets.firstOrNull { it.name == "raw_notifications" }?.let {
-                results += it.purge(notificationCutoff)
-            }
+            // Determine which targets to skip based on checkpoint
+            var skipTargets = resumeFrom != null
 
-            // OCR target uses its own cutoff
-            ctx.checkpoint("data_retention_ocr")
-            allTargets.firstOrNull { it.name == "scanned_receipts.rawOcrText" }?.let {
-                results += it.purge(ocrCutoff)
-            }
-
-            // All other targets use their appropriate cutoff
-            val defaultCutoff = now - TimeUnit.DAYS.toMillis(30)
-            for (target in allTargets) {
-                if (target.name != "raw_notifications" && target.name != "scanned_receipts.rawOcrText") {
-                    val cutoff = when (target.name) {
-                        "email_receipt_sources" -> emailCutoff  // PRIV-43B-12: redact not delete
-                        "ai_chat_messages" -> aiChatCutoff      // PR-D: proper 30-day cutoff
-                        "notification_intake" -> notificationCutoff   // P8F-01: same captured content as raw_notifications
-                        "pipeline_diagnostic_events" -> diagnosticsCutoff  // P8F-06: free-text PII, 30-day default
-                        "ai_artifacts" -> now  // TTL-based expiry (expiresAt < now is correct)
-                        else -> defaultCutoff  // 30-day window for all other targets
+            for (target in orderedTargets) {
+                // P8-PR1 (NEW-P8-002): If resuming, skip targets that were already completed
+                if (skipTargets) {
+                    if (target.name == resumeFrom) {
+                        skipTargets = false // This target was incomplete, process it now
+                    } else {
+                        Log.d(TAG, "Skipping already-completed target: ${target.name}")
+                        continue
                     }
-                    results += target.purge(cutoff)
+                }
+
+                val cutoff = when (target.name) {
+                    "raw_notifications" -> notificationCutoff
+                    "scanned_receipts.rawOcrText" -> ocrCutoff
+                    "email_receipt_sources" -> emailCutoff
+                    "ai_chat_messages" -> aiChatCutoff
+                    "notification_intake" -> notificationCutoff
+                    "pipeline_diagnostic_events" -> diagnosticsCutoff
+                    "ai_artifacts" -> now
+                    else -> now - TimeUnit.DAYS.toMillis(30)
+                }
+
+                ctx.checkpoint("retention_${target.name}")
+
+                // P8-PR1 (NEW-P8-006): Catch per-target purge failures so a single
+                // failing target does not prevent other targets from being processed.
+                val result = try {
+                    target.purge(cutoff)
+                } catch (e: Exception) {
+                    Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing", e)
+                    RetentionPurgeResult(
+                        targetName = target.name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "Exception: ${e.message}"
+                    )
+                }
+                results += result
+
+                if (result.success) {
+                    markTargetComplete(prefs, target.name)
+                } else {
+                    markTargetFailed(prefs, target.name)
+                    Log.w(TAG, "RetentionTarget[${target.name}] purge reported failure: ${result.errorMessage}")
                 }
             }
+
+            // P8-PR1 (NEW-P8-002): Clear checkpoint once all targets are done
+            clearCheckpoint(prefs)
 
             val auditDao = appDatabase.privacyAuditDao()
 
@@ -143,7 +175,15 @@ class DataRetentionWorker @AssistedInject constructor(
                 ))
             }
 
-            Log.d(TAG, "Data retention worker completed: notifications=$notifCount ocr=$ocrCount")
+            // P8-PR1 (NEW-P8-006): Report partial success — if any target failed, the
+            // run is not fully successful but still soft-succeeds (will retry next day).
+            val anyFailure = results.any { !it.success }
+            if (anyFailure) {
+                val failed = results.filter { !it.success }.map { it.targetName }
+                Log.w(TAG, "Data retention worker completed with PARTIAL failures: $failed")
+            } else {
+                Log.d(TAG, "Data retention worker completed: notifications=$notifCount ocr=$ocrCount")
+            }
         }
 
         return guardResult.toWorkerResult()
@@ -217,10 +257,59 @@ class DataRetentionWorker @AssistedInject constructor(
         return totalPurged
     }
 
+    // ── P8-PR1 (NEW-P8-002): Checkpoint helpers ──────────────────────
+
+    private fun checkpointPrefs(): SharedPreferences =
+        applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun markTargetComplete(prefs: SharedPreferences, targetName: String) {
+        prefs.edit().putBoolean("${CHECKPOINT_PREFIX}$targetName", true).commit()
+    }
+
+    private fun markTargetFailed(prefs: SharedPreferences, targetName: String) {
+        prefs.edit().putBoolean("${CHECKPOINT_PREFIX}${targetName}_failed", true).commit()
+    }
+
+    /**
+     * Returns the name of the first target that is not marked complete,
+     * or `null` if all targets are complete (no checkpoint needed).
+     */
+    private fun getLastIncompleteTarget(prefs: SharedPreferences): String? {
+        val allTargets = retentionRegistry.allTargets().sortedBy { it.name }
+        // A checkpoint is active only if at least one target is marked complete
+        // and the overall run is not cleared (no CLEARED sentinel).
+        if (prefs.getBoolean(PREFS_CLEARED_KEY, false)) return null
+
+        var foundComplete = false
+        for (target in allTargets) {
+            val key = "${CHECKPOINT_PREFIX}${target.name}"
+            val isComplete = prefs.getBoolean(key, false)
+            if (!isComplete) {
+                // If we've seen at least one completed target, this is the resume point
+                if (foundComplete) return target.name
+                // Otherwise no checkpoint is active yet
+                return null
+            }
+            foundComplete = true
+        }
+
+        // All targets complete — no resume needed
+        return null
+    }
+
+    /** Clears the checkpoint once all targets have been processed successfully. */
+    private fun clearCheckpoint(prefs: SharedPreferences) {
+        prefs.edit().clear().commit()
+    }
+
     companion object {
         const val TAG = "DataRetentionWorker"
         const val WORK_NAME = "data_retention"
         private const val PAGE_SIZE = 100
+
+        private const val PREFS_NAME = "data_retention_checkpoint"
+        private const val CHECKPOINT_PREFIX = "completed_"
+        private const val PREFS_CLEARED_KEY = "_cleared"
 
         /**
          * Enqueue a daily data-retention job.

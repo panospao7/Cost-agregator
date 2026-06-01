@@ -14,6 +14,13 @@ data class EffectiveCloudAiPolicy(
     val receiptImageUploadAllowed: Boolean,
     val bankStatementCloudAllowed: Boolean
 ) {
+    /**
+     * P8-PR1 (NEW-P8-005): Checks whether the specific [capability] is allowed.
+     *
+     * @throws SecurityException if the capability is blocked or unrecognised.
+     *         Unrecognised capabilities throw rather than silently returning,
+     *         so callers are forced to register new capabilities explicitly.
+     */
     fun requireAllowed(capability: PrivacyCapability) {
         if (!cloudAllowed) {
             throw SecurityException("Cloud AI blocked by privacy policy: $reason")
@@ -23,7 +30,13 @@ data class EffectiveCloudAiPolicy(
             PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD -> receiptImageUploadAllowed
             PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
             PrivacyCapability.AI_BANK_STATEMENT_PARSING -> bankStatementCloudAllowed
-            else -> true // Other capabilities only need global cloud gate
+            PrivacyCapability.CLOUD_AI_RECEIPT_OCR -> receiptImageUploadAllowed
+            // All other capabilities must be explicitly listed; unrecognised ones
+            // throw so the gap is discovered immediately at development time.
+            else -> throw SecurityException(
+                "EffectiveCloudAiPolicy does not recognise capability $capability — " +
+                "it must be explicitly registered in requireAllowed()"
+            )
         }
         if (!capabilityAllowed) {
             throw SecurityException("Capability $capability blocked by privacy policy")

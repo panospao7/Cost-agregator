@@ -19,6 +19,7 @@ object PrivacyCapabilityHandlingPolicy {
         PrivacyCapability.NOTIFICATION_CAPTURE,
         PrivacyCapability.NOTIFICATION_PACKAGE_ALLOWLIST,
         PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
+        PrivacyCapability.CLOUD_AI_RECEIPT_OCR,
         PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
         PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION,
         PrivacyCapability.CLOUD_AI_BANK_STATEMENT,

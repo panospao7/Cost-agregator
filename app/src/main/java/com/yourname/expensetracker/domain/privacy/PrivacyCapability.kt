@@ -4,6 +4,8 @@ enum class PrivacyCapability {
     NOTIFICATION_CAPTURE,
     NOTIFICATION_PACKAGE_ALLOWLIST,
     CLOUD_AI_RECEIPT_ASSIST,
+    /** U-PR5: Cloud OCR capability — gated by EffectiveCloudAiPolicy before cloud OCR calls. */
+    CLOUD_AI_RECEIPT_OCR,
     CLOUD_AI_ITEM_CATEGORIZATION,
     CLOUD_AI_WARRANTY_EXTRACTION,
     CLOUD_AI_BANK_STATEMENT,

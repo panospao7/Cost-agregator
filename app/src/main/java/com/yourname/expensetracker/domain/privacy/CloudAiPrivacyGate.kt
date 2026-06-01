@@ -25,6 +25,7 @@ class CloudAiPrivacyGate @Inject constructor(
 
         val decision = when (capability) {
             PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
+            PrivacyCapability.CLOUD_AI_RECEIPT_OCR,
             PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
             PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION,
             PrivacyCapability.CLOUD_AI_DAILY_BRIEFING,

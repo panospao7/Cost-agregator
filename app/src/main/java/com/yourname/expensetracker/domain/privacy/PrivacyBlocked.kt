@@ -7,6 +7,26 @@ package com.yourname.expensetracker.domain.privacy
  * human-readable [reason] string. UI components should use these classes for
  * consistent privacy-denied messaging across all screens rather than
  * constructing ad-hoc error strings.
+ *
+ * ## Usage in providers
+ *
+ * P8-PR2 (P8-P1-12): Cloud providers (CloudReceiptAssistService, etc.) MUST use
+ * [AiServiceError.PrivacyDenied] wrapping the appropriate [PrivacyBlocked] subclass
+ * when a privacy-gate check denies execution. Ad-hoc denial strings are not allowed.
+ *
+ * ## Adding new denied states
+ *
+ * When a new [PrivacyCapability] is added, a corresponding [PrivacyBlocked] subclass
+ * should be created and registered in the [toPrivacyBlocked] mapper. If no specific
+ * subclass exists, [Custom] is returned.
+ *
+ * ## Contract
+ *
+ * - [toPrivacyBlocked] is the single entry point for mapping [PrivacyDecision] → [PrivacyBlocked].
+ * - No provider constructs [PrivacyBlocked] subclasses directly; they always go through
+ *   [toPrivacyBlocked] or receive a typed [AiServiceError.PrivacyDenied] from the gate layer.
+ * - The [reason] string is a static default — the [PrivacyDecision.Denied.reason] from
+ *   the gate is passed through so the decision reason is preserved end-to-end.
  */
 sealed interface PrivacyBlocked {
     val capability: PrivacyCapability
@@ -63,7 +83,14 @@ sealed interface PrivacyBlocked {
     ) : PrivacyBlocked
 }
 
-/** Maps a PrivacyDecision + capability to a typed PrivacyBlocked, or null if allowed. */
+/**
+ * Maps a [PrivacyDecision] + [capability] to a typed [PrivacyBlocked], or null if allowed.
+ *
+ * P8-PR2 (P8-P1-12): This is the SINGLE entry point for mapping decisions to user-facing
+ * blocked states. Cloud providers MUST use [AiServiceError.PrivacyDenied] wrapping the
+ * result of this function. Direct construction of [PrivacyBlocked] subclasses outside
+ * this mapper is not allowed.
+ */
 fun PrivacyDecision.toPrivacyBlocked(capability: PrivacyCapability): PrivacyBlocked? = when (this) {
     is PrivacyDecision.Allowed, is PrivacyDecision.NotApplicable -> null
     is PrivacyDecision.Denied -> privacyBlockedFromCapability(capability, reason)

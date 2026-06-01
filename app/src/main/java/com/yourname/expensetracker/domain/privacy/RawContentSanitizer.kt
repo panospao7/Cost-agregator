@@ -1,13 +1,40 @@
 package com.yourname.expensetracker.domain.privacy
 
 object RawContentSanitizer {
-    // P8-PR3 (NEW-P8-007): STORE_RAW preserves null as empty string (field is non-nullable).
-    // Callers should check rawOcrText.isEmpty() to detect "no data" vs rawOcrTextPurgedAt for "purged".
+    /**
+     * P8-PR3 (NEW-P8-007): Sanitises OCR text for the given storage mode.
+     *
+     * This overload returns a non-null [String] — callers that need to distinguish
+     * between "no data was ever captured" (null) and "data was cleared" (empty
+     * string) should use [sanitizeRawOcrNullable] instead.
+     *
+     * Under STORE_RAW, null input is converted to empty string ("") so callers
+     * can check `rawOcrText.isEmpty()` vs `rawOcrTextPurgedAt` to determine
+     * whether data was ever present.
+     */
     fun sanitizeRawOcr(text: String?, mode: RawStorageMode): String = when (mode) {
         RawStorageMode.STORE_RAW -> text ?: ""
         RawStorageMode.STORE_REDACTED -> "[REDACTED]"
         RawStorageMode.STORE_METADATA_ONLY -> ""
         RawStorageMode.DO_NOT_STORE -> ""
+    }
+
+    /**
+     * P8-PR3 (NEW-P8-007): Null-aware OCR sanitisation that preserves the
+     * distinction between null (no data) and empty string (data cleared).
+     *
+     * - null input is returned as null so callers can differentiate "never captured"
+     *   from "captured and cleared".
+     * - Empty string input ("") stays as "" — the field was set but cleared.
+     * - Under STORE_RAW, non-null text is returned as-is.
+     * - Under STORE_REDACTED, returns "[REDACTED]" only if text was non-null.
+     * - Under STORE_METADATA_ONLY / DO_NOT_STORE, returns null.
+     */
+    fun sanitizeRawOcrNullable(text: String?, mode: RawStorageMode): String? = when (mode) {
+        RawStorageMode.STORE_RAW -> text  // preserve null vs "" distinction
+        RawStorageMode.STORE_REDACTED -> if (text != null) "[REDACTED]" else null
+        RawStorageMode.STORE_METADATA_ONLY -> null
+        RawStorageMode.DO_NOT_STORE -> null
     }
 
     fun sanitizeEmailSubject(subject: String?, mode: RawStorageMode): String? = when (mode) {

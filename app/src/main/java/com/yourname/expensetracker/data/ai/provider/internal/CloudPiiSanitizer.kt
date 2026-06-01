@@ -9,6 +9,23 @@ object CloudPiiSanitizer {
     private val PHONE_REGEX = Regex("""\+?\d[\d\s().-]{6,}\d""")
     private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
 
+    // P8-PR3 (NEW-P8-004): Additional PII patterns
+
+    /** US Social Security Number (XXX-XX-XXXX) */
+    private val SSN_REGEX = Regex("""\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b""")
+
+    /** UK National Insurance Number (AB 12 34 56 C) */
+    private val NI_NUMBER_REGEX = Regex("""\b[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-Z]\b""")
+
+    /** Canadian Social Insurance Number (XXX-XXX-XXX) */
+    private val SIN_REGEX = Regex("""\b\d{3}-\d{3}-\d{3}\b""")
+
+    /** Australian Tax File Number (XXX XXX XXX) */
+    private val TFN_REGEX = Regex("""\b\d{3}\s?\d{3}\s?\d{3}\b""")
+
+    /** Generic passport-like patterns (1-2 uppercase letters followed by 5-9 digits) */
+    private val PASSPORT_REGEX = Regex("""\b[A-Z]{1,2}\d{5,9}\b""")
+
     fun sanitizeText(raw: String, maxChars: Int, fallbackPrefix: String): String {
         val trimmed = raw.trim().take(maxChars)
         val redacted = trimmed
@@ -16,6 +33,11 @@ object CloudPiiSanitizer {
             .replace(IBAN_REGEX, "[REDACTED_IBAN]")
             .replace(CARD_REGEX, "[REDACTED_CARD]")
             .replace(PHONE_REGEX, "[REDACTED_PHONE]")
+            .replace(SSN_REGEX, "[REDACTED_SSN]")
+            .replace(NI_NUMBER_REGEX, "[REDACTED_NI_NUMBER]")
+            .replace(SIN_REGEX, "[REDACTED_SIN]")
+            .replace(TFN_REGEX, "[REDACTED_TFN]")
+            .replace(PASSPORT_REGEX, "[REDACTED_PASSPORT]")
             .replace(LONG_NUMBER_REGEX, "[REDACTED_NUMBER]")
             .replace(Regex("\\s+"), " ")
             .trim()
