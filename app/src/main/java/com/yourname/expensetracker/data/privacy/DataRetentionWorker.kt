@@ -117,6 +117,7 @@ class DataRetentionWorker @AssistedInject constructor(
                 val result = try {
                     target.purge(cutoff)
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing", e)
                     RetentionPurgeResult(
                         targetName = target.name,

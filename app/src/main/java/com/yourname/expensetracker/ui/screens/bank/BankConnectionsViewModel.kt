@@ -7,11 +7,13 @@ import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.SyncStatus
 import com.yourname.expensetracker.domain.bank.BankApiIntegration
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -30,10 +32,18 @@ class BankConnectionsViewModel @Inject constructor(
 
     /** True when no real connections exist — UI shows demo/coming-soon state. */
     val isDemoMode: Boolean = false
-    
+
+    /**
+     * P10: SharedFlow trigger that drives reactive collection of bank connections.
+     * Emitting Unit causes [flatMapLatest] to cancel the previous DAO Flow subscription
+     * and re-subscribe, effectively refreshing the data without relying on [.first()].
+     */
+    private val refreshTrigger = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
+
     init {
         viewModelScope.launch {
-            bankConnectionDao.getAllConnections()
+            refreshTrigger.onStart { emit(Unit) }
+                .flatMapLatest { bankConnectionDao.getAllConnections() }
                 .catch { e ->
                     Timber.e(e, "Failed to load bank connections")
                     _connections.value = emptyList()
@@ -93,9 +103,7 @@ class BankConnectionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                // Force a one-shot DB read to trigger fresh data
-                bankConnectionDao.getAllConnections().first()
-                // Flow collector in init{} picks up the invalidation
+                refreshTrigger.emit(Unit)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to refresh bank connections")
             } finally {

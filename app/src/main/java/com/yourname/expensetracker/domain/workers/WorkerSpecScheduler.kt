@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.workers
 
 import android.content.Context
 import androidx.work.*
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
@@ -118,6 +119,7 @@ object WorkerSpecScheduler {
             // bump and force UPDATE again, which is safe).
             prefs.edit().putInt(workerName, spec.version).apply()
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue worker '$workerName'", e)
         }
     }
@@ -212,6 +214,7 @@ object WorkerSpecScheduler {
             prefs.edit().putInt(workerName, spec.version).apply()
             android.util.Log.d("WorkerSpecScheduler", "Worker '$workerName' scheduled at midnight in ${delayMs}ms")
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("WorkerSpecScheduler", "Failed to enqueue midnight worker '$workerName'", e)
         }
     }

@@ -83,6 +83,14 @@ class MultiCurrencyRepository @Inject constructor(
      * NEW-P5-006: Cached home currency to avoid repeated [CurrencySettingsRepository.homeCurrency]
      * Flow subscriptions on every public method call. The cache is reset when the repository's
      * [CurrencySettingsRepository] emits a new value (TODO: wire up Flow collection in init block).
+     *
+     * == Invalidation TODO (known limitation) ==
+     * Currently, when the user changes their home currency in settings, this cache is NOT
+     * invalidated because no Flow collection has been wired up in the init block yet.
+     * As a result, stale values may be served until the process is restarted.
+     * The user must restart the app after changing the home currency to pick up the new value.
+     * See NEW-P5-006 for the planned fix: collect [CurrencySettingsRepository.homeCurrency]
+     * in the init block and update [cachedHomeCurrency] reactively.
      */
     @Volatile
     private var cachedHomeCurrency: CurrencyCode? = null
