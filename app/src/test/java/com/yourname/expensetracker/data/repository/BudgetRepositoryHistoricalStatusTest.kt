@@ -343,6 +343,93 @@ class BudgetRepositoryHistoricalStatusTest {
         assertThat(status.spentAmount).isEqualTo(800.0)
     }
 
+    // ── P6-P1-06: budget limit uses period-end rate ─────────────────────────
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `budget limit converted at period-end rate not latest rate`() = runTest(UnconfinedTestDispatcher()) {
+        // Budget is in USD (foreign currency); home currency is EUR
+        val budget = budget(amount = 1_000.0, categoryId = null).copy(currency = "USD")
+        val evaluationTime = utcMs(2026, Calendar.MARCH, 15)
+        val start = utcMs(2026, Calendar.MARCH, 1)
+        val end = utcMs(2026, Calendar.APRIL, 1)
+
+        every { timeProvider.now() } returns evaluationTime
+        coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
+        coEvery { categoryDao.getAll() } returns emptyList()
+        every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
+
+        // The limit conversion must use convertAsOf (period-end), NOT convert (latest).
+        coEvery {
+            currencyConverter.convertAsOf(
+                amount = 1_000.0,
+                fromCurrency = "USD",
+                toCurrency = "EUR",
+                asOfMillis = end
+            )
+        } returns com.yourname.expensetracker.domain.currency.ConversionResult(
+            originalAmount = 1_000.0,
+            originalCurrency = "USD",
+            convertedAmount = 850.0,
+            targetCurrency = "EUR",
+            rateUsed = 0.85,
+            timestamp = end
+        )
+
+        val status = repository.getBudgetStatusesAt(evaluationTime).single()
+
+        // Limit converted at period-end rate: 1000 USD → 850 EUR (0.85 rate)
+        assertThat(status.effectiveLimit).isEqualTo(850.0)
+        // period-end rate (0.85) should be used, NOT latest rate
+        coVerify(exactly = 1) {
+            currencyConverter.convertAsOf(1_000.0, "USD", "EUR", end)
+        }
+        coVerify(exactly = 0) {
+            currencyConverter.convert(1_000.0, "USD", "EUR")
+        }
+    }
+
+    @Suppress("DEPRECATION_ERROR")
+    @Test
+    fun `budget limit falls back to latest rate when historical unavailable`() = runTest(UnconfinedTestDispatcher()) {
+        val budget = budget(amount = 500.0, categoryId = null).copy(currency = "GBP")
+        val evaluationTime = utcMs(2026, Calendar.MARCH, 15)
+        val start = utcMs(2026, Calendar.MARCH, 1)
+        val end = utcMs(2026, Calendar.APRIL, 1)
+
+        every { timeProvider.now() } returns evaluationTime
+        coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
+        coEvery { categoryDao.getAll() } returns emptyList()
+        every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
+
+        // Historical rate is unavailable (returns null)
+        coEvery {
+            currencyConverter.convertAsOf(any<Double>(), any(), any(), any<Long>())
+        } returns null
+
+        // Latest rate is available
+        coEvery {
+            currencyConverter.convert(500.0, "GBP", "EUR")
+        } returns com.yourname.expensetracker.domain.currency.ConversionResult(
+            originalAmount = 500.0,
+            originalCurrency = "GBP",
+            convertedAmount = 580.0,
+            targetCurrency = "EUR",
+            rateUsed = 1.16,
+            timestamp = 0L
+        )
+
+        val status = repository.getBudgetStatusesAt(evaluationTime).single()
+
+        // Falls back to latest rate
+        assertThat(status.effectiveLimit).isEqualTo(580.0)
+        // Must be marked partial with a warning since historical rate was unavailable
+        assertThat(status.isPartial).isTrue()
+        assertThat(status.conversionWarning).contains("latest rate")
+    }
+
     // ── G6: delete/restore forecast policy (P6-CURRENT-005 / P6-P1-15) ─────────────
     //
     // HARNESS NOTE: this test class uses pure mockk DAOs — there is NO real Room DB,

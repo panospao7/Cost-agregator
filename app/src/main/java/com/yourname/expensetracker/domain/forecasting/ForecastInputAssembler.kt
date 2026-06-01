@@ -30,6 +30,11 @@ import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.MoneyBucketInput
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -87,7 +92,10 @@ class ForecastInputAssembler @Inject constructor(
     /** @suppress DAO injected to query materialized occurrences for dedup. */
     private val recurringOccurrenceDao: RecurringOccurrenceDao,
     /** @suppress P6-CURRENT-024: guards read-only access to materialized occurrences. */
-    private val databaseReadBarrier: DatabaseReadBarrier
+    private val databaseReadBarrier: DatabaseReadBarrier,
+    /** @suppress P6-P1-08: canonical normalizer for multi-currency planned expense amounts. */
+    private val moneyNormalizationEngine: MoneyNormalizationEngine =
+        MoneyNormalizationEngine(currencyConverter)
 ) {
     /**
      * REC-20: Effective amount stability in recurring forecasting.
@@ -510,24 +518,45 @@ class ForecastInputAssembler @Inject constructor(
         var plannedConversionFailures = 0
         val plannedWarnings = mutableListOf<String>()
 
-        // Normalize planned expenses: attempt conversion to home currency for each.
-        // Expenses that fail conversion are excluded from the forecast (they would
-        // produce incorrect amounts in a different currency).
-        val normalizedPlannedExpenses = deduplicatedPlannedExpenses.mapNotNull { pe ->
-            if (pe.currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
-                pe.copy(amount = pe.amount, currency = resolvedHomeCurrency)
-            } else {
-                val normalized = currencyConverter.convert(
-                    amount = pe.amount,
-                    fromCurrency = pe.currency,
-                    toCurrency = resolvedHomeCurrency
+        // P6-P1-08: Normalize planned expenses through MoneyNormalizationEngine.
+        // Group by currency and convert each group via the engine's canonical
+        // bucket-level conversion (consistent rate-basis selection, failure tracking,
+        // and metadata propagation).  Expenses in the home currency pass through
+        // unchanged; foreign-currency groups use LATEST_AVAILABLE rate (appropriate for
+        // future-dated planned items that have no transaction-date anchor).
+        val normalizedPlannedExpenses = mutableListOf<PlannedExpense>()
+        val byCurrency = deduplicatedPlannedExpenses.groupBy { it.currency.uppercase() }
+        for ((currency, expensesInCurrency) in byCurrency) {
+            if (currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
+                normalizedPlannedExpenses.addAll(
+                    expensesInCurrency.map { it.copy(currency = resolvedHomeCurrency) }
                 )
-                if (normalized != null) {
-                    pe.copy(amount = normalized.convertedAmount, currency = resolvedHomeCurrency)
+            } else {
+                val totalAmount = expensesInCurrency.sumOf { it.amount }
+                val bucketInput = MoneyBucketInput(
+                    amount = totalAmount,
+                    currency = CurrencyCode(currency),
+                    transactionCount = expensesInCurrency.size
+                )
+                val aggregate = moneyNormalizationEngine.aggregateBuckets(
+                    buckets = listOf(bucketInput),
+                    homeCurrency = CurrencyCode(resolvedHomeCurrency),
+                    rateBasis = RateBasis.LATEST_AVAILABLE,
+                    bucketDatePolicy = BucketDatePolicy.Latest
+                )
+                if (!aggregate.isPartial && aggregate.conversionFailures.isEmpty()) {
+                    // Distribute the converted total proportionally to each expense
+                    val ratio = if (totalAmount > 0.0) aggregate.displayAmount / totalAmount else 0.0
+                    for (pe in expensesInCurrency) {
+                        normalizedPlannedExpenses.add(
+                            pe.copy(amount = pe.amount * ratio, currency = resolvedHomeCurrency)
+                        )
+                    }
                 } else {
-                    plannedConversionFailures++
-                    plannedWarnings.add("Planned expense '${pe.description}' ${pe.amount} ${pe.currency} excluded — conversion failed")
-                    null
+                    plannedConversionFailures += expensesInCurrency.size
+                    plannedWarnings.add(
+                        "Planned expenses in $currency could not be converted to $resolvedHomeCurrency"
+                    )
                 }
             }
         }

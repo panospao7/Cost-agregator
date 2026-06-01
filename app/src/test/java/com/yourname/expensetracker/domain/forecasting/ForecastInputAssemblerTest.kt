@@ -12,15 +12,19 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.model.PlannedExpense
+import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -438,6 +442,281 @@ class ForecastInputAssemblerTest {
         val merchants = result.confirmedOccurrences.map { it.merchant }
         assertTrue(merchants.contains("Rent"))
         assertFalse(merchants.contains("Paused Gym"))
+    }
+
+    // ── P6-P1-08: planned expenses normalized through MoneyNormalizationEngine ──
+
+    @Test
+    fun `P6-P1-08 planned expenses in home currency pass through unchanged`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Groceries", amount = 200.0,
+                currency = "EUR", date = ms(2026, Calendar.JANUARY, 20, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            ),
+            PlannedExpense(
+                id = 2L, description = "Dinner", amount = 50.0,
+                currency = "EUR", date = ms(2026, Calendar.JANUARY, 22, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.LIKELY
+            )
+        )
+
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = emptyList(),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        assertThat(result.plannedExpenses).hasSize(2)
+        assertThat(result.plannedExpenses[0].amount).isEqualTo(200.0)
+        assertThat(result.plannedExpenses[0].currency).isEqualTo("EUR")
+        assertThat(result.plannedExpenses[1].amount).isEqualTo(50.0)
+        assertThat(result.plannedExpenses[1].currency).isEqualTo("EUR")
+        // No conversion failures for home-currency expenses
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `P6-P1-08 foreign currency planned expenses converted through engine`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        // The default MoneyNormalizationEngine uses currencyConverter internally.
+        // aggregateBuckets with BucketDatePolicy.Latest calls convertOutcome with LATEST_AVAILABLE.
+        coEvery {
+            currencyConverter.convertOutcome(
+                amount = 100.0,
+                fromCurrency = "USD",
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = any()
+            )
+        } returns com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+            originalAmount = 100.0,
+            originalCurrency = CurrencyCode("USD"),
+            convertedAmount = 85.0,
+            targetCurrency = CurrencyCode("EUR"),
+            rateUsed = 0.85,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            rateValidDate = null,
+            rateLastUpdated = null,
+            rateSource = "test",
+            conversionPath = com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+        )
+
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Amazon", amount = 100.0,
+                currency = "USD", date = ms(2026, Calendar.JANUARY, 25, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            )
+        )
+
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = emptyList(),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        assertThat(result.plannedExpenses).hasSize(1)
+        // 100 USD → 85 EUR at 0.85 rate
+        assertThat(result.plannedExpenses[0].amount).isEqualTo(85.0)
+        assertThat(result.plannedExpenses[0].currency).isEqualTo("EUR")
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `P6-P1-08 conversion failure excludes all expenses in that currency`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        // Conversion fails for USD → EUR
+        coEvery {
+            currencyConverter.convertOutcome(
+                amount = 100.0,
+                fromCurrency = "USD",
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = any()
+            )
+        } returns com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+            originalAmount = 100.0,
+            originalCurrency = "USD",
+            targetCurrency = "EUR",
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            failureType = com.yourname.expensetracker.domain.core.money.ConversionFailureType.MISSING_RATE,
+            message = "Rate unavailable"
+        )
+
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Amazon", amount = 100.0,
+                currency = "USD", date = ms(2026, Calendar.JANUARY, 25, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            )
+        )
+
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = emptyList(),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        // Expense excluded due to conversion failure
+        assertThat(result.plannedExpenses).isEmpty()
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(1)
+        assertTrue(result.dataQuality.conversionWarnings.any { it.contains("USD") })
+    }
+
+    @Test
+    fun `P6-P1-08 multiple foreign currencies each converted through engine`() = runTest {
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(any(), any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        // USD → EUR at 0.85
+        coEvery {
+            currencyConverter.convertOutcome(
+                amount = 100.0,
+                fromCurrency = "USD",
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = any()
+            )
+        } returns com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+            originalAmount = 100.0,
+            originalCurrency = CurrencyCode("USD"),
+            convertedAmount = 85.0,
+            targetCurrency = CurrencyCode("EUR"),
+            rateUsed = 0.85,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            rateValidDate = null,
+            rateLastUpdated = null,
+            rateSource = "test",
+            conversionPath = com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+        )
+
+        // GBP → EUR at 1.16
+        coEvery {
+            currencyConverter.convertOutcome(
+                amount = 50.0,
+                fromCurrency = "GBP",
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = any()
+            )
+        } returns com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+            originalAmount = 50.0,
+            originalCurrency = CurrencyCode("GBP"),
+            convertedAmount = 58.0,
+            targetCurrency = CurrencyCode("EUR"),
+            rateUsed = 1.16,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            rateValidDate = null,
+            rateLastUpdated = null,
+            rateSource = "test",
+            conversionPath = com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+        )
+
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Amazon", amount = 100.0,
+                currency = "USD", date = ms(2026, Calendar.JANUARY, 25, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            ),
+            PlannedExpense(
+                id = 2L, description = "Hotel", amount = 50.0,
+                currency = "GBP", date = ms(2026, Calendar.JANUARY, 26, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            )
+        )
+
+        val result = assembler.assemble(
+            expenses = emptyList(),
+            manualRecurringEntities = emptyList(),
+            detectedRecurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            homeCurrency = "EUR"
+        )
+
+        assertThat(result.plannedExpenses).hasSize(2)
+        // 100 USD → 85 EUR
+        assertThat(result.plannedExpenses[0].amount).isEqualTo(85.0)
+        assertThat(result.plannedExpenses[0].currency).isEqualTo("EUR")
+        // 50 GBP → 58 EUR
+        assertThat(result.plannedExpenses[1].amount).isEqualTo(58.0)
+        assertThat(result.plannedExpenses[1].currency).isEqualTo("EUR")
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0)
     }
 
     // ── DBG-06: barrier-blocked materialized read marks the forecast partial ──
