@@ -18,6 +18,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.BuildConfig
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 @Singleton
@@ -107,18 +108,20 @@ class BankStatementParser @Inject constructor(
      * currency is configured.
      */
     suspend fun resolveHomeCurrencySuspend(): String {
-        return runCatching {
-            val currency = currencySettingsRepository.homeCurrency().first()
-            if (currency.isNotBlank()) {
-                currency
-            } else {
-                Timber.w("No home currency configured, fallback to EUR (CurrencyAssumption.ASSUMED_HOME_CURRENCY)")
-                "EUR"
-            }
-        }.getOrElse { e ->
-            Timber.w(e, "Failed to read home currency, fallback to EUR")
-            "EUR"
+        // NEW-P3-008: Wrap homeCurrency() with a 3s timeout — DataStore reads
+        // can block indefinitely. Falls back to "EUR" with a warning on timeout.
+        val currency = kotlinx.coroutines.withTimeoutOrNull(3_000L) {
+            currencySettingsRepository.homeCurrency().first()
         }
+        if (currency != null && currency.isNotBlank()) {
+            return currency
+        }
+        if (currency == null) {
+            Timber.w("Timeout reading home currency, fallback to EUR (NEW-P3-008)")
+        } else {
+            Timber.w("No home currency configured, fallback to EUR (CurrencyAssumption.ASSUMED_HOME_CURRENCY)")
+        }
+        return "EUR"
     }
 
     /**

@@ -135,8 +135,10 @@ Full source: `PIPELINE_3_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | NEW-P3-002 | P1 | CancellationException swallowed in `BankStatementLifecycleProcessor` per-item | Bug | Per-item catch swallows CE | ✅ FIXED (U-PR1) |
 | NEW-P3-003 | P1 | CancellationException swallowed in `ReceiptLinkService.unlinkReceiptFromExpense` | Bug | Catch-all swallows CE | ✅ FIXED (U-PR1) |
 | NEW-P3-004 | P2 | Double `attachReceipt` call in `BankStatementLifecycleProcessor` | Bug | Duplicate attachReceipt removed (P3-PR3) | ✅ FIXED (P3-PR3) |
-| NEW-P3-005 | P2 | Race in post-OCR duplicate path | Bug | Non-atomic duplicate check after OCR | 🔴 OPEN |
-| NEW-P3-006 | P2 | Privacy leak — merchant/category logged in production | Bug | PII in production log statements | 🔴 OPEN |
+| NEW-P3-005 | P2 | Race in post-OCR duplicate path | Bug | Duplicate check moved inside `database.withTransaction` (P3-PR3) | ✅ FIXED (P3-PR3) |
+| NEW-P3-006 | P2 | Privacy leak — merchant/category logged in production | Bug | PII redacted in 5 Timber calls: imagePath, dedupeKey, errors, assetPath (P3-PR3) | ✅ FIXED (P3-PR3) |
+| NEW-P3-007 | P2 | `deleteReceipt` writes event for non-existent receipt | Bug | `requireNotNull` guard inside transaction prevents event for missing receipt (P3-PR3) | ✅ FIXED (P3-PR3) |
+| NEW-P3-008 | P3 | `homeCurrency()` thread starvation risk | Bug | `withTimeoutOrNull(3s)` in coordinator + BankStatementParser (P3-PR3) | ✅ FIXED (P3-PR3) |
 
 ## Pipeline 4 — Recurring / Bill Reminders
 

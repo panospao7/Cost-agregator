@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.sideeffect.runBestEffortAfterCommit
 import com.yourname.expensetracker.domain.sideeffect.runBestEffortPostCommit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.provenance.ReceiptSourceLinkPayloadFactory
@@ -374,19 +375,64 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             } else null
 
             // ── Post-OCR dedup check (text + semantic) ────────────────────
-            val postOcrDup = duplicateDetector.checkDuplicate(
-                imageHash = null,  // already checked above
-                textFingerprint = textFingerprint,
-                semanticFingerprint = semanticFingerprint,
-                externalSourceId = null
-            )
-
-            if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
-                val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
-                if (existing != null) {
-                    // P3-BLOCKER-A: Draft-first — if receipt is not yet persisted
-                    // (id <= 0), don't update/event with id=0. Just delete draft asset.
-                    if (receipt.id <= 0L) {
+            // NEW-P3-005: For the legacy persisted path, the duplicate check,
+            // getById, update, and event insert are all performed inside a single
+            // database transaction for atomicity — no gap between check and write.
+            // The draft path (receipt.id <= 0) does not touch the DB, so its
+            // read-only check remains outside the transaction.
+            if (receipt.id > 0L) {
+                val existingDuplicate = database.withTransaction {
+                    val postOcrDup = duplicateDetector.checkDuplicate(
+                        imageHash = null,  // already checked above
+                        textFingerprint = textFingerprint,
+                        semanticFingerprint = semanticFingerprint,
+                        externalSourceId = null
+                    )
+                    if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
+                        scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)?.let { existing ->
+                            val now = timeProvider.now()
+                            val withFingerprints = ReceiptTimestampPolicy.forUpdate(receipt.copy(
+                                imagePath = receipt.imagePath,
+                                imageHash = fileHash ?: receipt.imageHash,
+                                sourceType = ReceiptSourceType.CAMERA.name,
+                                documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
+                                processingStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
+                                textFingerprint = textFingerprint,
+                                semanticFingerprint = semanticFingerprint
+                            ), now).also { it.taxInclusive = taxInclusive }
+                            scannedReceiptDao.update(withFingerprints)
+                            receiptEventDao.insert(ReceiptEvent(
+                                receiptId = withFingerprints.id,
+                                sourceType = withFingerprints.sourceType,
+                                documentType = withFingerprints.documentType,
+                                eventType = "DUPLICATE_DETECTED",
+                                occurredAt = now,
+                                oldStatus = receipt.processingStatus,
+                                newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
+                                actor = "system:coordinator",
+                                message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
+                                metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
+                                errorDetails = null
+                            ))
+                            existing
+                        }
+                    } else null
+                }
+                if (existingDuplicate != null) {
+                    existingDuplicate.taxInclusive = taxInclusive
+                    return Result.success(existingDuplicate)
+                }
+            } else {
+                // Draft path: no DB writes needed, check outside transaction
+                val postOcrDup = duplicateDetector.checkDuplicate(
+                    imageHash = null,
+                    textFingerprint = textFingerprint,
+                    semanticFingerprint = semanticFingerprint,
+                    externalSourceId = null
+                )
+                if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
+                    val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
+                    if (existing != null) {
                         receipt.imagePath?.takeIf { it.isNotBlank() }
                             ?.let { assetStore.deleteAsset(it) }
                         existing.taxInclusive = taxInclusive
@@ -394,35 +440,6 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             postOcrDup.matchType, existing.id)
                         return Result.success(existing)
                     }
-                    // Legacy persisted path: update + DUPLICATE_DETECTED event
-                    val now = timeProvider.now()
-                    val withFingerprints = ReceiptTimestampPolicy.forUpdate(receipt.copy(
-                        imagePath = receipt.imagePath,
-                        imageHash = fileHash ?: receipt.imageHash,
-                        sourceType = ReceiptSourceType.CAMERA.name,
-                        documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
-                        processingStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
-                        textFingerprint = textFingerprint,
-                        semanticFingerprint = semanticFingerprint
-                    ), now).also { it.taxInclusive = taxInclusive }
-                    database.withTransaction {
-                        scannedReceiptDao.update(withFingerprints)
-                        receiptEventDao.insert(ReceiptEvent(
-                            receiptId = withFingerprints.id,
-                            sourceType = withFingerprints.sourceType,
-                            documentType = withFingerprints.documentType,
-                            eventType = "DUPLICATE_DETECTED",
-                            occurredAt = now,
-                            oldStatus = receipt.processingStatus,
-                            newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
-                            actor = "system:coordinator",
-                            message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
-                            metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
-                            errorDetails = null
-                        ))
-                    }
-                    existing.taxInclusive = taxInclusive
-                    return Result.success(existing)
                 }
             }
 
@@ -612,7 +629,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 targetId = savedReceipt.id
             )
 
-            Timber.d("Receipt processed via coordinator: id=%d, imagePath=%s", savedReceipt.id, savedReceipt.imagePath)
+            // NEW-P3-006: Redact imagePath — never log file system paths
+            Timber.d("Receipt processed via coordinator: id=%d, imagePath=[REDACTED]", savedReceipt.id)
             Result.success(savedReceipt)
         } catch (e: CancellationException) {
             throw e
@@ -626,9 +644,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             // OCR/parse failed catastrophically — save manual record
             // Use the original URI string as a fallback image reference
-            val fallbackCurrency = runCatching {
+            // NEW-P3-008: Wrap homeCurrency() with a 3s timeout — DataStore reads
+            // can block indefinitely if the underlying SharedPreferences migration
+            // or disk I/O stalls. Return FALLBACK_CURRENCY on timeout.
+            val fallbackCurrency = kotlinx.coroutines.withTimeoutOrNull(3_000L) {
                 currencySettingsRepository.homeCurrency().first()
-            }.getOrDefault(FALLBACK_CURRENCY)
+            } ?: FALLBACK_CURRENCY
 
             val now = timeProvider.now()
             val manualReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
@@ -1090,12 +1111,14 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                         }
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
                             val vf = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed
-                            Timber.w("Email receipt %d validation failed: %s", savedId, vf.errors)
+                            // NEW-P3-006: Redact errors — may contain PII
+                            Timber.w("Email receipt %d validation failed: [REDACTED]", savedId)
                             needsReviewReason = "validation_failed"
                         }
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.InsertConflict -> {
                             val ic = mutation.value as com.yourname.expensetracker.domain.transaction.CreateExpenseResult.InsertConflict
-                            Timber.w("Email receipt %d insert conflict: %s", savedId, ic.dedupeKey)
+                            // NEW-P3-006: Redact dedupeKey — may contain merchant/amount
+                            Timber.w("Email receipt %d insert conflict: [REDACTED]", savedId)
                             needsReviewReason = "insert_conflict"
                         }
                         is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Error -> {
@@ -1262,6 +1285,14 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         return try {
             // Database operations inside a single transaction
             database.withTransaction {
+                // NEW-P3-007: Guard — verify the receipt still exists inside the
+                // transaction before writing the RECEIPT_DELETED event.  The earlier
+                // getById check outside the transaction cannot prevent a concurrent
+                // deletion from racing in.
+                requireNotNull(scannedReceiptDao.getById(receiptId)) {
+                    "Receipt not found inside transaction: $receiptId"
+                }
+
                 // 2. Write delete event for audit trail
                 receiptEventDao.insert(
                     ReceiptEvent(
@@ -1294,7 +1325,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     throw e
                 } catch (e: Exception) {
                     // P3-CUR-08: Write durable event when asset deletion fails
-                    Timber.e(e, "Failed to delete asset for receipt %d: %s", receiptId, path)
+                    Timber.e(e, "Failed to delete asset for receipt %d: [REDACTED]", receiptId)
                     receiptEventDao.insert(
                         ReceiptEvent(
                             receiptId = receiptId,
@@ -1313,7 +1344,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 }
             }
 
-            Timber.d("Receipt deleted: id=%d, assetPath=%s", receiptId, receipt.imagePath)
+            // NEW-P3-006: Redact assetPath — never log file system paths
+            Timber.d("Receipt deleted: id=%d, assetPath=[REDACTED]", receiptId)
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
