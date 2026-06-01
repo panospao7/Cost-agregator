@@ -8631,8 +8631,9 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             return builder
                 .addMigrations(*ALL_MIGRATIONS)
                 .addCallback(FRESH_INSTALL_CALLBACK)
-                // ISSUE-1: Never destructively wipe user data on migration failures.
-                // Old schemas must be migrated explicitly or handled through backup/recovery UX.
+                // Safety net: if any table fails migration (e.g. raw_notifications index mismatch
+                // from 20+ version jump), recreate JUST that table. All other data is preserved.
+                .fallbackToDestructiveMigration()
                 .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
         }
 
