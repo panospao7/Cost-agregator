@@ -23,7 +23,7 @@ data class NormalizedForecastInput(
     val pastSumDaily: List<Double>,
     /** Recurring patterns (amounts still in original currency — normalization planned). */
     val recurringPatterns: List<RecurringPattern>,
-    /** Planned expenses (amounts still in original currency — normalization planned). */
+    /** Planned expenses (amounts normalized to home currency via MoneyNormalizationEngine). */
     val plannedExpenses: List<PlannedExpense>,
     val savingsGoals: List<SavingsGoal>,
     val budgetStatuses: List<BudgetStatusSnapshot>,

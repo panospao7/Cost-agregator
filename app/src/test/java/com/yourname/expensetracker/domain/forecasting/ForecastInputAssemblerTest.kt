@@ -719,6 +719,189 @@ class ForecastInputAssemblerTest {
         assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0)
     }
 
+    // ── assembleNormalized planned expense normalization ─────────────────────
+
+    @Test
+    fun `assembleNormalized home currency planned expenses pass through unchanged`() = runTest {
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Groceries", amount = 200.0,
+                currency = "EUR", date = ms(2026, Calendar.JANUARY, 20, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            ),
+            PlannedExpense(
+                id = 2L, description = "Dinner", amount = 50.0,
+                currency = "EUR", date = ms(2026, Calendar.JANUARY, 22, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.LIKELY
+            )
+        )
+
+        val input = NormalizedForecastInput(
+            homeCurrency = CurrencyCode("EUR"),
+            normalizedExpenses = emptyList(),
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = mockk(relaxed = true),
+            dataQuality = ForecastDataQuality()
+        )
+
+        val result = assembler.assembleNormalized(input)
+
+        assertThat(result.plannedExpenses).hasSize(2)
+        assertThat(result.plannedExpenses[0].amount).isEqualTo(200.0)
+        assertThat(result.plannedExpenses[0].currency).isEqualTo("EUR")
+        assertThat(result.plannedExpenses[1].amount).isEqualTo(50.0)
+        assertThat(result.plannedExpenses[1].currency).isEqualTo("EUR")
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `assembleNormalized foreign currency planned expenses converted through engine`() = runTest {
+        coEvery {
+            currencyConverter.convertOutcome(
+                amount = 100.0,
+                fromCurrency = "USD",
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = any()
+            )
+        } returns com.yourname.expensetracker.domain.core.money.ConversionOutcome.Converted(
+            originalAmount = 100.0,
+            originalCurrency = CurrencyCode("USD"),
+            convertedAmount = 85.0,
+            targetCurrency = CurrencyCode("EUR"),
+            rateUsed = 0.85,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            rateValidDate = null,
+            rateLastUpdated = null,
+            rateSource = "test",
+            conversionPath = com.yourname.expensetracker.domain.core.money.ConversionPath.DIRECT
+        )
+
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Amazon", amount = 100.0,
+                currency = "USD", date = ms(2026, Calendar.JANUARY, 25, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            )
+        )
+
+        val input = NormalizedForecastInput(
+            homeCurrency = CurrencyCode("EUR"),
+            normalizedExpenses = emptyList(),
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = mockk(relaxed = true),
+            dataQuality = ForecastDataQuality()
+        )
+
+        val result = assembler.assembleNormalized(input)
+
+        assertThat(result.plannedExpenses).hasSize(1)
+        // 100 USD → 85 EUR at 0.85 rate
+        assertThat(result.plannedExpenses[0].amount).isEqualTo(85.0)
+        assertThat(result.plannedExpenses[0].currency).isEqualTo("EUR")
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `assembleNormalized conversion failure excludes planned expenses in that currency`() = runTest {
+        coEvery {
+            currencyConverter.convertOutcome(
+                amount = 100.0,
+                fromCurrency = "USD",
+                toCurrency = "EUR",
+                rateBasis = RateBasis.LATEST_AVAILABLE,
+                atMillis = null,
+                stalePolicy = any()
+            )
+        } returns com.yourname.expensetracker.domain.core.money.ConversionOutcome.Failed(
+            originalAmount = 100.0,
+            originalCurrency = "USD",
+            targetCurrency = "EUR",
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            failureType = com.yourname.expensetracker.domain.core.money.ConversionFailureType.MISSING_RATE,
+            message = "Rate unavailable"
+        )
+
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Amazon", amount = 100.0,
+                currency = "USD", date = ms(2026, Calendar.JANUARY, 25, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            )
+        )
+
+        val input = NormalizedForecastInput(
+            homeCurrency = CurrencyCode("EUR"),
+            normalizedExpenses = emptyList(),
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = mockk(relaxed = true),
+            dataQuality = ForecastDataQuality()
+        )
+
+        val result = assembler.assembleNormalized(input)
+
+        // Expense excluded due to conversion failure
+        assertThat(result.plannedExpenses).isEmpty()
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(1)
+        assertThat(result.dataQuality.isPartial).isTrue()
+        assertTrue(result.dataQuality.conversionWarnings.any { it.contains("USD") })
+    }
+
+    @Test
+    fun `assembleNormalized preserves existing dataQuality fields when no conversion failures`() = runTest {
+        val planned = listOf(
+            PlannedExpense(
+                id = 1L, description = "Groceries", amount = 200.0,
+                currency = "EUR", date = ms(2026, Calendar.JANUARY, 20, 0),
+                categoryId = null, isRecurring = false,
+                priority = PlannedExpensePriority.MUST
+            )
+        )
+
+        val inputDataQuality = ForecastDataQuality(
+            isPartial = true,
+            excludedActualCount = 3,
+            conversionWarnings = listOf("PREVIOUS_WARNING: some issue")
+        )
+
+        val input = NormalizedForecastInput(
+            homeCurrency = CurrencyCode("EUR"),
+            normalizedExpenses = emptyList(),
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = planned,
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = mockk(relaxed = true),
+            dataQuality = inputDataQuality
+        )
+
+        val result = assembler.assembleNormalized(input)
+
+        // Original data quality fields preserved
+        assertThat(result.dataQuality.isPartial).isTrue() // from input
+        assertThat(result.dataQuality.excludedActualCount).isEqualTo(3) // from input
+        assertThat(result.dataQuality.excludedPlannedCount).isEqualTo(0) // no new failures
+        assertThat(result.dataQuality.conversionWarnings).contains("PREVIOUS_WARNING: some issue")
+    }
+
     // ── DBG-06: barrier-blocked materialized read marks the forecast partial ──
 
     @Test

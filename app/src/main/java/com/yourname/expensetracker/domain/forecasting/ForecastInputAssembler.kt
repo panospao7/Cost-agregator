@@ -666,20 +666,72 @@ class ForecastInputAssembler @Inject constructor(
      * This bypasses the AnalyticsCurrencyNormalizer step since the expenses
      * are already normalized to home currency. The SpendingPace is also
      * taken directly from the input rather than recomputed.
+     *
+     * Planned expenses are normalized through MoneyNormalizationEngine
+     * (same pattern as [assemble]) to convert foreign-currency amounts
+     * into the home currency.
      */
     suspend fun assembleNormalized(
         input: NormalizedForecastInput
     ): ForecastInput {
+        val resolvedHomeCurrency = input.homeCurrency.code
+
+        // ── Planned expense normalization (mirrors assemble() pattern) ──────
+        var plannedConversionFailures = 0
+        val plannedWarnings = mutableListOf<String>()
+        val normalizedPlannedExpenses = mutableListOf<PlannedExpense>()
+        val byCurrency = input.plannedExpenses.groupBy { it.currency.uppercase() }
+        for ((currency, expensesInCurrency) in byCurrency) {
+            if (currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
+                normalizedPlannedExpenses.addAll(
+                    expensesInCurrency.map { it.copy(currency = resolvedHomeCurrency) }
+                )
+            } else {
+                val totalAmount = expensesInCurrency.sumOf { it.amount }
+                val bucketInput = MoneyBucketInput(
+                    amount = totalAmount,
+                    currency = CurrencyCode(currency),
+                    transactionCount = expensesInCurrency.size
+                )
+                val aggregate = moneyNormalizationEngine.aggregateBuckets(
+                    buckets = listOf(bucketInput),
+                    homeCurrency = CurrencyCode(resolvedHomeCurrency),
+                    rateBasis = RateBasis.LATEST_AVAILABLE,
+                    bucketDatePolicy = BucketDatePolicy.Latest
+                )
+                if (!aggregate.isPartial && aggregate.conversionFailures.isEmpty()) {
+                    val ratio = if (totalAmount > 0.0) aggregate.displayAmount / totalAmount else 0.0
+                    for (pe in expensesInCurrency) {
+                        normalizedPlannedExpenses.add(
+                            pe.copy(amount = pe.amount * ratio, currency = resolvedHomeCurrency)
+                        )
+                    }
+                } else {
+                    plannedConversionFailures += expensesInCurrency.size
+                    plannedWarnings.add(
+                        "Planned expenses in $currency could not be converted to $resolvedHomeCurrency"
+                    )
+                }
+            }
+        }
+
+        val totalPlannedExcluded = plannedConversionFailures
+        val mergedDataQuality = input.dataQuality.copy(
+            isPartial = input.dataQuality.isPartial || totalPlannedExcluded > 0,
+            excludedPlannedCount = input.dataQuality.excludedPlannedCount + totalPlannedExcluded,
+            conversionWarnings = input.dataQuality.conversionWarnings + plannedWarnings
+        )
+
         return ForecastInput(
             pastSumDaily = input.pastSumDaily,
             recurringPatterns = input.recurringPatterns,
-            plannedExpenses = input.plannedExpenses,
+            plannedExpenses = normalizedPlannedExpenses,
             savingsGoals = input.savingsGoals,
             budgetStatuses = input.budgetStatuses,
             spendingPace = input.spendingPace,
             confirmedOccurrences = emptyList(), // Can be populated via occurrence DAO if needed
-            displayCurrency = input.homeCurrency.code,
-            dataQuality = input.dataQuality
+            displayCurrency = resolvedHomeCurrency,
+            dataQuality = mergedDataQuality
         )
     }
 
