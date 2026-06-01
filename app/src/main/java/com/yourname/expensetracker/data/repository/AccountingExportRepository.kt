@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.export.*
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import timber.log.Timber
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileWriter
@@ -99,9 +100,19 @@ class AccountingExportRepository @Inject constructor(
             }
 
             if (format.requiresAccountingPolicy() && exportTransactions.isNotEmpty()) {
+                val totalCount = expenses.size
+                if (totalCount > AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS) {
+                    Timber.w(
+                        "Accounting export dataset size (%d) exceeds validation limit (%d); " +
+                            "validating first %d rows only",
+                        totalCount, AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS,
+                        AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS
+                    )
+                }
                 accountingExportPolicy.validateAccountingDataset(
                     exportTransactions,
-                    format.displayName()
+                    format.displayName(),
+                    maxValidationRows = AccountingExportPolicy.DEFAULT_MAX_VALIDATION_ROWS
                 )
             }
 

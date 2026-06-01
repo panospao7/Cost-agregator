@@ -58,6 +58,15 @@ class ExportDataRepository @Inject constructor(
         return deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
     }
 
+    /**
+     * Same as [getExpensesBetween] but limits the returned rows to [maxRows].
+     * Prevents OOM when only a sample is needed (e.g. pre-export validation).
+     */
+    suspend fun getExpensesBetween(startDate: Long, endDate: Long, maxRows: Int): List<Expense> {
+        readBarrier.checkReadAllowed(exportOp, DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
+        return deterministicExpenseExportPager.fetchAllBetween(startDate, endDate, maxRows = maxRows)
+    }
+
     suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long): List<Expense> {
         readBarrier.checkReadAllowed(exportOp, DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ)
         return deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)

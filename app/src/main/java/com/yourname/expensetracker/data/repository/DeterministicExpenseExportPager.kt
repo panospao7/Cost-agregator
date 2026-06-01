@@ -38,45 +38,56 @@ class DeterministicExpenseExportPager @Inject constructor(
 
     /**
      * Fetches all expenses between [startDate] and [endDate] using keyset-based
-     * cursor pagination.
+     * cursor pagination, up to [maxRows] rows.
      *
      * @param startDate Start of the date range (inclusive).
      * @param endDate   End of the date range (exclusive).
      * @param pageSize  Number of rows per page (default [EXPORT_PAGE_SIZE]).
-     * @return A complete list of matching expenses in deterministic order.
+     * @param maxRows   Maximum number of rows to return (default Int.MAX_VALUE).
+     *                  Used to prevent OOM when only validation/sampling is needed.
+     * @return A list of matching expenses in deterministic order, limited to [maxRows].
      */
     suspend fun fetchAllBetween(
         startDate: Long,
         endDate: Long,
-        pageSize: Int = EXPORT_PAGE_SIZE
+        pageSize: Int = EXPORT_PAGE_SIZE,
+        maxRows: Int = Int.MAX_VALUE
     ): List<Expense> {
         require(pageSize > 0) { "pageSize must be greater than 0" }
+        require(maxRows > 0) { "maxRows must be greater than 0" }
 
         val expenses = mutableListOf<Expense>()
         var lastDate: Long? = null
         var lastId: Long? = null
 
-        while (true) {
+        while (expenses.size < maxRows) {
+            val remaining = maxRows - expenses.size
+            val fetchLimit = minOf(pageSize, remaining)
             val page = expenseRepository.getExpensesBetweenForExportKeyset(
                 startDate = startDate,
                 endDate = endDate,
-                limit = pageSize,
+                limit = fetchLimit,
                 lastDate = lastDate,
                 lastId = lastId
             )
             if (page.isEmpty()) break
 
-            expenses += page
-
-            if (page.size < pageSize) break
+            // Only take up to the remaining allowance from this page
+            val pageChunk = if (page.size <= remaining) page else page.take(remaining)
+            expenses += pageChunk
+            if (pageChunk.size < fetchLimit || expenses.size >= maxRows) break
 
             // Update cursor to the last row of this page
-            val lastRow = page.last()
+            val lastRow = pageChunk.last()
             lastDate = lastRow.date
             lastId = lastRow.id
         }
 
-        Timber.d("fetchAllBetween: exported %d expenses using keyset pagination", expenses.size)
+        if (expenses.size >= maxRows) {
+            Timber.w("fetchAllBetween: hit maxRows=%d limit (may be incomplete)", maxRows)
+        } else {
+            Timber.d("fetchAllBetween: fetched %d expenses using keyset pagination", expenses.size)
+        }
         return expenses
     }
 

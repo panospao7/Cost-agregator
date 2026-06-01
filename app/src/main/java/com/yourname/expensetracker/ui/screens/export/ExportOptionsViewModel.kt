@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.DatabaseReadPolicy
@@ -79,6 +80,9 @@ class ExportOptionsViewModel @Inject constructor(
 
     companion object {
         private const val PREVIEW_MAX_CHARS = 500
+        /** MAX_VALIDATION_ROWS: Maximum rows to load for pre-export validation.
+         *  Prevents OOM on very large datasets (see NEW-P12-005). */
+        private const val ACCOUNTING_VALIDATION_MAX_ROWS = 10_000
     }
 
     private val _uiState = MutableStateFlow(ExportOptionsUiState())
@@ -101,6 +105,13 @@ class ExportOptionsViewModel @Inject constructor(
                     _uiState.value.endDate
                 )
                 _uiState.value = _uiState.value.copy(expenseCount = count, error = null)
+            } catch (e: DatabaseAccessBlockedException) {
+                Timber.e(e, "Failed loading expense count — database restore in progress")
+                _uiState.value = _uiState.value.copy(
+                    expenseCount = 0,
+                    error = "Cannot load expense count while a database restore is in progress. " +
+                        "Please wait for the restore to complete and try again."
+                )
             } catch (e: Exception) {
                 Timber.e(e, "Failed loading expense count for export")
                 _uiState.value = _uiState.value.copy(
@@ -237,16 +248,28 @@ class ExportOptionsViewModel @Inject constructor(
                     throw IllegalArgumentException("No expenses found for selected date range")
                 }
 
-                // Accounting format validation: validate full dataset before streaming
-                // to catch data quality issues across all pages, not just the first.
+                // Accounting format validation: validate a bounded sample before
+                // streaming to catch data quality issues while avoiding OOM on
+                // very large datasets (NEW-P12-005).
                 if (format.requiresAccountingPolicy()) {
-                    val allExpenses = withContext(ioDispatcher) {
-                        exportDataRepository.getExpensesBetween(startDate, endDate)
+                    if (expenseCount > ACCOUNTING_VALIDATION_MAX_ROWS) {
+                        Timber.w(
+                            "Dataset size (%d) exceeds validation limit (%d); " +
+                                "validating first %d rows only",
+                            expenseCount, ACCOUNTING_VALIDATION_MAX_ROWS, ACCOUNTING_VALIDATION_MAX_ROWS
+                        )
                     }
-                    if (allExpenses.isNotEmpty()) {
+                    val sampleExpenses = withContext(ioDispatcher) {
+                        exportDataRepository.getExpensesBetween(
+                            startDate, endDate,
+                            ACCOUNTING_VALIDATION_MAX_ROWS
+                        )
+                    }
+                    if (sampleExpenses.isNotEmpty()) {
                         accountingExportPolicy.validateAccountingDataset(
-                            allExpenses.map { it.toExportTransaction() },
-                            format.accountingExportDisplayName()
+                            sampleExpenses.map { it.toExportTransaction() },
+                            format.accountingExportDisplayName(),
+                            maxValidationRows = ACCOUNTING_VALIDATION_MAX_ROWS
                         )
                     }
                 }
