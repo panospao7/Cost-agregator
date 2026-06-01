@@ -3,10 +3,9 @@
 > Consolidated P0/P1 issues from all 12 pipeline debug reports.
 > Each issue's **full fix strategy + implementation plan** lives in its source debug report.
 > Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`
-> **Last updated: 2026-06-01 (Pipeline 1 🟢 COMPLETE — all 23 issues FIXED; Pipeline 9-12 statuses reconciled)**
-> **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items**
-> **PIPELINE 1 — FINAL: 🟢 GREEN — 6 original + 17 NEW = 23/23 FIXED**
->   - P1-PR1 through P1-PR6 fully landed + NEW-P1-009 (U-PR5 adapter) closed
+> **Last updated: 2026-06-01 — Marathon Session: P1-P6 + P7-PR4 + P9 + P12 FIXED**
+> **Status: 🟢 P1,P2,P4,P9 | 🟡 P3,P5,P6,P7,P10,P11,P12 | 🔴 P8 (blocked by U-PR5)**
+> **Total remaining: ~55 issues across P3-P12 (mostly TODO/design items)**
 >
 > **NOTE (2026-05-31):** All 12 pipeline statuses validated against actual HEAD code. Key corrections:
 > - P1-P1-02: Was ⚠ PARTIAL → now ✅ FIXED (all drop paths emit diagnostics)
@@ -403,14 +402,14 @@ Universal contracts extracted from the architectural strategy — each represent
 | 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 21 | 0 | 0 — 🟢 COMPLETE |
 | 3 — Receipt Capture | 1 | 10 | 11+8 | 8 | 2 | 9 (2 TODO + 7 NEW) |
 | 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 22 | 0 | 0 — 🟢 COMPLETE |
-| 5 — Currency/Dashboard | 0 | 12 | 12+14 | 14 | 1 | 11 NEW |
-| 6 — Budget/Forecasting | 0 | 15 | 15+16 | 11 | 0 | 20 (5 TODO + 15 NEW) |
-| 7 — Backup/Restore | 2 | 8 | 10+6 | 2 | 0 | 14 (8 TODO + 6 NEW) |
+| 5 — Currency/Dashboard | 0 | 12 | 12+14 | 17 | 1 | 8 NEW |
+| 6 — Budget/Forecasting | 0 | 15 | 15+16 | 26 | 0 | 5 TODO (design) |
+| 7 — Backup/Restore | 2 | 8 | 10+6 | 6 | 0 | 10 (8 TODO + 2 NEW) |
 | 8 — Privacy/AI | 0 | 12 | 12+8 | 1 | 1 | 19 (10 TODO + 8 NEW) |
-| 9 — Workers | 0 | 12 | 12+15 | 16 | 0 | 11 NEW |
+| 9 — Workers | 0 | 12 | 12+15 | 23 | 0 | 4 NEW |
 | 10 — Bank Integration | 2 | 9 | 11+4 | 4 | 2 | 9 (7 TODO + 2 NEW) |
 | 11 — Email Receipt | 0 | 8 | 8+5 | 6 | 5 | 2 (1 TODO + 1 NEW) |
-| 12 — Import/Export | 1 | 10 | 11+7 | 7 | 4 | 7 (4 TODO + 3 NEW) |
+| 12 — Import/Export | 1 | 10 | 11+7 | 12 | 4 | 2 (4 TODO + 2 NEW) |
 | **UNIVERSAL CONTRACTS** | **0** | **0** | **10** | **9** | **1** | **0** |
 | **TOTAL (original)** | **8** | **112** | **130** | **63** | **16** | — |
 | **+ NEW issues (P1–6)** | — | — | **+81** | **+16 (P1) + partial P2-P6** | — | **≈+50 remaining** |
