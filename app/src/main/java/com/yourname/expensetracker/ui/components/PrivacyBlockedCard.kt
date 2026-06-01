@@ -93,6 +93,7 @@ fun PrivacyCapability.displayLabel(): String = when (this) {
     PrivacyCapability.CLOUD_AI_BANK_STATEMENT -> "Bank Statement AI"
     PrivacyCapability.AI_BANK_STATEMENT_PARSING -> "Bank Statement Parsing"
     PrivacyCapability.CLOUD_AI_DAILY_BRIEFING -> "Daily Briefing"
+    PrivacyCapability.CLOUD_AI_RECEIPT_OCR -> "Receipt OCR"
     PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD -> "Receipt Image Upload"
     PrivacyCapability.EXTERNAL_GEOCODING -> "Location Enrichment"
     PrivacyCapability.BACKGROUND_LOCATION_BACKFILL -> "Background Location"

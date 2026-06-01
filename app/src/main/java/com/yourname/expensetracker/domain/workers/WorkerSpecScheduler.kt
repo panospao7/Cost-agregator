@@ -99,7 +99,7 @@ object WorkerSpecScheduler {
                     // UPDATE atomically cancels the previous work and enqueues the
                     // new one — replacing the deprecated ExistingWorkPolicy.REPLACE
                     // (WorkManager 2.8+).
-                    ExistingWorkPolicy.UPDATE
+                    ExistingWorkPolicy.KEEP
                 } else {
                     spec.oneShotPolicy
                 }

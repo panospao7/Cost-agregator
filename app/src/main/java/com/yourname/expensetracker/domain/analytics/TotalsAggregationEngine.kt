@@ -553,7 +553,7 @@ class TotalsAggregationEngine @Inject constructor(
             ).toDays().coerceAtLeast(1)
         } ?: expenses.map { it.date }.distinct().size.coerceAtLeast(1)
         val average = if (expenses.isNotEmpty()) {
-            expenses.sumOf { it.normalizedAmount } / calendarDays
+            expenses.sumOf { it.normalizedAmount } / calendarDays.toDouble()
         } else 0.0
 
         // Group by day using the same dayKey format as [dayKey]

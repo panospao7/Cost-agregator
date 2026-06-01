@@ -496,6 +496,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     is RecurringExpenseReconcileResult.UpdatedLinkedSnapshot -> updatedSnapshots++
                     is RecurringExpenseReconcileResult.NoMatch -> noMatch++
                     is RecurringExpenseReconcileResult.Skipped -> skipped++
+                    is RecurringExpenseReconcileResult.Error -> { failed++; Timber.w("Reconcile error: %s", result.reason) }
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
