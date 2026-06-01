@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MerchantCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
@@ -20,8 +21,10 @@ import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -66,6 +69,7 @@ class MultiCurrencyRepository @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    @ApplicationScope private val applicationScope: CoroutineScope,
     private val normalizationEngine: com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine =
         com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(currencyConverter)
 ) {
@@ -79,18 +83,26 @@ class MultiCurrencyRepository @Inject constructor(
         const val DEFAULT_HOME_CURRENCY = "EUR"
     }
 
+    init {
+        // NEW-P5-006: Invalidate cachedHomeCurrency when the user changes home currency in settings.
+        // Collecting the homeCurrency Flow reactively resets the cache so the next call to
+        // requireHomeCurrencyForMoneyMath() fetches the fresh value.
+        applicationScope.launch {
+            currencySettingsRepository.homeCurrency().collect {
+                cachedHomeCurrency = null
+            }
+        }
+    }
+
     /**
      * NEW-P5-006: Cached home currency to avoid repeated [CurrencySettingsRepository.homeCurrency]
      * Flow subscriptions on every public method call. The cache is reset when the repository's
-     * [CurrencySettingsRepository] emits a new value (TODO: wire up Flow collection in init block).
+     * [CurrencySettingsRepository] emits a new value via the init-block Flow collection.
      *
-     * == Invalidation TODO (known limitation) ==
-     * Currently, when the user changes their home currency in settings, this cache is NOT
-     * invalidated because no Flow collection has been wired up in the init block yet.
-     * As a result, stale values may be served until the process is restarted.
-     * The user must restart the app after changing the home currency to pick up the new value.
-     * See NEW-P5-006 for the planned fix: collect [CurrencySettingsRepository.homeCurrency]
-     * in the init block and update [cachedHomeCurrency] reactively.
+     * == Fix applied ==
+     * The init block collects [CurrencySettingsRepository.homeCurrency] reactively and
+     * invalidates this cache whenever the user changes their home currency in settings.
+     * No app restart is required to pick up the new value.
      */
     @Volatile
     private var cachedHomeCurrency: CurrencyCode? = null
@@ -420,8 +432,8 @@ class MultiCurrencyRepository @Inject constructor(
      * Prefer [resolveHomeCurrencyForMoneyMath] in new code.
      *
      * NEW-P5-006: Uses [cachedHomeCurrency] to avoid repeated Flow subscriptions.
-     * The cache persists for the lifetime of this singleton; TODO: invalidate when
-     * [CurrencySettingsRepository.homeCurrency] emits a new value.
+     * The cache is invalidated reactively when [CurrencySettingsRepository.homeCurrency]
+     * emits a new value (see init block).
      */
     private suspend fun requireHomeCurrencyForMoneyMath(): CurrencyCode {
         cachedHomeCurrency?.let { return it }
