@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.database.entity.RecurringReminderDeliver
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -113,34 +114,44 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                         finalStatus = entity.status
 
                         // P4-CURRENT-003: If materializer auto-transitions to PAID, fulfill planned and suppress reminders
-                        if (entity.status == "PAID") {
-                            val expenseId = r.linkedExpenseId
-                            if (expenseId != null) {
-                                val fulfilled = plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, expenseId, now)
-                                lifecycleEventDao.insert(
-                                    RecurringLifecycleEvent(
-                                        occurrenceId = existing.id,
-                                        eventType = if (fulfilled > 0) "PLANNED_FULFILLED" else "PLANNED_FULFILLMENT_SKIPPED",
-                                        occurredAt = now,
-                                        oldStatus = if (fulfilled > 0) "PLANNED" else null,
-                                        newStatus = if (fulfilled > 0) "FULFILLED" else null,
-                                        metadata = """{"occurrenceKey":"${entity.occurrenceKey}","expenseId":$expenseId,"rows":$fulfilled,"source":"materializer_auto_paid"}"""
-                                    )
-                                )
-                            } else {
-                                lifecycleEventDao.insert(
-                                    RecurringLifecycleEvent(
-                                        occurrenceId = existing.id,
-                                        eventType = "PLANNED_FULFILLMENT_SKIPPED",
-                                        occurredAt = now,
-                                        oldStatus = null,
-                                        newStatus = null,
-                                        metadata = """{"occurrenceKey":"${entity.occurrenceKey}","reason":"missing_linkedExpenseId","source":"materializer_auto_paid"}"""
-                                    )
-                                )
-                            }
-                            reminderDeliveryDao.suppressByOccurrenceId(existing.id, now)
-                        }
+                if (entity.status == "PAID") {
+                    val expenseId = r.linkedExpenseId
+                    if (expenseId != null) {
+                        val fulfilled = plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, expenseId, now)
+                        // P4-NEW-009: JSONObject.put() auto-escapes strings
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = existing.id,
+                                eventType = if (fulfilled > 0) "PLANNED_FULFILLED" else "PLANNED_FULFILLMENT_SKIPPED",
+                                occurredAt = now,
+                                oldStatus = if (fulfilled > 0) "PLANNED" else null,
+                                newStatus = if (fulfilled > 0) "FULFILLED" else null,
+                                metadata = JSONObject().apply {
+                                    put("occurrenceKey", entity.occurrenceKey)
+                                    put("expenseId", expenseId)
+                                    put("rows", fulfilled)
+                                    put("source", "materializer_auto_paid")
+                                }.toString()
+                            )
+                        )
+                    } else {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = existing.id,
+                                eventType = "PLANNED_FULFILLMENT_SKIPPED",
+                                occurredAt = now,
+                                oldStatus = null,
+                                newStatus = null,
+                                metadata = JSONObject().apply {
+                                    put("occurrenceKey", entity.occurrenceKey)
+                                    put("reason", "missing_linkedExpenseId")
+                                    put("source", "materializer_auto_paid")
+                                }.toString()
+                            )
+                        )
+                    }
+                    reminderDeliveryDao.suppressByOccurrenceId(existing.id, now)
+                }
 
                         updated++
                     } else {
@@ -156,6 +167,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                     val expenseId = r.linkedExpenseId
                     if (expenseId != null) {
                         val fulfilled = plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, expenseId, now)
+                        // P4-NEW-009: JSONObject.put() auto-escapes strings
                         lifecycleEventDao.insert(
                             RecurringLifecycleEvent(
                                 occurrenceId = insertResult,
@@ -163,7 +175,12 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                 occurredAt = now,
                                 oldStatus = if (fulfilled > 0) "PLANNED" else null,
                                 newStatus = if (fulfilled > 0) "FULFILLED" else null,
-                                metadata = """{"occurrenceKey":"${entity.occurrenceKey}","expenseId":$expenseId,"rows":$fulfilled,"source":"materializer_auto_paid"}"""
+                                metadata = JSONObject().apply {
+                                    put("occurrenceKey", entity.occurrenceKey)
+                                    put("expenseId", expenseId)
+                                    put("rows", fulfilled)
+                                    put("source", "materializer_auto_paid")
+                                }.toString()
                             )
                         )
                     } else {
@@ -174,7 +191,11 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                 occurredAt = now,
                                 oldStatus = null,
                                 newStatus = null,
-                                metadata = """{"occurrenceKey":"${entity.occurrenceKey}","reason":"missing_linkedExpenseId","source":"materializer_auto_paid"}"""
+                                metadata = JSONObject().apply {
+                                    put("occurrenceKey", entity.occurrenceKey)
+                                    put("reason", "missing_linkedExpenseId")
+                                    put("source", "materializer_auto_paid")
+                                }.toString()
                             )
                         )
                     }
@@ -182,6 +203,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                 }
 
                 // Write lifecycle event for newly created occurrence
+                // P4-NEW-009: JSONObject.put() auto-escapes user-provided strings (merchant)
                 lifecycleEventDao.insert(
                     RecurringLifecycleEvent(
                         occurrenceId = insertResult,
@@ -189,7 +211,11 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                         occurredAt = now,
                         oldStatus = null,
                         newStatus = r.status,
-                        metadata = """{"merchant":"${r.candidate.merchant}","amount":${r.candidate.expectedAmount},"dueDate":${r.candidate.dueDate}}"""
+                        metadata = JSONObject().apply {
+                            put("merchant", r.candidate.merchant)
+                            put("amount", r.candidate.expectedAmount)
+                            put("dueDate", r.candidate.dueDate)
+                        }.toString()
                     )
                 )
             }
@@ -208,6 +234,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
 
                     // Skip past-due reminders unless explicitly allowed
                     if (!options.allowPastDueReminderDeliveries && scheduledAt < now) {
+                        // P4-NEW-009: JSONObject.put() auto-escapes strings
                         lifecycleEventDao.insert(
                             RecurringLifecycleEvent(
                                 occurrenceId = occurrenceId,
@@ -215,7 +242,12 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                 occurredAt = now,
                                 oldStatus = null,
                                 newStatus = null,
-                                metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due_generation_disallowed","source":"${options.generationSource}"}"""
+                                metadata = JSONObject().apply {
+                                    put("window", window)
+                                    put("scheduledAt", scheduledAt)
+                                    put("reason", "past_due_generation_disallowed")
+                                    put("source", options.generationSource)
+                                }.toString()
                             )
                         )
                         continue
@@ -223,8 +255,8 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                     val existingDelivery =
                         reminderDeliveryDao.getByOccurrenceAndWindow(occurrenceId, window)
                     if (existingDelivery == null) {
-                        // P4-PR1 (NEW-P4-002): Removed redundant scheduledAt computation
-                        // that shadowed the outer variable (same value).
+                        // P4-NEW-002: scheduledAt computed once above (line 225) —
+                        // the redundant shadowing variable was removed.
                         // P4-CURRENT-015: Check insert return value before counting
                         val deliveryId = reminderDeliveryDao.insert(
                             RecurringReminderDelivery(
@@ -240,6 +272,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                             remindersCreated++
 
                             // Write lifecycle event for scheduled reminder
+                            // P4-NEW-009: JSONObject.put() auto-escapes window string
                             lifecycleEventDao.insert(
                                 RecurringLifecycleEvent(
                                     occurrenceId = occurrenceId,
@@ -247,7 +280,10 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                     occurredAt = now,
                                     oldStatus = null,
                                     newStatus = "SCHEDULED",
-                                    metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                                    metadata = JSONObject().apply {
+                                        put("window", window)
+                                        put("scheduledAt", scheduledAt)
+                                    }.toString()
                                 )
                             )
                         }

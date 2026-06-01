@@ -23,6 +23,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.json.JSONObject
 import timber.log.Timber
 import kotlin.math.abs
 
@@ -255,6 +256,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * 5. Same currency (case-insensitive).
      * 6. Expense is not excluded: isNotMine, TRANSFER, and DEPOSIT are skipped.
      *
+     * All database operations (read + write) execute inside a single transaction
+     * to ensure atomicity: the occurrence lookup and the claim happen as one
+     * atomic unit, preventing race conditions with concurrent workers.
+     *
      * @param expenseId The ID of the expense to link.
      * @return `true` if a matching occurrence was found and linked.
      */
@@ -273,28 +278,33 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val expenseDayEnd = TimePeriodUtils.getEndOfDay(expense.date)
         val expenseMerchantKey = MerchantKeyGenerator.generate(expense.merchant)
 
-        // Find PLANNED occurrences on the same calendar day with no linked expense
-        val occurrences = occurrenceDao.getByDateRange(expenseDayStart, expenseDayEnd)
-        val match = occurrences.firstOrNull { occ ->
-            if (occ.status != "PLANNED" || occ.linkedExpenseId != null) return@firstOrNull false
-
-            // Merchant key match (case-insensitive)
-            val occMerchantKey = MerchantKeyGenerator.generate(occ.merchant.orEmpty())
-            if (occMerchantKey.isBlank() || expenseMerchantKey.isBlank()) return@firstOrNull false
-            if (occMerchantKey != expenseMerchantKey) return@firstOrNull false
-
-            // Amount within ±10% tolerance
-            if (!amountMatches(occ.expectedAmount, expense.amount)) return@firstOrNull false
-
-            // Same currency (case-insensitive)
-            if (!occ.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@firstOrNull false
-
-            true
-        } ?: return false
-
         val now = timeProvider.now()
+        var matchId = 0L
+        var matchKey = ""
         var claimed = false
         database.withTransaction {
+            // P4-NEW-003: Occurrence lookup INSIDE the transaction — read + write are atomic.
+            val occurrences = occurrenceDao.getByDateRange(expenseDayStart, expenseDayEnd)
+            val match = occurrences.firstOrNull { occ ->
+                if (occ.status != "PLANNED" || occ.linkedExpenseId != null) return@firstOrNull false
+
+                // Merchant key match (case-insensitive)
+                val occMerchantKey = MerchantKeyGenerator.generate(occ.merchant.orEmpty())
+                if (occMerchantKey.isBlank() || expenseMerchantKey.isBlank()) return@firstOrNull false
+                if (occMerchantKey != expenseMerchantKey) return@firstOrNull false
+
+                // Amount within ±10% tolerance
+                if (!amountMatches(occ.expectedAmount, expense.amount)) return@firstOrNull false
+
+                // Same currency (case-insensitive)
+                if (!occ.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@firstOrNull false
+
+                true
+            } ?: return@withTransaction
+
+            matchId = match.id
+            matchKey = match.occurrenceKey
+
             // P4-CURRENT-001: Use conditional DAO method to atomically claim the occurrence.
             // If another thread already claimed it, claimForExpense returns 0.
             val rows = occurrenceDao.claimForExpense(
@@ -310,12 +320,17 @@ class RecurringLifecycleCoordinator @Inject constructor(
             }
             claimed = true
 
+            // P4-NEW-009: JSONObject.put() auto-escapes user-provided strings (currency)
             eventWriter.writeCritical(
                 occurrenceId = match.id,
                 eventType = "OCCURRENCE_PAID",
                 oldStatus = "PLANNED",
                 newStatus = "PAID",
-                metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
+                metadata = JSONObject().apply {
+                    put("expenseId", expenseId)
+                    put("amount", expense.amount)
+                    put("currency", expense.currency)
+                }.toString()
             )
 
             val planned = plannedExpenseDao.getBySourceOccurrenceKey(match.occurrenceKey)
@@ -327,7 +342,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     eventType = "PLANNED_FULFILLED",
                     oldStatus = "PLANNED",
                     newStatus = "FULFILLED",
-                    metadata = """{"plannedExpenseId":${planned.id},"occurrenceKey":"${match.occurrenceKey}","expenseId":$expenseId,"source":"direct_expense_link"}"""
+                    metadata = JSONObject().apply {
+                        put("plannedExpenseId", planned.id)
+                        put("occurrenceKey", match.occurrenceKey)
+                        put("expenseId", expenseId)
+                        put("source", "direct_expense_link")
+                    }.toString()
                 )
             }
 
@@ -345,7 +365,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         Timber.d(
             "Recurring: expense %d linked to occurrence %d (occurrenceKey=%s) — PAID, planned fulfilled, reminders suppressed",
-            expenseId, match.id, match.occurrenceKey
+            expenseId, matchId, matchKey
         )
         return true
     }
@@ -368,7 +388,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
         }
         // Find the linked occurrence to get real ids
         val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
-            ?: return RecurringExpenseReconcileResult.Skipped(expenseId, "linked_occurrence_missing_after_successful_claim")
+            ?: run {
+                Timber.w("Impossible state: linkExpenseToOccurrence returned true but no linked occurrence found for expenseId=%d", expenseId)
+                return RecurringExpenseReconcileResult.Error(expenseId, "linked_occurrence_missing_after_successful_claim")
+            }
         val occurrenceId = linked.id
         val planned = linked.occurrenceKey.let { plannedExpenseDao.getBySourceOccurrenceKey(it) }
         return RecurringExpenseReconcileResult.Linked(expenseId, occurrenceId, planned?.id)
@@ -410,6 +433,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 )
                 if (rows > 0) {
                     try {
+                        // P4-NEW-009: JSONObject.put() auto-escapes user-provided strings (currency)
                         lifecycleEventDao.insert(
                             RecurringLifecycleEvent(
                                 occurrenceId = linked.id,
@@ -417,7 +441,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
                                 occurredAt = now,
                                 oldStatus = "PAID",
                                 newStatus = "PAID",
-                                metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
+                                metadata = JSONObject().apply {
+                                    put("expenseId", expenseId)
+                                    put("amount", expense.amount)
+                                    put("currency", expense.currency)
+                                }.toString()
                             )
                         )
                     } catch (e: Exception) {
@@ -707,6 +735,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
             )
 
             // Write lifecycle event
+            // P4-NEW-009: JSONObject.put() auto-escapes user-provided reason string
             lifecycleEventDao.insert(
                 RecurringLifecycleEvent(
                     occurrenceId = linked.id,
@@ -714,7 +743,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     occurredAt = now,
                     oldStatus = "PAID",
                     newStatus = "PLANNED",
-                    metadata = """{"expenseId":$expenseId,"reason":"$reason"}"""
+                    metadata = JSONObject().apply {
+                        put("expenseId", expenseId)
+                        put("reason", reason)
+                    }.toString()
                 )
             )
         }
@@ -1044,6 +1076,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
      *
      * **Note:** This method has write side-effects — it calls [generateOccurrences]
      * internally to ensure the database is up-to-date before computing the report.
+     * Despite the query-like name, this is NOT a pure read-only method.
+     *
+     * TODO(P4-NEW-008): Split into a pure query method and a separate
+     * "ensureGenerated" method so callers that only need the current snapshot
+     * don't trigger writes.
      *
      * Logic:
      * 1. Generate occurrences for the past N months via [generateOccurrences].

@@ -46,4 +46,13 @@ sealed interface RecurringExpenseReconcileResult {
         val expenseId: Long,
         val reason: String
     ) : RecurringExpenseReconcileResult
+
+    /**
+     * An unexpected / impossible state was reached during reconciliation.
+     * This represents a programming error rather than a normal business outcome.
+     */
+    data class Error(
+        val expenseId: Long,
+        val reason: String
+    ) : RecurringExpenseReconcileResult
 }

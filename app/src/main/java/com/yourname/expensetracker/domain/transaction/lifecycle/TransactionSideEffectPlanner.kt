@@ -357,7 +357,8 @@ class TransactionSideEffectPlanner @Inject constructor(
                     is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.UpdatedLinkedSnapshot ->
                         SideEffectOutcome.Completed
                     is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.NoMatch,
-                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Skipped ->
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Skipped,
+                    is com.yourname.expensetracker.domain.recurring.lifecycle.RecurringExpenseReconcileResult.Error ->
                         SideEffectOutcome.Skipped(SideEffectSkipReason.NOT_APPLICABLE)
                 }
             } catch (e: Exception) {

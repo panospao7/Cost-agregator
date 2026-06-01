@@ -159,10 +159,15 @@ Full source: `PIPELINE_4_CONSOLIDATED_ISSUES.md` (validated 2026-05-31)
 | P4-P1-09 | P1 | Shared recurring write methods miss restore guard | Bug | Write barrier present | ✅ FIXED |
 | P4-P1-10 | P1 | Legacy `BillReminderManager.markBillPaid()` creates mixed behavior | Bug | Legacy deprecated, coordinator owns | ✅ FIXED |
 | NEW-P4-001 | P1 | CancellationException swallowed in bulk reconcile | Bug | `catch(e: Exception)` does not rethrow CE | ✅ FIXED (U-PR1) |
-| NEW-P4-003 | P2 | Race in `linkExpenseToOccurrence` — lookup outside transaction | Bug | Occurrence lookup outside DB transaction | 🔴 OPEN |
+| NEW-P4-003 | P2 | Race in `linkExpenseToOccurrence` — lookup outside transaction | Bug | Occurrence lookup moved inside `database.withTransaction` for atomic read+write (P4-PR1) | ✅ FIXED (P4-PR1) |
 | NEW-P4-004 | P2 | `BillReminderWorker` uses `System.currentTimeMillis` | Bug | Not testable; should use injected clock | ✅ FIXED (U-PR7) |
-| NEW-P4-005 | P2 | Notification ID collision risk | Bug | `hashCode()` used for notification ID | 🔴 OPEN |
+| NEW-P4-005 | P2 | Notification ID collision risk | Bug | PendingIntent codes use `(deliveryId % Int.MAX_VALUE).toInt()` instead of `hashCode()` (P4-PR2) | ✅ FIXED (P4-PR2) |
 | NEW-P4-007 | P2 | CancellationException swallowed in `regenerateReminderDeliveries` | Bug | Catch-all swallows CE | ✅ FIXED (U-PR1) |
+| NEW-P4-002 | P2 | Variable shadowing — `scheduledAt` computed twice | Bug | Redundant computation removed; single `val scheduledAt` (P4-PR1) | ✅ FIXED (P4-PR1) |
+| NEW-P4-006 | P2 | PendingIntent request code collision | Bug | Request codes use stable `(deliveryId % Int.MAX_VALUE).toInt()` (P4-PR2) | ✅ FIXED (P4-PR2) |
+| NEW-P4-008 | P2 | `reconcilePlannedVsActual` has write side-effects in query method | Design | KDoc strengthened + TODO for future split; minimal change for now (P4-PR1) | ✅ FIXED (P4-PR1) |
+| NEW-P4-009 | P3 | JSON injection in lifecycle event metadata | Security | User-provided strings use `JSONObject.put()` auto-escaping (P4-PR2) | ✅ FIXED (P4-PR2) |
+| NEW-P4-010 | P3 | `linkExpenseToOccurrenceDetailed` returns Skipped for impossible state | Bug | Replaced Skipped with Error + Timber.w (P4-PR2) | ✅ FIXED (P4-PR2) |
 
 ## Pipeline 5 — Currency / Dashboard / Analytics
 
@@ -397,7 +402,7 @@ Universal contracts extracted from the architectural strategy — each represent
 | 1 — Notification | 0 | 6 | 6+17 | 23 | 0 | 0 — 🟢 COMPLETE |
 | 2 — Transaction Lifecycle | 0 | 5 | 5+16 | 21 | 0 | 0 — 🟢 COMPLETE |
 | 3 — Receipt Capture | 1 | 10 | 11+8 | 8 | 2 | 9 (2 TODO + 7 NEW) |
-| 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 10 | 0 | 12 (1 DEF + 11 NEW) |
+| 4 — Recurring/Bill Reminders | 2 | 10 | 12+10 | 22 | 0 | 0 — 🟢 COMPLETE |
 | 5 — Currency/Dashboard | 0 | 12 | 12+14 | 14 | 1 | 11 NEW |
 | 6 — Budget/Forecasting | 0 | 15 | 15+16 | 11 | 0 | 20 (5 TODO + 15 NEW) |
 | 7 — Backup/Restore | 2 | 8 | 10+6 | 2 | 0 | 14 (8 TODO + 6 NEW) |

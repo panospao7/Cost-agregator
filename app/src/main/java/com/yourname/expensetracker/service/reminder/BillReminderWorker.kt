@@ -181,20 +181,25 @@ class BillReminderWorker @AssistedInject constructor(
         val snoozeIntent = Intent(applicationContext, SnoozeReminderReceiver::class.java).apply {
             putExtra("deliveryId", delivery.id)
         }
+        // P4-NEW-005/006: Use stable ID derived from delivery.id (not hashCode)
+        // to ensure PendingIntent request codes are deterministic across restarts.
+        val snoozeRequestCode = (delivery.id % Int.MAX_VALUE).toInt()
         val snoozePendingIntent = PendingIntent.getBroadcast(
             applicationContext,
-            (delivery.id.hashCode() and 0x7FFFFFFF),
+            snoozeRequestCode,
             snoozeIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         // Dismiss action — marks delivery DISMISSED
+        // Uses snoozeRequestCode xor'd with a flag to guarantee uniqueness from snooze.
         val dismissIntent = Intent(applicationContext, DismissReminderReceiver::class.java).apply {
             putExtra("deliveryId", delivery.id)
         }
+        val dismissRequestCode = snoozeRequestCode xor 0x40000000
         val dismissPendingIntent = PendingIntent.getBroadcast(
             applicationContext,
-            ((delivery.id.hashCode() and 0x7FFFFFFF) xor 0x40000000),
+            dismissRequestCode,
             dismissIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

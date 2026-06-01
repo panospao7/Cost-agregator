@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.json.JSONObject
 import timber.log.Timber
 
 /**
@@ -77,7 +78,10 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     occurredAt = now,
                     oldStatus = "ACTIVE",
                     newStatus = "INACTIVE",
-                    metadata = """{"ruleId":$ruleId,"merchant":"${existing?.merchant.orEmpty()}"}"""
+                    metadata = JSONObject().apply {
+                        put("ruleId", ruleId)
+                        put("merchant", existing?.merchant.orEmpty())
+                    }.toString()
                 )
             )
         }
@@ -110,7 +114,11 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     occurredAt = now,
                     oldStatus = null,
                     newStatus = null,
-                    metadata = """{"ruleId":$ruleId,"merchant":"${existing?.merchant.orEmpty()}","amount":${existing?.amount ?: 0.0}}"""
+                    metadata = JSONObject().apply {
+                        put("ruleId", ruleId)
+                        put("merchant", existing?.merchant.orEmpty())
+                        put("amount", existing?.amount ?: 0.0)
+                    }.toString()
                 )
             )
         }
@@ -166,7 +174,12 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     eventType = "RULE_CREATED_GENERATED",
                     occurredAt = now,
                     oldStatus = null, newStatus = null,
-                    metadata = """{"ruleId":$id,"merchant":"${saved.merchant}","amount":${saved.amount},"frequency":"${saved.frequency}"}"""
+                    metadata = JSONObject().apply {
+                        put("ruleId", id)
+                        put("merchant", saved.merchant)
+                        put("amount", saved.amount)
+                        put("frequency", saved.frequency)
+                    }.toString()
                 )
             )
             id
@@ -220,7 +233,11 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     eventType = "RULE_ACTIVATED_REGENERATED",
                     occurredAt = now,
                     oldStatus = "INACTIVE", newStatus = "ACTIVE",
-                    metadata = """{"ruleId":$ruleId,"merchant":"${existing.merchant}","isActive":true}"""
+                    metadata = JSONObject().apply {
+                        put("ruleId", ruleId)
+                        put("merchant", existing.merchant)
+                        put("isActive", true)
+                    }.toString()
                 )
             )
         }
@@ -241,7 +258,10 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     occurredAt = now,
                     oldStatus = null,
                     newStatus = null,
-                    metadata = """{"ruleId":$ruleId,"nextDate":$nextDate}"""
+                    metadata = JSONObject().apply {
+                        put("ruleId", ruleId)
+                        put("nextDate", nextDate)
+                    }.toString()
                 )
             )
         }
@@ -326,7 +346,13 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     occurredAt = now,
                     oldStatus = null,
                     newStatus = null,
-                    metadata = """{"ruleId":${updated.id},"oldAmount":${old.amount},"newAmount":${updated.amount},"oldFrequency":"${old.frequency}","newFrequency":"${updated.frequency}"}"""
+                    metadata = JSONObject().apply {
+                        put("ruleId", updated.id)
+                        put("oldAmount", old.amount)
+                        put("newAmount", updated.amount)
+                        put("oldFrequency", old.frequency)
+                        put("newFrequency", updated.frequency)
+                    }.toString()
                 )
             )
         }
