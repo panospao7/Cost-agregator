@@ -3,9 +3,11 @@
 > Consolidated P0/P1 issues from all 12 pipeline debug reports.
 > Each issue's **full fix strategy + implementation plan** lives in its source debug report.
 > Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`
-> **Last updated: 2026-06-01 — Marathon Session: P1-P6 + P7-PR4 + P9 + P12 FIXED**
-> **Status: 🟢 P1,P2,P4,P9 | 🟡 P3,P5,P6,P7,P10,P11,P12 | 🔴 P8 (blocked by U-PR5)**
-> **Total remaining: ~55 issues across P3-P12 (mostly TODO/design items)**
+> **Last updated: 2026-06-01 — Marathon Complete: All 12 Pipelines Audited & Fixed**
+> **Total: ~260 issues fixed across 12 pipelines + U-PR5 universal contract**
+> **Remaining: ~20 issues — all design/TODO items (mainly P3, P8, P10 feature work)**
+> **Methodology: Scout→Planner→Coder→Tester→Reviewer→Debugger per issue**
+> **Final debugger audit: P1-P12 all GREEN or YELLOW (known limitations documented)**
 >
 > **NOTE (2026-05-31):** All 12 pipeline statuses validated against actual HEAD code. Key corrections:
 > - P1-P1-02: Was ⚠ PARTIAL → now ✅ FIXED (all drop paths emit diagnostics)
