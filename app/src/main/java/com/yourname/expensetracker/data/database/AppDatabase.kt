@@ -8597,11 +8597,35 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                         "ON warranty_reminder_deliveries (warrantyId)"
                 )
 
-                // Normalize raw_notifications indices to match Room entity expectations.
-                // Old migration paths may leave stale/extra indices that cause validation failure.
-                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
-                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp")
-                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_isRelevant")
+                // Normalize raw_notifications by rebuilding the table to match Room entity exactly.
+                // Index/column drift from 20+ version jumps causes validation failure even when
+                // all individual migrations succeed. Full table rebuild preserves all data.
+                database.execSQL("""
+                    CREATE TABLE raw_notifications_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        packageName TEXT NOT NULL,
+                        appName TEXT,
+                        title TEXT,
+                        text TEXT,
+                        bigText TEXT,
+                        subText TEXT,
+                        extrasJson TEXT,
+                        timestamp INTEGER NOT NULL,
+                        capturedAt INTEGER NOT NULL,
+                        isProcessed INTEGER NOT NULL,
+                        isRelevant INTEGER,
+                        parseResult TEXT,
+                        rawContentPurgedAt INTEGER,
+                        dedupeFingerprint TEXT
+                    )
+                """.trimIndent())
+                database.execSQL(
+                    "INSERT INTO raw_notifications_new SELECT id, packageName, appName, title, text, " +
+                    "bigText, subText, extrasJson, timestamp, capturedAt, isProcessed, isRelevant, " +
+                    "parseResult, rawContentPurgedAt, dedupeFingerprint FROM raw_notifications"
+                )
+                database.execSQL("DROP TABLE raw_notifications")
+                database.execSQL("ALTER TABLE raw_notifications_new RENAME TO raw_notifications")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications (capturedAt)")
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
             }
