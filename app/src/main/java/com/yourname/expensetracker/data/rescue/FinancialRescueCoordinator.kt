@@ -741,9 +741,7 @@ class FinancialRescueCoordinator(private val context: Context) {
         }
 
         val snapshotFile = File(context.filesDir, SNAPSHOT_FILENAME)
-        FileWriter(snapshotFile).use { writer ->
-            json.write(writer)
-        }
+        snapshotFile.writeText(json.toString(2))
         log("Wrote JSON snapshot to ${snapshotFile.absolutePath}")
     }
 

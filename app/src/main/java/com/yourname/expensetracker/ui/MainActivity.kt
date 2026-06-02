@@ -644,6 +644,11 @@ fun MainScreen(
                         onDismiss = { navigation.navigateBack() }
                     )
                 }
+                is NavigationDestination.PrivacySettings -> {
+                    com.yourname.expensetracker.ui.screens.privacysettings.PrivacySettingsScreen(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
                 is NavigationDestination.CategoryManagement -> {
                     com.yourname.expensetracker.ui.screens.categories.CategoryScreen(
                         onDismiss = { navigation.navigateBack() }

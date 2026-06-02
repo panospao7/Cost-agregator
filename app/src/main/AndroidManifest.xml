@@ -63,7 +63,7 @@
         -->
         <activity
             android:name=".data.rescue.RescueActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.ExpenseTracker" />
 
         <activity
