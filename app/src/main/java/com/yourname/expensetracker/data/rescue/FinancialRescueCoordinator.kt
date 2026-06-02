@@ -349,7 +349,10 @@ class FinancialRescueCoordinator(private val context: Context) {
         log("Importing ${categories.size} categories")
         val sql = "INSERT OR REPLACE INTO categories (id, name, icon, color, isDefault) VALUES (?, ?, ?, ?, ?)"
         for (cat in categories) {
-            db.execSQL(sql, arrayOf(cat.id, cat.name, cat.icon, cat.color, if (cat.isDefault) 1 else 0))
+            val safeName = cat.name.trim().takeIf { it.isNotBlank() } ?: "Recovered category ${cat.id}"
+            val safeIcon = cat.icon.takeIf { it.length <= 10 } ?: "\uD83D\uDCB8"
+            val safeColor = cat.color.takeIf { it.matches(Regex("^#[0-9A-Fa-f]{6}$")) } ?: "#9E9E9E"
+            db.execSQL(sql, arrayOf(cat.id, safeName, safeIcon, safeColor, if (cat.isDefault) 1 else 0))
         }
     }
 
@@ -454,7 +457,7 @@ class FinancialRescueCoordinator(private val context: Context) {
         val skippedCount = members.size - deduped.size
         if (deduped.isEmpty()) {
             log("No group members to import after filtering $skippedCount duplicates")
-            return
+            return emptySet()
         }
         log("Importing ${deduped.size} group members (filtered $skippedCount duplicates)")
 
