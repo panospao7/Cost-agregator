@@ -51,6 +51,17 @@
                 tools:node="remove" />
         </provider>
         
+        <!--
+            RescueActivity — manually triggered database recovery.
+            Launch via ADB when needed:
+              adb shell am start -n com.yourname.expensetracker/.data.rescue.RescueActivity
+            Can also be reached via notification/deep-link from the coordinator.
+        -->
+        <activity
+            android:name=".data.rescue.RescueActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ExpenseTracker" />
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
