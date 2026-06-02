@@ -231,6 +231,15 @@ data class FeatureConfig(
                 destination = NavigationDestination.BackupRestore,
                 descriptionRes = R.string.feature_backup_restore_desc,
                 isNew = true
+            ),
+            FeatureConfig(
+                id = "privacy",
+                titleRes = R.string.feature_backup_restore,  // reuse existing string temporarily
+                icon = Icons.Rounded.Security,
+                color = Color(0xFF9C27B0),
+                destination = NavigationDestination.PrivacySettings,
+                descriptionRes = R.string.feature_backup_restore_desc,
+                isNew = false
             )
         )
         
