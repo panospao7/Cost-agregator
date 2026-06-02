@@ -162,6 +162,7 @@ internal fun NavigationDestination.toSaveToken(): String = when (this) {
     // Budget entity is intentionally not serialized; reopening null-budget route is safe.
     is NavigationDestination.BudgetForecasting -> "budget_forecasting"
     is NavigationDestination.AiSettings -> "ai_settings"
+    is NavigationDestination.PrivacySettings -> "privacy_settings"
     is NavigationDestination.CategoryManagement -> "category_management"
     is NavigationDestination.Debug -> "debug"
 }
@@ -237,6 +238,7 @@ internal fun destinationFromSaveToken(token: String): NavigationDestination? {
         baseToken == "shared_expense_groups" -> NavigationDestination.SharedExpenseGroups
         baseToken == "budget_forecasting" -> NavigationDestination.BudgetForecasting()
         baseToken == "ai_settings" -> NavigationDestination.AiSettings
+        baseToken == "privacy_settings" -> NavigationDestination.PrivacySettings
         baseToken == "category_management" -> NavigationDestination.CategoryManagement
         baseToken == "debug" -> NavigationDestination.Debug
         else -> null

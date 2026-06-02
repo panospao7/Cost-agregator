@@ -8655,14 +8655,25 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
         val MIGRATION_143_144 = object : androidx.room.migration.Migration(143, 144) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                // Drop stale indices not declared in the Room entity
                 database.execSQL("DROP INDEX IF EXISTS index_categories_name_nocase")
-                // Ensure all raw_notifications indices match Room entity declaration
+            }
+        }
+
+        val MIGRATION_144_145 = object : androidx.room.migration.Migration(144, 145) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Add missing budget column from rescue-created v144 DB
+                var has = false
+                database.query("PRAGMA table_info(`budgets`)").use { c ->
+                    val ni = c.getColumnIndex("name")
+                    while (c.moveToNext()) {
+                        if (c.getString(ni) == "rolloverDeficitTracking") { has = true; break }
+                    }
+                }
+                if (!has) database.execSQL("ALTER TABLE budgets ADD COLUMN rolloverDeficitTracking INTEGER NOT NULL DEFAULT 0")
+                // Add missing raw_notifications indices from rescue-created v144 DB
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications (packageName, timestamp)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications (capturedAt)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_isRelevant ON raw_notifications (isRelevant)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text_bigText ON raw_notifications (packageName, timestamp, title, text, bigText)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
             }
         }
 
