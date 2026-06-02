@@ -4782,7 +4782,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                                 rawNotificationId INTEGER,
                                 scannedReceiptId INTEGER,
-                                suggestedAmount REAL NOT NULL CHECK(suggestedAmount > 0),
+                        suggestedAmount REAL,
                                 suggestedCurrency TEXT NOT NULL,
                                 suggestedMerchant TEXT NOT NULL,
                                 suggestedMerchantKey TEXT,
@@ -8637,6 +8637,44 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
         val MIGRATION_144_145 = object : androidx.room.migration.Migration(144, 145) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Rebuild pending_reviews to match Room entity (nullable suggestedAmount, no CHECK constraints)
+                database.execSQL("DROP TABLE IF EXISTS pending_reviews")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pending_reviews (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        rawNotificationId INTEGER,
+                        scannedReceiptId INTEGER,
+                        suggestedAmount REAL,
+                        suggestedCurrency TEXT NOT NULL,
+                        suggestedMerchant TEXT NOT NULL,
+                        suggestedMerchantKey TEXT,
+                        suggestedType TEXT NOT NULL,
+                        suggestedCategoryId INTEGER,
+                        suggestedDate INTEGER,
+                        confidence REAL NOT NULL,
+                        matchType TEXT,
+                        explanation TEXT,
+                        packageName TEXT NOT NULL,
+                        notificationTitle TEXT,
+                        notificationText TEXT,
+                        createdAt INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        suggestedDirection TEXT,
+                        suggestedAccountName TEXT,
+                        suggestedLatitude REAL,
+                        suggestedLongitude REAL,
+                        extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION',
+                        FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON UPDATE NO ACTION ON DELETE SET NULL,
+                        FOREIGN KEY(scannedReceiptId) REFERENCES scanned_receipts(id) ON UPDATE NO ACTION ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_suggestedMerchantKey ON pending_reviews (suggestedMerchantKey)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_suggestedMerchantKey_suggestedDate ON pending_reviews (status, suggestedMerchantKey, suggestedDate)")
+
                 // Add missing budget column from rescue-created v144 DB
                 var has = false
                 database.query("PRAGMA table_info(`budgets`)").use { c ->
