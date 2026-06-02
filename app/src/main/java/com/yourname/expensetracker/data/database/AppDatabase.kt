@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 145
+const val APP_DATABASE_SCHEMA_VERSION = 146
 
 @Database(
     entities = [
@@ -5083,31 +5083,7 @@ abstract class AppDatabase : RoomDatabase() {
         val FRESH_INSTALL_CALLBACK = object : RoomDatabase.Callback() {
             override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 super.onCreate(db)
-                // B4 Batch 6: raw_notifications partial unique indexes to close NULL loophole.
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_raw_notifications_dedup_nonnull " +
-                        "ON raw_notifications (packageName, timestamp, title, text) " +
-                        "WHERE title IS NOT NULL AND text IS NOT NULL"
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_raw_notifications_dedup_both_null " +
-                        "ON raw_notifications (packageName, timestamp) " +
-                        "WHERE title IS NULL AND text IS NULL"
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_raw_notifications_dedup_title_null " +
-                        "ON raw_notifications (packageName, timestamp, text) " +
-                        "WHERE title IS NULL AND text IS NOT NULL"
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_raw_notifications_dedup_text_null " +
-                        "ON raw_notifications (packageName, timestamp, title) " +
-                        "WHERE text IS NULL AND title IS NOT NULL"
-                )
+                // B4 Batch 6 removed — partial unique indexes were moved to MIGRATION_144_145 cleanup
                 // ── B8: CHECK constraints (table rebuilds — tables are empty on fresh install) ──
 
                 // savings_goals: targetAmount > 0, currentAmount >= 0
@@ -8670,10 +8646,19 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                     }
                 }
                 if (!has) database.execSQL("ALTER TABLE budgets ADD COLUMN rolloverDeficitTracking INTEGER NOT NULL DEFAULT 0")
-                // Add missing raw_notifications indices from rescue-created v144 DB
+                // Drop extra fresh-install indices that Room entity doesn't declare
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_nonnull")
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_both_null")
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_title_null")
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_text_null")
+                database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
+                database.execSQL("DROP INDEX IF EXISTS index_categories_name_nocase")
+                // Recreate only the 5 indices Room entity declares
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications (packageName, timestamp)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications (capturedAt)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_isRelevant ON raw_notifications (isRelevant)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text_bigText ON raw_notifications (packageName, timestamp, title, text, bigText)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
             }
         }
 
