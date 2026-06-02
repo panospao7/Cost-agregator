@@ -647,8 +647,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     emptyMap()
                 }
 
-                // Create .costbackup
-                val backupsDir = java.io.File(context.filesDir, "backups").apply { mkdirs() }
+                // Save to public Documents for easy access
+                val backupsDir = java.io.File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOCUMENTS
+                    ), "CostAggregatorBackups"
+                ).apply { mkdirs() }
                 val shortUuid = UUID.randomUUID().toString().take(8)
                 val outputName = "expense_tracker_backup_${timestamp}_${shortUuid}.costbackup"
                 val outputFile = java.io.File(backupsDir, outputName)
