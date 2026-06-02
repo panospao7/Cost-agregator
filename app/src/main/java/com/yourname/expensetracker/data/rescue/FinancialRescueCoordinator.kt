@@ -313,11 +313,8 @@ class FinancialRescueCoordinator(private val context: Context) {
      * on an empty file) and imports the rescued snapshot inside a transaction.
      */
     fun createFreshRoomDatabaseAndImport(snapshot: FinancialRescueSnapshot) {
-        // Move aside any leftover files (Room's builder may have cached something)
-        val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
-        moveDatabaseFilesAside(dbFile)
-
         // Build a fresh Room database — this will create all tables at latest schema
+        val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
         val roomDb = AppDatabase.fileBuilder(context).build()
 
         // Import through the writable database
@@ -326,7 +323,6 @@ class FinancialRescueCoordinator(private val context: Context) {
             // Build FK lookup sets from imported data
             val validCategoryIds = snapshot.categories.map { it.id }.toSet()
             val validGroupIds = snapshot.expenseGroups.map { it.id }.toSet()
-            val validMemberIds = snapshot.groupMembers.map { it.id }.toSet()
             val validExpenseIds = snapshot.expenses.map { it.id }.toSet()
 
             supportDb.beginTransaction()
@@ -334,8 +330,8 @@ class FinancialRescueCoordinator(private val context: Context) {
                 importCategories(supportDb, snapshot.categories)
                 importExpenses(supportDb, snapshot.expenses, validCategoryIds)
                 importExpenseGroups(supportDb, snapshot.expenseGroups)
-                importGroupMembers(supportDb, snapshot.groupMembers)
-                importGroupExpenses(supportDb, snapshot.groupExpenses, validGroupIds, validMemberIds, validExpenseIds)
+                val actualMemberIds = importGroupMembers(supportDb, snapshot.groupMembers)
+                importGroupExpenses(supportDb, snapshot.groupExpenses, validGroupIds, actualMemberIds, validExpenseIds)
                 importSplitItemAssignments(supportDb, snapshot.splitAssignments, validExpenseIds)
 
                 supportDb.setTransactionSuccessful()
@@ -358,15 +354,12 @@ class FinancialRescueCoordinator(private val context: Context) {
     }
 
     private fun importExpenses(db: SupportSQLiteDatabase, expenses: List<RescueExpense>, validCategoryIds: Set<Long>) {
-        val filtered = expenses.filter { exp ->
-            exp.categoryId == null || exp.categoryId in validCategoryIds
-        }
-        val skippedCount = expenses.size - filtered.size
-        if (filtered.isEmpty()) {
-            log("No expenses to import after filtering ${skippedCount} with invalid categoryId")
+        val nulledCount = expenses.count { it.categoryId != null && it.categoryId !in validCategoryIds }
+        if (expenses.isEmpty()) {
+            log("No expenses to import")
             return
         }
-        log("Importing ${filtered.size} expenses (filtered $skippedCount with invalid categoryId)")
+        log("Importing ${expenses.size} expenses ($nulledCount with invalid categoryId set to NULL)")
 
         // Discover what columns the fresh expenses table has
         val cols = readSupportColumnNames(db, TABLE_EXPENSES)
@@ -387,7 +380,7 @@ class FinancialRescueCoordinator(private val context: Context) {
         val columnNames = availableCols.joinToString(", ") { "`$it`" }
         val sql = "INSERT OR REPLACE INTO expenses ($columnNames) VALUES ($placeholders)"
 
-        for (exp in filtered) {
+        for (exp in expenses) {
             val values = mutableListOf<Any?>()
             for (col in availableCols) {
                 values.add(when (col) {
@@ -397,7 +390,7 @@ class FinancialRescueCoordinator(private val context: Context) {
                     "merchant" -> exp.merchant
                     "transactionType" -> exp.transactionType
                     "date" -> exp.date
-                    "categoryId" -> exp.categoryId
+                    "categoryId" -> exp.categoryId?.takeIf { it in validCategoryIds }
                     "createdAt" -> exp.createdAt
                     "source" -> exp.source
                     "paymentMethod" -> exp.paymentMethod
@@ -434,8 +427,8 @@ class FinancialRescueCoordinator(private val context: Context) {
         }
     }
 
-    private fun importGroupMembers(db: SupportSQLiteDatabase, members: List<RescueGroupMember>) {
-        if (members.isEmpty()) return
+    private fun importGroupMembers(db: SupportSQLiteDatabase, members: List<RescueGroupMember>): Set<Long> {
+        if (members.isEmpty()) return emptySet()
 
         // Dedupe by (groupId, name) — keep the first occurrence
         val seen = mutableSetOf<Pair<Long, String>>()
@@ -474,6 +467,7 @@ class FinancialRescueCoordinator(private val context: Context) {
         val columnNames = availableCols.joinToString(", ") { "`$it`" }
         val sql = "INSERT OR REPLACE INTO group_members ($columnNames) VALUES ($placeholders)"
 
+        val insertedIds = mutableSetOf<Long>()
         for (m in deduped) {
             val values = mutableListOf<Any?>()
             values.add(m.id)
@@ -486,7 +480,9 @@ class FinancialRescueCoordinator(private val context: Context) {
                 values.add(if (m.isCurrentUser) m.groupId else null)
             }
             db.execSQL(sql, values.toTypedArray())
+            insertedIds.add(m.id)
         }
+        return insertedIds
     }
 
     private fun importGroupExpenses(
@@ -626,6 +622,7 @@ class FinancialRescueCoordinator(private val context: Context) {
             val src = File(dbFile.absolutePath + ext + ".legacy.$moveTimestamp")
             if (src.exists()) {
                 val dst = File(dbFile.absolutePath + ext)
+                if (dst.exists()) dst.delete()
                 src.renameTo(dst)
                 log("Restored ${src.name} → ${dst.name}")
             }
