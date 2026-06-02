@@ -44,28 +44,31 @@ class RescueActivity : AppCompatActivity() {
         statusText.text = "Running rescue..."
 
         val coordinator = FinancialRescueCoordinator(this)
-        val result = coordinator.runRescueIfNeeded()
-
-        statusText.text = buildString {
-            append("Result: ")
-            when (result) {
-                is RescueResult.SUCCESS -> {
-                    append("SUCCESS\nAll financial data recovered.")
-                }
-                is RescueResult.SKIPPED -> {
-                    append("SKIPPED\nRescue is disabled in config.")
-                }
-                is RescueResult.ALREADY_DONE -> {
-                    append("ALREADY DONE\nRescue was previously completed.")
-                }
-                is RescueResult.NO_DB -> {
-                    append("NO DATABASE\nNothing to rescue.")
-                }
-                is RescueResult.FAILURE -> {
-                    append("FAILURE\n${result.error.message}")
-                    rescueButton.isEnabled = true // allow retry
+        Thread {
+            val result = coordinator.runRescueIfNeeded()
+            runOnUiThread {
+                statusText.text = buildString {
+                    append("Result: ")
+                    when (result) {
+                        is RescueResult.SUCCESS -> {
+                            append("SUCCESS\nAll financial data recovered.")
+                        }
+                        is RescueResult.SKIPPED -> {
+                            append("SKIPPED\nRescue is disabled in config.")
+                        }
+                        is RescueResult.ALREADY_DONE -> {
+                            append("ALREADY DONE\nRescue was previously completed.")
+                        }
+                        is RescueResult.NO_DB -> {
+                            append("NO DATABASE\nNothing to rescue.")
+                        }
+                        is RescueResult.FAILURE -> {
+                            append("FAILURE\n${result.error.message}")
+                            rescueButton.isEnabled = true // allow retry
+                        }
+                    }
                 }
             }
-        }
+        }.start()
     }
 }

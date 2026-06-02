@@ -56,10 +56,14 @@
             Launch via ADB when needed:
               adb shell am start -n com.yourname.expensetracker/.data.rescue.RescueActivity
             Can also be reached via notification/deep-link from the coordinator.
+
+            NOTE: exported="true" is ONLY for the rescue build so ADB can
+            launch the activity directly.  Set back to "false" before
+            releasing a non-rescue build.
         -->
         <activity
             android:name=".data.rescue.RescueActivity"
-            android:exported="false"
+            android:exported="true"
             android:theme="@style/Theme.ExpenseTracker" />
 
         <activity

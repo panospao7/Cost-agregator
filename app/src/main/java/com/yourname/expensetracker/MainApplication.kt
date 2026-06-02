@@ -3,7 +3,6 @@ package com.yourname.expensetracker
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
-import com.yourname.expensetracker.data.rescue.FinancialRescueCoordinator
 import com.yourname.expensetracker.data.rescue.RescueConfig
 import com.yourname.expensetracker.startup.AppStartupDelegate
 import dagger.hilt.android.HiltAndroidApp
@@ -24,20 +23,13 @@ class MainApplication : Application(), Configuration.Provider {
         super.onCreate()
 
         // ── Financial Rescue Path ──────────────────────────────────────
-        // When rescue mode is enabled the coordinator runs on every launch
-        // until the flag is set back to false.  After the first successful
-        // run the rescue is marked done and subsequent calls are no-ops,
-        // but normal startup is still skipped as a safety measure so the
-        // user can verify data integrity before re-enabling the app.
+        // When rescue mode is enabled normal startup is skipped so the user
+        // can launch RescueActivity manually (e.g. via ADB) to trigger the
+        // one-time DB recovery.  The rescue itself runs ONLY from the
+        // Activity, not here.
         if (RescueConfig.ENABLE_FINANCIAL_RESCUE) {
-            val coordinator = FinancialRescueCoordinator(this)
-            // Run rescue off the main thread to avoid ANR
-            Thread {
-                val result = coordinator.runRescueIfNeeded()
-                android.util.Log.i("MainApplication",
-                    "Financial rescue result: $result")
-            }.start()
-            return  // Skip normal startup — flag must be set to false manually
+            android.util.Log.i("MainApplication", "Financial rescue mode enabled; normal startup skipped")
+            return
         }
 
         AppStartupDelegate.initialize(this)

@@ -16,7 +16,7 @@ import java.io.FileWriter
  * 1. Opens the old DB with raw Android SQLite (NO Room, NO migrations)
  * 2. Reads only financial tables into plain data classes
  * 3. Backs up the old DB file (and WAL/SHM journals)
- * 4. Deletes the old DB so Room can create a fresh one at latest schema
+ * 4. Moves the old DB aside (renamed to .legacy.<timestamp>) so Room can create a fresh one at latest schema
  * 5. Creates a new Room database (fresh install at version APP_DATABASE_SCHEMA_VERSION)
  * 6. Imports recovered financial rows via SupportSQLiteDatabase (INSERT OR REPLACE)
  * 7. Writes a done-marker so rescue only runs once
@@ -80,9 +80,9 @@ class FinancialRescueCoordinator(private val context: Context) {
             // 3. Backup old DB files
             backupDatabaseFiles(dbFile)
 
-            // 4. Delete old DB so Room creates fresh
-            deleteDatabaseFiles(dbFile)
-            log("Old database files deleted")
+            // 4. Move old DB aside so Room creates fresh
+            moveDatabaseFilesAside(dbFile)
+            log("Old database files moved aside")
 
             // 5. Create fresh Room DB and import
             createFreshRoomDatabaseAndImport(snapshot)
@@ -94,6 +94,7 @@ class FinancialRescueCoordinator(private val context: Context) {
             RescueResult.SUCCESS
         } catch (e: Exception) {
             log("Rescue FAILED: ${e.message}", e)
+            restoreDatabaseFiles(dbFile)
             RescueResult.FAILURE(e)
         }
     }
@@ -291,7 +292,7 @@ class FinancialRescueCoordinator(private val context: Context) {
                         expenseId = cursor.getLong(cols.getValue("expenseId")),
                         receiptItemId = longOrNull(cursor, cols.getOrDefault("receiptItemId", -1)),
                         participantName = cursor.getString(cols.getValue("participantName")) ?: "",
-                        participantIndex = cursor.getInt(cols.getOrDefault("participantIndex", -1)),
+                        participantIndex = intOrNull(cursor, cols.getOrDefault("participantIndex", -1)) ?: 0,
                         assignedAmount = cursor.getDouble(cols.getValue("assignedAmount")),
                         isPaid = boolOrDefault(cursor, cols, "isPaid", false),
                         paidAt = longOrNull(cursor, cols.getOrDefault("paidAt", -1)),
@@ -312,9 +313,9 @@ class FinancialRescueCoordinator(private val context: Context) {
      * on an empty file) and imports the rescued snapshot inside a transaction.
      */
     fun createFreshRoomDatabaseAndImport(snapshot: FinancialRescueSnapshot) {
-        // Delete the database again (Room's builder may have cached something)
+        // Move aside any leftover files (Room's builder may have cached something)
         val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
-        deleteDatabaseFiles(dbFile)
+        moveDatabaseFilesAside(dbFile)
 
         // Build a fresh Room database — this will create all tables at latest schema
         val roomDb = AppDatabase.fileBuilder(context).build()
@@ -322,14 +323,20 @@ class FinancialRescueCoordinator(private val context: Context) {
         // Import through the writable database
         val supportDb = roomDb.openHelper.writableDatabase
         try {
+            // Build FK lookup sets from imported data
+            val validCategoryIds = snapshot.categories.map { it.id }.toSet()
+            val validGroupIds = snapshot.expenseGroups.map { it.id }.toSet()
+            val validMemberIds = snapshot.groupMembers.map { it.id }.toSet()
+            val validExpenseIds = snapshot.expenses.map { it.id }.toSet()
+
             supportDb.beginTransaction()
             try {
                 importCategories(supportDb, snapshot.categories)
-                importExpenses(supportDb, snapshot.expenses)
+                importExpenses(supportDb, snapshot.expenses, validCategoryIds)
                 importExpenseGroups(supportDb, snapshot.expenseGroups)
                 importGroupMembers(supportDb, snapshot.groupMembers)
-                importGroupExpenses(supportDb, snapshot.groupExpenses)
-                importSplitItemAssignments(supportDb, snapshot.splitAssignments)
+                importGroupExpenses(supportDb, snapshot.groupExpenses, validGroupIds, validMemberIds, validExpenseIds)
+                importSplitItemAssignments(supportDb, snapshot.splitAssignments, validExpenseIds)
 
                 supportDb.setTransactionSuccessful()
                 log("Import transaction committed successfully")
@@ -350,9 +357,16 @@ class FinancialRescueCoordinator(private val context: Context) {
         }
     }
 
-    private fun importExpenses(db: SupportSQLiteDatabase, expenses: List<RescueExpense>) {
-        if (expenses.isEmpty()) return
-        log("Importing ${expenses.size} expenses")
+    private fun importExpenses(db: SupportSQLiteDatabase, expenses: List<RescueExpense>, validCategoryIds: Set<Long>) {
+        val filtered = expenses.filter { exp ->
+            exp.categoryId == null || exp.categoryId in validCategoryIds
+        }
+        val skippedCount = expenses.size - filtered.size
+        if (filtered.isEmpty()) {
+            log("No expenses to import after filtering ${skippedCount} with invalid categoryId")
+            return
+        }
+        log("Importing ${filtered.size} expenses (filtered $skippedCount with invalid categoryId)")
 
         // Discover what columns the fresh expenses table has
         val cols = readSupportColumnNames(db, TABLE_EXPENSES)
@@ -373,7 +387,7 @@ class FinancialRescueCoordinator(private val context: Context) {
         val columnNames = availableCols.joinToString(", ") { "`$it`" }
         val sql = "INSERT OR REPLACE INTO expenses ($columnNames) VALUES ($placeholders)"
 
-        for (exp in expenses) {
+        for (exp in filtered) {
             val values = mutableListOf<Any?>()
             for (col in availableCols) {
                 values.add(when (col) {
@@ -422,7 +436,34 @@ class FinancialRescueCoordinator(private val context: Context) {
 
     private fun importGroupMembers(db: SupportSQLiteDatabase, members: List<RescueGroupMember>) {
         if (members.isEmpty()) return
-        log("Importing ${members.size} group members")
+
+        // Dedupe by (groupId, name) — keep the first occurrence
+        val seen = mutableSetOf<Pair<Long, String>>()
+        val deduped = mutableListOf<RescueGroupMember>()
+        // Ensure only one current user per group: track which groups already have one
+        val groupsWithCurrentUser = mutableSetOf<Long>()
+
+        for (m in members) {
+            val key = m.groupId to m.name
+            if (key in seen) continue
+            seen.add(key)
+
+            if (m.isCurrentUser) {
+                if (m.groupId in groupsWithCurrentUser) {
+                    // Skip duplicate current user for this group
+                    continue
+                }
+                groupsWithCurrentUser.add(m.groupId)
+            }
+            deduped.add(m)
+        }
+
+        val skippedCount = members.size - deduped.size
+        if (deduped.isEmpty()) {
+            log("No group members to import after filtering $skippedCount duplicates")
+            return
+        }
+        log("Importing ${deduped.size} group members (filtered $skippedCount duplicates)")
 
         val cols = readSupportColumnNames(db, TABLE_GROUP_MEMBERS)
         val hasCurrentUserKey = "currentUserGroupKey" in cols
@@ -433,7 +474,7 @@ class FinancialRescueCoordinator(private val context: Context) {
         val columnNames = availableCols.joinToString(", ") { "`$it`" }
         val sql = "INSERT OR REPLACE INTO group_members ($columnNames) VALUES ($placeholders)"
 
-        for (m in members) {
+        for (m in deduped) {
             val values = mutableListOf<Any?>()
             values.add(m.id)
             values.add(m.groupId)
@@ -448,9 +489,36 @@ class FinancialRescueCoordinator(private val context: Context) {
         }
     }
 
-    private fun importGroupExpenses(db: SupportSQLiteDatabase, groupExpenses: List<RescueGroupExpense>) {
+    private fun importGroupExpenses(
+        db: SupportSQLiteDatabase,
+        groupExpenses: List<RescueGroupExpense>,
+        validGroupIds: Set<Long>,
+        validMemberIds: Set<Long>,
+        validExpenseIds: Set<Long>
+    ) {
         if (groupExpenses.isEmpty()) return
-        log("Importing ${groupExpenses.size} group expenses")
+
+        val seenExpenseIds = mutableSetOf<Long?>()
+        val filtered = groupExpenses.filter { ge ->
+            // groupId must be valid
+            if (ge.groupId !in validGroupIds) return@filter false
+            // paidById must be a known member
+            if (ge.paidById !in validMemberIds) return@filter false
+            // expenseId must be null or in validExpenseIds and unique
+            if (ge.expenseId != null) {
+                if (ge.expenseId !in validExpenseIds) return@filter false
+                if (ge.expenseId in seenExpenseIds) return@filter false
+                seenExpenseIds.add(ge.expenseId)
+            }
+            true
+        }
+
+        val skippedCount = groupExpenses.size - filtered.size
+        if (filtered.isEmpty()) {
+            log("No group expenses to import after filtering $skippedCount with invalid FK")
+            return
+        }
+        log("Importing ${filtered.size} group expenses (filtered $skippedCount with invalid FK)")
 
         val cols = readSupportColumnNames(db, TABLE_GROUP_EXPENSES)
         val baseCols = listOf(
@@ -463,7 +531,7 @@ class FinancialRescueCoordinator(private val context: Context) {
         val columnNames = availableCols.joinToString(", ") { "`$it`" }
         val sql = "INSERT OR REPLACE INTO group_expenses ($columnNames) VALUES ($placeholders)"
 
-        for (ge in groupExpenses) {
+        for (ge in filtered) {
             val values = mutableListOf<Any?>()
             for (col in availableCols) {
                 values.add(when (col) {
@@ -488,11 +556,19 @@ class FinancialRescueCoordinator(private val context: Context) {
         }
     }
 
-    private fun importSplitItemAssignments(db: SupportSQLiteDatabase, splits: List<RescueSplitItemAssignment>) {
+    private fun importSplitItemAssignments(db: SupportSQLiteDatabase, splits: List<RescueSplitItemAssignment>, validExpenseIds: Set<Long>) {
         if (splits.isEmpty()) return
-        log("Importing ${splits.size} split item assignments")
+
+        val filtered = splits.filter { s -> s.expenseId in validExpenseIds }
+        val skippedCount = splits.size - filtered.size
+        if (filtered.isEmpty()) {
+            log("No split assignments to import after filtering $skippedCount with invalid expenseId")
+            return
+        }
+        log("Importing ${filtered.size} split item assignments (filtered $skippedCount with invalid expenseId)")
+
         val sql = "INSERT OR REPLACE INTO split_item_assignments (id, expenseId, receiptItemId, participantName, participantIndex, assignedAmount, isPaid, paidAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        for (s in splits) {
+        for (s in filtered) {
             db.execSQL(sql, arrayOf(
                 s.id, s.expenseId, s.receiptItemId, s.participantName,
                 s.participantIndex, s.assignedAmount, if (s.isPaid) 1 else 0,
@@ -502,7 +578,7 @@ class FinancialRescueCoordinator(private val context: Context) {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Backup / delete helpers
+    // Backup / move-aside helpers
     // ──────────────────────────────────────────────────────────────
 
     private fun backupDatabaseFiles(dbFile: File) {
@@ -520,14 +596,41 @@ class FinancialRescueCoordinator(private val context: Context) {
         }
     }
 
-    private fun deleteDatabaseFiles(dbFile: File) {
+    /** Timestamp used by the most recent [moveDatabaseFilesAside] call. */
+    private var moveTimestamp: Long = 0L
+
+    /**
+     * Renames database files (.db, -wal, -shm, -journal) to
+     * `.legacy.<timestamp>` so they can be restored later if the
+     * rescue fails.
+     */
+    private fun moveDatabaseFilesAside(dbFile: File) {
+        moveTimestamp = System.currentTimeMillis()
         for (ext in listOf("", "-wal", "-shm", "-journal")) {
-            val f = File(dbFile.absolutePath + ext)
-            if (f.exists()) {
-                f.delete()
-                log("Deleted ${f.name}")
+            val src = File(dbFile.absolutePath + ext)
+            if (src.exists()) {
+                val dst = File(dbFile.absolutePath + ext + ".legacy.$moveTimestamp")
+                src.renameTo(dst)
+                log("Moved aside ${src.name} → ${dst.name}")
             }
         }
+    }
+
+    /**
+     * Restores database files that were moved aside by
+     * [moveDatabaseFilesAside].  Safe no-op if no files were moved.
+     */
+    private fun restoreDatabaseFiles(dbFile: File) {
+        if (moveTimestamp == 0L) return
+        for (ext in listOf("", "-wal", "-shm", "-journal")) {
+            val src = File(dbFile.absolutePath + ext + ".legacy.$moveTimestamp")
+            if (src.exists()) {
+                val dst = File(dbFile.absolutePath + ext)
+                src.renameTo(dst)
+                log("Restored ${src.name} → ${dst.name}")
+            }
+        }
+        moveTimestamp = 0L
     }
 
     // ──────────────────────────────────────────────────────────────
