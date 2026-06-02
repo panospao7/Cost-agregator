@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 143
+const val APP_DATABASE_SCHEMA_VERSION = 144
 
 @Database(
     entities = [
@@ -8635,6 +8635,19 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_143_144 = object : androidx.room.migration.Migration(143, 144) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Drop stale indices not declared in the Room entity
+                database.execSQL("DROP INDEX IF EXISTS index_categories_name_nocase")
+                // Ensure all raw_notifications indices match Room entity declaration
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications (packageName, timestamp)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications (capturedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_isRelevant ON raw_notifications (isRelevant)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text_bigText ON raw_notifications (packageName, timestamp, title, text, bigText)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
+            }
+        }
+
         /**
          * Creates a file-backed [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and the full migration chain.
@@ -8667,9 +8680,6 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             return builder
                 .addMigrations(*ALL_MIGRATIONS)
                 .addCallback(FRESH_INSTALL_CALLBACK)
-                // Safety net: if any table fails migration (e.g. raw_notifications index mismatch
-                // from 20+ version jump), recreate JUST that table. All other data is preserved.
-                .fallbackToDestructiveMigration()
                 .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
         }
 
@@ -8814,7 +8824,8 @@ MIGRATION_91_92,
             MIGRATION_139_140,
             MIGRATION_140_141,
             MIGRATION_141_142,
-            MIGRATION_142_143
+            MIGRATION_142_143,
+            MIGRATION_143_144
     )
 }
 }
