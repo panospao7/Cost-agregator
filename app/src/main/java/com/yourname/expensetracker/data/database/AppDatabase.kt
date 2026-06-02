@@ -8638,9 +8638,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         val MIGRATION_144_145 = object : androidx.room.migration.Migration(144, 145) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // Rebuild pending_reviews to match Room entity (nullable suggestedAmount, no CHECK constraints)
+                database.execSQL("PRAGMA foreign_keys=OFF")
                 database.execSQL("DROP TABLE IF EXISTS pending_reviews")
                 database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS pending_reviews (
+                    CREATE TABLE pending_reviews (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         rawNotificationId INTEGER,
                         scannedReceiptId INTEGER,
