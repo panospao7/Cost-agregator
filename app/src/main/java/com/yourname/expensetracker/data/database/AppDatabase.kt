@@ -8626,7 +8626,11 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 )
                 database.execSQL("DROP TABLE raw_notifications")
                 database.execSQL("ALTER TABLE raw_notifications_new RENAME TO raw_notifications")
+                // Recreate all 5 indices matching Room @Entity declaration exactly
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications (packageName, timestamp)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications (capturedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_isRelevant ON raw_notifications (isRelevant)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text_bigText ON raw_notifications (packageName, timestamp, title, text, bigText)")
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
             }
         }
