@@ -48,6 +48,16 @@ class SmartBillNegotiationEngine @Inject constructor(
                 return@forEach
             }
 
+            // E1-REMAINING-002: Skip subscriptions with invalid amounts (NaN, Infinity, zero, negative)
+            if (!subscription.amount.isFinite() || subscription.amount <= 0.0) {
+                Timber.w(
+                    "Skipping negotiation for subscription %d with invalid amount %s",
+                    subscription.id,
+                    subscription.amount
+                )
+                return@forEach
+            }
+
             val marketRate = findMarketRate(subscription.merchant)
             
             if (marketRate != null) {
@@ -91,16 +101,25 @@ class SmartBillNegotiationEngine @Inject constructor(
             Timber.w(e, "MarketRateProvider failed for merchant=$merchantName, serviceType=$serviceType")
             return null
         }
-        val quotes = result.quotes
-        if (quotes.isEmpty()) return null
+        // E1-REMAINING-003: Filter out invalid provider quotes before matching
+        val validQuotes = result.quotes.filter {
+            it.averageMonthlyPrice.isFinite() && it.averageMonthlyPrice > 0.0 &&
+            it.competitiveMonthlyPrice.isFinite() && it.competitiveMonthlyPrice > 0.0 &&
+            it.bestMonthlyPrice.isFinite() && it.bestMonthlyPrice > 0.0 &&
+            it.providerName.isNotBlank()
+        }
+        if (validQuotes.isEmpty()) {
+            Timber.w("No valid market quotes for merchant=$merchantName, serviceType=$serviceType")
+            return null
+        }
 
         val merchantKey = providerMatchKey(merchantName)
-        val bestQuote = quotes.firstOrNull { quote ->
+        val bestQuote = validQuotes.firstOrNull { quote ->
             val quoteKey = providerMatchKey(quote.providerName)
             merchantKey.contains(quoteKey) ||
             quoteKey.contains(merchantKey) ||
             providerRootMatches(merchantKey, quoteKey)
-        } ?: quotes.first()
+        } ?: validQuotes.minBy { it.competitiveMonthlyPrice }
 
         return MarketRate(
             serviceType = serviceType,
@@ -109,7 +128,7 @@ class SmartBillNegotiationEngine @Inject constructor(
             competitivePrice = bestQuote.competitiveMonthlyPrice,
             bestPrice = bestQuote.bestMonthlyPrice,
             unit = "month",
-            competitors = quotes.filter { it != bestQuote }.map { it.providerName },
+            competitors = validQuotes.filter { it != bestQuote }.map { it.providerName },
             lastUpdated = result.lastUpdatedAt
         )
     }
@@ -567,12 +586,15 @@ class SmartBillNegotiationEngine @Inject constructor(
             val subscription = recurringExpenseRepository.getById(subscriptionId)
                 ?: return Result.failure(IllegalArgumentException("Subscription not found: $subscriptionId"))
 
+            // E1-REMAINING-001: Normalize currency before validation/persistence
+            val normalizedCurrency = subscription.currency.trim().uppercase()
+
             validateNegotiationOutcomeInput(
                 outcome = outcome,
                 newPrice = newPrice,
                 savings = savings,
                 oldAmount = subscription.amount,
-                currency = subscription.currency
+                currency = normalizedCurrency
             )
 
             val now = timeProvider.now()
@@ -583,7 +605,7 @@ class SmartBillNegotiationEngine @Inject constructor(
                     outcome = outcome.name,
                     oldAmount = subscription.amount,
                     newAmount = newPrice,
-                    currency = subscription.currency,
+                    currency = normalizedCurrency,
                     savingsAmount = savings,
                     notes = notes,
                     marketRateSource = "StaticMarketRateProvider",
@@ -605,7 +627,7 @@ class SmartBillNegotiationEngine @Inject constructor(
                         SubscriptionPriceHistory(
                             subscriptionId = subscriptionId,
                             amount = newBillingAmount,
-                            currency = subscription.currency,
+                            currency = normalizedCurrency,
                             recordedAt = now,
                             changeReason = "Negotiation outcome: ${outcome.name}"
                         )

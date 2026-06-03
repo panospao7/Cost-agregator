@@ -27,8 +27,8 @@
 | W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ✅ FIXED |
 | W06 | P0 | Subscription totals raw-sum mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter. PR9: explicit DeprecationLevel.WARNING + DeprecatedApiArchitectureGuardTest | ✅ FIXED |
 | W07 | P0 | Price change update not atomic | Bug | withTransaction wrap insert+update | ✅ FIXED |
-| W08 | P0 | Bill negotiation no persistence | Bug | Negotiation outcomes now persist to negotiation_outcomes table (Room entity + DAO + migration v145→146). Atomic transaction: outcome insert + conditional price history insert + conditional subscription amount update. DatabaseWriteBarrier enforced. getNegotiationHistory reads from DAO. In-memory list removed. PR1-FINALGATE: validation added (SUCCESS/PARTIAL require finite positive newPrice, non-finite savings rejected), write-barrier contract aligned, cancellation tests added, WATER detection added, provider matching normalized. PR1-FINALGATE-ROUND2: service detection fixed (raw merchant passed, normalized providerMatchKey + raw generic keywords). ENERGY skipped. non-EUR skipped. write-barrier before DB read. | ✅ FIXED |
-| W09 | P0 | Bill negotiation UI compares wrong rates | Bug | generateNegotiationScript now uses monthlyEquivalentPrice for monthly comparison text. NegotiationOpportunity has rawBillingAmount, billingFrequency, monthlyEquivalentPrice, currency fields. PR1-FINALGATE: Provider matching now uses normalized keys + providerRootMatches for Greek utilities. PR1-FINALGATE-ROUND2: Provider matching verified with exact service type tests (Vodafone CU -> MOBILE, Cosmote Fiber -> INTERNET). | ✅ FIXED |
+| W08 | P0 | Bill negotiation no persistence | Bug | Negotiation outcomes now persist to negotiation_outcomes table (Room entity + DAO + migration v145→146). Atomic transaction: outcome insert + conditional price history insert + conditional subscription amount update. DatabaseWriteBarrier enforced. getNegotiationHistory reads from DAO. In-memory list removed. PR1-FINALGATE: validation added (SUCCESS/PARTIAL require finite positive newPrice, non-finite savings rejected), write-barrier contract aligned, cancellation tests added, WATER detection added, provider matching normalized. PR1-FINALGATE-ROUND2: service detection fixed (raw merchant passed, normalized providerMatchKey + raw generic keywords). ENERGY skipped. non-EUR skipped. write-barrier before DB read. FINAL-HARDENING: legacy currency normalized, invalid amounts skipped, invalid provider quotes filtered, fallback uses lowest competitive price. | ✅ FIXED |
+| W09 | P0 | Bill negotiation UI compares wrong rates | Bug | generateNegotiationScript now uses monthlyEquivalentPrice for monthly comparison text. NegotiationOpportunity has rawBillingAmount, billingFrequency, monthlyEquivalentPrice, currency fields. PR1-FINALGATE: Provider matching now uses normalized keys + providerRootMatches for Greek utilities. PR1-FINALGATE-ROUND2: Provider matching verified with exact service type tests (Vodafone CU -> MOBILE, Cosmote Fiber -> INTERNET). FINAL-HARDENING: Plain Vodafone without service keyword returns no opportunity. | ✅ FIXED |
 | W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | ✅ FIXED |
 | W11 | P0 | Location insights include non-spending | Bug | SpendingMapViewModel filters spending-only via isSpending (line 435-458) | ✅ FIXED |
 | W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion; display currency in map marker label | ✅ FIXED |
@@ -69,6 +69,13 @@
 - E1-FINAL-002 (ENERGY per-kWh vs monthly): FIXED — ENERGY skipped in findMarketRate
 - E1-FINAL-003 (non-EUR raw comparison): FIXED — non-EUR subscriptions skipped
 - E1-FINAL-004 (write-barrier before read): FIXED — writeBarrier before getById inside try
+
+**E1-REMAINING issues (post-final-gate hardening):**
+- E1-REMAINING-001 (lowercase currency): FIXED — currency normalized before validation/persistence
+- E1-REMAINING-002 (invalid subscription amount): FIXED — NaN/Infinity/zero/negative amounts skipped
+- E1-REMAINING-003 (invalid provider quotes): FIXED — zero/NaN/Infinity prices filtered before matching
+- E1-REMAINING-004 (arbitrary fallback): FIXED — minBy { competitiveMonthlyPrice } instead of first()
+- E1-REMAINING-005 (sentinel diagnostic): ACCEPTED — warrantyId=-1 sentinel is durable short-term workaround, structured diagnostic deferred to Engine 3/5 infrastructure
 
 > PR1 (No-schema hardening) completed on 2026-06-03. Subscription currency validation is local strict ASCII-3-letter validation. Global supported-currency policy remains Engine 5.
 >

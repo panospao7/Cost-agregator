@@ -1075,4 +1075,278 @@ class NegotiationEngineTest {
 
         assertTrue("getById failure should return Result.failure", result.isFailure)
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // PR1: Currency normalization (lowercase → uppercase)
+    // ─────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `recordNegotiationOutcome_lowercaseEurCurrency_normalizesAndSucceeds`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 50L, merchant = "Netflix", amount = 13.99, currency = "eur",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getById(50L) } returns subscription
+        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            firstArg<suspend () -> Any>().invoke()
+        }
+
+        val engine = createEngine()
+        val result = engine.recordNegotiationOutcome(
+            subscriptionId = 50L,
+            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
+            newPrice = 9.99,
+            savings = 4.0,
+            notes = "test"
+        )
+
+        assertTrue("Lowercase EUR should normalize and succeed", result.isSuccess)
+        // Verify normalized currency is persisted
+        val slot = slot<NegotiationOutcomeEntity>()
+        coVerify { negotiationOutcomeDao.insert(capture(slot)) }
+        assertEquals("EUR", slot.captured.currency)
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // PR2: Invalid subscription amounts are skipped (NaN, Inf, zero, negative)
+    // ─────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `analyzeOpportunities_nanSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 60L, merchant = "Netflix", amount = Double.NaN, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+
+        val provider: MarketRateProvider = mockk()
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("NaN amount subscription should be skipped", opportunities.isEmpty())
+        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+    }
+
+    @Test
+    fun `analyzeOpportunities_infiniteSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 61L, merchant = "Netflix", amount = Double.POSITIVE_INFINITY, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+
+        val provider: MarketRateProvider = mockk()
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("Infinite amount subscription should be skipped", opportunities.isEmpty())
+        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+    }
+
+    @Test
+    fun `analyzeOpportunities_zeroSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 62L, merchant = "Netflix", amount = 0.0, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+
+        val provider: MarketRateProvider = mockk()
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("Zero amount subscription should be skipped", opportunities.isEmpty())
+        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+    }
+
+    @Test
+    fun `analyzeOpportunities_negativeSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 63L, merchant = "Netflix", amount = -5.0, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+
+        val provider: MarketRateProvider = mockk()
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("Negative amount subscription should be skipped", opportunities.isEmpty())
+        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // PR3: Invalid provider quotes are filtered (zero, NaN, blank name)
+    // ─────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `providerReturnsZeroCompetitivePrice_skipsQuote`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 70L, merchant = "Netflix", amount = 13.99, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+
+        val provider: MarketRateProvider = mockk()
+        coEvery {
+            provider.getRates(
+                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
+                region = "GR",
+                currency = "EUR"
+            )
+        } returns MarketRateResult(
+            quotes = listOf(
+                MarketRateQuote("Bad Provider", 10.0, 0.0, 5.0, "EUR", "GR", MarketRateConfidence.LOW),
+                MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
+            ),
+            source = "test", lastUpdatedAt = System.currentTimeMillis()
+        )
+
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertEquals("Should skip invalid quote and use valid one", 1, opportunities.size)
+        assertEquals("Netflix", opportunities.first().currentProvider)
+    }
+
+    @Test
+    fun `providerReturnsNaNQuote_skipsQuote`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 71L, merchant = "Netflix", amount = 13.99, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+
+        val provider: MarketRateProvider = mockk()
+        coEvery {
+            provider.getRates(
+                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
+                region = "GR",
+                currency = "EUR"
+            )
+        } returns MarketRateResult(
+            quotes = listOf(
+                MarketRateQuote("Bad Provider", Double.NaN, 7.99, 5.0, "EUR", "GR", MarketRateConfidence.LOW),
+                MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
+            ),
+            source = "test", lastUpdatedAt = System.currentTimeMillis()
+        )
+
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertEquals("Should skip NaN quote and use valid one", 1, opportunities.size)
+        assertEquals("Netflix", opportunities.first().currentProvider)
+    }
+
+    @Test
+    fun `providerReturnsOnlyInvalidQuotes_noOpportunity`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 72L, merchant = "Netflix", amount = 13.99, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+
+        val provider: MarketRateProvider = mockk()
+        coEvery {
+            provider.getRates(
+                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
+                region = "GR",
+                currency = "EUR"
+            )
+        } returns MarketRateResult(
+            quotes = listOf(
+                MarketRateQuote("Bad Provider", 0.0, 0.0, 0.0, "EUR", "GR", MarketRateConfidence.LOW),
+                MarketRateQuote("Another Bad", Double.NaN, Double.NaN, Double.NaN, "EUR", "GR", MarketRateConfidence.LOW)
+            ),
+            source = "test", lastUpdatedAt = System.currentTimeMillis()
+        )
+
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("All invalid quotes should result in no opportunity", opportunities.isEmpty())
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // PR4: Unknown provider uses lowest competitive price as fallback
+    // ─────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `unknownProvider_usesLowestCompetitivePriceFallback`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 80L, merchant = "Unknown Streaming Service", amount = 20.0, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+
+        val provider: MarketRateProvider = mockk()
+        coEvery {
+            provider.getRates(
+                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
+                region = "GR",
+                currency = "EUR"
+            )
+        } returns MarketRateResult(
+            quotes = listOf(
+                MarketRateQuote("Netflix", 13.99, 8.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                MarketRateQuote("Disney+", 11.99, 6.99, 5.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
+            ),
+            source = "test", lastUpdatedAt = System.currentTimeMillis()
+        )
+
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertEquals("Should still generate opportunity using fallback", 1, opportunities.size)
+        // Lowest competitive price is Disney+ at 6.99
+        assertEquals("Disney+", opportunities.first().currentProvider)
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // PR5: Plain "Vodafone" without MOBILE/INTERNET keyword → no opportunity
+    // ─────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `plainVodafone_returnsNoOpportunityWithoutServiceKeyword`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 90L, merchant = "Vodafone", amount = 24.99, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+
+        val provider: MarketRateProvider = mockk()
+
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("Plain Vodafone without MOBILE/INTERNET keyword should not generate opportunity", opportunities.isEmpty())
+        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+    }
 }
