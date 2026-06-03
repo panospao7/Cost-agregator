@@ -289,6 +289,13 @@ class NaturalLanguageSearchEngine @Inject constructor(
      * downstream consumers to display match quality alongside results.
      */
     suspend fun executeSearch(interpretation: QueryInterpretation): List<SearchResult> {
+        // PR5: Location filters are not supported — return empty results with warning flag.
+        if (!interpretation.locations.isNullOrEmpty()) {
+            Timber.w("NaturalLanguageSearchEngine: location filter not supported — returning empty results")
+            interpretation.dataQuality = interpretation.dataQuality.copy(unsupportedLocations = true)
+            return emptyList()
+        }
+
         val (startMs, endMs) = resolveDateRangeMillis(interpretation.dateRange)
         val homeCurrency = currencySettingsRepository.homeCurrency().first()
 

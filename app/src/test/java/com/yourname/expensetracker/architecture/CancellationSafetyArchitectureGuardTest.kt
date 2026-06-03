@@ -46,7 +46,6 @@ class CancellationSafetyArchitectureGuardTest {
             "CloudCategorizationAssistService.kt",
             "CloudDashboardBriefingService.kt",
             "CloudDedupeJudgeService.kt",
-            "CloudQueryInterpretationService.kt",
             "CloudReceiptItemCategorizationService.kt",
             "CloudReviewExplanationService.kt",
             "DefaultAiEnvironmentMonitor.kt",

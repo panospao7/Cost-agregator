@@ -8,6 +8,8 @@ import com.yourname.expensetracker.data.database.entity.BudgetAdjustmentEvent
 import com.yourname.expensetracker.data.database.entity.SpendingPersonalityProfileEntity
 import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
+import com.yourname.expensetracker.data.database.entity.NegotiationOutcomeEntity
+import com.yourname.expensetracker.data.database.dao.NegotiationOutcomeDao
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
 /**
@@ -38,7 +40,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 145
+const val APP_DATABASE_SCHEMA_VERSION = 146
 
 @Database(
     entities = [
@@ -110,7 +112,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 145
         EntitySourceLink::class,
         NotificationIntakeEntity::class,
         BankStatementImportRun::class,
-        BankStatementImportItem::class
+        BankStatementImportItem::class,
+        NegotiationOutcomeEntity::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -185,6 +188,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun notificationIntakeDao(): NotificationIntakeDao
     abstract fun bankStatementImportRunDao(): BankStatementImportRunDao
     abstract fun bankStatementImportItemDao(): BankStatementImportItemDao
+    abstract fun negotiationOutcomeDao(): NegotiationOutcomeDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"

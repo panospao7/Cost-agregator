@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -65,6 +67,73 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         engine.startVoiceInput(onResult = {})
 
         assertTrue(speechGateway.started)
+    }
+
+    @Test
+    fun `location query returns empty results with unsupported flag`() = runTest {
+        val engine = NaturalLanguageSearchEngine(
+            expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
+            speechInputGateway = FakeSpeechInputGateway(),
+            timeProvider = mockk(),
+            currencyConverter = mockk(),
+            currencySettingsRepository = mockk(),
+            categoryRepository = mockk(),
+            merchantNormalizationRepository = mockk(relaxed = true),
+        )
+
+        val interpretation = NaturalLanguageSearchEngine.QueryInterpretation(
+            originalQuery = "show me spending in Paris",
+            queryType = NaturalLanguageSearchEngine.QueryType.FIND_TRANSACTIONS,
+            extractedAmounts = null,
+            dateRange = null,
+            locations = listOf("Paris"),
+            categories = null,
+            merchants = null,
+            searchFilter = NaturalLanguageSearchEngine.SearchFilter(
+                minAmount = null, maxAmount = null, exactAmount = null,
+                startDate = null, endDate = null,
+                locations = listOf("Paris"),
+                categories = null, merchants = null
+            ),
+            confidence = 70.0
+        )
+
+        val results = engine.executeSearch(interpretation)
+
+        assertTrue("Expected empty results for location query", results.isEmpty())
+        assertTrue("Expected unsupportedLocations flag set", interpretation.dataQuality.unsupportedLocations)
+    }
+
+    @Test
+    fun `non-location query still proceeds normally`() = runTest {
+        val engine = NaturalLanguageSearchEngine(
+            expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
+            speechInputGateway = FakeSpeechInputGateway(),
+            timeProvider = mockk(),
+            currencyConverter = mockk(),
+            currencySettingsRepository = mockk(),
+            categoryRepository = mockk(),
+            merchantNormalizationRepository = mockk(relaxed = true),
+        )
+
+        val interpretation = NaturalLanguageSearchEngine.QueryInterpretation(
+            originalQuery = "show me food expenses",
+            queryType = NaturalLanguageSearchEngine.QueryType.FIND_TRANSACTIONS,
+            extractedAmounts = null,
+            dateRange = null,
+            locations = null,
+            categories = null,
+            merchants = null,
+            searchFilter = NaturalLanguageSearchEngine.SearchFilter(
+                minAmount = null, maxAmount = null, exactAmount = null,
+                startDate = null, endDate = null,
+                locations = null, categories = null, merchants = null
+            ),
+            confidence = 70.0
+        )
+
+        val results = engine.executeSearch(interpretation)
+        assertFalse("Non-location queries should not set unsupportedLocations", interpretation.dataQuality.unsupportedLocations)
     }
 
     private class FakeSpeechInputGateway : SpeechInputGateway {

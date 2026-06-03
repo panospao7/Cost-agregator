@@ -224,6 +224,45 @@ class PrivacyGuardTest {
         }
     }
 
+    // ── G4d: No CompositePrivacyGate(emptyList()) in main source ────────
+
+    @Test
+    fun noCompositePrivacyGateEmptyListInMainSource() {
+        assertTrue(
+            "G4d: mainSrcRoot not found: $mainSrcRoot — guard cannot run",
+            mainSrcRoot.exists()
+        )
+        val violations = mutableListOf<String>()
+        val token = "CompositePrivacyGate("
+        allKtFiles(mainSrcRoot).forEach { file ->
+            val content = file.readText()
+            var searchFrom = 0
+            while (true) {
+                val idx = content.indexOf(token, searchFrom)
+                if (idx < 0) break
+                val openParenIdx = idx + token.length - 1
+                val call = balancedCall(content, openParenIdx)
+                if (call.contains("emptyList()")) {
+                    val lineNo = content.substring(0, idx).count { it == '\n' } + 1
+                    val reason = if (call.contains("gateHandledCapabilities"))
+                        "has gateHandledCapabilities but empty gates list — no real gates consulted"
+                    else
+                        "missing gateHandledCapabilities — fails OPEN for local-only capabilities"
+                    violations += "${file.name}:$lineNo: CompositePrivacyGate(emptyList()...) — $reason"
+                }
+                searchFrom = idx + token.length
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail(
+                "G4d: CompositePrivacyGate(emptyList(), ...) found in main source — " +
+                    "secondary constructors must use `object : PrivacyGate { override suspend fun check(...) = PrivacyDecision.FailClosed(...) }` " +
+                    "instead of CompositePrivacyGate with no gates:\n" +
+                    violations.joinToString("\n")
+            )
+        }
+    }
+
     // ── G5: No String.hashCode() for sensitive IDs in main source ─────────────
 
     @Test

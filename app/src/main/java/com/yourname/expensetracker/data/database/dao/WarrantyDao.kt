@@ -76,7 +76,10 @@ interface WarrantyDao {
      * Note: effectiveAmount is a computed Kotlin property, not a column, so
      * the equivalent logic is expressed in SQL as a CASE expression.
      */
-    @Deprecated("Use getTotalProtectedValueByCurrency() for multi-currency safety")
+    @Deprecated(
+        message = "Use getTotalProtectedValueByCurrency() for multi-currency safety",
+        level = DeprecationLevel.WARNING
+    )
     @Query(
         """
         SELECT SUM(COALESCE(

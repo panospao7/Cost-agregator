@@ -24,7 +24,7 @@ class StaticMarketRateProvider @Inject constructor() : MarketRateProvider {
         currency: String
     ): MarketRateResult {
         val quotes = SEED_DATA
-            .filter { serviceType == ServiceType.OTHER || it.key == serviceType }
+            .filter { it.key == serviceType }
             .flatMap { (_, quoteList) -> quoteList }
             .filter { it.currency == currency || currency == "EUR" }
             .map { it.copy(region = region) }
@@ -58,6 +58,24 @@ class StaticMarketRateProvider @Inject constructor() : MarketRateProvider {
             ),
             ServiceType.DELIVERY to listOf(
                 MarketRateQuote("Wolt+", 9.99, 6.99, 4.99, "EUR", "GR", MarketRateConfidence.LOW),
+            ),
+            ServiceType.INTERNET to listOf(
+                MarketRateQuote("Cosmote Fiber", 34.99, 24.99, 19.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                MarketRateQuote("Vodafone Fiber", 32.99, 22.99, 18.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                MarketRateQuote("Nova Fiber", 29.99, 19.99, 15.99, "EUR", "GR", MarketRateConfidence.LOW),
+            ),
+            ServiceType.MOBILE to listOf(
+                MarketRateQuote("Cosmote Mobile", 24.99, 14.99, 9.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                MarketRateQuote("Vodafone Mobile", 22.99, 12.99, 8.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
+                MarketRateQuote("Wind Mobile", 19.99, 11.99, 7.99, "EUR", "GR", MarketRateConfidence.LOW),
+            ),
+            ServiceType.ENERGY to listOf(
+                MarketRateQuote("DEI", 0.18, 0.14, 0.10, "EUR", "GR", MarketRateConfidence.LOW),
+                MarketRateQuote("Elpedison", 0.17, 0.13, 0.09, "EUR", "GR", MarketRateConfidence.LOW),
+                MarketRateQuote("Heron", 0.16, 0.12, 0.08, "EUR", "GR", MarketRateConfidence.LOW),
+            ),
+            ServiceType.WATER to listOf(
+                MarketRateQuote("EYDAP", 15.99, 11.99, 8.99, "EUR", "GR", MarketRateConfidence.LOW),
             ),
         )
     }

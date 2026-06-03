@@ -64,8 +64,10 @@ class WarrantyTrackerRepository @Inject constructor(
 ) {
     private companion object {
         private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
-        /** WRN-16: Minimum confidence threshold for cloud-extracted warranties (0.0 - 1.0). */
-        private const val MIN_CLOUD_CONFIDENCE = 0.5f
+        /** Confidence threshold above which warranties are auto-accepted without review. */
+        private const val AUTO_ACCEPT_CLOUD_CONFIDENCE = 0.75f
+        /** Confidence threshold below which cloud-extracted warranties are discarded entirely. */
+        private const val REVIEW_CLOUD_CONFIDENCE = 0.30f
     }
 
     private fun activeItemsTickerFlow(intervalMs: Long = ACTIVE_ITEMS_REFRESH_INTERVAL_MS): Flow<Unit> = flow {
@@ -115,14 +117,16 @@ class WarrantyTrackerRepository @Inject constructor(
         val warrantyId = warrantyDao.insertWarranty(warrantyWithTimestamps)
 
         // PR-W1: Record CREATED lifecycle event
-        database.warrantyLifecycleEventDao().insert(
-            WarrantyLifecycleEvent(
-                warrantyId = warrantyId,
-                eventType = "CREATED",
-                occurredAt = now,
-                description = "Warranty created for ${warranty.productName}"
+        runCatching {
+            database.warrantyLifecycleEventDao().insert(
+                WarrantyLifecycleEvent(
+                    warrantyId = warrantyId,
+                    eventType = WarrantyLifecycleEventTypes.CREATED,
+                    occurredAt = now,
+                    description = "Warranty created for ${warranty.productName}"
+                )
             )
-        )
+        }.onFailure { Timber.w(it, "Failed to write CREATED lifecycle event for warrantyId=$warrantyId") }
 
         warrantyId
     }
@@ -131,18 +135,21 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.addWarrantyIgnoreConflicts")
         return database.withTransaction {
-        val id = warrantyDao.insertWarrantyIgnore(warranty)
+        val now = timeProvider.now()
+        val warrantyWithTimestamps = warranty.copy(
+            createdAt = if (warranty.createdAt == 0L) now else warranty.createdAt,
+            updatedAt = if (warranty.updatedAt == 0L) now else warranty.updatedAt
+        )
+        val id = warrantyDao.insertWarrantyIgnore(warrantyWithTimestamps)
         if (id > 0L) {
-            val now = timeProvider.now()
-
             // PR-W1: Record CREATED lifecycle event
             runCatching {
                 database.warrantyLifecycleEventDao().insert(
                     WarrantyLifecycleEvent(
                         warrantyId = id,
-                        eventType = "CREATED",
+                        eventType = WarrantyLifecycleEventTypes.CREATED,
                         occurredAt = now,
-                        description = "Warranty created for ${warranty.productName}"
+                        description = "Warranty created for ${warrantyWithTimestamps.productName}"
                     )
                 )
             }.onFailure { error ->
@@ -150,29 +157,29 @@ class WarrantyTrackerRepository @Inject constructor(
             }
 
             // AID-9 Gap 2: Audit trail for AI-driven warranty creation
-            if (warranty.autoDetected) {
+            if (warrantyWithTimestamps.autoDetected) {
                 val auditMessage = JSONObject().apply {
-                    put("confidence", warranty.extractionConfidence)
-                    put("extractionSource", warranty.extractionSource)
+                    put("confidence", warrantyWithTimestamps.extractionConfidence)
+                    put("extractionSource", warrantyWithTimestamps.extractionSource)
                 }.toString()
                 val auditMetadata = JSONObject().apply {
-                    put("productName", warranty.productName)
-                    put("warrantyDurationMonths", warranty.warrantyDurationMonths)
-                    put("warrantyType", warranty.warrantyType.name)
+                    put("productName", warrantyWithTimestamps.productName)
+                    put("warrantyDurationMonths", warrantyWithTimestamps.warrantyDurationMonths)
+                    put("warrantyType", warrantyWithTimestamps.warrantyType.name)
                 }.toString()
                 runCatching {
                     receiptLifecycleEventWriter.write(
                         com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent(
-                            receiptId = warranty.receiptId,
-                            sourceType = warranty.extractionSource,
+                            receiptId = warrantyWithTimestamps.receiptId,
+                            sourceType = warrantyWithTimestamps.extractionSource,
                             documentType = "WARRANTY_EXTRACTION",
                             eventType = "AI_WARRANTY_CREATED",
                             actor = "system:ai_warranty_extraction",
                             message = auditMessage,
                             metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                .put("productName", warranty.productName)
-                                .put("warrantyDurationMonths", warranty.warrantyDurationMonths)
-                                .put("warrantyType", warranty.warrantyType.name)
+                                .put("productName", warrantyWithTimestamps.productName)
+                                .put("warrantyDurationMonths", warrantyWithTimestamps.warrantyDurationMonths)
+                                .put("warrantyType", warrantyWithTimestamps.warrantyType.name)
                                 .build()
                         )
                     )
@@ -188,11 +195,31 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun updateWarranty(warranty: Warranty) {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.updateWarranty")
         warrantyDao.updateWarranty(warranty)
+        runCatching {
+            database.warrantyLifecycleEventDao().insert(
+                WarrantyLifecycleEvent(
+                    warrantyId = warranty.id,
+                    eventType = WarrantyLifecycleEventTypes.UPDATED,
+                    occurredAt = timeProvider.now(),
+                    description = "Warranty updated for ${warranty.productName}"
+                )
+            )
+        }.onFailure { Timber.w(it, "Failed to write UPDATED lifecycle event for warrantyId=${warranty.id}") }
     }
 
     suspend fun deleteWarranty(warranty: Warranty) {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.deleteWarranty")
         warrantyDao.deleteWarranty(warranty)
+        runCatching {
+            database.warrantyLifecycleEventDao().insert(
+                WarrantyLifecycleEvent(
+                    warrantyId = warranty.id,
+                    eventType = WarrantyLifecycleEventTypes.DELETED,
+                    occurredAt = timeProvider.now(),
+                    description = "Warranty deleted for ${warranty.productName}"
+                )
+            )
+        }.onFailure { Timber.w(it, "Failed to write DELETED lifecycle event for warrantyId=${warranty.id}") }
     }
 
     /**
@@ -209,6 +236,16 @@ class WarrantyTrackerRepository @Inject constructor(
                 }
             }
             warrantyDao.deleteWarranty(warranty)
+            runCatching {
+                database.warrantyLifecycleEventDao().insert(
+                    WarrantyLifecycleEvent(
+                        warrantyId = warranty.id,
+                        eventType = WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED,
+                        occurredAt = timeProvider.now(),
+                        description = "Auto-detected warranty rejected by user: ${warranty.productName}"
+                    )
+                )
+            }.onFailure { Timber.w(it, "Failed to write AI_EXTRACTION_DISCARDED event for warrantyId=${warranty.id}") }
         }
     }
 
@@ -228,7 +265,7 @@ class WarrantyTrackerRepository @Inject constructor(
             database.warrantyLifecycleEventDao().insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warrantyId,
-                    eventType = "CLAIMED",
+                    eventType = WarrantyLifecycleEventTypes.CLAIMED,
                     occurredAt = now,
                     description = "Warranty claimed"
                 )
@@ -241,8 +278,11 @@ class WarrantyTrackerRepository @Inject constructor(
 
     suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
     
-    @Deprecated("Use getTotalProtectedValueAggregate() for multi-currency safety",
-        ReplaceWith("getTotalProtectedValueAggregate().displayAmount"))
+    @Deprecated(
+        message = "Use getTotalProtectedValueAggregate() for multi-currency safety",
+        replaceWith = ReplaceWith("getTotalProtectedValueAggregate().displayAmount"),
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getTotalProtectedValue(): Double =
         warrantyDao.getTotalProtectedValue(timeProvider.now()) ?: 0.0
 
@@ -347,6 +387,16 @@ class WarrantyTrackerRepository @Inject constructor(
             updatedAt = timeProvider.now()
         )
         returnWindowDao.updateReturnWindow(updated)
+        runCatching {
+            database.warrantyLifecycleEventDao().insert(
+                WarrantyLifecycleEvent(
+                    warrantyId = existing.receiptId ?: returnWindowId,
+                    eventType = WarrantyLifecycleEventTypes.RETURN_WINDOW_RETURNED,
+                    occurredAt = timeProvider.now(),
+                    description = "Return window marked as returned"
+                )
+            )
+        }.onFailure { Timber.w(it, "Failed to write RETURN_WINDOW_RETURNED event for returnWindowId=$returnWindowId") }
         return updated
     }
 
@@ -354,6 +404,19 @@ class WarrantyTrackerRepository @Inject constructor(
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.reconcileExpiredItems")
         val expiredWarranties = warrantyDao.markExpiredWarranties(currentTime = now, updatedAt = now)
         val expiredReturnWindows = returnWindowDao.markExpiredReturnWindows(currentTime = now, updatedAt = now)
+        val resultNow = now
+        if (expiredWarranties > 0 || expiredReturnWindows > 0) {
+            runCatching {
+                database.warrantyLifecycleEventDao().insert(
+                    WarrantyLifecycleEvent(
+                        warrantyId = -1L,
+                        eventType = WarrantyLifecycleEventTypes.EXPIRED,
+                        occurredAt = resultNow,
+                        description = "Batch expired: $expiredWarranties warranties, $expiredReturnWindows return windows"
+                    )
+                )
+            }.onFailure { Timber.w(it, "Failed to write EXPIRED batch lifecycle event") }
+        }
         return ExpiryReconciliationResult(
             expiredWarrantyCount = expiredWarranties,
             expiredReturnWindowCount = expiredReturnWindows
@@ -437,29 +500,25 @@ class WarrantyTrackerRepository @Inject constructor(
     }
 
     /**
-     * WRN-16: Cloud extraction confidence threshold enforcement.
-     * If confidence is below MIN_CLOUD_CONFIDENCE (0.5), the extraction
-     * result is discarded entirely (returns null) rather than creating
-     * a low-confidence warranty or a needs-review draft. This prevents
-     * unreliable cloud predictions from polluting the warranty list.
+     * Three-band cloud extraction confidence threshold enforcement.
+     *
+     * - confidence >= AUTO_ACCEPT_CLOUD_CONFIDENCE (0.75): auto-accepted, status = ACTIVE
+     * - REVIEW_CLOUD_CONFIDENCE (0.30) <= confidence < AUTO_ACCEPT_CLOUD_CONFIDENCE (0.75):
+     *     created as a needs-review draft, status = PENDING_REVIEW
+     * - confidence < REVIEW_CLOUD_CONFIDENCE (0.30): discarded entirely (returns null)
      */
     private fun WarrantyExtractionResult.toWarrantyEntityOrNull(receipt: ScannedReceipt): Warranty? {
-        // WRN-16: Block extraction below confidence threshold
-        if (confidence < MIN_CLOUD_CONFIDENCE) {
-            Timber.w(
-                "WRN-16: Cloud extraction confidence %.2f below threshold %.2f for receipt %d, discarding",
-                confidence, MIN_CLOUD_CONFIDENCE, receipt.id
-            )
+        if (confidence < REVIEW_CLOUD_CONFIDENCE) {
+            Timber.d("Cloud warranty extraction discarded: confidence $confidence below review threshold $REVIEW_CLOUD_CONFIDENCE")
             return null
         }
+
+        val needsReview = confidence < AUTO_ACCEPT_CLOUD_CONFIDENCE
+        val status = if (needsReview) WarrantyStatus.PENDING_REVIEW else WarrantyStatus.ACTIVE
 
         val durationMonths = warrantyMonths ?: return null
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         val warrantyEndDate = purchaseDate.toCalendarMonthEndDate(durationMonths)
-
-        // WRN-3: Only auto-accept warranty if confidence > 0.3.
-        // Below that threshold the warranty is flagged for human review.
-        val lowConfidence = confidence <= 0.3f
 
         return Warranty(
             receiptId = receipt.id,
@@ -471,11 +530,14 @@ class WarrantyTrackerRepository @Inject constructor(
             warrantyDurationMonths = durationMonths,
             warrantyEndDate = warrantyEndDate,
             warrantyType = parseWarrantyType(warrantyType),
+            autoDetected = true,
+            extractionSource = "cloud",
             supportPhone = supportPhone,
             supportEmail = supportEmail,
             notes = returnConditions,
             extractionConfidence = confidence.toDouble(),
-            needsReview = lowConfidence
+            needsReview = needsReview,
+            status = status
         )
     }
 
@@ -603,6 +665,7 @@ class WarrantyTrackerRepository @Inject constructor(
         purchaseDate: Long,
         productName: String
     ): Long {
+        val now = timeProvider.now()
         val homeResolution = currencySettingsRepository.resolveHomeCurrency()
         val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR" // last resort for placeholder
         val receipt = ScannedReceipt(
@@ -615,7 +678,12 @@ class WarrantyTrackerRepository @Inject constructor(
             parsedTaxAmount = null,
             // W21: Use homeCurrency from CurrencySettingsRepository instead of hardcoded EUR.
             currency = homeCurrency,
-            confidence = 1f
+            confidence = 1f,
+            createdAt = now,
+            updatedAt = now,
+            sourceType = "MANUAL_RECORD",
+            documentType = "MANUAL_PLACEHOLDER",
+            processingStatus = "PARSED"
         )
         return receiptRepository.get().insertReceipt(receipt)
     }

@@ -1,11 +1,18 @@
 package com.yourname.expensetracker.domain.negotiation
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.database.entity.NegotiationOutcomeEntity
+import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.time.Instant
@@ -18,151 +25,17 @@ import timber.log.Timber
 @Singleton
 class SmartBillNegotiationEngine @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val priceHistoryDao: SubscriptionPriceHistoryDao
+    private val priceHistoryDao: SubscriptionPriceHistoryDao,
+    private val marketRateProvider: MarketRateProvider,
+    private val database: AppDatabase,
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val timeProvider: TimeProvider
 ) {
     
-    /**
-     * WRN-28-FIXED: Hardcoded market rates with staleness metadata.
-     *
-     * These rates are static mock data and WILL become stale over time. In production,
-     * this map should be replaced with a dynamic rate provider that:
-     * - Fetches current rates from an API (e.g., ISP/utility comparison APIs).
-     * - Stores rate metadata including `lastUpdatedAt`, `source`, and `region`.
-     * - Exposes a staleness check via `isStale(maxAgeMs: Long): Boolean`.
-     * - Falls back to cached rates when offline.
-     *
-     * ## Staleness
-     * Each entry now carries a `lastUpdated` timestamp and a staleness check is
-     * performed at the end of [analyzeNegotiationOpportunities]. If any rate is
-     * older than 30 days, a warning is logged.
-     */
-    private val marketRates: Map<String, MarketRate> = run {
-        val now = System.currentTimeMillis()
-        mapOf(
-            // Internet Providers
-            "COSMOTE" to MarketRate(
-                serviceType = ServiceType.INTERNET,
-                providerName = "Cosmote",
-                averagePrice = 29.90,
-                competitivePrice = 24.90,
-                bestPrice = 19.90,
-                unit = "month",
-                competitors = listOf("Vodafone", "Nova", "Wind"),
-                lastUpdated = now
-            ),
-            "VODAFONE" to MarketRate(
-                serviceType = ServiceType.INTERNET,
-                providerName = "Vodafone",
-                averagePrice = 27.90,
-                competitivePrice = 22.90,
-                bestPrice = 18.90,
-                unit = "month",
-                competitors = listOf("Cosmote", "Nova", "Wind"),
-                lastUpdated = now
-            ),
-            "NOVA" to MarketRate(
-                serviceType = ServiceType.INTERNET,
-                providerName = "Nova",
-                averagePrice = 25.90,
-                competitivePrice = 21.90,
-                bestPrice = 17.90,
-                unit = "month",
-                competitors = listOf("Cosmote", "Vodafone", "Wind"),
-                lastUpdated = now
-            ),
-            
-            // Mobile Providers
-            "COSMOTE_MOBILE" to MarketRate(
-                serviceType = ServiceType.MOBILE,
-                providerName = "Cosmote Mobile",
-                averagePrice = 19.90,
-                competitivePrice = 15.90,
-                bestPrice = 12.90,
-                unit = "month",
-                competitors = listOf("Vodafone CU", "What's Up", "Nova Mobile"),
-                lastUpdated = now
-            ),
-            "VODAFONE_CU" to MarketRate(
-                serviceType = ServiceType.MOBILE,
-                providerName = "Vodafone CU",
-                averagePrice = 12.90,
-                competitivePrice = 10.90,
-                bestPrice = 8.90,
-                unit = "month",
-                competitors = listOf("What's Up", "Nova Mobile", "Cosmote"),
-                lastUpdated = now
-            ),
-            
-            // Streaming
-            "NETFLIX" to MarketRate(
-                serviceType = ServiceType.STREAMING,
-                providerName = "Netflix",
-                averagePrice = 12.99,
-                competitivePrice = 7.99,
-                bestPrice = 7.99,
-                unit = "month",
-                competitors = listOf("Disney+", "Amazon Prime", "HBO Max"),
-                lastUpdated = now
-            ),
-            "SPOTIFY" to MarketRate(
-                serviceType = ServiceType.STREAMING,
-                providerName = "Spotify",
-                averagePrice = 10.99,
-                competitivePrice = 5.99,
-                bestPrice = 0.0, // Free tier available
-                unit = "month",
-                competitors = listOf("Apple Music", "YouTube Music", "Deezer"),
-                lastUpdated = now
-            ),
-            
-            // Insurance
-            "ETHNIKI_INSURANCE" to MarketRate(
-                serviceType = ServiceType.INSURANCE,
-                providerName = "Ethniki Insurance",
-                averagePrice = 45.00,
-                competitivePrice = 38.00,
-                bestPrice = 32.00,
-                unit = "month",
-                competitors = listOf("Euroins", "Interamerican", "Allianz"),
-                lastUpdated = now
-            ),
-            
-            // Utilities
-            "DEI" to MarketRate(
-                serviceType = ServiceType.ENERGY,
-                providerName = "DEI",
-                averagePrice = 85.00,
-                competitivePrice = 75.00,
-                bestPrice = 65.00,
-                unit = "month",
-                competitors = listOf("Elpedison", "Heron", "Protergia"),
-                lastUpdated = now
-            ),
-            "EYDAP" to MarketRate(
-                serviceType = ServiceType.WATER,
-                providerName = "EYDAP",
-                averagePrice = 18.00,
-                competitivePrice = 16.00,
-                bestPrice = 14.00,
-                unit = "month",
-                competitors = emptyList(), // Usually monopoly
-                lastUpdated = now
-            )
-        )
-    }
     
     suspend fun analyzeNegotiationOpportunities(): List<NegotiationOpportunity> {
         val subscriptions = recurringExpenseRepository.getAll()
         val opportunities = mutableListOf<NegotiationOpportunity>()
-        
-        // WRN-28-FIXED: Log warnings for stale market rates (> 30 days old)
-        val now = System.currentTimeMillis()
-        marketRates.values.forEach { rate ->
-            if (rate.isStale(now)) {
-                Timber.w("WRN-28: Market rate for %s (%s) is stale (lastUpdated=%d)",
-                    rate.providerName, rate.serviceType, rate.lastUpdated)
-            }
-        }
         
         subscriptions.forEach { subscription ->
             val normalizedMerchant = normalizeMerchantName(subscription.merchant)
@@ -186,20 +59,54 @@ class SmartBillNegotiationEngine @Inject constructor(
         return opportunities.sortedByDescending { it.potentialMonthlySavings }
     }
     
-    private fun findMarketRate(merchantName: String): MarketRate? {
-        // Try exact match first
-        marketRates[merchantName.uppercase()]?.let { return it }
-        
-        // Try partial match
-        marketRates.entries.forEach { (key, rate) ->
-            if (merchantName.uppercase().contains(key) || key.contains(merchantName.uppercase())) {
-                return rate
-            }
+    private suspend fun findMarketRate(merchantName: String): MarketRate? {
+        val serviceType = detectServiceType(merchantName) ?: return null
+        val providerType = mapServiceTypeToProviderEnum(serviceType)
+        val result = try {
+            marketRateProvider.getRates(
+                serviceType = providerType,
+                region = "GR",
+                currency = "EUR"
+            )
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "MarketRateProvider failed for merchant=$merchantName, serviceType=$serviceType")
+            return null
         }
-        
-        // Try by service type keywords
-        return detectServiceType(merchantName)?.let { serviceType ->
-            marketRates.values.find { it.serviceType == serviceType }
+        val quotes = result.quotes
+        if (quotes.isEmpty()) return null
+
+        val upperName = merchantName.uppercase()
+        val bestQuote = quotes.firstOrNull { quote ->
+            upperName.contains(quote.providerName.uppercase()) ||
+            quote.providerName.uppercase().contains(upperName)
+        } ?: quotes.first()
+
+        return MarketRate(
+            serviceType = serviceType,
+            providerName = bestQuote.providerName,
+            averagePrice = bestQuote.averageMonthlyPrice,
+            competitivePrice = bestQuote.competitiveMonthlyPrice,
+            bestPrice = bestQuote.bestMonthlyPrice,
+            unit = "month",
+            competitors = quotes.filter { it != bestQuote }.map { it.providerName },
+            lastUpdated = result.lastUpdatedAt
+        )
+    }
+
+    private fun mapServiceTypeToProviderEnum(
+        engineType: ServiceType
+    ): com.yourname.expensetracker.domain.negotiation.ServiceType {
+        return when (engineType) {
+            ServiceType.STREAMING -> com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING
+            ServiceType.INSURANCE -> com.yourname.expensetracker.domain.negotiation.ServiceType.INSURANCE
+            ServiceType.GYM -> com.yourname.expensetracker.domain.negotiation.ServiceType.GYM
+            ServiceType.SOFTWARE -> com.yourname.expensetracker.domain.negotiation.ServiceType.CLOUD_STORAGE
+            ServiceType.INTERNET -> com.yourname.expensetracker.domain.negotiation.ServiceType.INTERNET
+            ServiceType.MOBILE -> com.yourname.expensetracker.domain.negotiation.ServiceType.MOBILE
+            ServiceType.ENERGY -> com.yourname.expensetracker.domain.negotiation.ServiceType.ENERGY
+            ServiceType.WATER -> com.yourname.expensetracker.domain.negotiation.ServiceType.WATER
+            else -> com.yourname.expensetracker.domain.negotiation.ServiceType.OTHER
         }
     }
     
@@ -261,6 +168,21 @@ class SmartBillNegotiationEngine @Inject constructor(
     }
 
     /**
+     * PR8: Converts a monthly price back to the billing-cycle amount
+     * appropriate for the given frequency. This is the inverse operation
+     * of [monthlyEquivalent] and ensures that after a successful
+     * negotiation the subscription's stored amount remains in
+     * billing-cycle terms (e.g. €84/year for an annual subscription).
+     */
+    private fun convertFromMonthlyEquivalent(monthlyPrice: Double, frequency: RecurrenceFrequency): Double {
+        val months = frequency.calendarMonths
+        if (months != null) return monthlyPrice * months
+        val days = frequency.fixedIntervalDays
+        if (days != null) return monthlyPrice * days / (365.0 / 12.0)
+        return monthlyPrice // IRREGULAR fallback
+    }
+
+    /**
      * WRN-29-FIXED: billing frequency normalization.
      * The [monthlyEquivalent] method converts any billing frequency
      * (weekly, biweekly, quarterly, annual, etc.) to a monthly amount
@@ -292,16 +214,20 @@ class SmartBillNegotiationEngine @Inject constructor(
         )
         
         // W09: Compare monthlyEquivalentPrice to monthlyEquivalentPrice, not raw billing-cycle amounts.
-        // The NegotiationOpportunity stores currentPrice (raw amount) but subsequent comparisons
-        // and the generated script should use monthlyEquivalentPrice so that annual/quarterly
-        // subscriptions are fairly compared against monthly market rates.
+        // The NegotiationOpportunity stores currentPrice as the monthly equivalent so that
+        // annual/quarterly subscriptions are fairly compared against monthly market rates.
+        // The raw billing amount is stored separately in rawBillingAmount for display purposes.
         return NegotiationOpportunity(
             subscriptionId = subscription.id,
             serviceName = subscription.merchant,
             serviceType = marketRate.serviceType,
             currentProvider = marketRate.providerName,
-            currentPrice = currentPrice,
+            currentPrice = monthlyEquivalentPrice,
             billingCycle = subscription.frequency.name,
+            rawBillingAmount = subscription.amount,
+            billingFrequency = subscription.frequency,
+            monthlyEquivalentPrice = monthlyEquivalentPrice,
+            currency = subscription.currency,
             marketAveragePrice = marketRate.averagePrice,
             competitivePrice = marketRate.competitivePrice,
             bestAvailablePrice = marketRate.bestPrice,
@@ -315,7 +241,8 @@ class SmartBillNegotiationEngine @Inject constructor(
             negotiationScript = generateNegotiationScript(
                 subscription = subscription,
                 marketRate = marketRate,
-                negotiationPower = negotiationPower
+                negotiationPower = negotiationPower,
+                monthlyEquivalentPrice = monthlyEquivalentPrice
             ),
             retentionOffers = generateRetentionOffers(marketRate, negotiationPower),
             successProbability = calculateSuccessProbability(negotiationPower, marketRate),
@@ -406,10 +333,12 @@ class SmartBillNegotiationEngine @Inject constructor(
     private fun generateNegotiationScript(
         subscription: ManualRecurringExpense,
         marketRate: MarketRate,
-        negotiationPower: NegotiationPower
+        negotiationPower: NegotiationPower,
+        monthlyEquivalentPrice: Double
     ): NegotiationScript {
         val provider = marketRate.providerName
-        val currentPrice = subscription.amount
+        val rawBillingAmount = subscription.amount
+        val monthlyPrice = monthlyEquivalentPrice
         val competitivePrice = marketRate.competitivePrice
         
         val opening = when (negotiationPower) {
@@ -417,9 +346,16 @@ class SmartBillNegotiationEngine @Inject constructor(
                 "I've been a loyal customer for a while now, but I've noticed my bill has increased significantly. " +
                 "I see that ${marketRate.competitors.firstOrNull() ?: "competitors"} are offering similar services for ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", competitivePrice)}/month."
             
-            NegotiationPower.MODERATE ->
-                "I'm reviewing my monthly expenses and noticed I'm paying ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", currentPrice)}. " +
+            NegotiationPower.MODERATE -> {
+                val priceText = if (subscription.frequency != com.yourname.expensetracker.domain.model.RecurrenceFrequency.MONTHLY) {
+                    "${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", monthlyPrice)}/month " +
+                    "(currently ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", rawBillingAmount)} every ${subscription.frequency.name.lowercase().replace("_", " ")})"
+                } else {
+                    "${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", monthlyPrice)}/month"
+                }
+                "I'm reviewing my monthly expenses and noticed I'm paying $priceText. " +
                 "I'd like to discuss options to reduce my monthly cost."
+            }
             
             else ->
                 "I'm looking to reduce my monthly expenses. Are there any promotions or discounts available for existing customers?"
@@ -427,7 +363,7 @@ class SmartBillNegotiationEngine @Inject constructor(
         
         val talkingPoints = listOfNotNull(
             "I've been a customer for ${if (negotiationPower == NegotiationPower.STRONG) "several years" else "some time"}",
-            "My current rate is ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", currentPrice)} which is above the market average of ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", marketRate.averagePrice)}",
+            "My current rate is ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", monthlyPrice)} which is above the market average of ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", marketRate.averagePrice)}",
             if (marketRate.competitors.isNotEmpty()) "${marketRate.competitors.take(2).joinToString(" and ")} are offering lower rates" else null,
             "I'm considering my options but would prefer to stay with $provider if we can find a better rate",
             "What retention offers do you have available?"
@@ -536,50 +472,11 @@ class SmartBillNegotiationEngine @Inject constructor(
     }
     
     /**
-     * WRN-28-FIXED: In-memory negotiation history for tracking attempts.
-     * This list accumulates [recordNegotiationAttempt] entries and is exposed
-     * via [getNegotiationHistory] for UI display or analytics.
+     * Returns all persisted negotiation outcomes from the database.
      */
-    private val negotiationHistory = mutableListOf<Map<String, Any?>>()
-
-    /**
-     * WRN-28-FIXED: Records a negotiation attempt with relevant metadata.
-     *
-     * Stores the attempt in an in-memory list with timestamp, service type,
-     * provider name, current rate, savings (if known), and notes. Each record
-     * is a [Map] for flexible schema evolution (future DB-backed storage can
-     * migrate to a typed data class).
-     *
-     * @param serviceType  The type of service being negotiated.
-     * @param providerName The name of the provider.
-     * @param currentRate  The current rate being paid.
-     * @param savings      The achieved savings (nullable if not yet known).
-     * @param notes        Optional notes about the negotiation.
-     */
-    private fun recordNegotiationAttempt(
-        serviceType: ServiceType,
-        providerName: String,
-        currentRate: Double,
-        savings: Double?,
-        notes: String?
-    ) {
-        val record = mapOf(
-            "timestamp" to System.currentTimeMillis(),
-            "serviceType" to serviceType.name,
-            "providerName" to providerName,
-            "currentRate" to currentRate,
-            "savings" to savings,
-            "notes" to notes
-        )
-        negotiationHistory.add(record)
-        Timber.d("WRN-28: Negotiation tracked — %s @ %s (savings=%.2f)", providerName, serviceType.name, savings ?: 0.0)
+    suspend fun getNegotiationHistory(): List<NegotiationOutcomeEntity> {
+        return database.negotiationOutcomeDao().getAll()
     }
-
-    /**
-     * Returns an immutable snapshot of the negotiation history.
-     * Each element is a map of field-name to value for flexible schema evolution.
-     */
-    fun getNegotiationHistory(): List<Map<String, Any?>> = negotiationHistory.toList()
 
     suspend fun recordNegotiationOutcome(
         subscriptionId: Long,
@@ -587,16 +484,61 @@ class SmartBillNegotiationEngine @Inject constructor(
         newPrice: Double?,
         savings: Double?,
         notes: String?
-    ) {
-        // WRN-28: Track this negotiation in the in-memory history
-        val providerName = "Subscription #$subscriptionId"
-        recordNegotiationAttempt(
-            serviceType = ServiceType.MOBILE,
-            providerName = providerName,
-            currentRate = 0.0,
-            savings = savings,
-            notes = "$outcome | $notes"
-        )
+    ): Result<Unit> {
+        writeBarrier.checkWritesAllowed("SmartBillNegotiationEngine.recordNegotiationOutcome")
+
+        val subscription = recurringExpenseRepository.getById(subscriptionId)
+            ?: return Result.failure(IllegalArgumentException("Subscription not found: $subscriptionId"))
+
+        val now = timeProvider.now()
+
+        return try {
+            database.withTransaction {
+                // 1. Insert negotiation outcome
+                val outcomeEntity = NegotiationOutcomeEntity(
+                    subscriptionId = subscriptionId,
+                    outcome = outcome.name,
+                    oldAmount = subscription.amount,
+                    newAmount = newPrice,
+                    currency = subscription.currency,
+                    savingsAmount = savings,
+                    notes = notes,
+                    marketRateSource = "StaticMarketRateProvider",
+                    createdAt = now
+                )
+                database.negotiationOutcomeDao().insert(outcomeEntity)
+
+                // 2. If success/partial and newPrice is valid, update subscription + price history
+                if ((outcome == NegotiationOutcome.SUCCESS || outcome == NegotiationOutcome.PARTIAL)
+                    && newPrice != null && newPrice > 0
+                ) {
+                    // PR8: Convert monthly newPrice back to billing-cycle amount before storing,
+                    // so that non-monthly subscriptions (annual, quarterly, etc.) are not corrupted.
+                    val newBillingAmount = convertFromMonthlyEquivalent(
+                        monthlyPrice = newPrice,
+                        frequency = subscription.frequency
+                    )
+                    priceHistoryDao.insert(
+                        SubscriptionPriceHistory(
+                            subscriptionId = subscriptionId,
+                            amount = newBillingAmount,
+                            currency = subscription.currency,
+                            recordedAt = now,
+                            changeReason = "Negotiation outcome: ${outcome.name}"
+                        )
+                    )
+
+                    recurringExpenseRepository.update(
+                        subscription.copy(amount = newBillingAmount)
+                    )
+                }
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "Failed to record negotiation outcome for subscriptionId=$subscriptionId")
+            Result.failure(e)
+        }
     }
     
     data class MarketRate(
@@ -614,7 +556,7 @@ class SmartBillNegotiationEngine @Inject constructor(
          * WRN-28-FIXED: Staleness check.
          * Returns `true` if this rate has not been updated within [maxAgeDays].
          */
-        fun isStale(now: Long = System.currentTimeMillis(), maxAgeDays: Int = 30): Boolean {
+        fun isStale(now: Long, maxAgeDays: Int = 30): Boolean {
             if (lastUpdated <= 0L) return true
             return (now - lastUpdated) > TimeUnit.DAYS.toMillis(maxAgeDays.toLong())
         }
@@ -627,6 +569,10 @@ class SmartBillNegotiationEngine @Inject constructor(
         val currentProvider: String,
         val currentPrice: Double,
         val billingCycle: String,
+        val rawBillingAmount: Double,
+        val billingFrequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency,
+        val monthlyEquivalentPrice: Double,
+        val currency: String,
         val marketAveragePrice: Double,
         val competitivePrice: Double,
         val bestAvailablePrice: Double,
@@ -690,12 +636,11 @@ class SmartBillNegotiationEngine @Inject constructor(
         PRICE_MATCH, LOYALTY_DISCOUNT, PROMO_RATE, BUNDLE_DISCOUNT, FREE_MONTHS
     }
     
-    data class NegotiationOutcome(
-        val success: Boolean,
-        val newMonthlyRate: Double?,
-        val outcomeType: OutcomeType,
-        val notes: String?
-    )
+    enum class NegotiationOutcome {
+        SUCCESS,
+        PARTIAL,
+        FAILURE
+    }
     
     enum class OutcomeType {
         SUCCESSFUL_NEGOTIATION,

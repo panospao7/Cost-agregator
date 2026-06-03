@@ -136,6 +136,34 @@ class SubscriptionManagerEngine @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier
 ) {
     
+    private fun normalizeSubscriptionCurrency(raw: String): String {
+        val normalized = raw.trim().uppercase()
+        require(normalized.matches(Regex("^[A-Z]{3}$"))) {
+            "Invalid currency code: '$raw' — must be exactly 3 uppercase ASCII letters"
+        }
+        return normalized
+    }
+
+    private fun validatePositiveFiniteAmount(amount: Double, field: String = "Amount") {
+        require(amount.isFinite() && amount > 0.0) {
+            "$field must be a finite positive amount, got $amount"
+        }
+    }
+
+    private fun validateMerchant(merchant: String): String {
+        val normalized = merchant.trim()
+        require(normalized.isNotBlank()) {
+            "Merchant is required"
+        }
+        return normalized
+    }
+
+    private fun validatePositiveTimestamp(value: Long, field: String) {
+        require(value > 0L) {
+            "$field must be set (got 0)"
+        }
+    }
+
     /**
      * Validate a subscription creation request, persist the subscription and
      * its initial baseline price history, and return the created entity.
@@ -147,15 +175,16 @@ class SubscriptionManagerEngine @Inject constructor(
      */
     suspend fun validateAndCreate(request: CreateSubscriptionRequest): Result<ManualRecurringExpense> {
         writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.validateAndCreate")
-        require(request.amount > 0) { "Amount must be positive" }
-        require(request.currency.isNotBlank() && request.currency.length == 3) { "Invalid currency" }
-        require(request.merchant.isNotBlank()) { "Merchant is required" }
+        val merchant = validateMerchant(request.merchant)
+        validatePositiveFiniteAmount(request.amount, "Amount")
+        val currency = normalizeSubscriptionCurrency(request.currency)
+        validatePositiveTimestamp(request.startDate, "Start date")
 
         val now = timeProvider.now()
         val subscription = ManualRecurringExpense(
-            merchant = request.merchant,
+            merchant = merchant,
             amount = request.amount,
-            currency = request.currency.uppercase(),
+            currency = currency,
             frequency = request.frequency,
             nextDate = request.startDate,
             createdAt = now,
@@ -171,7 +200,7 @@ class SubscriptionManagerEngine @Inject constructor(
                     SubscriptionPriceHistory(
                         subscriptionId = subscriptionId,
                         amount = request.amount,
-                        currency = request.currency,
+                        currency = currency,
                         recordedAt = now
                     )
                 )
@@ -198,11 +227,15 @@ class SubscriptionManagerEngine @Inject constructor(
         nextDate: Long
     ): Long {
         writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.acceptCandidate")
+        val merchant = validateMerchant(candidate.merchant)
+        validatePositiveFiniteAmount(candidate.averageAmount, "Candidate average amount")
+        val currency = normalizeSubscriptionCurrency(candidate.currency)
+        validatePositiveTimestamp(nextDate, "Next date")
         val now = timeProvider.now()
         val subscription = ManualRecurringExpense(
-            merchant = candidate.merchant,
+            merchant = merchant,
             amount = candidate.averageAmount,
-            currency = candidate.currency,
+            currency = currency,
             frequency = frequency,
             nextDate = nextDate,
             isSubscription = true,
@@ -216,7 +249,7 @@ class SubscriptionManagerEngine @Inject constructor(
                 SubscriptionPriceHistory(
                     subscriptionId = id,
                     amount = candidate.averageAmount,
-                    currency = candidate.currency,
+                    currency = currency,
                     recordedAt = now,
                     changeReason = "BASELINE: Auto-detected from notifications"
                 )
@@ -306,6 +339,7 @@ class SubscriptionManagerEngine @Inject constructor(
         reason: String? = null
     ) {
         writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.recordPriceChange")
+        validatePositiveFiniteAmount(newAmount, "New subscription amount")
         // Get previous price
         val previousPrice = priceHistoryDao.getLatestPrice(subscriptionId)?.amount
             ?: recurringExpenseRepository.getAll().find { it.id == subscriptionId }?.amount
@@ -315,10 +349,16 @@ class SubscriptionManagerEngine @Inject constructor(
         if (abs(newAmount - previousPrice) > 0.01) {
             // Wrap history insert + subscription update in transaction for atomicity
             database.withTransaction {
+                // Load subscription for currency and update
+                val subscription = recurringExpenseRepository.getById(subscriptionId)
                 // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
                 val priceHistory = SubscriptionPriceHistory(
                     subscriptionId = subscriptionId,
                     amount = newAmount,
+                    currency = subscription?.currency
+                        ?: throw IllegalStateException(
+                            "Subscription $subscriptionId not found when recording price change"
+                        ),
                     recordedAt = timeProvider.now(),
                     changeReason = reason
                 )
@@ -327,7 +367,6 @@ class SubscriptionManagerEngine @Inject constructor(
                 // REC-7: Update the subscription's current amount so it reflects
                 // the new price immediately rather than showing the old amount
                 // until the next full sync.
-                val subscription = recurringExpenseRepository.getById(subscriptionId)
                 if (subscription != null && abs(subscription.amount - newAmount) > 0.01) {
                     recurringExpenseRepository.update(subscription.copy(amount = newAmount))
                 }
@@ -542,8 +581,9 @@ class SubscriptionManagerEngine @Inject constructor(
      * monthly cost rather than using the raw per-period amount.
      */
     @Deprecated(
-        "Raw Double sums across potentially multiple currencies. Use getTotalMonthlySubscriptionCostAggregate() instead.",
-        ReplaceWith("getTotalMonthlySubscriptionCostAggregate().displayAmount")
+        message = "Raw Double sums across potentially multiple currencies. Use getTotalMonthlySubscriptionCostAggregate() instead.",
+        replaceWith = ReplaceWith("getTotalMonthlySubscriptionCostAggregate().displayAmount"),
+        level = DeprecationLevel.WARNING
     )
     suspend fun getTotalMonthlySubscriptionCost(): Double {
         val subscriptions = getAllSubscriptions()
@@ -611,6 +651,10 @@ class SubscriptionManagerEngine @Inject constructor(
      * across recommendation types (e.g. underutilization + cancellation)
      * to avoid double-counting the same subscription amount.
      */
+    @Deprecated(
+        message = "Raw Double savings across potentially multiple currencies. No aggregate alternative exists yet.",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun calculatePotentialSavings(): Double {
         val toReview = getSubscriptionsToReview()
         var potentialSavings = 0.0

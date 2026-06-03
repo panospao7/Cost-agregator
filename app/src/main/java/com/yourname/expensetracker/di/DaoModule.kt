@@ -324,4 +324,9 @@ object DaoModule {
     @Singleton
     fun provideBankStatementImportItemDao(database: AppDatabase): BankStatementImportItemDao =
         database.bankStatementImportItemDao()
+
+    @Provides
+    @Singleton
+    fun provideNegotiationOutcomeDao(database: AppDatabase): NegotiationOutcomeDao =
+        database.negotiationOutcomeDao()
 }

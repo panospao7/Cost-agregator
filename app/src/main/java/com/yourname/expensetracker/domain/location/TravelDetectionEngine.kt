@@ -86,11 +86,12 @@ data class NormalizedTravelInsight(
 class TravelDetectionEngine @Inject constructor() {
 
     @Deprecated(
-        "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
-        ReplaceWith(
+        message = "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
+        replaceWith = ReplaceWith(
             "computeNormalized(expenses.map { it.toLocatedMoneyExpense(homeCurrency) }, homeCurrency, converter)",
             "com.yourname.expensetracker.domain.location.LocatedMoneyExpense"
-        )
+        ),
+        level = DeprecationLevel.WARNING
     )
     fun compute(expenses: List<Expense>): TravelInsight? {
         val located = expenses.filter { it.latitude != null && it.longitude != null }

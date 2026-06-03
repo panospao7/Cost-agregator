@@ -58,11 +58,12 @@ class AreaSpendingEngine @Inject constructor() {
     )
 
     @Deprecated(
-        "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
-        ReplaceWith(
+        message = "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
+        replaceWith = ReplaceWith(
             "computeNormalized(expenses.map { it.toLocatedMoneyExpense(homeCurrency) }, homeCurrency, converter)",
             "com.yourname.expensetracker.domain.location.LocatedMoneyExpense"
-        )
+        ),
+        level = DeprecationLevel.WARNING
     )
     fun compute(expenses: List<Expense>): List<AreaSpending> {
         // Only consider expenses that have a lat/lon AND a resolved address

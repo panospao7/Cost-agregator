@@ -17,7 +17,6 @@ import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationSe
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
-import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
@@ -55,14 +54,14 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
 ) : ReceiptItemCategorizationService {
 
-    @androidx.annotation.VisibleForTesting
+    @VisibleForTesting
     internal constructor(secureKeyStorage: SecureKeyStorage) : this(
-        secureKeyStorage, OkHttpClient(),
-        CompositePrivacyGate(
-            emptyList(),
-            PrivacyAuditLogger.NO_OP,
-            com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy.gateHandledCapabilities
-        ),
+        secureKeyStorage,
+        OkHttpClient(),
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
+        },
         DefaultCloudPayloadPolicy(
             EffectiveCloudAiPolicyResolver.failClosedNoAi(),
             DefaultCloudPayloadRedactor()

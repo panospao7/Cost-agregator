@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 @HiltViewModel
@@ -43,21 +44,22 @@ class BillNegotiationViewModel @Inject constructor(
     
     fun recordNegotiationOutcome(
         subscriptionId: Long,
-        outcome: SmartBillNegotiationEngine.NegotiationOutcome
+        outcome: SmartBillNegotiationEngine.NegotiationOutcome,
+        newPrice: Double?,
+        savings: Double?,
+        notes: String?
     ) {
         viewModelScope.launch {
-            negotiationEngine.recordNegotiationOutcome(
+            val result = negotiationEngine.recordNegotiationOutcome(
                 subscriptionId = subscriptionId,
                 outcome = outcome,
-                newPrice = outcome.newMonthlyRate,
-                savings = outcome.newMonthlyRate?.let { newRate ->
-                    _opportunities.value.find { it.subscriptionId == subscriptionId }?.let { opp ->
-                        opp.currentPrice - newRate
-                    }
-                },
-                notes = outcome.notes
+                newPrice = newPrice,
+                savings = savings,
+                notes = notes
             )
-            // Refresh the list
+            result.onFailure { error ->
+                Timber.w(error, "Failed to record negotiation outcome")
+            }
             loadOpportunities()
         }
     }
@@ -69,32 +71,28 @@ class BillNegotiationViewModel @Inject constructor(
         notes: String
     ) {
         viewModelScope.launch {
-            val newMonthlyRate = if (outcome == NegotiationOutcome.SUCCESS && actualSavings != null) {
+            val newMonthlyRate = if ((outcome == NegotiationOutcome.SUCCESS || outcome == NegotiationOutcome.PARTIAL) && actualSavings != null) {
                 opportunity.currentPrice - actualSavings
             } else null
             
-            val outcomeType = when (outcome) {
-                NegotiationOutcome.SUCCESS -> SmartBillNegotiationEngine.OutcomeType.SUCCESSFUL_NEGOTIATION
-                NegotiationOutcome.PARTIAL -> SmartBillNegotiationEngine.OutcomeType.PARTIAL_SUCCESS
-                NegotiationOutcome.FAILED -> SmartBillNegotiationEngine.OutcomeType.NO_CHANGE
-                NegotiationOutcome.CANCELLED -> SmartBillNegotiationEngine.OutcomeType.CANCELLED
-                NegotiationOutcome.PENDING -> SmartBillNegotiationEngine.OutcomeType.NO_CHANGE
+            val engineOutcome = when (outcome) {
+                NegotiationOutcome.SUCCESS -> SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS
+                NegotiationOutcome.PARTIAL -> SmartBillNegotiationEngine.NegotiationOutcome.PARTIAL
+                else -> SmartBillNegotiationEngine.NegotiationOutcome.FAILURE
             }
             
-            val negotiationOutcome = SmartBillNegotiationEngine.NegotiationOutcome(
-                success = outcome == NegotiationOutcome.SUCCESS || outcome == NegotiationOutcome.PARTIAL,
-                newMonthlyRate = newMonthlyRate?.takeIf { it > 0 },
-                outcomeType = outcomeType,
-                notes = notes.takeIf { it.isNotBlank() }
-            )
-            
-            negotiationEngine.recordNegotiationOutcome(
+            val result = negotiationEngine.recordNegotiationOutcome(
                 subscriptionId = opportunity.subscriptionId,
-                outcome = negotiationOutcome,
+                outcome = engineOutcome,
                 newPrice = newMonthlyRate?.takeIf { it > 0 },
                 savings = actualSavings?.takeIf { it > 0 },
                 notes = notes.takeIf { it.isNotBlank() }
             )
+            
+            result.onFailure { error ->
+                Timber.w(error, "Failed to record negotiation outcome")
+            }
+            
             // Refresh the list
             loadOpportunities()
         }

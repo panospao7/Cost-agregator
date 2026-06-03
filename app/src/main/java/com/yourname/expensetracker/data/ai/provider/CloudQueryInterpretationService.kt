@@ -12,13 +12,13 @@ import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
-import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import androidx.annotation.VisibleForTesting
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,6 +26,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -46,11 +47,25 @@ class CloudQueryInterpretationService @Inject constructor(
 
     private var apiKeyOverride: String? = null
 
-    // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP, com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy.gateHandledCapabilities))
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage) : this(
+        secureKeyStorage,
+        OkHttpClient(),
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
+        }
+    )
 
-    // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP, com.yourname.expensetracker.domain.privacy.PrivacyCapabilityHandlingPolicy.gateHandledCapabilities)) {
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
+        secureKeyStorage,
+        OkHttpClient(),
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
+        }
+    ) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -146,6 +161,8 @@ class CloudQueryInterpretationService @Inject constructor(
                     if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         return@withContext unsupported("Network error: ${e.message}")
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Timber.w(e, "CloudQueryInterpretationService: parse failure")
                     return@withContext unsupported("Failed to parse response: ${e.message}")

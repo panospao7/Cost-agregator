@@ -3,9 +3,15 @@ package com.yourname.expensetracker.data.ai.provider
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -17,8 +23,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class CloudQueryInterpretationServiceTest {
 
@@ -28,7 +36,8 @@ class CloudQueryInterpretationServiceTest {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
         every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
         
-        val service = CloudQueryInterpretationService(mockKeyStorage)
+        val mockClient = mockk<OkHttpClient>()
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -216,6 +225,120 @@ class CloudQueryInterpretationServiceTest {
         assertTrue(prompt.contains("category_a"))
         assertFalse(prompt.contains("Lidl"))
         assertFalse(prompt.contains("Groceries"))
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // PR1 — No-schema hardening: cancellation safety & error handling
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `interpret rethrows CancellationException`() {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+
+        val mockClient = mockk<OkHttpClient>()
+        val mockCall = mockk<Call>()
+        every { mockClient.newCall(any()) } returns mockCall
+        every { mockCall.execute() } throws CancellationException()
+
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                service.interpret(
+                    FinancialQueryInterpretationInput(
+                        rawQuery = "top merchants this month",
+                        currentTimeMs = 1_000L,
+                        localeTag = "en-US"
+                    )
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `interpret network IOException still returns unsupported`() {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+
+        val mockClient = mockk<OkHttpClient>()
+        val mockCall = mockk<Call>()
+        every { mockClient.newCall(any()) } returns mockCall
+        every { mockCall.execute() } throws IOException("Network error")
+
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+
+        val result = runBlocking {
+            service.interpret(
+                FinancialQueryInterpretationInput(
+                    rawQuery = "top merchants this month",
+                    currentTimeMs = 1_000L,
+                    localeTag = "en-US"
+                )
+            )
+        }
+
+        assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+    }
+
+    @Test
+    fun `interpret parse exception still returns unsupported`() {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+
+        val malformedBody = "This is not valid JSON".toResponseBody("application/json".toMediaType())
+        val response = Response.Builder()
+            .request(Request.Builder().url("https://example.com").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(200)
+            .message("OK")
+            .body(malformedBody)
+            .build()
+
+        val mockClient = mockk<OkHttpClient>()
+        val mockCall = mockk<Call>()
+        every { mockClient.newCall(any()) } returns mockCall
+        every { mockCall.execute() } returns response
+
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
+
+        val result = runBlocking {
+            service.interpret(
+                FinancialQueryInterpretationInput(
+                    rawQuery = "top merchants this month",
+                    currentTimeMs = 1_000L,
+                    localeTag = "en-US"
+                )
+            )
+        }
+
+        assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+    }
+
+    @Test
+    fun `interpret returns unsupported when privacy gate denies`() {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
+
+        val mockClient = mockk<OkHttpClient>()
+        val mockPrivacyGate = mockk<PrivacyGate>()
+        coEvery { mockPrivacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL) } returns
+            PrivacyDecision.Denied("blocked by test")
+
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockPrivacyGate)
+
+        val result = runBlocking {
+            service.interpret(
+                FinancialQueryInterpretationInput(
+                    rawQuery = "top merchants this month",
+                    currentTimeMs = 1_000L,
+                    localeTag = "en-US"
+                )
+            )
+        }
+
+        assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
+        verify(exactly = 0) { mockClient.newCall(any()) }
     }
 
     private fun okhttp3.RequestBody.bodyToString(): String {
