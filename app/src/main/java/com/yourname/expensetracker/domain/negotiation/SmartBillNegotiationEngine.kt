@@ -76,10 +76,12 @@ class SmartBillNegotiationEngine @Inject constructor(
         val quotes = result.quotes
         if (quotes.isEmpty()) return null
 
-        val upperName = merchantName.uppercase()
+        val merchantKey = providerMatchKey(merchantName)
         val bestQuote = quotes.firstOrNull { quote ->
-            upperName.contains(quote.providerName.uppercase()) ||
-            quote.providerName.uppercase().contains(upperName)
+            val quoteKey = providerMatchKey(quote.providerName)
+            merchantKey.contains(quoteKey) ||
+            quoteKey.contains(merchantKey) ||
+            providerRootMatches(merchantKey, quoteKey)
         } ?: quotes.first()
 
         return MarketRate(
@@ -137,6 +139,7 @@ class SmartBillNegotiationEngine @Inject constructor(
             name.containsAny("DEI", "EΝΕΡΓΕΙΑ", "ΕΛΠΕΔΙΣΩΝ", "ΗΡΩΝ", "ENERGY", "ELECTRICITY") -> ServiceType.ENERGY
             name.containsAny("GYM", "FITNESS", "SPORT", "ΓΥΜΝΑΣΤΗΡΙΟ") -> ServiceType.GYM
             name.containsAny("CLOUD", "STORAGE", "DROPBOX", "GOOGLE", "MICROSOFT", "365") -> ServiceType.SOFTWARE
+            name.containsAny("EYDAP", "WATER", "ΝΕΡΟ", "ΥΔΡΕΥΣΗ", "ΥΔΡΕΥΣΗΣ", "ΕΥΔΑΠ") -> ServiceType.WATER
             else -> null
         }
     }
@@ -463,6 +466,23 @@ class SmartBillNegotiationEngine @Inject constructor(
         }
     }
     
+    private fun providerMatchKey(value: String): String {
+        return value
+            .uppercase()
+            .replace(Regex("[^A-ZΑ-Ω0-9]"), "")
+    }
+
+    private fun providerRootMatches(merchantKey: String, quoteKey: String): Boolean {
+        val roots = listOf(
+            "COSMOTE", "VODAFONE", "NOVA", "WIND",
+            "DEI", "ΔΕΗ", "EYDAP", "ΕΥΔΑΠ",
+            "ELPEDISON", "HERON"
+        )
+        return roots.any { root ->
+            merchantKey.contains(root) && quoteKey.contains(root)
+        }
+    }
+
     private fun normalizeMerchantName(name: String): String {
         return name.uppercase()
             .replace(Regex("[^A-ZΑ-Ω0-9]"), "")
@@ -485,14 +505,20 @@ class SmartBillNegotiationEngine @Inject constructor(
         savings: Double?,
         notes: String?
     ): Result<Unit> {
-        writeBarrier.checkWritesAllowed("SmartBillNegotiationEngine.recordNegotiationOutcome")
-
         val subscription = recurringExpenseRepository.getById(subscriptionId)
             ?: return Result.failure(IllegalArgumentException("Subscription not found: $subscriptionId"))
 
-        val now = timeProvider.now()
-
         return try {
+            writeBarrier.checkWritesAllowed("SmartBillNegotiationEngine.recordNegotiationOutcome")
+            validateNegotiationOutcomeInput(
+                outcome = outcome,
+                newPrice = newPrice,
+                savings = savings,
+                oldAmount = subscription.amount,
+                currency = subscription.currency
+            )
+
+            val now = timeProvider.now()
             database.withTransaction {
                 // 1. Insert negotiation outcome
                 val outcomeEntity = NegotiationOutcomeEntity(
@@ -534,13 +560,47 @@ class SmartBillNegotiationEngine @Inject constructor(
                 }
             }
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is CancellationException) throw e
             Timber.w(e, "Failed to record negotiation outcome for subscriptionId=$subscriptionId")
             Result.failure(e)
         }
     }
     
+    private fun validateNegotiationOutcomeInput(
+        outcome: NegotiationOutcome,
+        newPrice: Double?,
+        savings: Double?,
+        oldAmount: Double,
+        currency: String
+    ) {
+        require(oldAmount.isFinite() && oldAmount >= 0.0) {
+            "Old amount must be finite and non-negative"
+        }
+
+        require(currency.matches(Regex("^[A-Z]{3}$"))) {
+            "Currency must be a valid 3-letter ISO code"
+        }
+
+        val requiresNewPrice = outcome == NegotiationOutcome.SUCCESS ||
+            outcome == NegotiationOutcome.PARTIAL
+
+        if (requiresNewPrice) {
+            require(newPrice != null && newPrice.isFinite() && newPrice > 0.0) {
+                "Successful or partial negotiation requires a finite positive new price"
+            }
+        }
+
+        require(newPrice == null || (newPrice.isFinite() && newPrice > 0.0)) {
+            "New price must be finite and positive"
+        }
+
+        require(savings == null || (savings.isFinite() && savings >= 0.0)) {
+            "Savings must be finite and non-negative"
+        }
+    }
+
     data class MarketRate(
         val serviceType: ServiceType,
         val providerName: String,

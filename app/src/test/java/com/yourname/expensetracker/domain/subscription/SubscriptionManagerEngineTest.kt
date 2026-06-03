@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -414,5 +415,57 @@ class SubscriptionManagerEngineTest {
 
         coVerify { priceHistoryDao.insert(match { it.amount == 11.99 }) }
         coVerify { recurringExpenseRepository.update(match { it.amount == 11.99 }) }
+    }
+
+    @Test
+    fun `recordPriceChange_missingSubscription_doesNotFallbackToEUR`() = runTest {
+        coEvery { recurringExpenseRepository.getById(999L) } returns null
+        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
+
+        val engine = createEngine()
+
+        assertFailsWith<IllegalStateException>(
+            "Expected IllegalStateException when subscription not found"
+        ) {
+            engine.recordPriceChange(
+                subscriptionId = 999L,
+                newAmount = 15.0,
+                reason = "Test price change"
+            )
+        }
+
+        // Verify no DAO operations happen after the early exception
+        coVerify(exactly = 0) { priceHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { recurringExpenseRepository.update(any()) }
+    }
+
+    @Test
+    fun `recordPriceChange_validSubscription_usesSubscriptionCurrency`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 1L, merchant = "Netflix", amount = 13.99, currency = "USD",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getById(1L) } returns subscription
+        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            firstArg<suspend () -> Any>().invoke()
+        }
+        coEvery { priceHistoryDao.getLatestPrice(any()) } returns null
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.insert(any()) } returns Unit
+        coEvery { recurringExpenseRepository.update(any()) } returns Unit
+
+        val engine = createEngine()
+        engine.recordPriceChange(
+            subscriptionId = 1L,
+            newAmount = 15.0,
+            reason = "Test price change"
+        )
+
+        val slot = slot<SubscriptionPriceHistory>()
+        coVerify { priceHistoryDao.insert(capture(slot)) }
+        assertEquals("USD", slot.captured.currency)
     }
 }

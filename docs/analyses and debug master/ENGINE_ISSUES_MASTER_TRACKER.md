@@ -22,13 +22,13 @@
 |----|-----|-------|------|-------------|--------|
 | W01 | P0 | Warranty protected value not currency-safe | Bug | Use MoneyAggregate with effectiveAmount + CurrencyConverter. PR9: explicit DeprecationLevel.WARNING + DeprecatedApiArchitectureGuardTest | ✅ FIXED |
 | W02 | P0 | Return-window refund currency not updated | Bug | Add refundCurrency to DAO, infer from expense | ✅ FIXED |
-| W03 | P0 | Warranty lifecycle has no event log | Enhancement | Lifecycle events added for all major transitions: CREATED (addWarranty/addWarrantyIgnoreConflicts), UPDATED (updateWarranty), DELETED (deleteWarranty), EXPIRED (reconcileExpiredItems batch event), CLAIMED (markWarrantyAsClaimed), AI_EXTRACTION_DISCARDED (rejectAutoDetectedWarranty), RETURN_WINDOW_RETURNED (markAsReturned). Constants object WarrantyLifecycleEventTypes created. | ✅ FIXED |
+| W03 | P0 | Warranty lifecycle has no event log | Enhancement | Lifecycle events added for all major transitions: CREATED (addWarranty/addWarrantyIgnoreConflicts), UPDATED (updateWarranty), DELETED (deleteWarranty), EXPIRED (reconcileExpiredItems batch event), CLAIMED (markWarrantyAsClaimed), AI_EXTRACTION_DISCARDED (rejectAutoDetectedWarranty), RETURN_WINDOW_RETURNED (markAsReturned). Constants object WarrantyLifecycleEventTypes created. PR3-FINALGATE: markAsReturned no longer writes fake WarrantyLifecycleEvent with receiptId as warrantyId. | ✅ FIXED |
 | W04 | P0 | Subscription price history recordedAt=0 | Bug | timeProvider.now() in creation paths | ✅ FIXED |
 | W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ✅ FIXED |
 | W06 | P0 | Subscription totals raw-sum mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter. PR9: explicit DeprecationLevel.WARNING + DeprecatedApiArchitectureGuardTest | ✅ FIXED |
 | W07 | P0 | Price change update not atomic | Bug | withTransaction wrap insert+update | ✅ FIXED |
-| W08 | P0 | Bill negotiation no persistence | Bug | Negotiation outcomes now persist to negotiation_outcomes table (Room entity + DAO + migration v145→146). Atomic transaction: outcome insert + conditional price history insert + conditional subscription amount update. DatabaseWriteBarrier enforced. getNegotiationHistory reads from DAO. In-memory list removed. | ✅ FIXED |
-| W09 | P0 | Bill negotiation UI compares wrong rates | Bug | generateNegotiationScript now uses monthlyEquivalentPrice for monthly comparison text. NegotiationOpportunity has rawBillingAmount, billingFrequency, monthlyEquivalentPrice, currency fields. | ✅ FIXED |
+| W08 | P0 | Bill negotiation no persistence | Bug | Negotiation outcomes now persist to negotiation_outcomes table (Room entity + DAO + migration v145→146). Atomic transaction: outcome insert + conditional price history insert + conditional subscription amount update. DatabaseWriteBarrier enforced. getNegotiationHistory reads from DAO. In-memory list removed. PR1-FINALGATE: validation added (SUCCESS/PARTIAL require finite positive newPrice, non-finite savings rejected), write-barrier contract aligned, cancellation tests added, WATER detection added, provider matching normalized. | ✅ FIXED |
+| W09 | P0 | Bill negotiation UI compares wrong rates | Bug | generateNegotiationScript now uses monthlyEquivalentPrice for monthly comparison text. NegotiationOpportunity has rawBillingAmount, billingFrequency, monthlyEquivalentPrice, currency fields. PR1-FINALGATE: Provider matching now uses normalized keys + providerRootMatches for Greek utilities. | ✅ FIXED |
 | W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | ✅ FIXED |
 | W11 | P0 | Location insights include non-spending | Bug | SpendingMapViewModel filters spending-only via isSpending (line 435-458) | ✅ FIXED |
 | W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion; display currency in map marker label | ✅ FIXED |
@@ -44,7 +44,7 @@
 | W22 | P1 | Subscription missing createdAt/currency/validation | Bug | MOSTLY FIXED for Engine 1 local validation. Subscription validation strengthened: isFinite()+[A-Z]{3}+startDate>0 enforced in validateAndCreate, acceptCandidate, recordPriceChange; currency propagated to price history. Global CurrencyCode policy remains Engine 5. | ⚠ PARTIAL |
 | W23 | P1 | Candidate accepted date uses fixed millis | Bug | SubscriptionManagementViewModel uses RecurrenceCalculator.nextOccurrence() | ✅ FIXED |
 | W24 | P1 | Candidate uniqueness wider than intended | Enhancement | Partial unique index or ledger table | ⏭ |
-| W25 | P1 | Bill negotiation rates hardcoded EUR | Enhancement | MarketRateProvider injected into SmartBillNegotiationEngine. Private static marketRates map removed. Hilt NegotiationModule added. ServiceType enums bridged with explicit mapping. | ✅ FIXED |
+| W25 | P1 | Bill negotiation rates hardcoded EUR | Enhancement | MarketRateProvider injected into SmartBillNegotiationEngine. Private static marketRates map removed. Hilt NegotiationModule added. ServiceType enums bridged with explicit mapping. PR1-FINALGATE: Seed data added for INTERNET, MOBILE, ENERGY, WATER. providerMatchKey() + providerRootMatches() prevent wrong-provider fallback. | ✅ FIXED |
 | W26 | P1 | Date-range filtering uses inclusive end | Bug | Change <= to < for half-open contract — map uses < end; NL engine uses endExclusive; audit in progress | 📝 TODO ONLY |
 | W27 | P1 | LocationResolver fetches GPS too early | Enhancement | onPermissionResult only updates state; onCenterOnMeRequested fetches on explicit FAB tap | ✅ FIXED |
 | W28 | P1 | Coordinate validation incomplete | Enhancement | GeoCoordinate value class rejecting NaN/Infinity/out-of-range/null-island (0,0) | ✅ FIXED |
@@ -75,6 +75,10 @@
 > PR8 (Bill negotiation persistence) completed on 2026-06-03. New negotiation_outcomes table with FK to manual_recurring_expenses. Migration v145→146. Hilt NegotiationOutcomeDao wired. convertFromMonthlyEquivalent correctly inverts monthlyEquivalent for all frequencies.
 >
 > PR9 (Deprecated API hardening + architecture guard) completed on 2026-06-03. All five deprecated raw-Double APIs now carry explicit `level = DeprecationLevel.WARNING`. New `calculatePotentialSavings()` also annotated `@Deprecated`. `DeprecatedApiArchitectureGuardTest` created to prevent new production call sites from using these deprecated APIs, with explicit allowlisting for `WarrantyTrackerRepository.kt`, `SubscriptionManagerEngine.kt`, `AreaSpendingEngine.kt`, `TravelDetectionEngine.kt`, and `AnalyticsViewModel.kt`.
+>
+> **Deferred items (post-final-gate):**
+> - Return-window lifecycle event needs dedicated table or general diagnostic infrastructure (PR3 deferred)
+> - NegotiationOutcomeEntity raw Double validated at insert but still uses Double (PR5 partial)
 
 ---
 

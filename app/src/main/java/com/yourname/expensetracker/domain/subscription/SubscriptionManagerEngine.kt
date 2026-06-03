@@ -340,25 +340,26 @@ class SubscriptionManagerEngine @Inject constructor(
     ) {
         writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.recordPriceChange")
         validatePositiveFiniteAmount(newAmount, "New subscription amount")
+
+        // Load subscription first to validate existence before any other work.
+        val subscription = recurringExpenseRepository.getById(subscriptionId)
+            ?: throw IllegalStateException(
+                "Subscription $subscriptionId not found when recording price change"
+            )
+
         // Get previous price
         val previousPrice = priceHistoryDao.getLatestPrice(subscriptionId)?.amount
-            ?: recurringExpenseRepository.getAll().find { it.id == subscriptionId }?.amount
-            ?: newAmount
+            ?: subscription.amount
         
         // Only record if price actually changed
         if (abs(newAmount - previousPrice) > 0.01) {
             // Wrap history insert + subscription update in transaction for atomicity
             database.withTransaction {
-                // Load subscription for currency and update
-                val subscription = recurringExpenseRepository.getById(subscriptionId)
                 // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
                 val priceHistory = SubscriptionPriceHistory(
                     subscriptionId = subscriptionId,
                     amount = newAmount,
-                    currency = subscription?.currency
-                        ?: throw IllegalStateException(
-                            "Subscription $subscriptionId not found when recording price change"
-                        ),
+                    currency = subscription.currency,
                     recordedAt = timeProvider.now(),
                     changeReason = reason
                 )
@@ -367,7 +368,7 @@ class SubscriptionManagerEngine @Inject constructor(
                 // REC-7: Update the subscription's current amount so it reflects
                 // the new price immediately rather than showing the old amount
                 // until the next full sync.
-                if (subscription != null && abs(subscription.amount - newAmount) > 0.01) {
+                if (abs(subscription.amount - newAmount) > 0.01) {
                     recurringExpenseRepository.update(subscription.copy(amount = newAmount))
                 }
             }

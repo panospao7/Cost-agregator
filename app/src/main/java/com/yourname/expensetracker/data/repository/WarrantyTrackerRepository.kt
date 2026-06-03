@@ -387,16 +387,11 @@ class WarrantyTrackerRepository @Inject constructor(
             updatedAt = timeProvider.now()
         )
         returnWindowDao.updateReturnWindow(updated)
-        runCatching {
-            database.warrantyLifecycleEventDao().insert(
-                WarrantyLifecycleEvent(
-                    warrantyId = existing.receiptId ?: returnWindowId,
-                    eventType = WarrantyLifecycleEventTypes.RETURN_WINDOW_RETURNED,
-                    occurredAt = timeProvider.now(),
-                    description = "Return window marked as returned"
-                )
-            )
-        }.onFailure { Timber.w(it, "Failed to write RETURN_WINDOW_RETURNED event for returnWindowId=$returnWindowId") }
+        // PR3-FINALGATE: Do not write a WarrantyLifecycleEvent for return-window actions
+        // because warrantyId expects a warranty ID, not a receiptId or returnWindowId.
+        // TODO: Add a dedicated ReturnWindowLifecycleEvent table or general diagnostic
+        // event infrastructure when schema evolution is planned.
+        Timber.d("Return window $returnWindowId marked as RETURNED")
         return updated
     }
 
@@ -507,9 +502,21 @@ class WarrantyTrackerRepository @Inject constructor(
      *     created as a needs-review draft, status = PENDING_REVIEW
      * - confidence < REVIEW_CLOUD_CONFIDENCE (0.30): discarded entirely (returns null)
      */
-    private fun WarrantyExtractionResult.toWarrantyEntityOrNull(receipt: ScannedReceipt): Warranty? {
+    private suspend fun WarrantyExtractionResult.toWarrantyEntityOrNull(receipt: ScannedReceipt): Warranty? {
         if (confidence < REVIEW_CLOUD_CONFIDENCE) {
-            Timber.d("Cloud warranty extraction discarded: confidence $confidence below review threshold $REVIEW_CLOUD_CONFIDENCE")
+            Timber.d("Cloud warranty extraction discarded: confidence $confidence below review threshold $REVIEW_CLOUD_CONFIDENCE for receiptId=${receipt.id}")
+            // PR4-FINALGATE: Write discard diagnostic to warranty lifecycle events.
+            // We use warrantyId = -1 as a sentinel to indicate this is not tied to a specific warranty.
+            runCatching {
+                database.warrantyLifecycleEventDao().insert(
+                    WarrantyLifecycleEvent(
+                        warrantyId = -1L,
+                        eventType = WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED,
+                        occurredAt = timeProvider.now(),
+                        description = "Cloud warranty extraction discarded: confidence=$confidence below threshold=$REVIEW_CLOUD_CONFIDENCE receiptId=${receipt.id}"
+                    )
+                )
+            }.onFailure { Timber.w(it, "Failed to write AI_EXTRACTION_DISCARDED diagnostic for receiptId=${receipt.id}") }
             return null
         }
 

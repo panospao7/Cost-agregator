@@ -1,10 +1,10 @@
 # Final Gate Review — Engine 1 (Warranty/Subscription/Location/NLP)
 
 ## 1. Verdict
-YELLOW
+YELLOW (upgraded from previous, but still blocked by pre-existing unrelated test compilation failures)
 
 ## 2. Validation status
-Compile: PASS (./gradlew :app:assembleDebug --stacktrace --no-daemon BUILD SUCCESSFUL)
+Compile PASS (Kotlin compilation successful)
 Unit tests: FAIL — compilation errors in pre-existing test files unrelated to Engine 1. Engine 1 tests could not be independently executed due to unrelated test source set compilation failure.
 Check/lint: FAIL — same pre-existing test compilation errors
 Connected tests if needed: N/A (no connected tests attempted; schema migration v145→146 exists but Room validation passed in production compile via kapt)
@@ -26,6 +26,15 @@ What is correct:
 - Deprecation guard active (DeprecatedApiArchitectureGuardTest)
 - Currency normalization used for all new aggregation paths
 - TimeProvider used in all production paths
+- WATER/EYDAP detection works
+- Provider matching uses normalized keys (prevents Vodafone CU -> Cosmote fallback)
+- SUCCESS/PARTIAL negotiation outcomes require finite positive newPrice
+- Non-finite savings/newPrice rejected before DB insert
+- Write-barrier blocked outcomes return Result.failure (contract aligned)
+- CancellationException rethrow tested for both findMarketRate and recordNegotiationOutcome
+- markAsReturned no longer pollutes warrantyId semantics
+- Low-confidence discard writes durable diagnostic with -1L sentinel
+- recordPriceChange validates subscription existence before any DAO work
 
 What is risky:
 - Unit test suite has pre-existing compilation failures in unrelated engines (receipt, recurring, transaction, worker, e2e, golden tests). This prevents automated verification of Engine 1 tests in CI.
@@ -58,6 +67,12 @@ Strong tests:
 - CancellationSafety guard
 - DeprecatedApi guard
 - NL voice input tests
+- WATER detection tests (EYDAP, Greek keywords)
+- Provider matching tests (Vodafone CU, Cosmote Fiber, DEI Energy)
+- Validation tests (null/infinite/NaN newPrice, infinite/negative savings)
+- Cancellation rethrow tests (findMarketRate, recordNegotiationOutcome)
+- Write-barrier contract tests
+- Subscription recordPriceChange tests (missing subscription throws, currency preserved)
 
 Weak/missing tests:
 - Cannot run full suite due to pre-existing unrelated test compilation failures
