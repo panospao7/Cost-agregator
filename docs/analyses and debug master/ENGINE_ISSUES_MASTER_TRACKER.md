@@ -27,8 +27,8 @@
 | W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ✅ FIXED |
 | W06 | P0 | Subscription totals raw-sum mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter. PR9: explicit DeprecationLevel.WARNING + DeprecatedApiArchitectureGuardTest | ✅ FIXED |
 | W07 | P0 | Price change update not atomic | Bug | withTransaction wrap insert+update | ✅ FIXED |
-| W08 | P0 | Bill negotiation no persistence | Bug | Negotiation outcomes now persist to negotiation_outcomes table (Room entity + DAO + migration v145→146). Atomic transaction: outcome insert + conditional price history insert + conditional subscription amount update. DatabaseWriteBarrier enforced. getNegotiationHistory reads from DAO. In-memory list removed. PR1-FINALGATE: validation added (SUCCESS/PARTIAL require finite positive newPrice, non-finite savings rejected), write-barrier contract aligned, cancellation tests added, WATER detection added, provider matching normalized. | ✅ FIXED |
-| W09 | P0 | Bill negotiation UI compares wrong rates | Bug | generateNegotiationScript now uses monthlyEquivalentPrice for monthly comparison text. NegotiationOpportunity has rawBillingAmount, billingFrequency, monthlyEquivalentPrice, currency fields. PR1-FINALGATE: Provider matching now uses normalized keys + providerRootMatches for Greek utilities. | ✅ FIXED |
+| W08 | P0 | Bill negotiation no persistence | Bug | Negotiation outcomes now persist to negotiation_outcomes table (Room entity + DAO + migration v145→146). Atomic transaction: outcome insert + conditional price history insert + conditional subscription amount update. DatabaseWriteBarrier enforced. getNegotiationHistory reads from DAO. In-memory list removed. PR1-FINALGATE: validation added (SUCCESS/PARTIAL require finite positive newPrice, non-finite savings rejected), write-barrier contract aligned, cancellation tests added, WATER detection added, provider matching normalized. PR1-FINALGATE-ROUND2: service detection fixed (raw merchant passed, normalized providerMatchKey + raw generic keywords). ENERGY skipped. non-EUR skipped. write-barrier before DB read. | ✅ FIXED |
+| W09 | P0 | Bill negotiation UI compares wrong rates | Bug | generateNegotiationScript now uses monthlyEquivalentPrice for monthly comparison text. NegotiationOpportunity has rawBillingAmount, billingFrequency, monthlyEquivalentPrice, currency fields. PR1-FINALGATE: Provider matching now uses normalized keys + providerRootMatches for Greek utilities. PR1-FINALGATE-ROUND2: Provider matching verified with exact service type tests (Vodafone CU -> MOBILE, Cosmote Fiber -> INTERNET). | ✅ FIXED |
 | W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | ✅ FIXED |
 | W11 | P0 | Location insights include non-spending | Bug | SpendingMapViewModel filters spending-only via isSpending (line 435-458) | ✅ FIXED |
 | W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion; display currency in map marker label | ✅ FIXED |
@@ -44,7 +44,7 @@
 | W22 | P1 | Subscription missing createdAt/currency/validation | Bug | MOSTLY FIXED for Engine 1 local validation. Subscription validation strengthened: isFinite()+[A-Z]{3}+startDate>0 enforced in validateAndCreate, acceptCandidate, recordPriceChange; currency propagated to price history. Global CurrencyCode policy remains Engine 5. | ⚠ PARTIAL |
 | W23 | P1 | Candidate accepted date uses fixed millis | Bug | SubscriptionManagementViewModel uses RecurrenceCalculator.nextOccurrence() | ✅ FIXED |
 | W24 | P1 | Candidate uniqueness wider than intended | Enhancement | Partial unique index or ledger table | ⏭ |
-| W25 | P1 | Bill negotiation rates hardcoded EUR | Enhancement | MarketRateProvider injected into SmartBillNegotiationEngine. Private static marketRates map removed. Hilt NegotiationModule added. ServiceType enums bridged with explicit mapping. PR1-FINALGATE: Seed data added for INTERNET, MOBILE, ENERGY, WATER. providerMatchKey() + providerRootMatches() prevent wrong-provider fallback. | ✅ FIXED |
+| W25 | P1 | Bill negotiation rates hardcoded EUR | Enhancement | MarketRateProvider injected into SmartBillNegotiationEngine. Private static marketRates map removed. Hilt NegotiationModule added. ServiceType enums bridged with explicit mapping. PR1-FINALGATE: Seed data added for INTERNET, MOBILE, ENERGY, WATER. providerMatchKey() + providerRootMatches() prevent wrong-provider fallback. PR1-FINALGATE-ROUND2: ENERGY negotiation disabled (consumption-aware pricing required). non-EUR subscriptions skipped. Seed data remains but ENERGY filtered before provider call. | ✅ FIXED |
 | W26 | P1 | Date-range filtering uses inclusive end | Bug | Change <= to < for half-open contract — map uses < end; NL engine uses endExclusive; audit in progress | 📝 TODO ONLY |
 | W27 | P1 | LocationResolver fetches GPS too early | Enhancement | onPermissionResult only updates state; onCenterOnMeRequested fetches on explicit FAB tap | ✅ FIXED |
 | W28 | P1 | Coordinate validation incomplete | Enhancement | GeoCoordinate value class rejecting NaN/Infinity/out-of-range/null-island (0,0) | ✅ FIXED |
@@ -63,6 +63,12 @@
 | E1-NOW-006 | P1 | Manual placeholder lacks document type/timestamps | Bug | documentType=MANUAL_PLACEHOLDER, sourceType=MANUAL_RECORD, processingStatus=PARSED, timestamps set | ✅ FIXED |
 | E1-NOW-007 | P1 | Market-rate provider is dead/not wired | Bug | MarketRateProvider wired via Hilt. Static map removed. Staleness check now uses provider's lastUpdatedAt. | ✅ FIXED |
 | E1-NOW-008 | P1 | NLP location query still returns broad results | Bug | NLP location queries return empty results with unsupported flag. | ✅ FIXED |
+
+**E1-FINAL issues (PR1-FINALGATE-ROUND2):**
+- E1-FINAL-001 (Vodafone CU misclassification): FIXED — raw merchant + providerMatchKey
+- E1-FINAL-002 (ENERGY per-kWh vs monthly): FIXED — ENERGY skipped in findMarketRate
+- E1-FINAL-003 (non-EUR raw comparison): FIXED — non-EUR subscriptions skipped
+- E1-FINAL-004 (write-barrier before read): FIXED — writeBarrier before getById inside try
 
 > PR1 (No-schema hardening) completed on 2026-06-03. Subscription currency validation is local strict ASCII-3-letter validation. Global supported-currency policy remains Engine 5.
 >

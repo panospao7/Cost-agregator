@@ -1,7 +1,7 @@
 # Final Gate Review — Engine 1 (Warranty/Subscription/Location/NLP)
 
 ## 1. Verdict
-YELLOW (upgraded from previous, but still blocked by pre-existing unrelated test compilation failures)
+YELLOW — upgraded. All E1-FINAL-001 through E1-FINAL-004 are fixed. Production compile passes. Pre-existing unrelated test compilation failures still block full CI.
 
 ## 2. Validation status
 Compile PASS (Kotlin compilation successful)
@@ -35,6 +35,10 @@ What is correct:
 - markAsReturned no longer pollutes warrantyId semantics
 - Low-confidence discard writes durable diagnostic with -1L sentinel
 - recordPriceChange validates subscription existence before any DAO work
+- Service detection uses raw merchant + dual key/raw matching (providerMatchKey for provider-specific, raw uppercase for generic)
+- ENERGY negotiation disabled until consumption-aware pricing
+- non-EUR subscriptions skipped with warning
+- write-barrier checked before any DB read in recordNegotiationOutcome
 
 What is risky:
 - Unit test suite has pre-existing compilation failures in unrelated engines (receipt, recurring, transaction, worker, e2e, golden tests). This prevents automated verification of Engine 1 tests in CI.
@@ -56,6 +60,7 @@ Blocking issues:
 | Map/location GPS/privacy | Green | PrivacyGate check, normalized aggregates |
 | NLP location/amount/merchant queries | Green | Empty results with unsupported flag |
 | Backup/restore write barrier | Green | WriteBarrier checked on all new writes |
+| Subscription/bill negotiation | YELLOW/GREEN | PR1-FINALGATE-ROUND2: ENERGY disabled, non-EUR skipped, write-barrier before read, service detection fixed |
 
 ## 6. Tests review
 Strong tests:
@@ -73,6 +78,11 @@ Strong tests:
 - Cancellation rethrow tests (findMarketRate, recordNegotiationOutcome)
 - Write-barrier contract tests
 - Subscription recordPriceChange tests (missing subscription throws, currency preserved)
+- Service-type verification tests (Vodafone CU -> MOBILE, Cosmote Fiber -> INTERNET)
+- ENERGY skip test (no opportunity, no provider call)
+- non-EUR skip test (USD skipped, EUR still works)
+- write-barrier-before-read test (getById never called when blocked)
+- getById failure wrapped as Result.failure
 
 Weak/missing tests:
 - Cannot run full suite due to pre-existing unrelated test compilation failures

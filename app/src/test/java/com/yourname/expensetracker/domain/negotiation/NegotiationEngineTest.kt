@@ -669,7 +669,13 @@ class NegotiationEngineTest {
         coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
 
         val provider: MarketRateProvider = mockk()
-        coEvery { provider.getRates(any(), any(), any()) } returns MarketRateResult(
+        coEvery {
+            provider.getRates(
+                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.MOBILE,
+                region = "GR",
+                currency = "EUR"
+            )
+        } returns MarketRateResult(
             quotes = listOf(
                 MarketRateQuote("Cosmote Mobile", 24.99, 14.99, 9.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
                 MarketRateQuote("Vodafone Mobile", 22.99, 12.99, 8.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
@@ -684,6 +690,19 @@ class NegotiationEngineTest {
         // Provider name should contain "Vodafone", not "Cosmote"
         assertTrue("Expected Vodafone provider, got: ${opportunities.first().currentProvider}",
             opportunities.first().currentProvider.contains("Vodafone", ignoreCase = true))
+
+        coVerify(exactly = 1) {
+            provider.getRates(
+                com.yourname.expensetracker.domain.negotiation.ServiceType.MOBILE,
+                "GR", "EUR"
+            )
+        }
+        coVerify(exactly = 0) {
+            provider.getRates(
+                com.yourname.expensetracker.domain.negotiation.ServiceType.INTERNET,
+                "GR", "EUR"
+            )
+        }
     }
 
     @Test
@@ -698,7 +717,13 @@ class NegotiationEngineTest {
         coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
 
         val provider: MarketRateProvider = mockk()
-        coEvery { provider.getRates(any(), any(), any()) } returns MarketRateResult(
+        coEvery {
+            provider.getRates(
+                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.INTERNET,
+                region = "GR",
+                currency = "EUR"
+            )
+        } returns MarketRateResult(
             quotes = listOf(
                 MarketRateQuote("Vodafone Fiber", 32.99, 22.99, 18.99, "EUR", "GR", MarketRateConfidence.MEDIUM),
                 MarketRateQuote("Cosmote Fiber", 34.99, 24.99, 19.99, "EUR", "GR", MarketRateConfidence.MEDIUM)
@@ -712,10 +737,17 @@ class NegotiationEngineTest {
         assertEquals(1, opportunities.size)
         assertTrue("Expected Cosmote provider",
             opportunities.first().currentProvider.contains("Cosmote", ignoreCase = true))
+
+        coVerify(exactly = 1) {
+            provider.getRates(
+                com.yourname.expensetracker.domain.negotiation.ServiceType.INTERNET,
+                "GR", "EUR"
+            )
+        }
     }
 
     @Test
-    fun `deiEnergy_matchesDeiQuote`() = runTest {
+    fun `deiEnergy_doesNotGenerateNegotiationOpportunity`() = runTest {
         val subscription = ManualRecurringExpense(
             id = 22L, merchant = "DEI Energy", amount = 50.0, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -726,20 +758,68 @@ class NegotiationEngineTest {
         coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
 
         val provider: MarketRateProvider = mockk()
-        coEvery { provider.getRates(any(), any(), any()) } returns MarketRateResult(
-            quotes = listOf(
-                MarketRateQuote("Heron", 0.16, 0.12, 0.08, "EUR", "GR", MarketRateConfidence.LOW),
-                MarketRateQuote("DEI", 0.18, 0.14, 0.10, "EUR", "GR", MarketRateConfidence.LOW)
-            ),
+        // No stub needed — ENERGY should be skipped before provider is called
+
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("ENERGY subscription should not generate negotiation opportunity", opportunities.isEmpty())
+        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+    }
+
+    @Test
+    fun `usdSubscription_isSkippedNotComparedToEurRate`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 25L, merchant = "Netflix", amount = 13.99, currency = "USD",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+
+        val provider: MarketRateProvider = mockk()
+
+        val engine = createEngine(marketRateProvider = provider)
+        val opportunities = engine.analyzeNegotiationOpportunities()
+
+        assertTrue("Non-EUR subscription should be skipped", opportunities.isEmpty())
+        coVerify(exactly = 0) { provider.getRates(any(), any(), any()) }
+    }
+
+    @Test
+    fun `eurSubscription_stillProducesOpportunity`() = runTest {
+        val subscription = ManualRecurringExpense(
+            id = 26L, merchant = "Netflix", amount = 13.99, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
+        coEvery { priceHistoryDao.getAllPricesForSubscription(any()) } returns emptyList()
+
+        val provider: MarketRateProvider = mockk()
+        coEvery {
+            provider.getRates(
+                serviceType = com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
+                region = "GR",
+                currency = "EUR"
+            )
+        } returns MarketRateResult(
+            quotes = listOf(MarketRateQuote("Netflix", 12.99, 7.99, 6.99, "EUR", "GR", MarketRateConfidence.MEDIUM)),
             source = "test", lastUpdatedAt = System.currentTimeMillis()
         )
 
         val engine = createEngine(marketRateProvider = provider)
         val opportunities = engine.analyzeNegotiationOpportunities()
 
-        assertEquals(1, opportunities.size)
-        assertTrue("Expected DEI provider",
-            opportunities.first().currentProvider.contains("DEI", ignoreCase = true))
+        assertEquals("EUR subscription should still produce opportunity", 1, opportunities.size)
+        coVerify(exactly = 1) {
+            provider.getRates(
+                com.yourname.expensetracker.domain.negotiation.ServiceType.STREAMING,
+                "GR", "EUR"
+            )
+        }
     }
 
     @Test
@@ -954,13 +1034,8 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `recordNegotiationOutcome_writeBarrierBlocked_doesNotInsertOrUpdate`() = runTest {
-        coEvery { recurringExpenseRepository.getById(1L) } returns ManualRecurringExpense(
-            id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
-            frequency = RecurrenceFrequency.MONTHLY,
-            nextDate = System.currentTimeMillis(),
-            isSubscription = true, isActive = true
-        )
+    fun `recordNegotiationOutcome_writeBarrierBlocked_doesNotReadSubscription`() = runTest {
+        // Because writeBarrier is checked BEFORE getById, getById should never be called
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } throws
             DatabaseAccessBlockedException(
                 accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
@@ -978,8 +1053,26 @@ class NegotiationEngineTest {
         )
 
         assertTrue("Write barrier blocked should return failure", result.isFailure)
+        coVerify(exactly = 0) { recurringExpenseRepository.getById(any()) }
         coVerify(exactly = 0) { negotiationOutcomeDao.insert(any()) }
         coVerify(exactly = 0) { priceHistoryDao.insert(any()) }
         coVerify(exactly = 0) { recurringExpenseRepository.update(any()) }
+    }
+
+    @Test
+    fun `recordNegotiationOutcome_getByIdFailure_returnsFailure`() = runTest {
+        coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
+        coEvery { recurringExpenseRepository.getById(50L) } throws RuntimeException("DB error")
+
+        val engine = createEngine()
+        val result = engine.recordNegotiationOutcome(
+            subscriptionId = 50L,
+            outcome = SmartBillNegotiationEngine.NegotiationOutcome.SUCCESS,
+            newPrice = 9.99,
+            savings = 4.0,
+            notes = "test"
+        )
+
+        assertTrue("getById failure should return Result.failure", result.isFailure)
     }
 }

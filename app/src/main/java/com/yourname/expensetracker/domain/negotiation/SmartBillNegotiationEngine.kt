@@ -38,8 +38,17 @@ class SmartBillNegotiationEngine @Inject constructor(
         val opportunities = mutableListOf<NegotiationOpportunity>()
         
         subscriptions.forEach { subscription ->
-            val normalizedMerchant = normalizeMerchantName(subscription.merchant)
-            val marketRate = findMarketRate(normalizedMerchant)
+            val subscriptionCurrency = subscription.currency.trim().uppercase()
+            if (subscriptionCurrency != "EUR") {
+                Timber.i(
+                    "Skipping negotiation for non-EUR subscription %d (%s); market rates are EUR-only",
+                    subscription.id,
+                    subscriptionCurrency
+                )
+                return@forEach
+            }
+
+            val marketRate = findMarketRate(subscription.merchant)
             
             if (marketRate != null) {
                 val currentPrice = subscription.amount
@@ -61,6 +70,15 @@ class SmartBillNegotiationEngine @Inject constructor(
     
     private suspend fun findMarketRate(merchantName: String): MarketRate? {
         val serviceType = detectServiceType(merchantName) ?: return null
+
+        // PR2-FINALGATE: Energy pricing is consumption-based (per-kWh), not a flat monthly
+        // subscription. Comparing monthly bills to per-kWh rates produces fake savings.
+        // Disable energy negotiation until consumption-aware pricing is implemented.
+        if (serviceType == ServiceType.ENERGY) {
+            Timber.i("Energy negotiation skipped for merchant=$merchantName: consumption-aware pricing required")
+            return null
+        }
+
         val providerType = mapServiceTypeToProviderEnum(serviceType)
         val result = try {
             marketRateProvider.getRates(
@@ -128,18 +146,56 @@ class SmartBillNegotiationEngine @Inject constructor(
      * with the most keyword matches wins, rather than first-match-wins.
      */
     private fun detectServiceType(merchantName: String): ServiceType? {
-        val name = merchantName.uppercase()
+        val raw = merchantName.uppercase()
+        val key = providerMatchKey(merchantName)
+
         return when {
-            // MOBILE checked first to avoid misclassifying mobile-specific
-            // entries (e.g. "COSMOTE MOBILE") as INTERNET.
-            name.containsAny("MOBILE", "CELL", "PHONE", "COSMOTE MOBILE", "VODAFONE CU", "WHAT'S UP") -> ServiceType.MOBILE
-            name.containsAny("INTERNET", "FIBER", "VDSL", "BROADBAND", "COSMOTE", "VODAFONE", "WIND", "NOVA") -> ServiceType.INTERNET
-            name.containsAny("NETFLIX", "SPOTIFY", "DISNEY", "HBO", "PRIME", "STREAMING") -> ServiceType.STREAMING
-            name.containsAny("INSURANCE", "ΑΣΦΑΛΕΙΑ", "INSUR", "ASFI") -> ServiceType.INSURANCE
-            name.containsAny("DEI", "EΝΕΡΓΕΙΑ", "ΕΛΠΕΔΙΣΩΝ", "ΗΡΩΝ", "ENERGY", "ELECTRICITY") -> ServiceType.ENERGY
-            name.containsAny("GYM", "FITNESS", "SPORT", "ΓΥΜΝΑΣΤΗΡΙΟ") -> ServiceType.GYM
-            name.containsAny("CLOUD", "STORAGE", "DROPBOX", "GOOGLE", "MICROSOFT", "365") -> ServiceType.SOFTWARE
-            name.containsAny("EYDAP", "WATER", "ΝΕΡΟ", "ΥΔΡΕΥΣΗ", "ΥΔΡΕΥΣΗΣ", "ΕΥΔΑΠ") -> ServiceType.WATER
+            // MOBILE: provider-specific normalized keys + generic raw keywords
+            key.contains("VODAFONECU") ||
+            key.contains("WHATSUP") ||
+            key.contains("COSMOTEMOBILE") ||
+            key.contains("VODAFONEMOBILE") ||
+            raw.contains("MOBILE") ||
+            raw.contains("CELL") ||
+            raw.contains("PHONE") -> ServiceType.MOBILE
+
+            // INTERNET: generic raw keywords + provider-specific normalized keys with internet indicator
+            raw.contains("INTERNET") ||
+            raw.contains("FIBER") ||
+            raw.contains("VDSL") ||
+            raw.contains("BROADBAND") ||
+            key.contains("COSMOTEFIBER") ||
+            key.contains("VODAFONEFIBER") ||
+            key.contains("NOVAFIBER") -> ServiceType.INTERNET
+
+            // STREAMING
+            raw.containsAny("NETFLIX", "SPOTIFY", "DISNEY", "HBO", "PRIME", "STREAMING") -> ServiceType.STREAMING
+
+            // INSURANCE
+            raw.containsAny("INSURANCE", "ΑΣΦΑΛΕΙΑ", "INSUR", "ASFI") -> ServiceType.INSURANCE
+
+            // ENERGY
+            key.contains("DEI") ||
+            key.contains("ΔΕΗ") ||
+            key.contains("ELPEDISON") ||
+            key.contains("HERON") ||
+            raw.contains("ENERGY") ||
+            raw.contains("ELECTRIC") ||
+            raw.contains("ΡΕΥΜΑ") -> ServiceType.ENERGY
+
+            // GYM
+            raw.containsAny("GYM", "FITNESS", "SPORT", "ΓΥΜΝΑΣΤΗΡΙΟ") -> ServiceType.GYM
+
+            // SOFTWARE/CLOUD
+            raw.containsAny("CLOUD", "STORAGE", "DROPBOX", "GOOGLE", "MICROSOFT", "365") -> ServiceType.SOFTWARE
+
+            // WATER
+            key.contains("EYDAP") ||
+            key.contains("ΕΥΔΑΠ") ||
+            raw.contains("WATER") ||
+            raw.contains("ΝΕΡΟ") ||
+            raw.contains("ΥΔΡΕΥΣΗ") -> ServiceType.WATER
+
             else -> null
         }
     }
@@ -474,7 +530,7 @@ class SmartBillNegotiationEngine @Inject constructor(
 
     private fun providerRootMatches(merchantKey: String, quoteKey: String): Boolean {
         val roots = listOf(
-            "COSMOTE", "VODAFONE", "NOVA", "WIND",
+            "COSMOTE", "VODAFONE", "NOVA",
             "DEI", "ΔΕΗ", "EYDAP", "ΕΥΔΑΠ",
             "ELPEDISON", "HERON"
         )
@@ -505,11 +561,12 @@ class SmartBillNegotiationEngine @Inject constructor(
         savings: Double?,
         notes: String?
     ): Result<Unit> {
-        val subscription = recurringExpenseRepository.getById(subscriptionId)
-            ?: return Result.failure(IllegalArgumentException("Subscription not found: $subscriptionId"))
-
         return try {
             writeBarrier.checkWritesAllowed("SmartBillNegotiationEngine.recordNegotiationOutcome")
+
+            val subscription = recurringExpenseRepository.getById(subscriptionId)
+                ?: return Result.failure(IllegalArgumentException("Subscription not found: $subscriptionId"))
+
             validateNegotiationOutcomeInput(
                 outcome = outcome,
                 newPrice = newPrice,
