@@ -1,13 +1,21 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryRef
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
 import com.yourname.expensetracker.domain.analytics.DataQualityReport
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.FailureReason
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.RateBasis
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -101,7 +109,8 @@ class AnalyticsRepository @Inject constructor(
             val previousTotal = previousNormalization.normalizedExpenses.sumOf { it.normalizedEffectiveAmount }
             val transactionCount = currentNormalization.normalizedExpenses.size
 
-            val isPartial = currentNormalization.hasWarnings
+            val aggregate = buildMoneyAggregate(currentNormalization, currentExpenses, homeCurrency)
+            val isPartial = aggregate.isPartial
             val warningMessage = currentNormalization.warnings.firstOrNull()?.message
 
             // ── Daily history from the same normalized expenses ─────────────
@@ -138,7 +147,7 @@ class AnalyticsRepository @Inject constructor(
                 previousDailyHistory = previousDailyHistory.toList(),
                 transactionCount = transactionCount,
                 currency = homeCurrency,
-                aggregate = null,
+                aggregate = aggregate,
                 isPartial = isPartial
             )
             )
@@ -213,6 +222,75 @@ class AnalyticsRepository @Inject constructor(
                 .sortedByDescending { it.total }
             )
         }
+    }
+
+    /**
+     * Builds a [MoneyAggregate] from the normalization result and the original
+     * expense list. Does NOT use [MoneyAggregateBuilder.fromBuckets] because the
+     * expenses are ALREADY converted by [AnalyticsCurrencyNormalizer]; building
+     * the aggregate directly avoids double-conversion.
+     *
+     * @param normalization   The normalizer output (includes converted + excluded expenses).
+     * @param originalExpenses The raw expenses fetched from the DAO (before normalization).
+     * @param homeCurrency    The user's home currency code.
+     */
+    private fun buildMoneyAggregate(
+        normalization: AnalyticsNormalizationResult,
+        originalExpenses: List<Expense>,
+        homeCurrency: String
+    ): MoneyAggregate {
+        // Group normalized expenses by originalCurrency
+        val groupedByCurrency = normalization.normalizedExpenses
+            .groupBy { it.originalCurrency }
+
+        // Build MoneyBucket per original currency with amount = sum of originalEffectiveAmount
+        val sourceBuckets = groupedByCurrency.map { (currency, expenses) ->
+            MoneyBucket(
+                currency = CurrencyCode.parseOr(currency, CurrencyCode.EUR),
+                amount = expenses.sumOf { it.originalEffectiveAmount },
+                transactionCount = expenses.size
+            )
+        }
+
+        // Group excluded expenses by (originalCurrency, failureReason) and sum transactionCount
+        val conversionFailures = normalization.excludedReasons
+            .mapNotNull { (expenseId, reasonPair) ->
+                val originalExpense = originalExpenses.find { it.id == expenseId }
+                val failureReason = when (reasonPair.first) {
+                    AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY -> FailureReason.UNKNOWN
+                    AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE -> FailureReason.MISSING_RATE
+                    AnalyticsConversionWarningType.STALE_EXCHANGE_RATE -> FailureReason.RATE_STALE
+                    else -> FailureReason.UNKNOWN
+                }
+                val originalCurrency = originalExpense?.currency ?: homeCurrency
+                val originalAmount = originalExpense?.effectiveAmount ?: 0.0
+                Triple(originalCurrency, failureReason, originalAmount)
+            }
+            .groupBy { it.first to it.second }
+            .map { (key, entries) ->
+                val (currency, reason) = key
+                val totalAmount = entries.sumOf { it.third }
+                ConversionFailure(
+                    originalAmount = MoneyAmount(totalAmount, CurrencyCode.parseOr(currency, CurrencyCode.EUR)),
+                    targetCurrency = CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR),
+                    reason = reason,
+                    transactionCount = entries.size
+                )
+            }
+
+        // displayAmount = sum of normalizedEffectiveAmount (should equal totalSpent)
+        val displayAmount = normalization.normalizedExpenses.sumOf { it.normalizedEffectiveAmount }
+        val isPartial = normalization.hasWarnings || normalization.excludedCount > 0
+
+        return MoneyAggregate(
+            displayAmount = displayAmount,
+            displayCurrency = CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR),
+            sourceBuckets = sourceBuckets,
+            conversionFailures = conversionFailures,
+            isPartial = isPartial,
+            rateBasis = RateBasis.TRANSACTION_DATE,
+            warningMessage = if (isPartial) normalization.warnings.firstOrNull()?.message else null
+        )
     }
 
     // ── Data quality reporting ────────────────────────────────────────────────

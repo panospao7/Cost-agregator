@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsInputAssembler
 import com.yourname.expensetracker.domain.analytics.BudgetVsActualEngine
 import com.yourname.expensetracker.domain.analytics.DailyBucketEngine
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
+import com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput
 import com.yourname.expensetracker.domain.analytics.TimePeriod
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -84,7 +85,7 @@ class BudgetVsActualFxBasisTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns 1700000000001L
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatternsFromSnapshots(any()) } returns emptyList()
-        coEvery { spendingPersonalityClassifier.classify() } returns com.yourname.expensetracker.domain.analytics.SpendingPersonalityProfile(
+        coEvery { spendingPersonalityClassifier.classify(any<NormalizedAnalyticsInput>()) } returns com.yourname.expensetracker.domain.analytics.SpendingPersonalityProfile(
             personalityType = com.yourname.expensetracker.domain.analytics.SpendingPersonalityType.BALANCED,
             confidence = 0.0,
             featureScores = emptyMap(),
@@ -93,13 +94,13 @@ class BudgetVsActualFxBasisTest : ViewModelTestUtils() {
             lastUpdated = 1700000000001L
         )
         every { locationInsightsEngine.compute(any()) } returns emptyList()
-        every { areaSpendingEngine.compute(any()) } returns emptyList()
-        every { travelDetectionEngine.compute(any()) } returns com.yourname.expensetracker.domain.location.TravelInsight(
+        coEvery { areaSpendingEngine.computeNormalized(any(), any(), any()) } returns emptyList()
+        coEvery { travelDetectionEngine.computeNormalized(any(), any(), any()) } returns com.yourname.expensetracker.domain.location.NormalizedTravelInsight(
             homeLatitude = null,
             homeLongitude = null,
-            homeSpend = 0.0,
-            localSpend = 0.0,
-            travelSpend = 0.0,
+            homeAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR),
+            localAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR),
+            travelAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR),
             travelTrips = emptyList()
         )
 

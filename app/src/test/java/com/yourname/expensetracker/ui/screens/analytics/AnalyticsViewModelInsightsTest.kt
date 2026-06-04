@@ -1,10 +1,13 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.*
@@ -71,7 +74,7 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns 1704067200000L
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatternsFromSnapshots(any()) } returns emptyList()
-        coEvery { spendingPersonalityClassifier.classify() } returns SpendingPersonalityProfile(
+        coEvery { spendingPersonalityClassifier.classify(any<NormalizedAnalyticsInput>()) } returns SpendingPersonalityProfile(
             personalityType = SpendingPersonalityType.BALANCED,
             confidence = 0.0,
             featureScores = emptyMap(),
@@ -80,13 +83,13 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
             lastUpdated = 1704067200000L
         )
         every { locationInsightsEngine.computeNormalized(any()) } returns emptyList()
-        every { areaSpendingEngine.compute(any()) } returns emptyList()
-        every { travelDetectionEngine.compute(any()) } returns com.yourname.expensetracker.domain.location.TravelInsight(
+        coEvery { areaSpendingEngine.computeNormalized(any(), any(), any()) } returns emptyList()
+        coEvery { travelDetectionEngine.computeNormalized(any(), any(), any()) } returns com.yourname.expensetracker.domain.location.NormalizedTravelInsight(
             homeLatitude = null,
             homeLongitude = null,
-            homeSpend = 0.0,
-            localSpend = 0.0,
-            travelSpend = 0.0,
+            homeAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR),
+            localAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR),
+            travelAggregate = com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(com.yourname.expensetracker.domain.core.money.CurrencyCode.EUR),
             travelTrips = emptyList()
         )
 
@@ -343,5 +346,287 @@ class AnalyticsViewModelInsightsTest : ViewModelTestUtils() {
         assertNotNull(result, "Result must not be null when historicalInput is null")
         assertEquals(1, result.totalMonthsOfData, "totalMonthsOfData should only reflect current input expenses")
         assertTrue(result.totalMonthsOfData > 0, "totalMonthsOfData must be positive with current expenses present")
+    }
+
+    // =========================================================================
+    // PR4 — Period-aware behavior tests
+    // =========================================================================
+
+    @Test
+    fun `weekInsightsUseSelectedWeekNotCurrentMonth`() = runTest(testDispatcher) {
+        // Fix "now" to 2024-01-15 12:00 UTC (a Monday)
+        val now = 1705320000000L // 2024-01-15 12:00:00 UTC
+        every { timeProvider.now() } returns now
+
+        // Create two expenses: one OUTSIDE the selected week (prev week, Wed Jan 10)
+        // and one INSIDE the selected week (Tue Jan 16)
+        val outsideWeekExpense = Expense(
+            id = 100L, amount = 25.0, currency = "EUR",
+            merchant = "OutsideWeekMerchant",
+            transactionType = TransactionType.PURCHASE,
+            date = 1704844800000L, // 2024-01-10 00:00 UTC (Wed, previous week)
+            categoryId = 1L
+        )
+        val insideWeekExpense = Expense(
+            id = 200L, amount = 50.0, currency = "EUR",
+            merchant = "InsideWeekMerchant",
+            transactionType = TransactionType.PURCHASE,
+            date = 1705363200000L, // 2024-01-16 00:00 UTC (Tue, selected week)
+            categoryId = 2L
+        )
+        val allExpenses = listOf(outsideWeekExpense, insideWeekExpense)
+
+        // getAllExpenses must emit so the combine flow triggers
+        every { expenseRepository.getAllExpenses() } returns flowOf(allExpenses)
+        // getExpensesBetween returns all expenses regardless of range (we verify via captured period)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns allExpenses
+
+        // Capture the period passed to analyticsInputAssembler.build and echo it back
+        val periodSlot = slot<PeriodRange>()
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), capture(periodSlot), any()) } answers {
+            val capturedPeriod = periodSlot.captured
+            NormalizedAnalyticsInput(
+                period = capturedPeriod,
+                homeCurrency = "EUR",
+                includedExpenses = firstArg<List<Expense>>().map { exp ->
+                    NormalizedExpense(
+                        id = exp.id,
+                        originalAmount = exp.amount,
+                        originalEffectiveAmount = exp.amount,
+                        originalCurrency = exp.currency,
+                        normalizedAmount = exp.amount,
+                        normalizedCurrency = "EUR",
+                        date = exp.date,
+                        merchant = exp.merchant,
+                        merchantKey = null,
+                        categoryId = exp.categoryId,
+                        categoryNameSnapshot = null,
+                        transactionType = "PURCHASE",
+                        isNotMine = false,
+                        isSharedExpense = false,
+                        ownershipMode = null,
+                        source = null
+                    )
+                }
+            )
+        }
+
+        // Select WEEK period
+        viewModel.selectPeriod(com.yourname.expensetracker.domain.analytics.TimePeriod.WEEK)
+
+        // Subscribe to trigger computation
+        val collectJob = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        // Compute the expected week range using the same utility the ViewModel uses
+        val (expectedWeekStart, expectedWeekEnd) = TimePeriodUtils.getWeekRange(now, 0)
+
+        // Verify the insights engine received a NormalizedAnalyticsInput whose period
+        // matches the selected WEEK range (not the full month range)
+        val inputSlot = slot<NormalizedAnalyticsInput>()
+        coVerify {
+            insightsEngine.generateInsights(capture(inputSlot), any(), any<List<AnalyticsCategoryRef>>(), any())
+        }
+
+        val capturedInput = inputSlot.captured
+        val capturedPeriod = capturedInput.period
+        assertNotNull(capturedPeriod, "currentInput.period must not be null")
+        assertEquals(
+            expectedWeekStart, capturedPeriod.startInclusiveMillis,
+            "Period start should match selected week start, not month start"
+        )
+        assertEquals(
+            expectedWeekEnd, capturedPeriod.endExclusiveMillis,
+            "Period end should match selected week end, not month end"
+        )
+        assertEquals(
+            PeriodKind.CUSTOM, capturedPeriod.kind,
+            "ViewModel passes CUSTOM kind for all period types"
+        )
+        assertEquals("WEEK", capturedPeriod.label)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `yearInsightsUseSelectedYearNotCurrentMonth`() = runTest(testDispatcher) {
+        // Fix "now" to 2024-06-15 12:00 UTC
+        val now = 1718452800000L // 2024-06-15 12:00:00 UTC
+        every { timeProvider.now() } returns now
+
+        // Create expenses: one in current month (June) and one earlier in the year (January)
+        val januaryExpense = Expense(
+            id = 300L, amount = 120.0, currency = "EUR",
+            merchant = "JanuaryMerchant",
+            transactionType = TransactionType.PURCHASE,
+            date = 1704067200000L, // 2024-01-01 00:00 UTC
+            categoryId = 1L
+        )
+        val juneExpense = Expense(
+            id = 400L, amount = 80.0, currency = "EUR",
+            merchant = "JuneMerchant",
+            transactionType = TransactionType.PURCHASE,
+            date = 1717200000000L, // 2024-06-01 00:00 UTC
+            categoryId = 2L
+        )
+        val allExpenses = listOf(januaryExpense, juneExpense)
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(allExpenses)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns allExpenses
+
+        val periodSlot = slot<PeriodRange>()
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), capture(periodSlot), any()) } answers {
+            val capturedPeriod = periodSlot.captured
+            NormalizedAnalyticsInput(
+                period = capturedPeriod,
+                homeCurrency = "EUR",
+                includedExpenses = firstArg<List<Expense>>().map { exp ->
+                    NormalizedExpense(
+                        id = exp.id,
+                        originalAmount = exp.amount,
+                        originalEffectiveAmount = exp.amount,
+                        originalCurrency = exp.currency,
+                        normalizedAmount = exp.amount,
+                        normalizedCurrency = "EUR",
+                        date = exp.date,
+                        merchant = exp.merchant,
+                        merchantKey = null,
+                        categoryId = exp.categoryId,
+                        categoryNameSnapshot = null,
+                        transactionType = "PURCHASE",
+                        isNotMine = false,
+                        isSharedExpense = false,
+                        ownershipMode = null,
+                        source = null
+                    )
+                }
+            )
+        }
+
+        // Select YEAR period
+        viewModel.selectPeriod(com.yourname.expensetracker.domain.analytics.TimePeriod.YEAR)
+
+        val collectJob = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        // Compute expected year range
+        val (expectedYearStart, expectedYearEnd) = TimePeriodUtils.getYearRange(now)
+
+        // Verify the input period covers the full year, not just current month
+        val inputSlot = slot<NormalizedAnalyticsInput>()
+        coVerify {
+            insightsEngine.generateInsights(capture(inputSlot), any(), any<List<AnalyticsCategoryRef>>(), any())
+        }
+
+        val capturedInput = inputSlot.captured
+        val capturedPeriod = capturedInput.period
+        assertNotNull(capturedPeriod)
+        assertEquals(
+            expectedYearStart, capturedPeriod.startInclusiveMillis,
+            "Period start should match year start (Jan 1), not current month start"
+        )
+        assertEquals(
+            expectedYearEnd, capturedPeriod.endExclusiveMillis,
+            "Period end should match year end, not current month end"
+        )
+        assertEquals(PeriodKind.CUSTOM, capturedPeriod.kind)
+        assertEquals("YEAR", capturedPeriod.label)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `allInsightsDoNotCollapseToCurrentMonth`() = runTest(testDispatcher) {
+        // Fix "now" to 2024-06-15 12:00 UTC
+        val now = 1718452800000L // 2024-06-15 12:00:00 UTC
+        every { timeProvider.now() } returns now
+
+        // Create expenses spanning multiple years
+        val expense2022 = Expense(
+            id = 500L, amount = 200.0, currency = "EUR",
+            merchant = "OldMerchant2022",
+            transactionType = TransactionType.PURCHASE,
+            date = 1640995200000L, // 2022-01-01 00:00 UTC
+            categoryId = 1L
+        )
+        val expense2023 = Expense(
+            id = 600L, amount = 150.0, currency = "EUR",
+            merchant = "OldMerchant2023",
+            transactionType = TransactionType.PURCHASE,
+            date = 1672531200000L, // 2023-01-01 00:00 UTC
+            categoryId = 2L
+        )
+        val expense2024 = Expense(
+            id = 700L, amount = 90.0, currency = "EUR",
+            merchant = "CurrentMerchant2024",
+            transactionType = TransactionType.PURCHASE,
+            date = 1717200000000L, // 2024-06-01 00:00 UTC
+            categoryId = 3L
+        )
+        val allExpenses = listOf(expense2022, expense2023, expense2024)
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(allExpenses)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns allExpenses
+
+        val periodSlot = slot<PeriodRange>()
+        coEvery { analyticsInputAssembler.build(any<List<Expense>>(), any<String>(), capture(periodSlot), any()) } answers {
+            val capturedPeriod = periodSlot.captured
+            NormalizedAnalyticsInput(
+                period = capturedPeriod,
+                homeCurrency = "EUR",
+                includedExpenses = firstArg<List<Expense>>().map { exp ->
+                    NormalizedExpense(
+                        id = exp.id,
+                        originalAmount = exp.amount,
+                        originalEffectiveAmount = exp.amount,
+                        originalCurrency = exp.currency,
+                        normalizedAmount = exp.amount,
+                        normalizedCurrency = "EUR",
+                        date = exp.date,
+                        merchant = exp.merchant,
+                        merchantKey = null,
+                        categoryId = exp.categoryId,
+                        categoryNameSnapshot = null,
+                        transactionType = "PURCHASE",
+                        isNotMine = false,
+                        isSharedExpense = false,
+                        ownershipMode = null,
+                        source = null
+                    )
+                }
+            )
+        }
+
+        // Select ALL period
+        viewModel.selectPeriod(com.yourname.expensetracker.domain.analytics.TimePeriod.ALL)
+
+        val collectJob = launch { viewModel.state.collect { } }
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        // Verify the input period starts at 0 (epoch), NOT at current month start
+        val inputSlot = slot<NormalizedAnalyticsInput>()
+        coVerify {
+            insightsEngine.generateInsights(capture(inputSlot), any(), any<List<AnalyticsCategoryRef>>(), any())
+        }
+
+        val capturedInput = inputSlot.captured
+        val capturedPeriod = capturedInput.period
+        assertNotNull(capturedPeriod)
+        assertEquals(
+            0L, capturedPeriod.startInclusiveMillis,
+            "ALL period start must be 0 (epoch), not collapsed to current month start"
+        )
+        // End should be "now" (the ViewModel passes `now` for ALL period end)
+        assertEquals(
+            now, capturedPeriod.endExclusiveMillis,
+            "ALL period end should be 'now'"
+        )
+        assertEquals(PeriodKind.CUSTOM, capturedPeriod.kind)
+        assertEquals("ALL", capturedPeriod.label)
+
+        collectJob.cancel()
     }
 }

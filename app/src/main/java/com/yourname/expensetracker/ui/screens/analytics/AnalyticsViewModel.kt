@@ -20,14 +20,14 @@ import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
-import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.AreaSpendingEngine
 import com.yourname.expensetracker.domain.location.ConversionStatus
 import com.yourname.expensetracker.domain.location.LocatedMoneyExpense
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
+import com.yourname.expensetracker.domain.location.NormalizedAreaSpending
+import com.yourname.expensetracker.domain.location.NormalizedTravelInsight
 import com.yourname.expensetracker.domain.location.PlaceInsight
 import com.yourname.expensetracker.domain.location.TravelDetectionEngine
-import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -90,8 +90,8 @@ data class AnalyticsState(
     val currentDateRange: Pair<Long, Long>? = null, // period start/end for filter navigation
     // Location insights (B5, B1, B2)
     val locationInsights: List<PlaceInsight> = emptyList(),
-    val areaSpending: List<AreaSpending> = emptyList(),
-    val travelInsight: TravelInsight? = null,
+    val areaSpending: List<NormalizedAreaSpending> = emptyList(),
+    val travelInsight: NormalizedTravelInsight? = null,
     // F13: Spending Personality Profile
     val personalityProfile: SpendingPersonalityProfile? = null,
     val isLoading: Boolean = true,
@@ -108,7 +108,16 @@ data class AnalyticsState(
     val dataQualityPartial: Boolean = false,
     val referenceNowMillis: Long = 0L
 ) {
-    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(homeCurrency ?: ""))
+    /** PR2: nullable money helper — returns null when homeCurrency is null/blank/invalid */
+    val moneyCurrentTotalOrNull: MoneyAmount? get() {
+        val ccy = homeCurrency?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: return null
+        val currencyCode = CurrencyCode.parse(ccy) ?: return null
+        return MoneyAmount(currentTotal, currencyCode)
+    }
+
+    /** PR2: deprecated unsafe helper — kept for binary compatibility but guarded */
+    @Deprecated("Use moneyCurrentTotalOrNull which handles null/invalid currency safely", ReplaceWith("moneyCurrentTotalOrNull"))
+    val moneyCurrentTotal: MoneyAmount get() = moneyCurrentTotalOrNull ?: MoneyAmount(currentTotal, CurrencyCode.EUR)
 
     /** Universal contract: typed loadable state. */
     val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<AnalyticsState>
@@ -656,7 +665,8 @@ class AnalyticsViewModel @Inject constructor(
                     originalCurrency = normalized.originalCurrency,
                     conversionStatus = if (normalized.rateBasis == "IDENTITY") ConversionStatus.HOME_CURRENCY else ConversionStatus.CONVERTED,
                     merchant = exp.merchant,
-                    date = exp.date
+                    date = exp.date,
+                    resolvedAddress = exp.resolvedAddress
                 )
                 excluded != null -> LocatedMoneyExpense(
                     expenseId = exp.id,
@@ -668,33 +678,16 @@ class AnalyticsViewModel @Inject constructor(
                     originalCurrency = exp.currency,
                     conversionStatus = ConversionStatus.FAILED,
                     merchant = exp.merchant,
-                    date = exp.date
+                    date = exp.date,
+                    resolvedAddress = exp.resolvedAddress
                 )
                 else -> null
             }
         }
 
         val locationInsights = locationInsightsEngine.computeNormalized(locatedMoneyExpenses).take(10)
-        // PR8-FIX: Build a lookup map so we don't do O(n²) firstOrNull inside mapNotNull.
-        val normalizedById = currentInput.includedExpenses.associateBy { it.id }
-        val normalizedPurchases = purchases.mapNotNull { purchase ->
-            val normalized = normalizedById[purchase.id] ?: return@mapNotNull null
-            purchase.copy(
-                amount = normalized.normalizedAmount,
-                currency = homeCurrency,
-                isSharedExpense = false,
-                myShareAmount = null,
-                mySharePercentage = null
-            )
-        }
-        // PR8: These compute() calls use normalizedPurchases which now carries
-        // normalizedAmount in both amount and effectiveAmount. The raw-Double sums
-        // inside AreaSpendingEngine/TravelDetectionEngine are safe for single-currency
-        // normalized data. Future work: migrate to computeNormalized().
-        @Suppress("DEPRECATION")
-        val areaSpending = areaSpendingEngine.compute(normalizedPurchases)
-        @Suppress("DEPRECATION")
-        val travelInsight = travelDetectionEngine.compute(normalizedPurchases)
+        val areaSpending = areaSpendingEngine.computeNormalized(locatedMoneyExpenses, homeCurrency, currencyConverter)
+        val travelInsight = travelDetectionEngine.computeNormalized(locatedMoneyExpenses, homeCurrency, currencyConverter)
 
         // ── F13: Spending Personality Profile ────────────────────────────────
         val personalityProfile = try {

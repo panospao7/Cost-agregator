@@ -187,6 +187,5 @@ class AnalyticsInputAssembler @Inject constructor(
  */
 data class AnalyticsInputOptions(
     val spendingOnly: Boolean = true,
-    val excludeNotMine: Boolean = true,
-    val includeDepositsForBehavior: Boolean = false
+    val excludeNotMine: Boolean = true
 )

@@ -52,8 +52,8 @@ import com.yourname.expensetracker.ui.components.analytics.*
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.analytics.*
-import com.yourname.expensetracker.domain.location.AreaSpending
-import com.yourname.expensetracker.domain.location.TravelInsight
+import com.yourname.expensetracker.domain.location.NormalizedAreaSpending
+import com.yourname.expensetracker.domain.location.NormalizedTravelInsight
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.components.*
@@ -1671,7 +1671,7 @@ fun SuspectTransactionCard(item: SuspectTransaction, homeCurrency: String = item
  * @param homeCurrency ISO-4217 currency code. Callers must pass the actual home currency.
  */
 @Composable
-fun AreaSpendingItem(area: AreaSpending, homeCurrency: String) {
+fun AreaSpendingItem(area: NormalizedAreaSpending, homeCurrency: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1699,7 +1699,7 @@ fun AreaSpendingItem(area: AreaSpending, homeCurrency: String) {
                 )
             }
             Text(
-                CurrencyFormatter.formatMoney(area.totalSpend, homeCurrency),
+                CurrencyFormatter.formatMoney(area.aggregate.displayAmount, homeCurrency),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold
@@ -1713,7 +1713,7 @@ fun AreaSpendingItem(area: AreaSpending, homeCurrency: String) {
  * @param homeCurrency ISO-4217 currency code. Callers must pass the actual home currency.
  */
 @Composable
-fun TravelInsightCard(travel: TravelInsight, homeCurrency: String) {
+fun TravelInsightCard(travel: NormalizedTravelInsight, homeCurrency: String) {
     val totalSpend = travel.homeSpend + travel.localSpend + travel.travelSpend
 
     BentoCard {

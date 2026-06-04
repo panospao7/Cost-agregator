@@ -113,7 +113,7 @@
 | A12 | P1 | Merchant anomaly limited history in normal path | Bug | Merchant anomaly/history dedicated lookback comment documented | ✅ FIXED |
 | A13 | P1 | Spending pace period wrong for historical | Bug | SpendingPaceCalculator.calculate() gains referenceNowMs parameter; historical periods use period end | ✅ FIXED |
 | A14 | P1 | Location analytics raw DAO path | Bug | new computeNormalized() uses MoneyAggregate; old compute() path still raw-sums — partial fix | ✅ FIXED |
-| A15 | P1 | Category deletion/history weak | Enhancement | categoryNameSnapshot populated from CategoryRepository in AnalyticsInputAssembler; deleted categories preserve historical names | ✅ FIXED |
+| A15 | P1 | Category deletion/history weak | Enhancement | categoryNameSnapshot populated but sourced from current category table; deleted/renamed categories still distort history. Soft-delete (isArchived) designed and deferred. See docs/architecture/HISTORICAL_CATEGORY_IDENTITY_PLAN.md | ⏭ DEFERRED |
 | A16 | P1 | Analytics recomputes too much | Enhancement | AnalyticsViewModel no longer duplicates normalization — uses AnalyticsInputAssembler; BudgetVsActualEngine extracted from ViewModel | ✅ FIXED |
 | A17 | P1 | Analytics engines Calendar→java.time migration | Enhancement | analytics engines annotated for Calendar→java.time migration (9 sites across 5 files) | ✅ FIXED |
 | A18 | P1 | SpendingPersonalityClassifier java.time migration | Enhancement | SpendingPersonalityClassifier switched to java.time classify(NormalizedAnalyticsInput) called from ViewModel | ✅ FIXED |
@@ -226,10 +226,10 @@ All items from the original Quick Wins list have been resolved:
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 84 |
+| ✅ FIXED | 83 |
 | ⚠ PARTIAL | 8 |
 | 📝 TODO ONLY | 11 |
-| ⏭ DEFERRED | 11 |
+| ⏭ DEFERRED | 12 |
 | ⏭ DEFERRED_DESIGN | 2 |
 | ⬜ NOT STARTED | 0 |
 

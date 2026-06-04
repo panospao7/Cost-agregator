@@ -94,7 +94,7 @@ class DeprecatedApiArchitectureGuardTest {
         assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
         val violations = mutableListOf<String>()
         allKtFiles(sourceRoot).forEach { file ->
-            if (file.name == "AreaSpendingEngine.kt" || file.name == "AnalyticsViewModel.kt") return@forEach
+            if (file.name == "AreaSpendingEngine.kt") return@forEach
             val content = file.readText()
             val regex = Regex("areaSpendingEngine\\.compute\\(")
             val matches = regex.findAll(content).toList()
@@ -112,7 +112,7 @@ class DeprecatedApiArchitectureGuardTest {
         assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
         val violations = mutableListOf<String>()
         allKtFiles(sourceRoot).forEach { file ->
-            if (file.name == "TravelDetectionEngine.kt" || file.name == "AnalyticsViewModel.kt") return@forEach
+            if (file.name == "TravelDetectionEngine.kt") return@forEach
             val content = file.readText()
             val regex = Regex("travelDetectionEngine\\.compute\\(")
             val matches = regex.findAll(content).toList()
@@ -270,6 +270,33 @@ class DeprecatedApiArchitectureGuardTest {
         }
         if (violations.isNotEmpty()) {
             fail("PR8: insightsEngine.getLegacyInsights() called from unexpected production code:\n${violations.joinToString("\n")}")
+        }
+    }
+
+    // ── PR6: SpendingPersonalityClassifier raw classify() guard ─────────────
+
+    /**
+     * PR6-GUARDRAIL: spendingPersonalityClassifier.classify() (no-arg) is the
+     * deprecated raw self-fetching overload. It must not be called from unexpected
+     * production code. Allowlisted in SpendingPersonalityClassifier.kt (defining
+     * file) only.
+     */
+    @Test
+    fun noProductionCallToRawSpendingPersonalityClassify() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            if (file.name == "SpendingPersonalityClassifier.kt") return@forEach
+            val content = file.readText()
+            // Match "classify()" but not "classify(input" or "classify(Normalized"
+            val regex = Regex("spendingPersonalityClassifier\\.classify\\s*\\(\\s*\\)")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} call(s) to raw classify()")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("W30: raw classify() called from unexpected production code:\n${violations.joinToString("\n")}")
         }
     }
 }

@@ -27,8 +27,11 @@ import com.yourname.expensetracker.domain.analytics.MonthlyComparisonCalculator
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.SpendingPersonalityClassifier
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.location.AreaSpendingEngine
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
+import com.yourname.expensetracker.domain.location.NormalizedTravelInsight
 import com.yourname.expensetracker.domain.location.TravelDetectionEngine
 import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
@@ -109,13 +112,13 @@ internal fun buildPipeline(
 
     coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
     every { locationInsightsEngine.compute(any()) } returns emptyList()
-    every { areaSpendingEngine.compute(any()) } returns emptyList()
-    every { travelDetectionEngine.compute(any()) } returns TravelInsight(
+    coEvery { areaSpendingEngine.computeNormalized(any(), any(), any()) } returns emptyList()
+    coEvery { travelDetectionEngine.computeNormalized(any(), any(), any()) } returns NormalizedTravelInsight(
         homeLatitude = null,
         homeLongitude = null,
-        homeSpend = 0.0,
-        localSpend = 0.0,
-        travelSpend = 0.0,
+        homeAggregate = MoneyAggregate.empty(CurrencyCode.EUR),
+        localAggregate = MoneyAggregate.empty(CurrencyCode.EUR),
+        travelAggregate = MoneyAggregate.empty(CurrencyCode.EUR),
         travelTrips = emptyList()
     )
 

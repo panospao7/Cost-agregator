@@ -14,7 +14,8 @@ data class LocatedMoneyExpense(
     val originalCurrency: String,    // expense's currency
     val conversionStatus: ConversionStatus,
     val merchant: String,
-    val date: Long
+    val date: Long,
+    val resolvedAddress: String? = null  // PR3: resolved address from geocoding backfill
 )
 
 enum class ConversionStatus {

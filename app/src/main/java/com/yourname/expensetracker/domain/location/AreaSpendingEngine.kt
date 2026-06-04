@@ -30,6 +30,26 @@ data class AreaSpending(
 )
 
 /**
+ * Currency-safe version of [AreaSpending] using [MoneyAggregate] for multi-currency safety.
+ */
+data class NormalizedAreaSpending(
+    /** Human-readable area name (e.g. "Γλυφάδα" or "Glyfada"). */
+    val areaName: String,
+    /** Aggregate total for this area (multi-currency safe). */
+    val aggregate: MoneyAggregate,
+    /** Number of individual transactions in this area. */
+    val transactionCount: Int,
+    /** Average transaction amount derived from aggregate. */
+    val avgTransaction: Double,
+    /** Representative latitude of the area centroid. */
+    val latitude: Double,
+    /** Representative longitude of the area centroid. */
+    val longitude: Double,
+    /** Display currency for the aggregate. */
+    val displayCurrency: String
+)
+
+/**
  * Domain-layer engine that builds [AreaSpending]s from located expenses.
  *
  * Area naming strategy:
@@ -134,40 +154,89 @@ class AreaSpendingEngine @Inject constructor() {
      *
      * Groups expenses by grid cell (~1 km) and builds a [MoneyAggregate] per cell
      * via [MoneyAggregateBuilder.fromBuckets]. Skips expenses with failed conversion.
-     * Results use grid-cell coordinate keys since [LocatedMoneyExpense] does not
-     * carry a resolved address for human-readable area names.
+     * Cells sharing the same parsed area name are merged together.
+     * Results are sorted by aggregate display amount descending.
      *
      * @param expenses  Located expenses (caller must ensure they are pre-filtered
      *                  to spending-only transaction types).
      * @param homeCurrency  User's home currency code (e.g. "EUR").
      * @param converter  CurrencyConverter for multi-currency aggregation.
-     * @return Map of grid-cell label → [MoneyAggregate] for that area.
+     * @return List of [NormalizedAreaSpending] sorted by total descending.
      */
     suspend fun computeNormalized(
         expenses: List<LocatedMoneyExpense>,
         homeCurrency: String,
         converter: CurrencyConverter
-    ): Map<String, MoneyAggregate> {
+    ): List<NormalizedAreaSpending> {
         val validExpenses = expenses.filter {
             it.conversionStatus == ConversionStatus.HOME_CURRENCY ||
             it.conversionStatus == ConversionStatus.CONVERTED
         }
-        if (validExpenses.isEmpty()) return emptyMap()
+        if (validExpenses.isEmpty()) return emptyList()
 
-        val byCell = HashMap<GridCell, MutableList<LocatedMoneyExpense>>()
+        // ── 1. Group by grid cell, collecting area name candidates ──────────
+        val cells = HashMap<GridCell, Accumulator>()
+
         for (expense in validExpenses) {
+            val areaName = parseAreaName(expense.resolvedAddress ?: "")
             val latBucket = (expense.latitude / GRID_DEG).toLong()
             val lonBucket = (expense.longitude / GRID_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)
-            byCell.getOrPut(cell) { mutableListOf() }.add(expense)
+
+            val acc = cells.getOrPut(cell) { Accumulator() }
+            acc.count += 1
+            acc.latSum += expense.latitude
+            acc.lonSum += expense.longitude
+            val stats = acc.areaCandidates.getOrPut(areaName) { AreaNameStats() }
+            stats.count += 1
         }
 
-        return byCell.mapValues { (cell, cellExpenses) ->
-            val buckets = cellExpenses.map { exp ->
-                Pair(exp.normalizedAmount ?: exp.originalAmount, exp.normalizedCurrency)
+        // ── 2. Merge cells sharing the same area name ──────────────────────
+        // Also build MoneyAggregate per grouped area
+        data class AreaAccum(
+            val expenses: MutableList<LocatedMoneyExpense> = mutableListOf(),
+            var latSum: Double = 0.0,
+            var lonSum: Double = 0.0
+        )
+
+        val byArea = HashMap<String, AreaAccum>()
+        for ((cell, acc) in cells) {
+            val resolvedAreaName = selectRepresentativeAreaName(acc.areaCandidates)
+            val existing = byArea.getOrPut(resolvedAreaName) { AreaAccum() }
+            existing.latSum += acc.latSum
+            existing.lonSum += acc.lonSum
+            // Collect all expenses from this cell
+            val cellExpenses = validExpenses.filter { exp ->
+                val latBucket = (exp.latitude / GRID_DEG).toLong()
+                val lonBucket = (exp.longitude / GRID_DEG).toLong()
+                GridCell(latBucket, lonBucket) == cell
             }
-            MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, converter)
-        }.mapKeys { "${it.key.latBucket}_${it.key.lonBucket}" }
+            existing.expenses.addAll(cellExpenses)
+        }
+
+        // ── 3. Build NormalizedAreaSpending for each area ──────────────────
+        return byArea.entries.map { (areaName, areaAcc) ->
+            val aggregate = MoneyAggregateBuilder.fromBuckets(
+                areaAcc.expenses.map { exp ->
+                    Pair(exp.normalizedAmount ?: exp.originalAmount, exp.normalizedCurrency)
+                },
+                homeCurrency,
+                converter
+            )
+            val transactionCount = areaAcc.expenses.size
+            val avgTransaction = if (transactionCount > 0) aggregate.displayAmount / transactionCount else 0.0
+            NormalizedAreaSpending(
+                areaName = areaName,
+                aggregate = aggregate,
+                transactionCount = transactionCount,
+                avgTransaction = avgTransaction,
+                latitude = areaAcc.latSum / transactionCount,
+                longitude = areaAcc.lonSum / transactionCount,
+                displayCurrency = homeCurrency
+            )
+        }
+            .filter { it.areaName.isNotBlank() }
+            .sortedByDescending { it.aggregate.displayAmount }
     }
 
     /**

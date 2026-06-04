@@ -49,9 +49,12 @@ data class NormalizedTravelTrip(
     val aggregate: MoneyAggregate,
     /** Number of transactions during this trip. */
     val transactionCount: Int,
-    /** Representative destination hint for the trip (derived from merchant name). */
+    /** Representative destination hint for the trip (derived from resolved address). */
     val destinationHint: String?
-)
+) {
+    /** Convenience accessor for aggregate display amount. */
+    val totalSpend: Double get() = aggregate.displayAmount
+}
 
 /** Currency-safe version of [TravelInsight] using [MoneyAggregate] for all spend totals. */
 data class NormalizedTravelInsight(
@@ -67,7 +70,14 @@ data class NormalizedTravelInsight(
     val travelAggregate: MoneyAggregate,
     /** Number of distinct inferred trips with per-trip [MoneyAggregate]. */
     val travelTrips: List<NormalizedTravelTrip>
-)
+) {
+    /** Convenience accessor for home aggregate display amount. */
+    val homeSpend: Double get() = homeAggregate.displayAmount
+    /** Convenience accessor for local aggregate display amount. */
+    val localSpend: Double get() = localAggregate.displayAmount
+    /** Convenience accessor for travel aggregate display amount. */
+    val travelSpend: Double get() = travelAggregate.displayAmount
+}
 
 /**
  * Domain-layer engine that detects home area and travel patterns from located expenses.
@@ -314,7 +324,7 @@ class TravelDetectionEngine @Inject constructor() {
         var tripStart = sorted[0].date
         var tripEnd = sorted[0].date
         var tripExpenses = mutableListOf(sorted[0])
-        var tripDest: String? = sorted[0].merchant.takeIf { it.isNotBlank() }
+        var tripDest: String? = parseDestinationHint(sorted[0].resolvedAddress)
 
         for (i in 1 until sorted.size) {
             val exp = sorted[i]
@@ -323,7 +333,7 @@ class TravelDetectionEngine @Inject constructor() {
                 tripEnd = exp.date
                 tripExpenses.add(exp)
                 if (tripDest == null) {
-                    tripDest = exp.merchant.takeIf { it.isNotBlank() }
+                    tripDest = parseDestinationHint(exp.resolvedAddress)
                 }
             } else {
                 // Save previous trip and start a new one
@@ -339,7 +349,7 @@ class TravelDetectionEngine @Inject constructor() {
                 tripStart = exp.date
                 tripEnd = exp.date
                 tripExpenses = mutableListOf(exp)
-                tripDest = exp.merchant.takeIf { it.isNotBlank() }
+                tripDest = parseDestinationHint(exp.resolvedAddress)
             }
         }
         // Flush last trip
@@ -365,7 +375,7 @@ class TravelDetectionEngine @Inject constructor() {
         homeCurrency: String,
         converter: CurrencyConverter
     ): MoneyAggregate {
-        if (expenses.isEmpty()) return MoneyAggregate.empty(CurrencyCode(homeCurrency))
+        if (expenses.isEmpty()) return MoneyAggregate.empty(CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR))
         val buckets = expenses.map { Pair(it.normalizedAmount ?: it.originalAmount, it.normalizedCurrency) }
         return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, converter)
     }

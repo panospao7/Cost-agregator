@@ -71,9 +71,14 @@ class SpendingPersonalityClassifier @Inject constructor(
     }
 
     /**
-     * Classify user's spending personality based on behavior patterns.
-     * Analyzes the last 3 months of data to determine personality type.
+     * PR8-GUARDRAIL: Raw self-fetching path. Use classify(NormalizedAnalyticsInput) in production.
+     * This path remains for backward compatibility and tests only.
      */
+    @Deprecated(
+        message = "Use classify(NormalizedAnalyticsInput) for normalized, currency-safe personality classification",
+        replaceWith = ReplaceWith("classify(input)", "com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput"),
+        level = DeprecationLevel.WARNING
+    )
     suspend fun classify(): SpendingPersonalityProfile = withContext(Dispatchers.Default) {
         val now = timeProvider.now()
         val analysisStartMs = TimePeriodUtils.addMonths(now, -ANALYSIS_MONTHS)
@@ -560,6 +565,16 @@ class SpendingPersonalityClassifier @Inject constructor(
 
     /**
      * A05-FIXED: Classify personality from pre-normalized [NormalizedAnalyticsInput].
+     *
+     * PR6-CAVEAT: Known behavioral differences vs raw path:
+     * - budgetAdherence is neutralized at 0.5 because NormalizedAnalyticsInput
+     *   does not carry budget data.
+     * - weekendSpendShare and nightSpendShare are count-based (weekend tx count /
+     *   total tx count) rather than spend-weighted (weekend spend / total spend).
+     * - impulseRatio only detects DEPOSIT income events, not INCOMING transfers.
+     *
+     * These differences affect the feature vector but prevent raw-Double
+     * mixed-currency summing. The normalized path is currency-safe.
      *
      * Uses [input.includedExpenses] (already converted to home currency) instead of
      * querying raw snapshots directly. The dataQuality flag reduces confidence when
