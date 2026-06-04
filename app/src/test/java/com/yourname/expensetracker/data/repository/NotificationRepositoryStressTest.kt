@@ -65,6 +65,7 @@ class NotificationRepositoryStressTest {
             classifier,
             pipeline,
             mockk(relaxed = true),
+            mockk(relaxed = true),
             mockk(relaxed = true)
         )
     }

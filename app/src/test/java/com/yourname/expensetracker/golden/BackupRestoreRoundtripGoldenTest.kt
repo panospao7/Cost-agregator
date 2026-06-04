@@ -53,7 +53,8 @@ class BackupRestoreRoundtripGoldenTest : GoldenTestBase() {
             expenseDao = database.expenseDao(),
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
-            currencySettingsRepository = currencySettings
+            currencySettingsRepository = currencySettings,
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
         )
     }
 

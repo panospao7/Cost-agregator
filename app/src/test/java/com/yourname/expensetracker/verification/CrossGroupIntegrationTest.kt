@@ -147,6 +147,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             currencyConverter = testCurrencyConverter(),
             timeProvider = timeProvider,
             currencySettingsRepository = TestCurrencySettingsRepository(),
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
             normalizationEngine = com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(testCurrencyConverter())
         )
         totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, mcRepository, mockk(relaxed = true), Dispatchers.Unconfined)

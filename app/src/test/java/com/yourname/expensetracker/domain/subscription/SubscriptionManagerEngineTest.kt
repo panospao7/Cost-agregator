@@ -141,11 +141,7 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `validateAndCreate normalizes lowercase currency`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         coEvery { recurringExpenseRepository.insert(any()) } returns 1L
 
@@ -174,7 +170,7 @@ class SubscriptionManagerEngineTest {
             frequency = RecurrenceFrequency.MONTHLY,
             startDate = 1_000_000L
         )
-        val ex = assertThrows<IllegalArgumentException> {
+        val ex = assertFailsWith<IllegalArgumentException> {
             runBlocking { engine.validateAndCreate(request) }
         }
         assertTrue(ex.message?.contains("Merchant is required") == true)
@@ -198,11 +194,7 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `validateAndCreate succeeds with valid input`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         coEvery { recurringExpenseRepository.insert(any()) } returns 1L
 
@@ -294,11 +286,7 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `acceptCandidate succeeds with valid candidate`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         coEvery { recurringExpenseRepository.insert(any()) } returns 5L
 
@@ -361,11 +349,7 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `recordPriceChange preserves subscription currency in price history`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         val subscription = ManualRecurringExpense(
             id = 10,
@@ -392,11 +376,7 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `recordPriceChange succeeds with valid amount`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         val subscription = ManualRecurringExpense(
             id = 20,
@@ -454,7 +434,7 @@ class SubscriptionManagerEngineTest {
         }
         coEvery { priceHistoryDao.getLatestPrice(any()) } returns null
         coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
-        coEvery { priceHistoryDao.insert(any()) } returns Unit
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
         coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         val engine = createEngine()

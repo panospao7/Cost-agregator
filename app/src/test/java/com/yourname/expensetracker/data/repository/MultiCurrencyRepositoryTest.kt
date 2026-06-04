@@ -47,7 +47,7 @@ class MultiCurrencyRepositoryTest {
     @Before
     fun setUp() {
         every { timeProvider.now() } returns millis(2026, 4, 15)
-        repository = MultiCurrencyRepository(expenseDao, currencyConverter, timeProvider, currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true))
+        repository = MultiCurrencyRepository(expenseDao, currencyConverter, timeProvider, currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true), applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined))
     }
 
     // ── getMonthlyTotalsInHomeCurrency ─────────────────────────────────────

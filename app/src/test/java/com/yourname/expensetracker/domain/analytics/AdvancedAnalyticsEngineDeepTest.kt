@@ -231,6 +231,7 @@ class AdvancedAnalyticsEngineDeepTest {
         assertTrue((patterns.timeOfDayDistribution[TimeSlot.NIGHT] ?: 0.0) > 0)
     }
 
+    @Suppress("DEPRECATION_ERROR")
     @Test
     fun `merchant analytics computes visit frequency average days between and loyalty score`() = runTest {
         val period = AnalyticsPeriodRange(AnalyticsPeriod.YEAR, dateMs(2025, 5, 1), dateMs(2026, 5, 1), "year", null)
@@ -251,6 +252,7 @@ class AdvancedAnalyticsEngineDeepTest {
         assertApproxEquals(85f, merchant.loyaltyScore, 0.1f)
     }
 
+    @Suppress("DEPRECATION_ERROR")
     @Test
     fun `merchant analytics canonicalizes aliases and caps history at period end`() = runTest {
         val period = AnalyticsPeriodRange(AnalyticsPeriod.MONTH, dateMs(2026, 4, 1), dateMs(2026, 5, 1), "Apr", null)

@@ -42,11 +42,7 @@ class GroupsRepositoryImplTest {
 
     @Before
     fun setUp() {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         repository = GroupsRepositoryImpl(
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),

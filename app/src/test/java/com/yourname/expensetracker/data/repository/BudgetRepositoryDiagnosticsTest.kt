@@ -87,12 +87,7 @@ class BudgetRepositoryDiagnosticsTest {
             listOf(CurrencyTotal("EUR", 0.0, 0))
         every { timeProvider.now() } returns 1_000_000L
 
-        // Run Room withTransaction inline on the test coroutine.
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         emitted.clear()
         coEvery { diagnosticEventWriter.emit(capture(emitted)) } returns Unit
@@ -101,7 +96,8 @@ class BudgetRepositoryDiagnosticsTest {
             expenseDao = expenseDao,
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
         )
 
         repository = BudgetRepository(

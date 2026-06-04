@@ -101,9 +101,13 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
                 effectiveAmount = 50.0,
                 currency = "EUR",
                 merchant = "Test",
+                merchantKey = null,
                 transactionType = DomainTransactionType.PURCHASE,
                 date = currentMonthStart + 86_400_000L, // day 2
-                isNotMine = false
+                categoryId = null,
+                isNotMine = false,
+                transferDirection = null,
+                notes = null
             )
         )
 
@@ -141,15 +145,17 @@ class P6BudgetCleanupTest : AnalyticsEngineTestBase() {
         val deposits = listOf(
             ExpenseSnapshot(
                 id = 1L, amount = 1000.0, effectiveAmount = 1000.0,
-                currency = "EUR", merchant = "Salary",
+                currency = "EUR", merchant = "Salary", merchantKey = null,
                 transactionType = DomainTransactionType.DEPOSIT,
-                date = twoMonthsAgo, isNotMine = false
+                date = twoMonthsAgo, categoryId = null, isNotMine = false,
+                transferDirection = null, notes = null
             ),
             ExpenseSnapshot(
                 id = 2L, amount = 1000.0, effectiveAmount = 1000.0,
-                currency = "EUR", merchant = "Salary",
+                currency = "EUR", merchant = "Salary", merchantKey = null,
                 transactionType = DomainTransactionType.DEPOSIT,
-                date = now, isNotMine = false
+                date = now, categoryId = null, isNotMine = false,
+                transferDirection = null, notes = null
             )
         )
 

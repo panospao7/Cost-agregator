@@ -97,20 +97,13 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         every { insightsEngine.getLegacyInsights(any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
         val now = System.currentTimeMillis()
-        every { advancedAnalyticsEngine.getPeriodRange(any(), any(), any()) } returns com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange(
-            period = com.yourname.expensetracker.domain.analytics.AnalyticsPeriod.MONTH,
-            startMs = now - 30L * 24 * 60 * 60 * 1000,
-            endMs = now,
-            label = "Test",
-            comparisonRange = null
-        )
         coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any()) } returns Pair(emptyList(), emptyList())
         val merchantAnalyticsResult: Pair<List<com.yourname.expensetracker.domain.analytics.EnhancedMerchantAnalytics>, List<com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning>> = Pair(emptyList(), emptyList())
         coEvery { advancedAnalyticsEngine.getMerchantAnalytics(any<com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput>(), any<com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput>(), any()) } returns merchantAnalyticsResult
         val spendingPatternResult: Pair<com.yourname.expensetracker.domain.analytics.SpendingPatternAnalysis, List<com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning>> = Pair(mockk(relaxed = true), emptyList())
-        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any(), any()) } answers { spendingPatternResult }
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any<com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput>()) } answers { spendingPatternResult }
         val statisticalInsightsResult: Pair<com.yourname.expensetracker.domain.analytics.StatisticalInsights, List<com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning>> = Pair(mockk(relaxed = true), emptyList())
-        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any(), any()) } answers { statisticalInsightsResult }
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any<com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput>()) } answers { statisticalInsightsResult }
         every { locationInsightsEngine.compute(any()) } returns emptyList()
         every { areaSpendingEngine.compute(any()) } returns emptyList()
         every { travelDetectionEngine.compute(any()) } returns com.yourname.expensetracker.domain.location.TravelInsight(

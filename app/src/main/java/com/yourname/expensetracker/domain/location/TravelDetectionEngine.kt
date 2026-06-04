@@ -85,6 +85,12 @@ data class NormalizedTravelInsight(
 @Singleton
 class TravelDetectionEngine @Inject constructor() {
 
+    /**
+     * PR8-GUARDRAIL: Raw-Double sums without MoneyAggregate safety.
+     * If [expenses] contains mixed currencies, home/travel/local totals will be silently incorrect.
+     * Only safe when caller has pre-normalized all amounts to the same currency.
+     * Preferred: [computeNormalized] with [LocatedMoneyExpense] and a [CurrencyConverter].
+     */
     @Deprecated(
         message = "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
         replaceWith = ReplaceWith(

@@ -86,7 +86,8 @@ class BudgetRepositoryTruncationTest {
             expenseDao = expenseDao,
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
         )
 
         repository = BudgetRepository(

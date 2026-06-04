@@ -124,4 +124,152 @@ class DeprecatedApiArchitectureGuardTest {
             fail("W29: travelDetectionEngine.compute() called from unexpected production code:\n${violations.joinToString("\n")}")
         }
     }
+
+    // ── PR8: AdvancedAnalyticsEngine self-fetching overload guards ─────────
+
+    /**
+     * PR8-GUARDRAIL: getCategoryAnalytics(period, displayCurrency) is the deprecated
+     * self-fetching overload. It is allowlisted in HomeViewModel (category trends)
+     * and AnalyticsViewModel (safe NormalizedAnalyticsInput overload at lines 576-579).
+     * NOTE: This regex matches both overloads; the allowlist must include all callers.
+     */
+    @Test
+    fun advancedCategoryAnalytics_onlyCalledFromHomeViewModel() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            if (file.name == "AdvancedAnalyticsEngine.kt" || file.name == "HomeViewModel.kt" || file.name == "AnalyticsViewModel.kt") return@forEach
+            val content = file.readText()
+            val regex = Regex("advancedAnalyticsEngine\\.getCategoryAnalytics\\(")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} call(s) to advancedAnalyticsEngine.getCategoryAnalytics()")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("PR8: advancedAnalyticsEngine.getCategoryAnalytics() called from unexpected production code:\n${violations.joinToString("\n")}")
+        }
+    }
+
+    /**
+     * PR8-GUARDRAIL: getMerchantAnalytics(period, displayCurrency, limit) is the deprecated
+     * self-fetching overload. It has no production callers; any new caller must be reviewed and
+     * allowlisted.
+     * NOTE: This regex matches both the deprecated self-fetching overload and the safe
+     * NormalizedAnalyticsInput overload; the allowlist must include all callers.
+     */
+    @Test
+    fun advancedMerchantAnalytics_noProductionCallers() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            if (file.name == "AdvancedAnalyticsEngine.kt" || file.name == "AnalyticsViewModel.kt") return@forEach
+            val content = file.readText()
+            val regex = Regex("advancedAnalyticsEngine\\.getMerchantAnalytics\\(")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} call(s) to advancedAnalyticsEngine.getMerchantAnalytics()")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("PR8: advancedAnalyticsEngine.getMerchantAnalytics() called from unexpected production code:\n${violations.joinToString("\n")}")
+        }
+    }
+
+    /**
+     * PR8-GUARDRAIL: getSpendingPatterns(period, displayCurrency) is the deprecated
+     * self-fetching overload. It has no production callers; any new caller must be reviewed and
+     * allowlisted.
+     * NOTE: This regex matches both the deprecated self-fetching overload and the safe
+     * NormalizedAnalyticsInput overload; the allowlist must include all callers.
+     */
+    @Test
+    fun advancedSpendingPatterns_noProductionCallers() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            if (file.name == "AdvancedAnalyticsEngine.kt" || file.name == "AnalyticsViewModel.kt") return@forEach
+            val content = file.readText()
+            val regex = Regex("advancedAnalyticsEngine\\.getSpendingPatterns\\(")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} call(s) to advancedAnalyticsEngine.getSpendingPatterns()")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("PR8: advancedAnalyticsEngine.getSpendingPatterns() called from unexpected production code:\n${violations.joinToString("\n")}")
+        }
+    }
+
+    /**
+     * PR8-GUARDRAIL: getStatisticalInsights(period, displayCurrency) is the deprecated
+     * self-fetching overload. It has no production callers; any new caller must be reviewed and
+     * allowlisted.
+     * NOTE: This regex matches both the deprecated self-fetching overload and the safe
+     * NormalizedAnalyticsInput overload; the allowlist must include all callers.
+     */
+    @Test
+    fun advancedStatisticalInsights_noProductionCallers() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            if (file.name == "AdvancedAnalyticsEngine.kt" || file.name == "AnalyticsViewModel.kt") return@forEach
+            val content = file.readText()
+            val regex = Regex("advancedAnalyticsEngine\\.getStatisticalInsights\\(")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} call(s) to advancedAnalyticsEngine.getStatisticalInsights()")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("PR8: advancedAnalyticsEngine.getStatisticalInsights() called from unexpected production code:\n${violations.joinToString("\n")}")
+        }
+    }
+
+    /**
+     * PR8-GUARDRAIL: AdvancedAnalyticsDashboard.generateDashboardData() self-fetches
+     * raw expenses and bypasses NormalizedAnalyticsInput. Allowlisted in
+     * AdvancedAnalyticsViewModel only.
+     */
+    @Test
+    fun generateDashboardData_onlyCalledFromAdvancedAnalyticsViewModel() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            if (file.name == "AdvancedAnalyticsDashboard.kt" || file.name == "AdvancedAnalyticsViewModel.kt") return@forEach
+            val content = file.readText()
+            val regex = Regex("generateDashboardData\\(")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} call(s) to generateDashboardData()")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("PR8: generateDashboardData() called from unexpected production code:\n${violations.joinToString("\n")}")
+        }
+    }
+
+    /**
+     * PR8-GUARDRAIL: insightsEngine.getLegacyInsights() is a deprecated
+     * WARNING-level convenience wrapper that bypasses NormalizedAnalyticsInput.
+     * This regex matches only this method name. Allowlisted in the defining
+     * file (InsightsEngine.kt) and the sole production caller (AnalyticsViewModel.kt).
+     */
+    @Test
+    fun legacyInsights_onlyCalledFromAnalyticsViewModel() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            if (file.name == "InsightsEngine.kt" || file.name == "AnalyticsViewModel.kt") return@forEach
+            val content = file.readText()
+            val regex = Regex("insightsEngine\\.getLegacyInsights\\(")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} call(s) to insightsEngine.getLegacyInsights()")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("PR8: insightsEngine.getLegacyInsights() called from unexpected production code:\n${violations.joinToString("\n")}")
+        }
+    }
 }

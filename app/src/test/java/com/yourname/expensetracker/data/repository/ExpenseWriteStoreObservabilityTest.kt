@@ -77,12 +77,7 @@ class ExpenseWriteStoreObservabilityTest {
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
-        // Mock withTransaction to execute block directly
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val dbBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(dbBlock)) } coAnswers {
-            dbBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         coordinator = TransactionLifecycleCoordinator(
             database = database,

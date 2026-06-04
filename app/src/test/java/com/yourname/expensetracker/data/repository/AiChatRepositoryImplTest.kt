@@ -47,11 +47,7 @@ class AiChatRepositoryImplTest {
         aiSettingsRepository = mockk()
         fakeTimeProvider = FakeTimeProvider(1_000L)
 
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         val redactor = mockk<CloudPayloadRedactor>(relaxed = true)
         every { redactor.redactText(any(), any()) } answers {
@@ -63,7 +59,7 @@ class AiChatRepositoryImplTest {
 
     @After
     fun tearDown() {
-        unmockkStatic("androidx.room.RoomDatabaseKt")
+        // withTransaction inline mock removed — no static mock to clear
     }
 
     @Test

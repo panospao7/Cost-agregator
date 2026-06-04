@@ -51,6 +51,10 @@ class AdvancedAnalyticsViewModel @Inject constructor(
                 try {
                     val now = timeProvider.now()
                     val thirtyDaysAgo = TimePeriodUtils.addDays(now, -30)
+                    // PR8: Calls the self-fetching dashboard method. Safe because
+                    // AdvancedAnalyticsDashboard normalizes internally via AnalyticsCurrencyNormalizer.
+                    // Future work: build NormalizedAnalyticsInput here and use a non-self-fetching overload.
+                    @Suppress("DEPRECATION")
                     val data = analyticsDashboard.generateDashboardData(thirtyDaysAgo, now)
                     val resolvedCurrency = homeCurrency ?: throw IllegalStateException("Home currency not available")
                     emit(

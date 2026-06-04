@@ -12,13 +12,7 @@ import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.every
-import io.mockk.firstArg
-import io.mockk.match
-import io.mockk.mockk
-import io.mockk.slot
+import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -335,7 +329,7 @@ class NegotiationEngineTest {
             firstArg<suspend () -> Any>().invoke()
         }
         coEvery { negotiationOutcomeDao.insert(any()) } returns 1L
-        coEvery { priceHistoryDao.insert(any()) } returns Unit
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
         coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         // monthlyEquivalent(50, WEEKLY) = 50 * (365/12) / 7 ≈ 217.26
@@ -370,7 +364,7 @@ class NegotiationEngineTest {
             firstArg<suspend () -> Any>().invoke()
         }
         coEvery { negotiationOutcomeDao.insert(any()) } returns 1L
-        coEvery { priceHistoryDao.insert(any()) } returns Unit
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
         coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         // monthlyEquivalent(100, BIWEEKLY) = 100 * (365/12) / 14 ≈ 217.26
@@ -437,7 +431,7 @@ class NegotiationEngineTest {
             DatabaseAccessBlockedException(
                 accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
                 operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("test"),
-                mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_IN_PROGRESS
+                mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_PREPARING
             )
 
         val engine = createEngine()
@@ -1040,7 +1034,7 @@ class NegotiationEngineTest {
             DatabaseAccessBlockedException(
                 accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
                 operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("test"),
-                mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_IN_PROGRESS
+                mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_PREPARING
             )
 
         val engine = createEngine()

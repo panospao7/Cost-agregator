@@ -112,11 +112,18 @@ class AnalyticsInputAssembler @Inject constructor(
                 isNotMine = snap.isNotMine,
                 isSharedExpense = false, // A16: populate when ExpenseSnapshot carries isSharedExpense
                 ownershipMode = null,
-                source = null
+                source = null,
+                // Rate provenance — copied from normalizer snapshot
+                rateBasis = normExp.rateBasis,
+                rateUsed = normExp.rateUsed,
+                rateValidDate = normExp.rateValidDate,
+                rateLastUpdated = normExp.rateLastUpdated,
+                rateSource = normExp.rateSource,
+                conversionPath = normExp.conversionPath
             )
         }
 
-        // 6. Build excluded expenses with detailed reasons
+        // 6. Build excluded expenses with detailed reasons and warning type/message
         val excluded = filtered
             .filter { it.id !in normalizedIds }
             .map { exp ->
@@ -129,7 +136,9 @@ class AnalyticsInputAssembler @Inject constructor(
                     id = exp.id,
                     originalAmount = exp.effectiveAmount,
                     originalCurrency = exp.currency,
-                    reason = reason
+                    reason = reason,
+                    warningType = result.excludedReasons[exp.id]?.first,
+                    message = result.excludedReasons[exp.id]?.second
                 )
             }
 

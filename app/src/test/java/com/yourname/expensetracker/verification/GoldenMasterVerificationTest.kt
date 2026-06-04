@@ -208,6 +208,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
                 currencyConverter = currencyConverter,
                 timeProvider = timeProvider,
                 currencySettingsRepository = currencySettingsRepository,
+                applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
                 normalizationEngine = com.yourname.expensetracker.domain.core.money.MoneyNormalizationEngine(currencyConverter)
             ),
             categoryRepository = categoryRepository,

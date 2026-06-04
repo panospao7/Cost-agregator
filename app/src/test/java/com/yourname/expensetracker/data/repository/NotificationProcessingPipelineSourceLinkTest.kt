@@ -65,11 +65,7 @@ class NotificationProcessingPipelineSourceLinkTest {
 
     @Before
     fun setup() {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val dbBlock = slot<suspend () -> Any>()
-        coEvery { database.withTransaction(capture(dbBlock)) } coAnswers {
-            dbBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         every { timeProvider.now() } returns 1_700_000_000_000L
 
         pipeline = NotificationProcessingPipeline(

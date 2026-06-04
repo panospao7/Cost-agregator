@@ -429,7 +429,8 @@ fun createCanonicalRepository(
         expenseDao = expenseDao,
         currencyConverter = currencyConverter,
         timeProvider = timeProvider,
-        currencySettingsRepository = settingsRepo
+        currencySettingsRepository = settingsRepo,
+        applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
     )
 }
 
@@ -579,7 +580,8 @@ class CanonicalMultiCurrencyFixtureTest {
             expenseDao = expenseDao,
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
-            currencySettingsRepository = settingsRepo
+            currencySettingsRepository = settingsRepo,
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
         )
 
         val aggregate = repo.getHomeCurrencyPurchaseTotal(0L, 9999999999999L)

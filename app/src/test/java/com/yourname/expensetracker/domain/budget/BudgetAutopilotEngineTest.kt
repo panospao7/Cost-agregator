@@ -93,7 +93,8 @@ class BudgetAutopilotEngineTest {
             expenseDao = expenseDao,
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
-            currencySettingsRepository = sharedCurrencySettingsRepo
+            currencySettingsRepository = sharedCurrencySettingsRepo,
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
         )
 
         engine = BudgetAutopilotEngine(

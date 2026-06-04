@@ -239,7 +239,8 @@ class BankApiIntegrationTest {
         // P10-P1-04: Default confidence should be 1.0f (auto-approve)
         val tx = BankTransaction(
             id = "tx-1", date = 1000L, amount = -10.0,
-            currency = "EUR", merchant = "Shop", description = "Test"
+            currency = "EUR", merchant = "Shop", description = "Test",
+            reference = null
         )
         assertEquals(1.0f, tx.confidence, 0.0f)
         assertTrue("Default confidence should be above review threshold",
@@ -256,7 +257,7 @@ class BankApiIntegrationTest {
         val tx = BankTransaction(
             id = "low-conf-1", date = 1000L, amount = -10.0,
             currency = "EUR", merchant = "Unknown", description = "Blurry receipt",
-            movementType = BankMovementType.PURCHASE, confidence = 0.30f
+            reference = null, movementType = BankMovementType.PURCHASE, confidence = 0.30f
         )
         val request = integration.mapTransactionToExpense(tx, connection, syncRunId = 1L)
         assertEquals(ExpenseSource.BANK_API_SYNC, request.source)
@@ -269,7 +270,7 @@ class BankApiIntegrationTest {
         val tx = BankTransaction(
             id = "high-conf-1", date = 1000L, amount = -50.0,
             currency = "EUR", merchant = "Store", description = "Known purchase",
-            movementType = BankMovementType.PURCHASE, confidence = 0.95f
+            reference = null, movementType = BankMovementType.PURCHASE, confidence = 0.95f
         )
         assertTrue("High confidence should be >= review threshold",
             tx.confidence >= BankApiIntegration.BANK_REVIEW_CONFIDENCE_THRESHOLD)
@@ -285,7 +286,7 @@ class BankApiIntegrationTest {
             BankTransaction(
                 id = "meta-tx", date = 1000L, amount = -25.0,
                 currency = "EUR", merchant = "Test", description = "Meta test",
-                movementType = BankMovementType.PURCHASE
+                reference = null, movementType = BankMovementType.PURCHASE
             ),
             conn,
             syncRunId = 99L

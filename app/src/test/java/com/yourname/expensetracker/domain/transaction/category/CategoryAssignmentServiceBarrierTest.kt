@@ -49,12 +49,13 @@ class CategoryAssignmentServiceBarrierTest {
     @Test
     fun `category_assignment_service_respects_write_barrier`() = runTest {
         // Arrange: write barrier blocks
-        every { writeBarrier.checkWritesAllowed(any()) } throws
-            DatabaseAccessBlockedException(
+        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+            throw DatabaseAccessBlockedException(
                 accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
                 operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("CategoryAssignment"),
                 mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_PREPARING
             )
+        }
 
         val service = DefaultExpenseCategoryAssignmentService(
             database = database,
@@ -76,7 +77,7 @@ class CategoryAssignmentServiceBarrierTest {
         assertTrue("Expected Failed outcome when write barrier blocks", outcome is CategoryAssignmentOutcome.Failed)
 
         // Verify the barrier check was actually called
-        coVerify(exactly = 1) { writeBarrier.checkWritesAllowed(any()) }
+        coVerify(exactly = 1) { writeBarrier.checkWritesAllowed(any<String>()) }
 
         // Verify no DAO write was attempted
         coVerify(exactly = 0) { expenseDao.updateCategory(any(), any()) }

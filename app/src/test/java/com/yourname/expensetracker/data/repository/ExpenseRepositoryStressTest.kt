@@ -47,12 +47,7 @@ class ExpenseRepositoryStressTest {
         coEvery { userCorrectionDao.insert(any()) } returns 1L
         coEvery { pendingReviewDao.bulkRenameMerchant(any(), any(), any(), any()) } returns Unit
 
-        // Mock Room withTransaction to run the block on the test coroutine (avoids Dispatchers.IO leak)
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         repository = ExpenseRepository(
             writeBarrier,
@@ -70,7 +65,7 @@ class ExpenseRepositoryStressTest {
 
     @After
     fun tearDown() {
-        unmockkStatic("androidx.room.RoomDatabaseKt")
+        // withTransaction inline mock removed — no static mock to clear
     }
 
     // ============================================================================

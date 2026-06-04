@@ -40,7 +40,7 @@ class P9RemainingWorkerFixesTest {
         assertNotNull("Constraints must not be null", spec!!.constraints)
         assertTrue(
             "merchant_key_backfill must have requireBatteryNotLow",
-            spec.constraints.requireBatteryNotLow
+            spec.constraints.requiresBatteryNotLow()
         )
     }
 
@@ -93,11 +93,11 @@ class P9RemainingWorkerFixesTest {
 
         // First call: should write to DAO
         handle.success()
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
 
         // Second call: must be idempotent — no additional DAO write
         handle.success()
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
     }
 
     @Test
@@ -112,11 +112,11 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.retry("transient error")
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
 
         // Second call is a no-op even with a different terminal status
         handle.success()
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
     }
 
     @Test
@@ -131,11 +131,11 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.failure("permanent error")
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
 
         // Second call is no-op
         handle.failure("ignored duplicate")
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
     }
 
     @Test
@@ -150,10 +150,10 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.cancelled("system cancel")
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
 
         handle.cancelled("ignored duplicate")
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
     }
 
     @Test
@@ -168,10 +168,10 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.staleAborted()
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
 
         handle.staleAborted()
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
     }
 
     @Test
@@ -186,10 +186,10 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.skipped("work already in progress")
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
 
         handle.skipped("ignored duplicate")
-        verify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.update(any()) }
     }
 
     // ──────────────────────────────────────────────────────────────

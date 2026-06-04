@@ -199,6 +199,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
 
     /**
      * Generates enhanced analytics for all categories within the specified period.
+     *
+     * PR8-GUARDRAIL: Self-fetches from [ExpenseRepository], creating a second DB query
+     * that may diverge from the ViewModel's normalization pipeline. Safe for isolated
+     * use (e.g., HomeViewModel category trends) but should be migrated to the
+     * [NormalizedAnalyticsInput] overload for consistency with the main analytics screen.
      */
     @Deprecated(
         "Use getCategoryAnalytics(input, previousInput, categories, budgets)",
@@ -350,10 +355,14 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Generates enhanced analytics for top merchants within the specified period.
      * @param limit Maximum number of merchants to return
+     *
+     * PR8-GUARDRAIL: Self-fetches from [ExpenseRepository]. No production callers remain;
+     * exists only for legacy test coverage. Prefer [getMerchantAnalytics] with
+     * [NormalizedAnalyticsInput] so the caller controls the data source.
      */
     @Deprecated(
         "Use getMerchantAnalytics(input, historicalInput, limit)",
-        level = DeprecationLevel.WARNING
+        level = DeprecationLevel.ERROR
     )
     suspend fun getMerchantAnalytics(
         period: AnalyticsPeriodRange,
@@ -479,7 +488,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
      * TODO (E2-008): Migrate to accept NormalizedAnalyticsInput instead of fetching
      * expenses internally. This method still queries ExpenseRepository directly,
      * creating a second data source that may diverge from the ViewModel's normalized input.
+     *
+     * PR8-GUARDRAIL: No production callers remain; exists only for legacy test coverage.
      */
+    @Deprecated(
+        "Use getSpendingPatterns(input: NormalizedAnalyticsInput)",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getSpendingPatterns(period: AnalyticsPeriodRange, displayCurrency: String): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
             val expenses = withContext(ioDispatcher) {
@@ -490,49 +505,70 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val allWarnings = normResult.warnings
             val purchases = normResult.includedExpenses
                 .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
-        
-        if (purchases.isEmpty()) {
-            return@coroutineScope Pair(createEmptyPatternAnalysis(period), allWarnings)
+            computeSpendingPatternsCore(purchases, period, displayCurrency, allWarnings)
         }
-        
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
+    }
+
+    suspend fun getSpendingPatterns(
+        input: NormalizedAnalyticsInput
+    ): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = null
+        )
+        val purchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        computeSpendingPatternsCore(purchases, period, input.homeCurrency, input.dataQuality.warnings)
+    }
+
+    private fun computeSpendingPatternsCore(
+        purchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> {
+        if (purchases.isEmpty()) {
+            return Pair(createEmptyPatternAnalysis(period), allWarnings)
+        }
+
         val totalSpent = purchases.sumOf { it.effectiveAmount }
-        
-        // Use arrays for better performance
+
         val dayTotals = DoubleArray(7)
         val dayCounts = IntArray(7)
         val timeSlotStats = mutableMapOf<TimeSlot, Double>()
-        
+
         for (purchase in purchases) {
             val dayIndex = calendarDayToIndex(purchase.date)
             val hour = TimePeriodUtils.getHourOfDay(purchase.date)
-            
+
             dayTotals[dayIndex] += purchase.effectiveAmount
             dayCounts[dayIndex]++
-            
+
             val slot = hourToTimeSlot(hour)
             timeSlotStats[slot] = (timeSlotStats[slot] ?: 0.0) + purchase.effectiveAmount
         }
-        
-        // Build day of week stats map
+
         val dayOfWeekStats = (0..6).associateWith { index ->
-                DayOfWeekStats(
-                    dayName = DAY_NAMES[index],
-                    dayIndex = index,
-                    totalSpent = dayTotals[index],
-                    transactionCount = dayCounts[index],
-                    averagePerDay = if (dayCounts[index] > 0) dayTotals[index] / dayCounts[index] else 0.0,
-                    percentageOfWeek = if (totalSpent > 0) (dayTotals[index] / totalSpent * 100).toFloat() else 0f,
-                    displayCurrency = displayCurrency
-                )
-            }
-        
-        // Weekend vs Weekday
+            DayOfWeekStats(
+                dayName = DAY_NAMES[index],
+                dayIndex = index,
+                totalSpent = dayTotals[index],
+                transactionCount = dayCounts[index],
+                averagePerDay = if (dayCounts[index] > 0) dayTotals[index] / dayCounts[index] else 0.0,
+                percentageOfWeek = if (totalSpent > 0) (dayTotals[index] / totalSpent * 100).toFloat() else 0f,
+                displayCurrency = displayCurrency
+            )
+        }
+
         val weekdayTotal = (0..4).sumOf { dayTotals[it] }
         val weekendTotal = (5..6).sumOf { dayTotals[it] }
         val weekdayCount = (0..4).sumOf { dayCounts[it] }
         val weekendCount = (5..6).sumOf { dayCounts[it] }
-        
+
         val weekendWeekdayComparison = WeekendWeekdayComparison(
             weekdayTotal = weekdayTotal,
             weekdayCount = weekdayCount,
@@ -543,13 +579,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
             weekendToWeekdayRatio = if (weekdayTotal > 0) (weekendTotal / weekdayTotal).toFloat() else 0f,
             displayCurrency = displayCurrency
         )
-        
-        // Detect patterns
+
         val detectedPatterns = detectSpendingPatterns(
             purchases, dayTotals, timeSlotStats, totalSpent
         )
-        
-        Pair(SpendingPatternAnalysis(
+
+        return Pair(SpendingPatternAnalysis(
             period = period,
             dayOfWeekStats = dayOfWeekStats,
             mostActiveDayIndex = dayTotals.indices.maxByOrNull { dayTotals[it] } ?: 0,
@@ -559,8 +594,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             detectedPatterns = detectedPatterns
         ), allWarnings)
     }
-}
-    
+
     private fun createEmptyPatternAnalysis(period: AnalyticsPeriodRange): SpendingPatternAnalysis {
         val displayCurrency = defaultDisplayCurrency()
         return SpendingPatternAnalysis(
@@ -591,7 +625,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
      * TODO (E2-008): Migrate to accept NormalizedAnalyticsInput instead of fetching
      * expenses internally. This method still queries ExpenseRepository directly,
      * creating a second data source that may diverge from the ViewModel's normalized input.
+     *
+     * PR8-GUARDRAIL: No production callers remain; exists only for legacy test coverage.
      */
+    @Deprecated(
+        "Use getStatisticalInsights(input: NormalizedAnalyticsInput)",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getStatisticalInsights(period: AnalyticsPeriodRange, displayCurrency: String): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
             val expenses = withContext(ioDispatcher) {
@@ -602,27 +642,48 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val allWarnings = normResult.warnings
             val purchases = normResult.includedExpenses
                 .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
-        
-        if (purchases.isEmpty()) {
-            return@coroutineScope Pair(createEmptyStatisticalInsights(period), allWarnings)
+            computeStatisticalInsightsCore(purchases, period, displayCurrency, allWarnings)
         }
-        
+    }
+
+    suspend fun getStatisticalInsights(
+        input: NormalizedAnalyticsInput
+    ): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = null
+        )
+        val purchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        computeStatisticalInsightsCore(purchases, period, input.homeCurrency, input.dataQuality.warnings)
+    }
+
+    private fun computeStatisticalInsightsCore(
+        purchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> {
+        if (purchases.isEmpty()) {
+            return Pair(createEmptyStatisticalInsights(period), allWarnings)
+        }
+
         val amounts = purchases.map { it.effectiveAmount }
         val sortedAmounts = amounts.sorted()
-        
+
         val mean = amounts.average()
-        // Use sample variance (N-1) for stdDev; single value => 0 (LOW bug fix)
         val variance = if (amounts.size > 1) {
-            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             amounts.sumOf { (it - mean) * (it - mean) } / (amounts.size - 1)
         } else 0.0
         val stdDev = sqrt(variance)
         val cv = if (mean > 0) (stdDev / mean).toFloat() else 0f
-        
-        // Build histogram (O(n) single pass)
+
         val histogram = buildHistogram(amounts, 10, displayCurrency)
-        
-        // Calculate percentiles
+
         val percentiles = TransactionPercentiles(
             p10 = getPercentile(sortedAmounts, 0.10),
             p25 = getPercentile(sortedAmounts, 0.25),
@@ -633,37 +694,18 @@ class AdvancedAnalyticsEngine @Inject constructor(
             p99 = getPercentile(sortedAmounts, 0.99),
             displayCurrency = displayCurrency
         )
-        
-        // Daily spending analysis
+
         val dailyTotals = purchases.groupBy { expense ->
             val dayStart = TimePeriodUtils.getStartOfDay(expense.date)
             "${TimePeriodUtils.getYear(dayStart)}-${TimePeriodUtils.getMonth(dayStart) + 1}-${TimePeriodUtils.getDayOfMonth(dayStart)}"
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
-        
+
         val periodDays = TimePeriodUtils.daysBetween(period.startMs, period.endMs).coerceAtLeast(1)
-        
-        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
+
         val totalAmount = purchases.sumOf { it.effectiveAmount }
         val averageDailySpend = totalAmount / periodDays
 
-        if (Timber.treeCount > 0 && BuildConfig.DEBUG) {
-            fun formatTimestamp(ms: Long): String = java.time.Instant.ofEpochMilli(ms)
-                .atZone(java.time.ZoneId.systemDefault())
-                .format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm"))
-
-            Timber.d("=== STATISTICAL INSIGHTS DEBUG ===")
-            Timber.d("Period: ${period.period} (${period.label})")
-            Timber.d("Period Range: ${formatTimestamp(period.startMs)} → ${formatTimestamp(period.endMs)}")
-            Timber.d("Period Days: $periodDays")
-            Timber.d("Transactions: ${purchases.size}")
-            Timber.d("Total: €$totalAmount")
-            Timber.d("Daily Totals: $dailyTotals")
-            Timber.d("Average Daily: €$averageDailySpend (€$totalAmount / $periodDays days)")
-            Timber.d("========================")
-        }
-        
-        Pair(StatisticalInsights(
+        return Pair(StatisticalInsights(
             period = period,
             displayCurrency = displayCurrency,
             histogramBins = histogram,
@@ -686,8 +728,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             daysWithoutSpending = (periodDays - dailyTotals.size).coerceAtLeast(0)
         ), allWarnings)
     }
-}
-    
+
     private fun createEmptyStatisticalInsights(period: AnalyticsPeriodRange): StatisticalInsights {
         val displayCurrency = defaultDisplayCurrency()
         return StatisticalInsights(

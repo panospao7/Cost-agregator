@@ -22,7 +22,8 @@ import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.AreaSpendingEngine
-import com.yourname.expensetracker.domain.location.LocatedExpense
+import com.yourname.expensetracker.domain.location.ConversionStatus
+import com.yourname.expensetracker.domain.location.LocatedMoneyExpense
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.PlaceInsight
 import com.yourname.expensetracker.domain.location.TravelDetectionEngine
@@ -52,11 +53,15 @@ data class BudgetVsActualItem(
     val budgetAmount: Double,
     val actualSpent: Double,
     val percentUsed: Float, // 0.0 - 1.0+
-    /** S9-003: null until home currency loads — never defaults to "EUR" */
-    val displayCurrency: String? = null
+    /** PR6: always set from homeCurrency at construction time — never null */
+    val displayCurrency: String,
+    /** PR3: true when budget conversion failed or was partial */
+    val isPartial: Boolean = false,
+    /** PR3: warning message when budget conversion used fallback or failed */
+    val warningMessage: String? = null
 ) {
-    val moneyBudgetAmount: MoneyAmount get() = MoneyAmount(budgetAmount, CurrencyCode(displayCurrency ?: ""))
-    val moneyActualSpent: MoneyAmount get() = MoneyAmount(actualSpent, CurrencyCode(displayCurrency ?: ""))
+    val moneyBudgetAmount: MoneyAmount get() = MoneyAmount(budgetAmount, CurrencyCode(displayCurrency))
+    val moneyActualSpent: MoneyAmount get() = MoneyAmount(actualSpent, CurrencyCode(displayCurrency))
 }
 
 data class AnalyticsState(
@@ -322,7 +327,6 @@ class AnalyticsViewModel @Inject constructor(
             }
         }
     }
-    .flowOn(Dispatchers.Default)
     .stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -460,15 +464,18 @@ class AnalyticsViewModel @Inject constructor(
         } ?: emptyMap()
 
         // Insights
-        val budgetChartResult = buildBudgetVsActualItems(homeCurrency, currentExpenseSnapshots, categories, currentInput)
+        val budgetChartResult = buildBudgetVsActualItems(homeCurrency, currentExpenseSnapshots, categories, currentInput, currentEnd)
         val conversionWarnings = mergeWarnings(allWarnings + budgetChartResult.warnings)
         val latestRateTimestamp = rateTimestamp.takeIf { it > 0L }
         val insightsSnapshot = insightsEngine.generateInsights(
-            analyticsCategories,
-            allExpenseSnapshots,
-            displayCurrency = homeCurrency,
+            currentInput = currentInput,
+            historicalInput = allInput,
+            categories = analyticsCategories,
             conversionWarnings = conversionWarnings
         )
+        // PR8: getLegacyInsights is a deprecated convenience wrapper, but safe here because
+        // insightsSnapshot was computed from normalized data (lines 470-475).
+        @Suppress("DEPRECATION")
         val insights = insightsEngine.getLegacyInsights(insightsSnapshot, homeCurrency)
         // Note: dayOfWeekPattern is now computed period-aware below from currentExpenses
 
@@ -554,25 +561,6 @@ class AnalyticsViewModel @Inject constructor(
             Timber.d("========================")
         }
 
-        val advancedPeriod = timePeriodToAnalyticsPeriod(period)
-        val advRange = if (advancedPeriod != null) {
-            advancedAnalyticsEngine.getPeriodRange(advancedPeriod)
-        } else {
-            AnalyticsPeriodRange(
-                period = AnalyticsPeriod.CUSTOM,
-                startMs = currentStart,
-                endMs = currentEnd,
-                label = period.name,
-                comparisonRange = AnalyticsPeriodRange(
-                    period = AnalyticsPeriod.CUSTOM,
-                    startMs = previousStart,
-                    endMs = previousEnd,
-                    label = "PREVIOUS_${period.name}",
-                    comparisonRange = null
-                )
-            )
-        }
-
         val advResult = advancedCache[cacheKey] ?: coroutineScope {
             // Build 12-month historical input for merchant analytics
             val historicalStart = TimePeriodUtils.addMonths(currentStart, -12)
@@ -587,9 +575,8 @@ class AnalyticsViewModel @Inject constructor(
 
             val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(currentInput, previousInput, categories, budgetSnapshots) }
             val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(currentInput, historicalInput, limit = 15) }
-            // Spending patterns and statistical insights still use the old API (not yet migrated)
-            val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
-            val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
+            val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(currentInput) }
+            val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(currentInput) }
             val (cats, catWarnings) = try { catDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
             val (merchs, merchWarnings) = try { merchDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
             val (patterns, patternWarnings) = try { patternsDeferred.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null to emptyList<AnalyticsConversionWarning>() }
@@ -651,26 +638,47 @@ class AnalyticsViewModel @Inject constructor(
             .filter { (_, v) -> v > 0 }
 
         // ── Location analytics (B5 / B1 / B2) ────────────────────────────────
-        // Convert located purchases (any period) to LocatedExpense for the engine.
-        val locatedExpenses = purchases.mapNotNull { exp ->
+        // Build LocatedMoneyExpense list from located purchases so location
+        // engines consume normalized amounts and proper conversion status.
+        val locatedMoneyExpenses = purchases.mapNotNull { exp ->
             val lat = exp.latitude ?: return@mapNotNull null
             val lon = exp.longitude ?: return@mapNotNull null
-            val normalized = currentInput.includedExpenses.firstOrNull { it.id == exp.id } ?: return@mapNotNull null
-            LocatedExpense(
-                expenseId = exp.id,
-                latitude = lat,
-                longitude = lon,
-                amount = normalized.normalizedAmount,
-                merchant = exp.merchant,
-                date = exp.date,
-                locationSource = exp.locationSource,
-                placeId = exp.placeId
-            )
+            val normalized = currentInput.includedExpenses.firstOrNull { it.id == exp.id }
+            val excluded = currentInput.excludedExpenses.firstOrNull { it.id == exp.id }
+            when {
+                normalized != null -> LocatedMoneyExpense(
+                    expenseId = exp.id,
+                    latitude = lat,
+                    longitude = lon,
+                    normalizedAmount = normalized.normalizedAmount,
+                    normalizedCurrency = normalized.normalizedCurrency,
+                    originalAmount = normalized.originalEffectiveAmount,
+                    originalCurrency = normalized.originalCurrency,
+                    conversionStatus = if (normalized.rateBasis == "IDENTITY") ConversionStatus.HOME_CURRENCY else ConversionStatus.CONVERTED,
+                    merchant = exp.merchant,
+                    date = exp.date
+                )
+                excluded != null -> LocatedMoneyExpense(
+                    expenseId = exp.id,
+                    latitude = lat,
+                    longitude = lon,
+                    normalizedAmount = null,
+                    normalizedCurrency = homeCurrency,
+                    originalAmount = exp.effectiveAmount,
+                    originalCurrency = exp.currency,
+                    conversionStatus = ConversionStatus.FAILED,
+                    merchant = exp.merchant,
+                    date = exp.date
+                )
+                else -> null
+            }
         }
 
-        val locationInsights = locationInsightsEngine.compute(locatedExpenses).take(10)
+        val locationInsights = locationInsightsEngine.computeNormalized(locatedMoneyExpenses).take(10)
+        // PR8-FIX: Build a lookup map so we don't do O(n²) firstOrNull inside mapNotNull.
+        val normalizedById = currentInput.includedExpenses.associateBy { it.id }
         val normalizedPurchases = purchases.mapNotNull { purchase ->
-            val normalized = currentInput.includedExpenses.firstOrNull { it.id == purchase.id } ?: return@mapNotNull null
+            val normalized = normalizedById[purchase.id] ?: return@mapNotNull null
             purchase.copy(
                 amount = normalized.normalizedAmount,
                 currency = homeCurrency,
@@ -679,7 +687,13 @@ class AnalyticsViewModel @Inject constructor(
                 mySharePercentage = null
             )
         }
+        // PR8: These compute() calls use normalizedPurchases which now carries
+        // normalizedAmount in both amount and effectiveAmount. The raw-Double sums
+        // inside AreaSpendingEngine/TravelDetectionEngine are safe for single-currency
+        // normalized data. Future work: migrate to computeNormalized().
+        @Suppress("DEPRECATION")
         val areaSpending = areaSpendingEngine.compute(normalizedPurchases)
+        @Suppress("DEPRECATION")
         val travelInsight = travelDetectionEngine.compute(normalizedPurchases)
 
         // ── F13: Spending Personality Profile ────────────────────────────────
@@ -729,17 +743,6 @@ class AnalyticsViewModel @Inject constructor(
   )
     }
 
-
-    @Suppress("DEPRECATION")
-    private fun timePeriodToAnalyticsPeriod(period: TimePeriod): AnalyticsPeriod? = when (period) {
-        TimePeriod.WEEK -> AnalyticsPeriod.WEEK
-        // MONTH/QUARTER/YEAR use rolling windows from getPeriodRange(), so use CUSTOM.
-        TimePeriod.MONTH,
-        TimePeriod.QUARTER,
-        TimePeriod.YEAR,
-        TimePeriod.TODAY,
-        TimePeriod.ALL -> null
-    }
 
     /** Maps [TimePeriod] to [PeriodKind] for the migration to domain.core.time. */
     @Suppress("DEPRECATION")
@@ -1129,7 +1132,8 @@ class AnalyticsViewModel @Inject constructor(
         homeCurrency: String,
         currentExpenseSnapshots: List<ExpenseSnapshot>,
         categories: List<Category>,
-        currentInput: NormalizedAnalyticsInput
+        currentInput: NormalizedAnalyticsInput,
+        currentEnd: Long
     ): BudgetChartResult {
         return try {
             val warnings = mutableListOf<AnalyticsConversionWarning>()
@@ -1141,6 +1145,7 @@ class AnalyticsViewModel @Inject constructor(
                     amount = snapshot.amount,
                     sourceCurrency = snapshot.currency,
                     homeCurrency = homeCurrency,
+                    periodEndMillis = currentEnd - 1,
                     warnings = warnings
                 ) ?: return@mapNotNull null
                 BudgetSnapshot(
@@ -1155,6 +1160,9 @@ class AnalyticsViewModel @Inject constructor(
 
             val categoryEntityMap = categories.associateBy { it.id }
 
+            val mergedWarnings = mergeWarnings(warnings)
+            val hasBudgetWarnings = mergedWarnings.isNotEmpty()
+            val warningMsg = mergedWarnings.firstOrNull()?.message
             val items = engineResult.items.map { engineItem ->
                 val category = engineItem.categoryId?.let { categoryEntityMap[it] }
                 BudgetVsActualItem(
@@ -1164,11 +1172,15 @@ class AnalyticsViewModel @Inject constructor(
                     budgetAmount = engineItem.budgetLimit,
                     actualSpent = engineItem.actualSpent,
                     percentUsed = engineItem.percentageUsed.toFloat(),
-                    displayCurrency = homeCurrency
+                    displayCurrency = homeCurrency,
+                    isPartial = hasBudgetWarnings || engineItem.budgetLimit <= 0,
+                    warningMessage = warningMsg
                 )
             }
 
-            BudgetChartResult(items = items, warnings = mergeWarnings(warnings))
+            BudgetChartResult(items = items, warnings = mergedWarnings)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e  // S9-008: never swallow cancellation
         } catch (_: Exception) {
             BudgetChartResult(items = emptyList(), warnings = emptyList())
         }
@@ -1182,6 +1194,7 @@ class AnalyticsViewModel @Inject constructor(
         amount: Double,
         sourceCurrency: String,
         homeCurrency: String,
+        periodEndMillis: Long,
         warnings: MutableList<AnalyticsConversionWarning>
     ): Double? {
         val normalizedSourceCurrency = sourceCurrency.trim().uppercase(Locale.ROOT)
@@ -1198,10 +1211,11 @@ class AnalyticsViewModel @Inject constructor(
             return amount
         }
 
-        val conversion = currencyConverter.convert(
+        val conversion = currencyConverter.convertAsOf(
             amount = amount,
             fromCurrency = normalizedSourceCurrency,
-            toCurrency = homeCurrency
+            toCurrency = homeCurrency,
+            atMillis = periodEndMillis
         ) ?: run {
             warnings += AnalyticsConversionWarning(
                 type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,

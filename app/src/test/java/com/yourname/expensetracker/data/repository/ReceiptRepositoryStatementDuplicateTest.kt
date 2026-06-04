@@ -71,11 +71,7 @@ class ReceiptRepositoryStatementDuplicateTest {
 
     @Before
     fun setup() {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         every { timeProvider.now() } returns 1_700_000_000_000L
         coEvery { scannedReceiptDao.getAllFlow() } returns MutableStateFlow(emptyList())
@@ -125,7 +121,7 @@ class ReceiptRepositoryStatementDuplicateTest {
 
     @After
     fun tearDown() {
-        unmockkStatic("androidx.room.RoomDatabaseKt")
+        // withTransaction inline mock removed — no static mock to clear
     }
 
     @Test

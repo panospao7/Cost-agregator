@@ -155,6 +155,67 @@ class InsightsEngine @Inject constructor(
     }
 
     /**
+     * Generate insights with explicit historical context for comparison and baselines.
+     *
+     * [currentInput] drives the primary period and display currency.
+     * [historicalInput] provides additional expenses for sub-engines that need
+     * lookback data (monthly comparison, pace baselines, anomaly history, etc.).
+     */
+    suspend fun generateInsights(
+        currentInput: NormalizedAnalyticsInput,
+        historicalInput: NormalizedAnalyticsInput?,
+        categories: List<AnalyticsCategoryRef>,
+        conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+    ): InsightsSnapshot {
+        val period = currentInput.period ?: return generateInsights(
+            currentInput,
+            categories
+        )
+        val currentMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis),
+            startMs = period.startInclusiveMillis,
+            endMs = period.endExclusiveMillis
+        )
+        val durationMs = period.endExclusiveMillis - period.startInclusiveMillis
+        val previousMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis - durationMs),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis - durationMs),
+            startMs = period.startInclusiveMillis - durationMs,
+            endMs = period.startInclusiveMillis
+        )
+        // Merge current + historical expenses so sub-engines have full context
+        val currentSnapshots = currentInput.includedExpenses.map { it.toExpenseSnapshot() }
+        val historicalSnapshots = historicalInput?.includedExpenses?.map { it.toExpenseSnapshot() } ?: emptyList()
+        val allSnapshots = (currentSnapshots + historicalSnapshots).distinctBy { it.id }
+        val mergedWarnings = if (conversionWarnings.isNotEmpty()) {
+            conversionWarnings
+        } else {
+            (currentInput.dataQuality.conversionWarnings.map { msg ->
+                AnalyticsConversionWarning(
+                    type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = msg,
+                    affectedTransactionCount = 0
+                )
+            } + (historicalInput?.dataQuality?.conversionWarnings ?: emptyList()).map { msg ->
+                AnalyticsConversionWarning(
+                    type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = msg,
+                    affectedTransactionCount = 0
+                )
+            }).distinct()
+        }
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = allSnapshots,
+            displayCurrency = currentInput.homeCurrency,
+            conversionWarnings = mergedWarnings
+        )
+    }
+
+    /**
      * ## AI-1: Explicit period support
      * This overload allows callers to specify an arbitrary time range, enabling
      * historical or custom-period insight generation. The range is decomposed
@@ -339,6 +400,16 @@ class InsightsEngine @Inject constructor(
 
     // === Legacy Compatibility ===
 
+    /**
+     * PR8-GUARDRAIL: Legacy convenience wrapper that maps [InsightsSnapshot] to a
+     * list of [SpendingInsight]. Safe when [snapshot] was already computed from
+     * normalized data. Prefer constructing insights directly from snapshot fields
+     * to avoid the "EUR" default on [homeCurrency].
+     */
+    @Deprecated(
+        "Legacy convenience wrapper. Prefer constructing SpendingInsight list directly from InsightsSnapshot fields.",
+        level = DeprecationLevel.WARNING
+    )
     fun getLegacyInsights(snapshot: InsightsSnapshot, /** Placeholder default. Production callers should pass explicit currency. */ homeCurrency: String = "EUR"): List<SpendingInsight> {
         val insights = mutableListOf<SpendingInsight>()
 

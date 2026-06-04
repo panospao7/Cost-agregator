@@ -16,7 +16,6 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkStatic
 import io.mockk.slot
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -56,12 +55,9 @@ class TransactionLifecycleCoordinatorUpdateTest {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
-        // Mock withTransaction to execute block directly
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val dbBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(dbBlock)) } coAnswers {
-            dbBlock.captured.invoke()
-        }
+        // withTransaction is an inline extension on RoomDatabase; mocking it directly
+        // doesn't work. The underlying transaction methods on database are already
+        // handled by mockk(relaxed = true) in setup.
 
         coordinator = TransactionLifecycleCoordinator(
             database = database,
@@ -104,7 +100,7 @@ class TransactionLifecycleCoordinatorUpdateTest {
         coEvery { expenseDao.getById(1L) } returns existingExpense
 
         // Conversion fails (returns null from runCatching)
-        coEvery { currencyConverter.convertAsOf(any(), any(), any(), any()) } throws RuntimeException("Network error")
+        coEvery { currencyConverter.convertAsOf(any<Double>(), any<CurrencyCode>(), any<CurrencyCode>(), any<Long>()) } throws RuntimeException("Network error")
 
         // Capture the expense that gets persisted
         val updatedSlot = slot<Expense>()

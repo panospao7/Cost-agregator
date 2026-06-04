@@ -349,11 +349,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarrantyIgnoreConflicts sets createdAt and updatedAt when zero`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         val fixedNow = timeProvider.now()
         val warranty = Warranty(
             receiptId = 1,
@@ -378,11 +374,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarrantyIgnoreConflicts preserves existing createdAt`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         val existingCreatedAt = 1_000_000L
         val existingUpdatedAt = 2_000_000L
         val warranty = Warranty(
@@ -408,11 +400,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarrantyIgnoreConflicts writes created event after insert`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         val warranty = Warranty(
             receiptId = 3,
             productName = "Event Test",
@@ -769,11 +757,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarranty_lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest {
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         val testWarranty = Warranty(
             receiptId = 4,
             productName = "Test Product",

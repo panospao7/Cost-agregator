@@ -79,8 +79,6 @@ fun AnalyticsScreen(
     viewModel: AnalyticsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
-    // S9-002: currency is only used inside the content block where homeCurrency is guaranteed non-null
-    val currency = state.homeCurrency ?: ""
 
     LaunchedEffect(initialPeriod) {
         initialPeriod
@@ -154,6 +152,8 @@ fun AnalyticsScreen(
                 }
             }
         } else {
+            // PR6: currency is guaranteed non-null here (null case handled above)
+            val currency = state.homeCurrency!!
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -165,7 +165,7 @@ fun AnalyticsScreen(
                 item { PeriodSelector(state.selectedPeriod) { viewModel.selectPeriod(it) } }
 
                 // 2. Main Hero Bento: Total Spent + Change
-                item { TotalSpentHero(state) }
+                item { TotalSpentHero(state, currency) }
 
                 if (state.conversionWarnings.isNotEmpty()) {
                     item { AnalyticsWarningsCard(state.conversionWarnings) }
@@ -624,14 +624,14 @@ private fun EnhancedMerchantItem(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 StatMicro(stringResource(R.string.analytics_stat_micro_avg_visit), item.averagePerVisit, item.displayCurrency)
-                StatMicro(stringResource(R.string.analytics_stat_micro_loyalty), "${item.loyaltyScore.toInt()}/100")
+                StatMicro(stringResource(R.string.analytics_stat_micro_loyalty), "${item.loyaltyScore.toInt()}/100", item.displayCurrency)
                 item.predictedNextVisitDate?.let {
                     val daysUntil = TimePeriodUtils.daysBetween(nowMs, it)
-                    val nextExpectedText = if (daysUntil <= 0) 
-                        stringResource(R.string.analytics_next_expected_soon) 
-                    else 
+                    val nextExpectedText = if (daysUntil <= 0)
+                        stringResource(R.string.analytics_next_expected_soon)
+                    else
                         stringResource(R.string.analytics_next_expected_days_format, daysUntil)
-                    StatMicro(stringResource(R.string.analytics_stat_micro_next_expected), nextExpectedText)
+                    StatMicro(stringResource(R.string.analytics_stat_micro_next_expected), nextExpectedText, item.displayCurrency)
                 }
             }
         }
@@ -781,11 +781,10 @@ fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>, currency: Str
 
 // ── Shared helper composables ─────────────────────────────────────────
 /**
- * @param currency ISO-4217 currency code. Default "EUR" is a placeholder;
- *                 callers should pass the actual home currency from settings.
+ * @param currency ISO-4217 currency code. Callers must pass the actual home currency.
  */
 @Composable
-fun StatMicro(label: String, value: Any, currency: String = "EUR") {
+fun StatMicro(label: String, value: Any, currency: String) {
     Column {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (value is Double) {
@@ -807,7 +806,7 @@ fun AnalyticsSectionHeader(title: String, subtitle: String? = null) {
 }
 
 @Composable
-fun TotalSpentHero(state: AnalyticsState) {
+fun TotalSpentHero(state: AnalyticsState, homeCurrency: String) {
     HeroBentoCard {
         Column {
             Text(
@@ -818,7 +817,7 @@ fun TotalSpentHero(state: AnalyticsState) {
             Spacer(modifier = Modifier.height(4.dp))
             AmountText(
                 amount = state.currentTotal,
-                currency = state.homeCurrency ?: "",
+                currency = homeCurrency,
                 style = MaterialTheme.typography.displayMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
@@ -1075,8 +1074,8 @@ fun BudgetVsActualChart(items: List<BudgetVsActualItem>) {
                                 text = if (hasValidBudget) {
                                     stringResource(
                                         R.string.analytics_budget_range_format,
-                                        formatAmount(item.actualSpent, item.displayCurrency ?: "", showCents = false),
-                                        formatAmount(item.budgetAmount, item.displayCurrency ?: "", showCents = false)
+                                        formatAmount(item.actualSpent, item.displayCurrency, showCents = false),
+                                        formatAmount(item.budgetAmount, item.displayCurrency, showCents = false)
                                     )
                                 } else {
                                     stringResource(R.string.forecast_no_budget_set)
@@ -1669,11 +1668,10 @@ fun SuspectTransactionCard(item: SuspectTransaction, homeCurrency: String = item
 
 // ── Location: Area Spending Item (B1) ─────────────────────────────────
 /**
- * @param homeCurrency ISO-4217 currency code. Default "EUR" is a placeholder;
- *                     callers should pass the actual home currency.
+ * @param homeCurrency ISO-4217 currency code. Callers must pass the actual home currency.
  */
 @Composable
-fun AreaSpendingItem(area: AreaSpending, homeCurrency: String = "EUR") {
+fun AreaSpendingItem(area: AreaSpending, homeCurrency: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1712,11 +1710,10 @@ fun AreaSpendingItem(area: AreaSpending, homeCurrency: String = "EUR") {
 
 // ── Location: Travel vs Home Card (B2) ────────────────────────────────
 /**
- * @param homeCurrency ISO-4217 currency code. Default "EUR" is a placeholder;
- *                     callers should pass the actual home currency.
+ * @param homeCurrency ISO-4217 currency code. Callers must pass the actual home currency.
  */
 @Composable
-fun TravelInsightCard(travel: TravelInsight, homeCurrency: String = "EUR") {
+fun TravelInsightCard(travel: TravelInsight, homeCurrency: String) {
     val totalSpend = travel.homeSpend + travel.localSpend + travel.travelSpend
 
     BentoCard {

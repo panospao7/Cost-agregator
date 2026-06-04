@@ -3,21 +3,26 @@ package com.yourname.expensetracker.worker
 import android.content.Context
 import androidx.work.Data
 import androidx.work.WorkerParameters
-import androidx.work.Result as WorkResult
+import androidx.work.ListenableWorker.Result as WorkResult
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -29,69 +34,46 @@ import org.junit.Test
  */
 class NotificationIntakeWorkerTimeoutTest {
 
+    /** Helper: creates a real [TimeoutCancellationException] via [withTimeout]. */
+    private fun createTimeoutCancellationException(): TimeoutCancellationException = runBlocking {
+        try {
+            withTimeout(1) { delay(100) }
+        } catch (e: TimeoutCancellationException) {
+            return@runBlocking e
+        }
+        throw IllegalStateException("Expected TimeoutCancellationException")
+    }
+
     @Test
     fun `worker_timeout_marks_retryable_not_terminal`() {
-        // Verify that TimeoutCancellationException is NOT a subtype of
-        // plain CancellationException in the catch hierarchy — i.e. a
-        // dedicated catch block for TimeoutCancellationException must
-        // appear BEFORE the generic CancellationException catch.
-        //
-        // If TimeoutCancellationException were caught by the generic
-        // CancellationException block it would be re-thrown instead of
-        // being handled as a retryable timeout.
-        val timeoutEx: Throwable = TimeoutCancellationException("WorkManager 10-min timeout")
+        val timeoutEx = createTimeoutCancellationException()
         val isCancellation = timeoutEx is CancellationException
         val isTimeout = timeoutEx is TimeoutCancellationException
 
-        // TimeoutCancellationException IS a CancellationException (subclass),
-        // so ordering of catch blocks matters: the timeout-specific block
-        // must come BEFORE the generic CancellationException block.
-        assertEquals("TimeoutCancellationException must be a CancellationException subclass",
-            true, isCancellation)
-        assertEquals("TimeoutCancellationException must be a TimeoutCancellationException",
-            true, isTimeout)
+        assertTrue("TimeoutCancellationException must be a CancellationException subclass", isCancellation)
+        assertTrue("TimeoutCancellationException must be a TimeoutCancellationException", isTimeout)
     }
 
     @Test
     fun `worker_system_cancellation_propagates`() {
-        // Verify that a plain (non-timeout) CancellationException is NOT
-        // a TimeoutCancellationException, so it won't be caught by the
-        // timeout-specific catch block and will propagate as a system
-        // cancellation.
         val systemCancel: Throwable = CancellationException("System shutdown")
         val isTimeout = systemCancel is TimeoutCancellationException
 
-        assertEquals("Plain CancellationException must NOT be a TimeoutCancellationException",
-            false, isTimeout)
+        assertFalse("Plain CancellationException must NOT be a TimeoutCancellationException", isTimeout)
     }
 
     @Test
     fun `timeout_cancellation_exception_is_subclass_of_cancellation_exception`() {
-        // Structural/type-hierarchy documentation test.
-        //
-        // Verifies that TimeoutCancellationException is a subclass of
-        // CancellationException, which means catch-block ordering matters:
-        // the TimeoutCancellationException catch must appear BEFORE the
-        // generic CancellationException catch in the worker.
-        //
-        // This is NOT a behavioral test — the actual catch-block ordering
-        // is verified by worker_timeout_calls_markRetryableFailure_and_returns_retry.
-        val timeoutEx: Throwable = TimeoutCancellationException("WorkManager 10-min timeout")
+        val timeoutEx = createTimeoutCancellationException()
         val isCancellation = timeoutEx is CancellationException
         val isTimeout = timeoutEx is TimeoutCancellationException
 
-        assertEquals("TimeoutCancellationException must be a CancellationException subclass",
-            true, isCancellation)
-        assertEquals("TimeoutCancellationException must be a TimeoutCancellationException",
-            true, isTimeout)
+        assertTrue("TimeoutCancellationException must be a CancellationException subclass", isCancellation)
+        assertTrue("TimeoutCancellationException must be a TimeoutCancellationException", isTimeout)
     }
 
     @Test
     fun `worker_timeout_calls_markRetryableFailure_and_returns_retry`() = runBlocking {
-        // Behavioral test: when repository.processAndSave throws
-        // TimeoutCancellationException, the worker must:
-        // 1. Call intakeDao.markRetryableFailure with failureCode = "TIMEOUT"
-        // 2. Return Result.retry() (to let WorkManager retry)
         val context = mockk<Context>(relaxed = true)
         val params = mockk<WorkerParameters>(relaxed = true)
         val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
@@ -99,6 +81,7 @@ class NotificationIntakeWorkerTimeoutTest {
         val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
         val timeProvider = mockk<TimeProvider>(relaxed = true)
         val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+        val executionGuard = mockk<WorkerExecutionGuard>(relaxed = true)
 
         val intakeId = 42L
         val now = 1_700_000_000_000L
@@ -112,13 +95,13 @@ class NotificationIntakeWorkerTimeoutTest {
         every { timeProvider.now() } returns now
         coEvery { intakeDao.getById(intakeId) } returns intakeRow
         coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
-        coEvery { repository.processAndSave(any(), any(), any(), any()) } throws TimeoutCancellationException("WorkManager 10-min timeout")
+        coEvery { repository.processAndSave(any(), any(), any(), any()) } throws createTimeoutCancellationException()
 
         val worker = NotificationIntakeWorker(
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             writeBarrier = writeBarrier, timeProvider = timeProvider,
-            crypto = crypto
+            crypto = crypto, executionGuard = executionGuard
         )
 
         val result = worker.doWork()

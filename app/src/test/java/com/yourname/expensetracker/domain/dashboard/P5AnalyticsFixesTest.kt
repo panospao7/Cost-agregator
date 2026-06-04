@@ -183,6 +183,7 @@ class P5AnalyticsFixesTest {
             currencyConverter = converter,
             timeProvider = TestTime(NOW),
             currencySettingsRepository = settingsRepo,
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
             normalizationEngine = mockk(relaxed = true)
         )
 

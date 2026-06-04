@@ -59,12 +59,7 @@ class ExpenseRepositoryTruncationTest {
         // Default: uncapped flow returns empty list
         every { expenseDao.getAllFlowUncapped() } returns flowOf(emptyList())
 
-        // Mock Room withTransaction to run the block on the test coroutine
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         repository = ExpenseRepository(
             writeBarrier,
@@ -82,7 +77,7 @@ class ExpenseRepositoryTruncationTest {
 
     @After
     fun tearDown() {
-        unmockkStatic("androidx.room.RoomDatabaseKt")
+        // withTransaction inline mock removed — no static mock to clear
     }
 
     // ── getAllExpenses — formerly capped at 500 ─────────────────────────────

@@ -108,6 +108,16 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     
+    /**
+     * PR8-GUARDRAIL: Self-fetches raw expenses and normalizes internally.
+     * Safe because normalization happens inside, but bypasses the caller's
+     * NormalizedAnalyticsInput pipeline. Prefer an overload that accepts
+     * pre-built [NormalizedAnalyticsInput] for consistency.
+     */
+    @Deprecated(
+        "Self-fetches raw expenses; prefer an overload accepting NormalizedAnalyticsInput",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun generateDashboardData(
         startDate: Long,
         endDate: Long

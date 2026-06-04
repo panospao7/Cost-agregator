@@ -479,6 +479,12 @@ class HomeViewModel @Inject constructor(
      * S4-011R: Suspend — called directly inside collectLatest so cancellation propagates.
      * S4-012R: Typed state: emptyMap on error is replaced by explicit error logging.
      */
+    // PR8: This calls the deprecated self-fetching overload. It is safe because
+    // AnalyticsCurrencyNormalizer normalizes internally, but it creates a second
+    // DB query and bypasses the main analytics normalization pipeline.
+    // Preferred: build NormalizedAnalyticsInput in this ViewModel and call
+    // getCategoryAnalytics(currentInput, previousInput, categories, budgets).
+    @Suppress("DEPRECATION")
     private suspend fun loadCategoryTrendsForCurrency(currency: String) {
         try {
             val period = advancedAnalyticsEngine.getPeriodRange(

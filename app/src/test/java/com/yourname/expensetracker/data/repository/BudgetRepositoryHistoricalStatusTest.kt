@@ -80,20 +80,14 @@ class BudgetRepositoryHistoricalStatusTest {
             MultiConversionAggregate(total = total, targetCurrency = targetCurrency, failedConversions = emptyList())
         }
 
-        // Run Room withTransaction inline on the test coroutine so deleteBudget's
-        // forecast-purge + budget-delete block executes against the mocked DAOs.
-        // (Same pattern as BudgetRepositoryDiagnosticsTest.)
-        mockkStatic("androidx.room.RoomDatabaseKt")
-        val transactionBlock = slot<suspend () -> Any?>()
-        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
-            transactionBlock.captured.invoke()
-        }
+        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         multiCurrencyRepository = MultiCurrencyRepository(
             expenseDao = expenseDao,
             currencyConverter = currencyConverter,
             timeProvider = timeProvider,
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
         )
 
         repository = BudgetRepository(
@@ -115,7 +109,7 @@ class BudgetRepositoryHistoricalStatusTest {
 
     @After
     fun tearDown() {
-        // Undo mockkStatic("androidx.room.RoomDatabaseKt") from setup().
+        // withTransaction inline mock removed — general mock cleanup
         unmockkAll()
     }
 
@@ -366,7 +360,7 @@ class BudgetRepositoryHistoricalStatusTest {
                 amount = 1_000.0,
                 fromCurrency = "USD",
                 toCurrency = "EUR",
-                asOfMillis = end
+                atMillis = end
             )
         } returns com.yourname.expensetracker.domain.currency.ConversionResult(
             originalAmount = 1_000.0,
@@ -406,7 +400,7 @@ class BudgetRepositoryHistoricalStatusTest {
 
         // Historical rate is unavailable (returns null)
         coEvery {
-            currencyConverter.convertAsOf(any<Double>(), any(), any(), any<Long>())
+            currencyConverter.convertAsOf(any<Double>(), any<CurrencyCode>(), any<CurrencyCode>(), any<Long>())
         } returns null
 
         // Latest rate is available

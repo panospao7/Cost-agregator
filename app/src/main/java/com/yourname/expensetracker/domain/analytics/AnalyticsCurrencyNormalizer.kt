@@ -109,6 +109,7 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
 
         val warnings = linkedMapOf<WarningKey, WarningAccumulator>()
         var latestRateTimestamp: Long? = null
+        val excludedReasons = mutableMapOf<Long, Pair<AnalyticsConversionWarningType, String>>()
 
         val normalizedExpenses = expenses.mapNotNull { expense ->
             val sourceCurrency = expense.currency.toCurrencyCodeOrNull()
@@ -120,11 +121,23 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                     message = "Analytics excluded transaction(s) with invalid currency codes.",
                     expenseId = expense.id
                 )
+                excludedReasons[expense.id] = Pair(
+                    AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY,
+                    "Analytics excluded transaction(s) with invalid currency codes."
+                )
                 return@mapNotNull null
             }
 
-            val normalizedAmount = when {
-                sourceCurrency == homeCurrency -> expense.effectiveAmount
+            val conversionResult = when {
+                sourceCurrency == homeCurrency -> ConversionResult(
+                    amount = expense.effectiveAmount,
+                    rateBasis = "IDENTITY",
+                    rateUsed = 1.0,
+                    rateValidDate = expense.date,
+                    rateLastUpdated = null,
+                    rateSource = null,
+                    conversionPath = "IDENTITY"
+                )
                 else -> {
                     // P5-NEW-07 FIX: use convertOutcome (TRANSACTION_DATE) so staleness is
                     // evaluated against the rate's validDate, not its lastUpdated. Historical
@@ -146,6 +159,10 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                                 message = "Analytics excluded transaction(s) because exchange rates were unavailable.",
                                 expenseId = expense.id
                             )
+                            excludedReasons[expense.id] = Pair(
+                                AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                                "Analytics excluded transaction(s) because exchange rates were unavailable."
+                            )
                             return@mapNotNull null
                         }
                         is ConversionOutcome.Converted -> {
@@ -166,7 +183,15 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                                     expenseId = expense.id
                                 )
                             }
-                            outcome.convertedAmount
+                            ConversionResult(
+                                amount = outcome.convertedAmount,
+                                rateBasis = outcome.rateBasis.name,
+                                rateUsed = outcome.rateUsed,
+                                rateValidDate = outcome.rateValidDate,
+                                rateLastUpdated = outcome.rateLastUpdated,
+                                rateSource = outcome.rateSource,
+                                conversionPath = outcome.conversionPath.name
+                            )
                         }
                     }
                 }
@@ -174,12 +199,18 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
 
             NormalizedExpenseSnapshot(
                 snapshot = expense.toExpenseSnapshot(
-                    normalizedEffectiveAmount = normalizedAmount,
+                    normalizedEffectiveAmount = conversionResult.amount,
                     homeCurrency = homeCurrency.code
                 ),
                 originalCurrency = sourceCurrency.code,
                 originalEffectiveAmount = expense.effectiveAmount,
-                normalizedEffectiveAmount = normalizedAmount
+                normalizedEffectiveAmount = conversionResult.amount,
+                rateBasis = conversionResult.rateBasis,
+                rateUsed = conversionResult.rateUsed,
+                rateValidDate = conversionResult.rateValidDate,
+                rateLastUpdated = conversionResult.rateLastUpdated,
+                rateSource = conversionResult.rateSource,
+                conversionPath = conversionResult.conversionPath
             )
         }
 
@@ -196,7 +227,8 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
             includedExpenses = normalizedExpenses.map { it.snapshot },
             warnings = warnings.values.map { it.toWarning() },
             latestRateTimestamp = latestRateTimestamp,
-            totalInputCount = expenses.size
+            totalInputCount = expenses.size,
+            excludedReasons = excludedReasons
         )
     }
 
@@ -227,7 +259,8 @@ data class AnalyticsNormalizationResult(
     val includedExpenses: List<ExpenseSnapshot>,
     val warnings: List<AnalyticsConversionWarning>,
     val latestRateTimestamp: Long?,
-    val totalInputCount: Int = 0
+    val totalInputCount: Int = 0,
+    val excludedReasons: Map<Long, Pair<AnalyticsConversionWarningType, String>> = emptyMap()
 ) {
     /** Returns true when there are any conversion warnings. */
     val hasWarnings: Boolean get() = warnings.isNotEmpty()
@@ -246,11 +279,21 @@ data class AnalyticsNormalizationResult(
     }
 }
 
+/**
+ * Snapshot of a single expense after currency normalisation, including
+ * conversion rate provenance metadata.
+ */
 data class NormalizedExpenseSnapshot(
     val snapshot: ExpenseSnapshot,
     val originalCurrency: String,
     val originalEffectiveAmount: Double,
-    val normalizedEffectiveAmount: Double
+    val normalizedEffectiveAmount: Double,
+    val rateBasis: String? = null,
+    val rateUsed: Double? = null,
+    val rateValidDate: Long? = null,
+    val rateLastUpdated: Long? = null,
+    val rateSource: String? = null,
+    val conversionPath: String? = null
 )
 
 private data class WarningKey(
@@ -273,6 +316,20 @@ private data class WarningAccumulator(
         )
     }
 }
+
+/**
+ * Internal result of a single-expense conversion, carrying both the
+ * converted amount and the rate provenance metadata.
+ */
+private data class ConversionResult(
+    val amount: Double,
+    val rateBasis: String?,
+    val rateUsed: Double?,
+    val rateValidDate: Long?,
+    val rateLastUpdated: Long?,
+    val rateSource: String?,
+    val conversionPath: String?
+)
 
 private data class NormalizableAnalyticsExpense(
     val id: Long,
