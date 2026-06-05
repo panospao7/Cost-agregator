@@ -2,7 +2,7 @@ package com.yourname.expensetracker.ui.screens.tax
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.domain.tax.GreeceTaxConfiguration
+
 import com.yourname.expensetracker.domain.tax.TaxBracket
 import com.yourname.expensetracker.domain.tax.TaxConfiguration
 import com.yourname.expensetracker.domain.tax.TaxConfigurationFactory
@@ -111,6 +111,7 @@ class TaxConfigurationViewModel @Inject constructor(
                     startDate = oneMonthAgo,
                     endDate = now,
                     estimatedAnnualIncome = annualIncome,
+                    estimatedAnnualIncomeCurrency = _uiState.value.currency,
                     taxConfig = config
                 )
                 

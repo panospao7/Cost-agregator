@@ -33,6 +33,28 @@ data class PortfolioSummary(
     val byType: Map<InvestmentType, Double>
 )
 
+/**
+ * Aggregate-safe portfolio summary with MoneyAggregate-backed totals.
+ *
+ * PR6: Replaces raw PortfolioSummary for multi-currency safety.
+ * Raw PortfolioSummary remains @Deprecated for backward compatibility.
+ */
+data class PortfolioSummaryAggregate(
+    val totalValue: MoneyAggregate,
+    val costBasis: MoneyAggregate,
+    val gainLoss: MoneyAggregate,
+    val dataQuality: InvestmentDataQuality,
+    val valuationBasis: String,
+    val investmentCount: Int
+) {
+    /** Convenience display value for UI backward compatibility */
+    val totalValueDisplay: Double get() = totalValue.displayAmount
+    val totalInvestedDisplay: Double get() = costBasis.displayAmount
+    val totalGainLossDisplay: Double get() = gainLoss.displayAmount
+    val totalGainLossPercentDisplay: Double get() =
+        if (costBasis.displayAmount > 0) (gainLoss.displayAmount / costBasis.displayAmount) * 100 else 0.0
+}
+
 data class InvestmentPerformance(
     val investment: Investment,
     val currentValue: Double,
@@ -127,9 +149,14 @@ class InvestmentTracker @Inject constructor(
      */
     suspend fun addHolding(investment: Investment): Result<Long> {
         writeBarrier.checkWritesAllowed("InvestmentTracker.addHolding")
-        require(investment.quantity > 0) { "Quantity must be positive" }
-        require(investment.purchasePrice > 0) { "Purchase price must be positive" }
-        require(investment.currency.isNotBlank()) { "Currency is required" }
+        require(investment.symbol.trim().isNotBlank()) { "Symbol is required" }
+        require(investment.name.trim().isNotBlank()) { "Name is required" }
+        require(investment.quantity.isFinite() && investment.quantity > 0.0) { "Quantity must be finite and positive" }
+        require(investment.purchasePrice.isFinite() && investment.purchasePrice > 0.0) { "Purchase price must be finite and positive" }
+        require(investment.currency.trim().uppercase().matches(Regex("^[A-Z]{3}$"))) { "Currency must be a valid 3-letter code" }
+        require(investment.purchaseDate > 0L) { "Purchase date must be set" }
+        require(investment.currentPrice.isFinite() && investment.currentPrice > 0.0) { "Current price must be finite and positive" }
+        require(investment.purchaseFees.isFinite() && investment.purchaseFees >= 0.0) { "Purchase fees must be finite and non-negative" }
         val now = timeProvider.now()
         val validated = investment.copy(
             createdAt = if (investment.createdAt > 0) investment.createdAt else now,
@@ -179,45 +206,36 @@ class InvestmentTracker @Inject constructor(
      *
      * I01: Now converts all currencies to home currency using CurrencyConverter.
      */
-    suspend fun getPortfolioSummaryAggregate(holdings: List<Investment>): Triple<PortfolioSummary, MoneyAggregate, InvestmentDataQuality> {
-        var totalValue = 0.0
-        var totalInvested = 0.0
-        
-        for (investment in holdings) {
-            totalValue += investment.currentPrice * investment.quantity
-            totalInvested += (investment.purchasePrice * investment.quantity) + investment.purchaseFees
+    suspend fun getPortfolioSummaryAggregate(holdings: List<Investment>): PortfolioSummaryAggregate {
+        // Build per-currency buckets for current value and cost basis
+        val currentValueBuckets = holdings.map { inv ->
+            Pair(inv.currentPrice * inv.quantity, inv.currency.uppercase())
         }
-        
-        val gainLoss = totalValue - totalInvested
-        val gainLossPercent = if (totalInvested > 0) (gainLoss / totalInvested) * 100 else 0.0
-        
-        // Group by type
-        val byType = mutableMapOf<InvestmentType, Double>()
-        for (investment in holdings) {
-            val currentValue = investment.currentPrice * investment.quantity
-            val current = byType[investment.type] ?: 0.0
-            byType[investment.type] = current + currentValue
+        val costBasisBuckets = holdings.map { inv ->
+            Pair((inv.purchasePrice * inv.quantity) + inv.purchaseFees, inv.currency.uppercase())
         }
-        
-        val summary = PortfolioSummary(
-            totalValue = totalValue,
-            totalInvested = totalInvested,
-            totalGainLoss = gainLoss,
-            totalGainLossPercent = gainLossPercent,
-            investmentCount = holdings.size,
-            byType = byType
-        )
-        
-        // Group by currency for MoneyAggregate using the builder
-        val byCurrency = holdings.groupBy { it.currency.uppercase() }
-            .mapValues { (_, list) -> list.sumOf { it.currentPrice * it.quantity } }
 
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
-        val buckets = byCurrency.map { Pair(it.value, it.key) }
-        val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
 
-        // I09-FIXED: Price staleness thresholds — 7 days stale, 30 days very stale
+        val totalValueAggregate = MoneyAggregateBuilder.fromBuckets(
+            currentValueBuckets, homeCurrency, currencyConverter
+        )
+        val costBasisAggregate = MoneyAggregateBuilder.fromBuckets(
+            costBasisBuckets, homeCurrency, currencyConverter
+        )
+
+        // Derive gain/loss aggregate from per-currency gain/loss buckets
+        val gainLossBuckets = holdings.map { inv ->
+            val currentValue = inv.currentPrice * inv.quantity
+            val invested = (inv.purchasePrice * inv.quantity) + inv.purchaseFees
+            Pair(currentValue - invested, inv.currency.uppercase())
+        }
+        val gainLossAggregate = MoneyAggregateBuilder.fromBuckets(
+            gainLossBuckets, homeCurrency, currencyConverter
+        )
+
+        // I09: Price staleness thresholds
         val staleThresholdMs = STALE_PRICE_DAYS * 24 * 60 * 60 * 1000L
         val veryStaleThresholdMs = VERY_STALE_PRICE_DAYS * 24 * 60 * 60 * 1000L
         val now = timeProvider.now()
@@ -230,7 +248,15 @@ class InvestmentTracker @Inject constructor(
             missingPriceCount = holdings.count { it.lastUpdated == 0L },
             lastUpdatedAt = if (holdings.isEmpty()) 0L else holdings.maxOf { it.lastUpdated }
         )
-        return Triple(summary, aggregate, dataQuality)
+
+        return PortfolioSummaryAggregate(
+            totalValue = totalValueAggregate,
+            costBasis = costBasisAggregate,
+            gainLoss = gainLossAggregate,
+            dataQuality = dataQuality,
+            valuationBasis = "currentPrice",
+            investmentCount = holdings.size
+        )
     }
     
     /**
@@ -255,7 +281,29 @@ class InvestmentTracker @Inject constructor(
             // True all-time high/low: query from epoch 0 (all recorded history)
             val allTimeHigh = investmentValueDao.getMaxPrice(investmentId, 0L)
             val allTimeLow = investmentValueDao.getMinPrice(investmentId, 0L)
-            
+
+            val currentValueBuckets = listOf(Pair(currentValue, investment.currency.uppercase()))
+            val costBasisBuckets = listOf(Pair(investedValue, investment.currency.uppercase()))
+
+            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+                .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
+
+            val currentValueAggregate = MoneyAggregateBuilder.fromBuckets(
+                currentValueBuckets, homeCurrency, currencyConverter
+            )
+            val costBasisAggregate = MoneyAggregateBuilder.fromBuckets(
+                costBasisBuckets, homeCurrency, currencyConverter
+            )
+
+            val staleThresholdMs = STALE_PRICE_DAYS * 24 * 60 * 60 * 1000L
+            val isPriceStale = (now - investment.lastUpdated) > staleThresholdMs
+            val dataQuality = InvestmentDataQuality(
+                isPartial = isPriceStale || investment.lastUpdated == 0L,
+                staleHoldingCount = if (isPriceStale) 1 else 0,
+                missingPriceCount = if (investment.lastUpdated == 0L) 1 else 0,
+                lastUpdatedAt = investment.lastUpdated
+            )
+
             InvestmentPerformance(
                 investment = investment,
                 currentValue = currentValue,
@@ -264,7 +312,11 @@ class InvestmentTracker @Inject constructor(
                 dayChange = dayChange,
                 dayChangePercent = dayChangePercent,
                 allTimeHigh = allTimeHigh,
-                allTimeLow = allTimeLow
+                allTimeLow = allTimeLow,
+                currentValueAggregate = currentValueAggregate,
+                costBasisAggregate = costBasisAggregate,
+                isPriceStale = isPriceStale,
+                dataQuality = dataQuality
             )
         }
     
@@ -276,6 +328,7 @@ class InvestmentTracker @Inject constructor(
      */
     suspend fun updatePrice(investmentId: Long, newPrice: Double) = withContext(ioDispatcher) {
         writeBarrier.checkWritesAllowed("InvestmentTracker.updatePrice")
+        require(newPrice.isFinite() && newPrice > 0.0) { "Price must be finite and positive" }
         val investment = investmentDao.getById(investmentId) ?: return@withContext
         val timestamp = timeProvider.now()
         
@@ -337,15 +390,21 @@ class InvestmentTracker @Inject constructor(
      */
     suspend fun getPortfolioAllocation(): PortfolioAllocationResult = withContext(ioDispatcher) {
         val holdings = investmentDao.getAllActiveInvestments().first()
-        val (_, aggregate, _) = getPortfolioSummaryAggregate(holdings)
-        if (aggregate.sourceBuckets.isEmpty()) return@withContext PortfolioAllocationResult(emptyMap(), false, emptySet())
-        val total = aggregate.displayAmount
+        val aggregate = getPortfolioSummaryAggregate(holdings)
+        if (aggregate.totalValue.sourceBuckets.isEmpty()) return@withContext PortfolioAllocationResult(emptyMap(), false, emptySet())
+        val total = aggregate.totalValue.displayAmount
         if (total <= 0.0) return@withContext PortfolioAllocationResult(emptyMap(), false, emptySet())
-        val homeCurrency = aggregate.displayCurrency.code
+        val homeCurrency = aggregate.totalValue.displayCurrency.code
         val failedTypes = mutableSetOf<InvestmentType>()
+        val missingHistoryTypes = mutableSetOf<InvestmentType>()
         val byType = holdings.groupBy { it.type }.mapValues { (type, holds) ->
             holds.sumOf { h ->
-                val value = investmentValueDao.getLatestValue(h.id)?.totalValue ?: 0.0
+                // PR6: Use same source as denominator (currentPrice * quantity)
+                val value = h.currentPrice * h.quantity
+                // Track missing latest value history as diagnostic
+                if (investmentValueDao.getLatestValue(h.id) == null) {
+                    missingHistoryTypes.add(type)
+                }
                 if (h.currency == homeCurrency) value
                 else {
                     val converted = currencyConverter.convertAsOf(value, h.currency, homeCurrency, atMillis = h.lastUpdated)?.convertedAmount
@@ -354,7 +413,8 @@ class InvestmentTracker @Inject constructor(
             }
         }
         val allocations = byType.mapValues { (_, value) -> if (total > 0.0) value / total else 0.0 }
-        return@withContext PortfolioAllocationResult(allocations, failedTypes.isNotEmpty(), failedTypes)
+        val isPartial = failedTypes.isNotEmpty() || missingHistoryTypes.isNotEmpty()
+        return@withContext PortfolioAllocationResult(allocations, isPartial, failedTypes)
     }
     
     /**
@@ -480,6 +540,7 @@ class InvestmentTracker @Inject constructor(
                 cursor += 24 * 60 * 60 * 1000L
             }
             val dayMap = dayKeys.associateWith { 0.0 }.toMutableMap()
+            val dayCurrencyBuckets = dayKeys.associateWith { mutableListOf<Pair<Double, String>>() }.toMutableMap()
 
             var hasMissingData = false
 
@@ -512,6 +573,18 @@ class InvestmentTracker @Inject constructor(
                         }
                     }
                     dayMap[dayKey] = (dayMap[dayKey] ?: 0.0) + latestTotalValue
+                    dayCurrencyBuckets[dayKey]?.add(latestTotalValue to investment.currency.uppercase())
+                }
+            }
+
+            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+                .getOrElse { "EUR" } // fallback for history generation
+            val dailyAggregates = dayKeys.map { dayKey ->
+                val buckets = dayCurrencyBuckets[dayKey] ?: emptyList()
+                if (buckets.isEmpty()) {
+                    MoneyAggregate.empty(CurrencyCode(homeCurrency), RateBasis.LATEST_AVAILABLE)
+                } else {
+                    MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
                 }
             }
             
@@ -519,7 +592,7 @@ class InvestmentTracker @Inject constructor(
                 result.add(DailyPortfolioValue(dayKey, totalValue))
             }
             
-            PortfolioValueHistoryResult(result, DataQuality(isPartial = hasMissingData))
+            PortfolioValueHistoryResult(result, DataQuality(isPartial = hasMissingData), dailyAggregates)
         }
 
     private suspend fun getPreviousDayCloseSnapshot(investmentId: Long, referenceTime: Long): InvestmentValue? {

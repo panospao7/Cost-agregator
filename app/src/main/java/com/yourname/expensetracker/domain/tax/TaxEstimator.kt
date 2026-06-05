@@ -27,6 +27,13 @@ import javax.inject.Singleton
  * No new tax features should be added without a full design review.
  * The existing implementation is kept for demo/testing purposes only.
  *
+ * PR7-DEFERRED (E4-NOW-015): Historical FX basis for tax conversion.
+ * Current implementation uses MoneyAggregateBuilder.fromBuckets with LATEST_AVAILABLE rates.
+ * Converting to per-transaction-date rates (TRANSACTION_DATE basis) requires:
+ * 1. Changing DAO queries from aggregate-by-currency to per-transaction expense rows, OR
+ * 2. Using MoneyNormalizationEngine with per-expense normalization.
+ * This is deferred to a future schema-backed PR with explicit human approval.
+ *
  * HIGH FIX (HIGH-6): Calculates estimated taxes using configurable tax rates.
  * 
  * Replaces hardcoded tax rates with TaxConfiguration for country-specific rates.
@@ -61,14 +68,29 @@ class TaxEstimator @Inject constructor(
      * The default [taxConfig] is loaded via [TaxConfigurationFactory.getConfiguration]
      * using the stored tax country code instead of a hardcoded default.
      *
+     * @param estimatedAnnualIncomeCurrency The currency of the estimated annual income (defaults to filing currency if null).
      * @param taxConfig The tax configuration to use (defaults to the configured tax country)
      */
     suspend fun estimateTaxes(
         startDate: Long,
         endDate: Long,
         estimatedAnnualIncome: Double,
+        estimatedAnnualIncomeCurrency: String? = null,
         taxConfig: TaxConfiguration = TaxConfigurationFactory.getConfiguration(taxSettings.getTaxCountry())
     ): TaxEstimate = withContext(ioDispatcher) {
+        // PR7: Resolve currency context
+        val filingCurrency = taxSettings.getFilingCurrency().uppercase()
+        val incomeCurrency = estimatedAnnualIncomeCurrency?.uppercase() ?: filingCurrency
+
+        // PR7: Home-vs-filing currency warning
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrNull()?.uppercase()
+        val currencyMismatchWarning = if (homeCurrency != null && homeCurrency != filingCurrency) {
+            "Home currency ($homeCurrency) differs from tax filing currency ($filingCurrency). Tax numbers are in filing currency."
+        } else null
+
+        // PR7: If income currency differs from filing currency, mark partial
+        val incomeCurrencyPartial = incomeCurrency != filingCurrency
+
         // A.9: Aggregate SQL replaces capped row scan for deductible total.
         // getTotalBusinessExpenses uses SUM(effectiveAmount) via
         // ExpenseDao.getTotalBusinessExpensesBetween, eliminating hidden
@@ -79,9 +101,6 @@ class TaxEstimator @Inject constructor(
 
         val periodYearFraction = calculatePeriodYearFraction(startDate, endDate)
         val periodIncome = estimatedAnnualIncome * periodYearFraction
-
-        // Filing currency for display purposes
-        val filingCurrency = taxSettings.getFilingCurrency()
 
         // T04-FIXED: VAT fields renamed for clarity; confidence marked LOW when estimated from standard rate.
         // T04-FIXED: TaxRateProvider used as supplementary rate source. Falls back to TaxConfiguration for backward compat.
@@ -122,7 +141,7 @@ class TaxEstimator @Inject constructor(
             isPartial = deductibleAggregate.isPartial,
             warningMessage = null
         )
-        val partial = deductibleAggregate.isPartial || vatAggregate.isPartial
+        val partial = deductibleAggregate.isPartial || vatAggregate.isPartial || incomeCurrencyPartial
         val warnings = deductibleAggregate.conversionFailures.map { it.description }
 
         TaxEstimate(
@@ -136,7 +155,16 @@ class TaxEstimator @Inject constructor(
             estimatedRecoverableVat = 0.0,
             vatConfidence = "LOW",
             effectiveTaxRate = if (periodIncome > 0) (estimatedIncomeTax / periodIncome) * 100 else 0.0,
-            notes = "Estimate using ${taxConfig.getCountryCode()} tax rates (filing currency: $filingCurrency). Consult tax professional for accurate filing.",
+            notes = buildString {
+                append("Estimate using ${taxConfig.getCountryCode()} tax rates (filing currency: $filingCurrency). Consult tax professional for accurate filing.")
+                if (currencyMismatchWarning != null) {
+                    append(" ")
+                    append(currencyMismatchWarning)
+                }
+                if (incomeCurrencyPartial) {
+                    append(" Income currency ($incomeCurrency) differs from filing currency ($filingCurrency).")
+                }
+            },
             deductibleAggregate = deductibleAggregate,
             vatAggregate = vatAggregate,
             taxableIncomeAggregate = taxableIncomeAggregate,
@@ -226,11 +254,11 @@ class TaxEstimator @Inject constructor(
      */
     private suspend fun buildDeductibleAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getBusinessExpensesBetweenByCurrency(startMs, endMs)
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault(taxSettings.getFilingCurrency())
+        // PR7: Tax calculations always use filing currency as target, not home currency
+        val filingCurrency = taxSettings.getFilingCurrency()
         val buckets = currencyTotals.map { Pair(it.total, it.currency) }
         val counts = currencyTotals.map { it.txCount }
-        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
+        return MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter, counts)
     }
 
     /**
@@ -241,11 +269,11 @@ class TaxEstimator @Inject constructor(
      */
     private suspend fun buildIncomeAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startMs, endMs)
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault(taxSettings.getFilingCurrency())
+        // PR7: Tax calculations always use filing currency as target, not home currency
+        val filingCurrency = taxSettings.getFilingCurrency()
         val buckets = currencyTotals.map { Pair(it.total, it.currency) }
         val counts = currencyTotals.map { it.txCount }
-        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
+        return MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter, counts)
     }
 
     /**
@@ -265,7 +293,11 @@ class TaxEstimator @Inject constructor(
         val totalIncome = incomeAggregate.displayAmount
         val filingCurrency = taxSettings.getFilingCurrency()
 
-        val estimate = estimateTaxes(yearStart, yearEnd, totalIncome, taxConfig)
+        val estimate = estimateTaxes(
+            yearStart, yearEnd, totalIncome,
+            estimatedAnnualIncomeCurrency = incomeAggregate.displayCurrency.code,
+            taxConfig = taxConfig
+        )
 
         val estimatedTaxAgg = MoneyAggregate(
             displayAmount = estimate.estimatedIncomeTax,

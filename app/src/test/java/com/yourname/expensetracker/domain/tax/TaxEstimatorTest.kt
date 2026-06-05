@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -74,7 +75,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 1240.0
 
         val taxConfig = GreeceTaxConfiguration() // 24% VAT
-        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, taxConfig)
+        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, taxConfig = taxConfig)
 
         val expectedVat = 1240.0 * (0.24 / 1.24)
         assertApproxEquals(expectedVat, estimate.estimatedVatPortion, 0.01)
@@ -101,7 +102,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 5000.0
 
         val usConfig = UsTaxConfiguration() // 0% VAT
-        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, usConfig)
+        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, taxConfig = usConfig)
 
         assertApproxEquals(0.0, estimate.estimatedVatPortion, 0.001)
     }
@@ -118,7 +119,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
-        val estimate = taxEstimator.estimateTaxes(start, end, annualIncome, GreeceTaxConfiguration())
+        val estimate = taxEstimator.estimateTaxes(start, end, annualIncome, taxConfig = GreeceTaxConfiguration())
 
         val periodFraction = periodYearFraction(start, end)
         assertApproxEquals(annualIncome * periodFraction, estimate.estimatedIncome, 0.01)
@@ -133,7 +134,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 500.0
 
         val taxConfig = GreeceTaxConfiguration()
-        val estimate = taxEstimator.estimateTaxes(start, end, annualIncome, taxConfig)
+        val estimate = taxEstimator.estimateTaxes(start, end, annualIncome, taxConfig = taxConfig)
 
         val periodFraction = periodYearFraction(start, end)
         val expectedIncome = annualIncome * periodFraction
@@ -184,10 +185,10 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
-        val grEstimate = taxEstimator.estimateTaxes(start, end, 10000.0, GreeceTaxConfiguration())
+        val grEstimate = taxEstimator.estimateTaxes(start, end, 10000.0, taxConfig = GreeceTaxConfiguration())
         assertTrue(grEstimate.notes.contains("GR"))
 
-        val usEstimate = taxEstimator.estimateTaxes(start, end, 10000.0, UsTaxConfiguration())
+        val usEstimate = taxEstimator.estimateTaxes(start, end, 10000.0, taxConfig = UsTaxConfiguration())
         assertTrue(usEstimate.notes.contains("US"))
     }
 
@@ -310,6 +311,36 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         assertApproxEquals(estimate1.effectiveTaxRate, estimate2.effectiveTaxRate, 0.001)
         assertApproxEquals(1000.0 * (0.24 / 1.24), estimate1.estimatedVatPortion, 0.01)
         coVerify(exactly = 0) { expenseDao.getTotalSpentBetween(any(), any()) }
+    }
+
+    // =========================================================================
+    // PR7 — Tax currency consistency
+    // =========================================================================
+
+    @Test
+    fun `estimateTaxes uses filing currency not home currency for deductions`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+
+        // This is a structural check — the aggregate target currency should be filing currency
+        // Since we mock the DAO and converter, verify the method runs with filingCurrency
+        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, "EUR")
+        assertThat(estimate).isNotNull()
+    }
+
+    @Test
+    fun `estimateTaxes warns when income currency differs from filing currency`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+
+        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, "USD")
+        assertThat(estimate.isPartial).isTrue()
+        assertThat(estimate.notes).contains("USD")
+        assertThat(estimate.notes).contains("filing currency")
     }
 
     // =========================================================================

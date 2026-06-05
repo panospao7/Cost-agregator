@@ -4,9 +4,12 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MileageTracking
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.data.repository.TaxSettingsRepository
+import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.export.CsvCellSanitizer
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
@@ -26,7 +29,9 @@ data class BusinessExpenseReport(
     val mileageReport: MileageReport,
     val expensesMissingReceipts: List<Expense>,
     val topExpenses: List<Expense>,
-    val formattedReport: String
+    val formattedReport: String,
+    val isPartial: Boolean = false,
+    val warningMessage: String? = null
 )
 
 data class MileageReport(
@@ -42,7 +47,9 @@ data class MileageReport(
 @Singleton
 class BusinessExpenseReportGenerator @Inject constructor(
     private val businessExpenseRepository: BusinessExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val taxSettingsRepository: TaxSettingsRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
     /**
@@ -52,12 +59,24 @@ class BusinessExpenseReportGenerator @Inject constructor(
         startDate: Long,
         endDate: Long,
         includeMileage: Boolean = true
-    ): BusinessExpenseReport = withContext(Dispatchers.IO) {
+    ): BusinessExpenseReport = withContext(ioDispatcher) {
         val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
         
         // Get all business expenses – enforce purchase-only at the boundary
         val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
             .filter { it.transactionType.toDomain().isSpending }
+        
+        // Determine report currency and mixed-currency state
+        val distinctCurrencies = expenses.map { it.currency.uppercase() }.distinct()
+        val isMixedCurrency = distinctCurrencies.size > 1
+        val reportCurrency = if (isMixedCurrency) {
+            taxSettingsRepository.getFilingCurrency().uppercase()
+        } else {
+            distinctCurrencies.firstOrNull() ?: taxSettingsRepository.getFilingCurrency().uppercase()
+        }
+        val warningMessage = if (isMixedCurrency) {
+            "Warning: report contains mixed currencies (${distinctCurrencies.joinToString()}). Totals are raw sums and may be misleading."
+        } else null
         
         // Calculate totals
         var totalExpenses = 0.0
@@ -110,11 +129,15 @@ class BusinessExpenseReportGenerator @Inject constructor(
             append("Period: ${formatInstant(startDate, dateFormat)} - ${formatInstant(endDate, dateFormat)}\n")
             append("Generated: ${formatInstant(timeProvider.now(), dateFormat)}\n")
             append("\n")
+            if (warningMessage != null) {
+                append("⚠️ $warningMessage\n")
+                append("\n")
+            }
             append("SUMMARY\n")
             append("----------------------------------------\n")
-            append("Total Business Expenses: €${String.format("%.2f", totalExpenses)}\n")
-            append("Total Mileage Deduction: €${String.format("%.2f", mileageReport.totalDeduction)}\n")
-            append("Total Deductible Amount: €${String.format("%.2f", totalDeductible)}\n")
+            append("Total Business Expenses: $reportCurrency ${String.format("%.2f", totalExpenses)}\n")
+            append("Total Mileage Deduction: $reportCurrency ${String.format("%.2f", mileageReport.totalDeduction)}\n")
+            append("Total Deductible Amount: $reportCurrency ${String.format("%.2f", totalDeductible)}\n")
             append("\n")
             
             if (expensesByCategory.isNotEmpty()) {
@@ -122,7 +145,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("----------------------------------------\n")
                 val sortedCategories = expensesByCategory.toList().sortedByDescending { it.second }
                 for ((category, amount) in sortedCategories) {
-                    append("${category}: €${String.format("%.2f", amount)}\n")
+                    append("${category}: $reportCurrency ${String.format("%.2f", amount)}\n")
                 }
                 append("\n")
             }
@@ -132,7 +155,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("----------------------------------------\n")
                 val sortedProjects = expensesByProject.toList().sortedByDescending { it.second }
                 for ((project, amount) in sortedProjects) {
-                    append("${project}: €${String.format("%.2f", amount)}\n")
+                    append("${project}: $reportCurrency ${String.format("%.2f", amount)}\n")
                 }
                 append("\n")
             }
@@ -142,12 +165,12 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("----------------------------------------\n")
                 append("Total Distance: ${String.format("%.1f", mileageReport.totalDistanceKm)} km\n")
                 val rateLine = if (mileageReport.hasMultipleRates) {
-                    "Deduction Rate: €${String.format("%.2f", mileageReport.effectiveDeductionRatePerKm)}/km (weighted average, multiple rates applied)"
+                    "Deduction Rate: $reportCurrency ${String.format("%.2f", mileageReport.effectiveDeductionRatePerKm)}/km (weighted average, multiple rates applied)"
                 } else {
-                    "Deduction Rate: €${String.format("%.2f", mileageReport.deductionRatePerKm ?: 0.0)}/km"
+                    "Deduction Rate: $reportCurrency ${String.format("%.2f", mileageReport.deductionRatePerKm ?: 0.0)}/km"
                 }
                 append("$rateLine\n")
-                append("Total Mileage Deduction: €${String.format("%.2f", mileageReport.totalDeduction)}\n")
+                append("Total Mileage Deduction: $reportCurrency ${String.format("%.2f", mileageReport.totalDeduction)}\n")
                 append("Number of Trips: ${mileageReport.tripCount}\n")
                 append("\n")
             }
@@ -159,7 +182,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                     val date = formatInstant(expense.date, dateFormat)
                     val merchant = expense.merchant.take(25)
                     val purpose = expense.businessPurpose?.let { " - $it" } ?: ""
-                    append("${index + 1}. ${date} - €${String.format("%.2f", expense.effectiveAmount)} - ${merchant}${purpose}\n")
+                    append("${index + 1}. ${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${merchant}${purpose}\n")
                 }
                 append("\n")
             }
@@ -169,7 +192,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("----------------------------------------\n")
                 for (expense in missingReceipts) {
                     val date = formatInstant(expense.date, dateFormat)
-                    append("${date} - €${String.format("%.2f", expense.effectiveAmount)} - ${expense.merchant}\n")
+                    append("${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${expense.merchant}\n")
                 }
                 append("\n")
             }
@@ -190,7 +213,9 @@ class BusinessExpenseReportGenerator @Inject constructor(
             mileageReport = mileageReport,
             expensesMissingReceipts = missingReceipts,
             topExpenses = topExpenses,
-            formattedReport = formattedReport
+            formattedReport = formattedReport,
+            isPartial = isMixedCurrency,
+            warningMessage = warningMessage
         )
     }
     
@@ -230,7 +255,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         startDate: Long,
         endDate: Long,
         includeMileage: Boolean = true
-    ): String = withContext(Dispatchers.IO) {
+    ): String = withContext(ioDispatcher) {
         val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
         val csv = StringBuilder()
         
@@ -242,12 +267,12 @@ class BusinessExpenseReportGenerator @Inject constructor(
             .filter { it.transactionType.toDomain().isSpending }
         for (expense in expenses) {
             val date = formatInstant(expense.date, dateFormat)
-            val merchant = escapeCSV(expense.merchant)
-            val category = escapeCSV(expense.businessCategory ?: "")
-            val purpose = escapeCSV(expense.businessPurpose ?: "")
-            val project = escapeCSV(expense.businessProject ?: "")
+            val merchant = CsvCellSanitizer.sanitize(expense.merchant)
+            val category = CsvCellSanitizer.sanitize(expense.businessCategory ?: "")
+            val purpose = CsvCellSanitizer.sanitize(expense.businessPurpose ?: "")
+            val project = CsvCellSanitizer.sanitize(expense.businessProject ?: "")
             val requiresReceipt = if (expense.requiresReceipt) "Yes" else "No"
-            val notes = escapeCSV(expense.notes ?: "")
+            val notes = CsvCellSanitizer.sanitize(expense.notes ?: "")
             
             csv.append("${date},${merchant},${expense.effectiveAmount},${expense.currency},${category},${purpose},${project},${requiresReceipt},${notes}\n")
         }
@@ -260,10 +285,10 @@ class BusinessExpenseReportGenerator @Inject constructor(
             val trips = businessExpenseRepository.getBusinessMileageBetween(startDate, endDate)
             for (trip in trips) {
                 val date = formatInstant(trip.date, dateFormat)
-                val startLoc = escapeCSV(trip.startLocation ?: "")
-                val endLoc = escapeCSV(trip.endLocation ?: "")
-                val purpose = escapeCSV(trip.tripPurpose)
-                val project = escapeCSV(trip.businessProject ?: "")
+                val startLoc = CsvCellSanitizer.sanitize(trip.startLocation ?: "")
+                val endLoc = CsvCellSanitizer.sanitize(trip.endLocation ?: "")
+                val purpose = CsvCellSanitizer.sanitize(trip.tripPurpose)
+                val project = CsvCellSanitizer.sanitize(trip.businessProject ?: "")
                 val deduction = trip.calculatedDeduction ?: (trip.distanceKm * trip.deductionRatePerKm)
                 
                 csv.append("${date},${trip.distanceKm},${startLoc},${endLoc},${purpose},${project},${deduction}\n")
@@ -273,15 +298,6 @@ class BusinessExpenseReportGenerator @Inject constructor(
         csv.toString()
     }
     
-    /**
-     * Escape CSV values to handle commas and quotes.
-     */
-    private fun escapeCSV(value: String): String {
-        return if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
-            "\"${value.replace("\"", "\"\"")}\""
-        } else value
-    }
-
     /**
      * Formats an epoch-millis timestamp using the given [DateTimeFormatter].
      * Thread-safe replacement for the legacy `SimpleDateFormat.format(Date(millis))`.

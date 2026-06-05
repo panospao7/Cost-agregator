@@ -222,7 +222,8 @@ class GroupTransactionCoordinator @Inject constructor(
         name: String,
         description: String?,
         currency: String,
-        members: List<GroupMember>
+        members: List<GroupMember>,
+        onInsideTransaction: suspend (groupId: Long) -> Unit
     ): GroupCreationResult = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.createGroupWithMembers")
@@ -240,13 +241,17 @@ class GroupTransactionCoordinator @Inject constructor(
                 
                 // If this fails, group insertion rolls back
                 val membersWithGroupId = members.map { member ->
-                    member.copy(groupId = newGroupId).let { m ->
+                    // Normalize joinedAt — if <= 0, set to now (PR1: no-schema invariant hardening)
+                    val normalizedMember = if (member.joinedAt <= 0L) member.copy(joinedAt = timeProvider.now()) else member
+                    normalizedMember.copy(groupId = newGroupId).let { m ->
                         // G01: currentUserGroupKey invariant — currentUser=true members
                         // get currentUserGroupKey set to the group's primary key.
                         if (m.isCurrentUser) m.copy(currentUserGroupKey = newGroupId) else m
                     }
                 }
                 memberDao.insertAll(membersWithGroupId)
+                
+                onInsideTransaction(newGroupId)
                 
                 newGroupId
             }
@@ -268,7 +273,8 @@ class GroupTransactionCoordinator @Inject constructor(
         groupId: Long,
         name: String,
         email: String?,
-        isCurrentUser: Boolean
+        isCurrentUser: Boolean,
+        onInsideTransaction: suspend (memberId: Long) -> Unit
     ): Result<Unit, GroupValidationError> = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addMemberToGroup")
@@ -307,7 +313,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     if (isCurrentUser) m.copy(currentUserGroupKey = groupId) else m
                 }
 
-                memberDao.insert(member)
+                val memberId = memberDao.insert(member)
+                onInsideTransaction(memberId)
                 Result.Success(Unit)
             }
         } catch (e: SQLiteConstraintException) {
@@ -646,10 +653,13 @@ class GroupTransactionCoordinator @Inject constructor(
      * Archive a group by setting isActive = false instead of hard-deleting.
      * Preserves all expense history for audit purposes.
      */
-    override suspend fun archiveGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
+    override suspend fun archiveGroup(groupId: Long, onInsideTransaction: suspend () -> Unit): Boolean = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.archiveGroup")
-            groupDao.archiveGroup(groupId)
+            database.withTransaction {
+                groupDao.archiveGroup(groupId)
+                onInsideTransaction()
+            }
             true
         } catch (e: CancellationException) {
             throw e
@@ -677,10 +687,10 @@ class GroupTransactionCoordinator @Inject constructor(
      * TODO (G08): Route through archiveGroup() for soft-delete or ensure all
      *             deletions write lifecycle events to maintain audit trail.
      */
-    override suspend fun permanentlyDeleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
+    override suspend fun permanentlyDeleteGroup(groupId: Long, onInsideTransaction: suspend () -> Unit): Boolean = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.permanentlyDeleteGroup")
-            deleteGroupAtomic(groupId)
+            deleteGroupAtomic(groupId, onInsideTransaction)
             true
         } catch (e: CancellationException) {
             throw e
@@ -712,7 +722,9 @@ class GroupTransactionCoordinator @Inject constructor(
             
             // If this fails, group insertion rolls back
             val membersWithGroupId = members.map { member ->
-                member.copy(groupId = groupId).let { m ->
+                // Normalize joinedAt — if <= 0, set to now (PR1: no-schema invariant hardening)
+                val normalizedMember = if (member.joinedAt <= 0L) member.copy(joinedAt = timeProvider.now()) else member
+                normalizedMember.copy(groupId = groupId).let { m ->
                     // G01: currentUserGroupKey invariant — currentUser=true members
                     // get currentUserGroupKey set to the group's primary key.
                     if (m.isCurrentUser) m.copy(currentUserGroupKey = groupId) else m
@@ -764,6 +776,16 @@ class GroupTransactionCoordinator @Inject constructor(
                 if (members.none { it.id == paidById }) {
                     return@withTransaction GroupMutationTxOutcome(
                         GroupExpenseCreationResult.Error("Payer is not a member of this group"),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
+                }
+
+                // E4-005: Enforce single-currency group policy at low level
+                if (currency != group.defaultCurrency) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error(
+                            "Expense currency '$currency' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
+                        ),
                         PostCommitActionBatch.empty(correlationId)
                     )
                 }
@@ -964,7 +986,7 @@ class GroupTransactionCoordinator @Inject constructor(
      * Prefer [deleteGroup] (soft archive via isActive = false) whenever possible
      * to preserve referential integrity.
      */
-    suspend fun deleteGroupAtomic(groupId: Long) {
+    suspend fun deleteGroupAtomic(groupId: Long, onInsideTransaction: suspend () -> Unit = {}) {
         writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.deleteGroupAtomic")
         // Collect linked expense IDs before deleting
         val linkedExpenseIds = groupExpenseDao.getExpensesForGroupOnce(groupId).mapNotNull { it.expenseId }
@@ -1006,6 +1028,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     reason = "Group hard-delete cleared shared expense flags for ${linkedExpenseIds.size} expenses"
                 )
             )
+
+            onInsideTransaction()
         }
 
         // After commit: plan and run bulk updated actions

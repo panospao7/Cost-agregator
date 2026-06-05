@@ -70,24 +70,34 @@ class TaxSettingsRepository @Inject constructor(
 
     // ── Setters ──────────────────────────────────────────────────────────────
 
-    /** Sets the tax filing country code. */
+    /** Sets the tax filing country code. Must be ISO 3166-1 alpha-2 (2 letters). */
     fun setTaxCountry(country: String) {
-        prefs.edit().putString(KEY_TAX_COUNTRY, country).apply()
+        val normalized = country.trim().uppercase()
+        require(normalized.matches(Regex("^[A-Z]{2}$"))) {
+            "Tax country must be a 2-letter ISO code, got: $country"
+        }
+        prefs.edit().putString(KEY_TAX_COUNTRY, normalized).apply()
     }
 
-    /** Sets the tax filing currency code. */
+    /** Sets the tax filing currency code. Must be ISO 4217 (3 letters). */
     fun setFilingCurrency(currency: String) {
-        prefs.edit().putString(KEY_FILING_CURRENCY, currency).apply()
+        val normalized = currency.trim().uppercase()
+        require(normalized.matches(Regex("^[A-Z]{3}$"))) {
+            "Filing currency must be a 3-letter ISO code, got: $currency"
+        }
+        prefs.edit().putString(KEY_FILING_CURRENCY, normalized).apply()
     }
 
-    /** Sets the fiscal year start month (1 = January, 12 = December). */
+    /** Sets the fiscal year start month (1 = January, 12 = December). Fail-fast on invalid input. */
     fun setFiscalYearStartMonth(month: Int) {
-        prefs.edit().putInt(KEY_FISCAL_YEAR_START, month.coerceIn(1, 12)).apply()
+        require(month in 1..12) { "Fiscal year start month must be 1-12, got: $month" }
+        prefs.edit().putInt(KEY_FISCAL_YEAR_START, month).apply()
     }
 
-    /** Sets the fiscal year start day (1-31). */
+    /** Sets the fiscal year start day (1-31). Fail-fast on invalid input. */
     fun setFiscalYearStartDay(day: Int) {
-        prefs.edit().putInt(KEY_FISCAL_YEAR_START_DAY, day.coerceIn(1, 31)).apply()
+        require(day in 1..31) { "Fiscal year start day must be 1-31, got: $day" }
+        prefs.edit().putInt(KEY_FISCAL_YEAR_START_DAY, day).apply()
     }
 
     /** Enables or disables VAT tracking/reporting. */

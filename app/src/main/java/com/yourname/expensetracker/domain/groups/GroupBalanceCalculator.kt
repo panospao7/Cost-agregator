@@ -4,7 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
-import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,47 +32,29 @@ class GroupBalanceCalculator @Inject constructor(
         val group = groupDao.getGroupById(groupId)
         val currency = group?.defaultCurrency ?: "EUR"
         val expenses = groupExpenseDao.getExpensesForGroupOnce(groupId)
+        val members = memberDao.getAllForGroup(groupId)
         val settlements = settlementDao.getSettlementsForGroup(groupId)
 
         val paidTotal = expenses.filter { it.paidById == memberId }.sumOf { it.totalAmount }
-        val memberCount = memberDao.getMemberCount(groupId).coerceAtLeast(1)
-        // TODO (E4-007): memberCount uses the CURRENT member count for all historical expenses.
-        // For accurate historical splits, each expense should use the member count at the time
-        // the expense was created (members may have joined/left since then). Consider storing
-        // participantCount on GroupExpense at creation time, or querying member join dates.
-        // For CUSTOM splits, compute owed share from the split JSON
+
+        // E4-NOW-004 FIX: Use SplitCalculator which respects joinedAt for historical participation
         val owedShareTotal = expenses.sumOf { expense ->
-            when (expense.splitType) {
-                SplitType.EQUAL -> expense.totalAmount / memberCount
-                SplitType.CUSTOM_PERCENT -> {
-                    val json = expense.customSplitsJson
-                    if (json != null) {
-                        val percent = extractMemberShare(json, memberId.toString())
-                        if (percent != null) expense.totalAmount * percent / 100.0
-                        else expense.totalAmount / memberCount // missing member = equal share fallback
-                    } else expense.totalAmount / memberCount
-                }
-                SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
-                    val json = expense.customSplitsJson
-                    if (json != null) {
-                        val share = extractMemberShare(json, memberId.toString())
-                        share ?: 0.0 // missing member in custom split = 0 (they owe nothing)
-                    } else expense.totalAmount / memberCount
-                }
-                else -> expense.totalAmount / memberCount
-            }
+            SplitCalculator.calculateMemberShare(
+                expense = expense,
+                members = members,
+                memberId = memberId
+            )
         }
-        val settlementsPaid = settlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }
-        val settlementsReceived = settlements.filter { it.toMemberId == memberId }.sumOf { it.amount }
+
+        // E4-NOW-005 FIX: Only count settlements with status RECORDED or COMPLETED and matching currency
+        val validSettlements = settlements.filter {
+            it.status in listOf("RECORDED", "COMPLETED") && it.currency == currency
+        }
+        val settlementsPaid = validSettlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }
+        val settlementsReceived = validSettlements.filter { it.toMemberId == memberId }.sumOf { it.amount }
         val netBalance = paidTotal - owedShareTotal - settlementsPaid + settlementsReceived
 
         return GroupMemberBalance(groupId, memberId, currency, paidTotal, owedShareTotal, settlementsPaid, settlementsReceived, netBalance)
-    }
-
-    private fun extractMemberShare(customSplitsJson: String, memberIdStr: String): Double? {
-        // Parse simple JSON: {"123": 45.0, "456": 55.0}
-        val pattern = Regex("\"$memberIdStr\"\\s*:\\s*([\\d.]+)")
-        return pattern.find(customSplitsJson)?.groupValues?.get(1)?.toDoubleOrNull()
     }
 
     private companion object {

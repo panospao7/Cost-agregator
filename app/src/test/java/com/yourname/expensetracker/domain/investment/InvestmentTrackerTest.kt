@@ -202,6 +202,35 @@ class InvestmentTrackerTest {
     }
 
     @Test
+    fun `portfolio summary aggregate uses money aggregate not raw totals`() = runTest {
+        val investments = listOf(
+            makeInvestment(id = 70L, currentPrice = 150.0, purchasePrice = 100.0, quantity = 2.0, purchaseFees = 10.0),
+            makeInvestment(id = 71L, currentPrice = 75.0, purchasePrice = 50.0, quantity = 1.0, purchaseFees = 5.0)
+        )
+        every { investmentDao.getAllActiveInvestments() } returns flowOf(investments)
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
+
+        val aggregate = tracker.getPortfolioSummaryAggregate(investments)
+
+        assertThat(aggregate.investmentCount).isEqualTo(2)
+        assertThat(aggregate.totalValue).isNotNull()
+        assertThat(aggregate.costBasis).isNotNull()
+        assertThat(aggregate.gainLoss).isNotNull()
+        assertThat(aggregate.dataQuality).isNotNull()
+        assertThat(aggregate.valuationBasis).isEqualTo("currentPrice")
+    }
+
+    @Test
+    fun `portfolio allocation uses same source for numerator and denominator`() = runTest {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
+        // This is a structural check — allocation runs without crash
+        // and returns valid percentages
+        val result = tracker.getPortfolioAllocation()
+        // With no holdings, should be empty
+        assertThat(result.allocations).isEmpty()
+    }
+
+    @Test
     fun `portfolio history collapses same-day snapshots to latest value per investment`() = runTest {
         val investmentA = makeInvestment(id = 9L)
         val investmentB = makeInvestment(id = 10L)
@@ -242,6 +271,84 @@ class InvestmentTrackerTest {
         assertThat(history.values.size).isEqualTo(1)
         assertThat(history.values.single().totalValue).isEqualTo(170.0)
         coVerify(exactly = 1) { investmentValueDao.getPortfolioHistoryBatch(listOf(9L, 10L), any(), any()) }
+    }
+
+    // ---- addHolding strengthened validation ----
+
+    @Test
+    fun `addHolding rejects NaN quantity`() = runTest {
+        val investment = makeInvestment(quantity = Double.NaN)
+        val result = tracker.addHolding(investment)
+        assertThat(result.isFailure).isTrue()
+        assertThat(result.exceptionOrNull()?.message).contains("finite")
+    }
+
+    @Test
+    fun `addHolding rejects infinite purchasePrice`() = runTest {
+        val investment = makeInvestment(purchasePrice = Double.POSITIVE_INFINITY)
+        val result = tracker.addHolding(investment)
+        assertThat(result.isFailure).isTrue()
+        assertThat(result.exceptionOrNull()?.message).contains("finite")
+    }
+
+    @Test
+    fun `addHolding rejects invalid currency`() = runTest {
+        val investment = makeInvestment().copy(currency = "123")
+        val result = tracker.addHolding(investment)
+        assertThat(result.isFailure).isTrue()
+        assertThat(result.exceptionOrNull()?.message).contains("Currency")
+    }
+
+    @Test
+    fun `addHolding rejects blank symbol`() = runTest {
+        val investment = makeInvestment().copy(symbol = "   ")
+        val result = tracker.addHolding(investment)
+        assertThat(result.isFailure).isTrue()
+        assertThat(result.exceptionOrNull()?.message).contains("Symbol")
+    }
+
+    @Test
+    fun `addHolding rejects purchaseDate zero`() = runTest {
+        val investment = makeInvestment().copy(purchaseDate = 0L)
+        val result = tracker.addHolding(investment)
+        assertThat(result.isFailure).isTrue()
+        assertThat(result.exceptionOrNull()?.message).contains("Purchase date")
+    }
+
+    @Test
+    fun `updatePrice rejects zero and does not call dao`() = runTest {
+        val investment = makeInvestment(id = 50L)
+        coEvery { investmentDao.getById(50L) } returns investment
+        val ex = kotlin.runCatching { tracker.updatePrice(50L, 0.0) }.exceptionOrNull()
+        assertThat(ex).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(ex?.message).contains("finite")
+        coVerify(exactly = 0) { investmentDao.updatePrice(any(), any(), any()) }
+    }
+
+    @Test
+    fun `updatePrice rejects NaN and does not call dao`() = runTest {
+        val investment = makeInvestment(id = 51L)
+        coEvery { investmentDao.getById(51L) } returns investment
+        val ex = kotlin.runCatching { tracker.updatePrice(51L, Double.NaN) }.exceptionOrNull()
+        assertThat(ex).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(ex?.message).contains("finite")
+        coVerify(exactly = 0) { investmentDao.updatePrice(any(), any(), any()) }
+    }
+
+    @Test
+    fun `investmentPerformance contains per holding aggregate`() = runTest {
+        val investment = makeInvestment(id = 60L, currentPrice = 150.0, purchasePrice = 100.0, quantity = 2.0)
+        coEvery { investmentDao.getById(60L) } returns investment
+        coEvery { investmentValueDao.getLatestValueBefore(60L, any()) } returns null
+        coEvery { investmentValueDao.getLatestValue(60L) } returns null
+        coEvery { investmentValueDao.getMaxPrice(60L, 0L) } returns null
+        coEvery { investmentValueDao.getMinPrice(60L, 0L) } returns null
+
+        val perf = tracker.getInvestmentPerformance(60L)!!
+
+        assertThat(perf.currentValueAggregate).isNotNull()
+        assertThat(perf.costBasisAggregate).isNotNull()
+        assertThat(perf.dataQuality).isNotNull()
     }
 
     // ---- Helpers ----

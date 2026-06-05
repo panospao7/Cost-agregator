@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MileageTracking
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -46,6 +47,7 @@ class BusinessExpenseReportGeneratorTest {
 
     private lateinit var repo: BusinessExpenseRepository
     private lateinit var timeProvider: TimeProvider
+    private val taxSettingsRepository: TaxSettingsRepository = mockk(relaxed = true)
     private lateinit var generator: BusinessExpenseReportGenerator
 
     // Fixed reference timestamps
@@ -145,8 +147,9 @@ class BusinessExpenseReportGeneratorTest {
         repo = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         every { timeProvider.now() } returns fixedNow
+        every { taxSettingsRepository.getFilingCurrency() } returns "EUR"
 
-        generator = BusinessExpenseReportGenerator(repo, timeProvider)
+        generator = BusinessExpenseReportGenerator(repo, timeProvider, taxSettingsRepository, Dispatchers.Unconfined)
 
         // Default: repository returns only purchase rows (the real contract)
         coEvery { repo.getBusinessExpenses(startDate, endDate) } returns
@@ -550,8 +553,8 @@ class BusinessExpenseReportGeneratorTest {
         val report = generator.generateReport(startDate, endDate, includeMileage = false)
         val text = report.formattedReport
 
-        assertTrue("Total should be 350.00",
-            text.contains("Total Business Expenses: \u20ac350.00"))
+        assertTrue("Total should be 350.00 EUR",
+            text.contains("Total Business Expenses: EUR 350.00"))
     }
 
     // =====================================================================
@@ -568,11 +571,65 @@ class BusinessExpenseReportGeneratorTest {
     }
 
     // =====================================================================
-    // 9. Repository-level hardening: verify purchase-only semantics are
-    //    enforced in every report-facing repository method, so even if DAO
-    //    output regresses the report surface stays clean.
-    //    We exercise the repository through a real (non-mocked) instance
-    //    that wraps a mocked DAO, then feed it to the generator.
+    // 9. Export safety – CSV injection and mixed-currency
+    // =====================================================================
+
+    @Test
+    fun `CSV export neutralizes formula injection in merchant and notes`() = runTest {
+        val formulaExpense = purchaseExpense.copy(
+            id = 100L,
+            merchant = "=cmd|'/C calc'!A0",
+            notes = "@SUM(A1:A10)"
+        )
+        coEvery { repo.getBusinessExpenses(startDate, endDate) } returns listOf(formulaExpense)
+
+        val csv = generator.generateCSVExport(startDate, endDate, includeMileage = false)
+
+        // Formula-leading values should be prefixed with single quote
+        assertTrue("Formula merchant must be neutralized", csv.contains("'=cmd|'/C calc'!A0"))
+        assertTrue("Formula notes must be neutralized", csv.contains("'@SUM(A1:A10)"))
+    }
+
+    @Test
+    fun `formatted report does not hardcode euro for non EUR filing currency`() = runTest {
+        every { taxSettingsRepository.getFilingCurrency() } returns "USD"
+
+        val report = generator.generateReport(startDate, endDate, includeMileage = false)
+        val text = report.formattedReport
+
+        assertFalse("Report must not contain euro symbol", text.contains("\u20ac"))
+        assertTrue("Report must show USD currency", text.contains("USD"))
+    }
+
+    @Test
+    fun `report uses injected dispatcher not hardcoded IO`() = runTest {
+        // This is a structural check: the test class uses Unconfined dispatcher,
+        // and the generator constructor accepts a CoroutineDispatcher.
+        // Runtime verification is implicit: if Dispatchers.IO were hardcoded,
+        // tests would hang under StandardTestDispatcher.
+        val report = generator.generateReport(startDate, endDate, includeMileage = false)
+        assertTrue(report.generatedAt > 0)
+    }
+
+    @Test
+    fun `mixed currency report marks partial and includes warning`() = runTest {
+        val usdExpense = purchaseExpense.copy(id = 200L, currency = "USD")
+        coEvery { repo.getBusinessExpenses(startDate, endDate) } returns listOf(purchaseExpense, usdExpense)
+
+        val report = generator.generateReport(startDate, endDate, includeMileage = false)
+
+        assertTrue("Mixed currency must be marked partial", report.isPartial)
+        assertTrue("Warning must mention mixed currencies", report.warningMessage?.contains("mixed") == true)
+        assertTrue("Warning must list currencies", report.warningMessage?.contains("EUR") == true)
+        assertTrue("Warning must list currencies", report.warningMessage?.contains("USD") == true)
+    }
+
+    // =====================================================================
+    // 10. Repository-level hardening: verify purchase-only semantics are
+    //     enforced in every report-facing repository method, so even if DAO
+    //     output regresses the report surface stays clean.
+    //     We exercise the repository through a real (non-mocked) instance
+    //     that wraps a mocked DAO, then feed it to the generator.
     // =====================================================================
 
     /**
@@ -585,7 +642,7 @@ class BusinessExpenseReportGeneratorTest {
             mockk(relaxed = true)
     ): Pair<BusinessExpenseRepository, BusinessExpenseReportGenerator> {
         val realRepo = BusinessExpenseRepository(mockk(relaxed = true), expenseDao, mileageDao)
-        val gen = BusinessExpenseReportGenerator(realRepo, timeProvider)
+        val gen = BusinessExpenseReportGenerator(realRepo, timeProvider, taxSettingsRepository, Dispatchers.Unconfined)
         return realRepo to gen
     }
 

@@ -16,6 +16,7 @@ import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.Result
@@ -55,6 +56,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.IOException
 import java.sql.SQLException
+import kotlin.test.assertFailsWith
 
 private const val TEST_DATE = 1_710_000_000_000L
 
@@ -1048,5 +1050,103 @@ class GroupTransactionCoordinatorTest {
 
         // Assert
         assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+    }
+
+    // ==================== PR1: joinedAt normalization ====================
+
+    @Test
+    fun `createGroupWithMembers sets joinedAt for members with zero joinedAt`() = runTest {
+        // Arrange — members with joinedAt = 0 (default sentinel)
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = 0L),
+            GroupMember(groupId = 0, name = "Bob", joinedAt = 0L)
+        )
+
+        // Act
+        val result = coordinator.createGroupWithMembers(
+            name = "Test Group",
+            description = null,
+            currency = "EUR",
+            members = members
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupCreationResult.Success::class.java)
+        val groupId = (result as GroupCreationResult.Success).groupId
+
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        assertThat(savedMembers).hasSize(2)
+        savedMembers.forEach { member ->
+            assertThat(member.joinedAt).isGreaterThan(0)
+            assertThat(member.joinedAt).isEqualTo(TEST_DATE) // timeProvider.now() value
+        }
+    }
+
+    @Test
+    fun `createGroupWithMembers preserves existing non-zero joinedAt`() = runTest {
+        // Arrange — members with explicit joinedAt values
+        val explicitJoinedAt = 1_700_000_000_000L
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true, joinedAt = explicitJoinedAt),
+            GroupMember(groupId = 0, name = "Bob", joinedAt = explicitJoinedAt + 1000L)
+        )
+
+        // Act
+        val result = coordinator.createGroupWithMembers(
+            name = "Test Group",
+            description = null,
+            currency = "EUR",
+            members = members
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupCreationResult.Success::class.java)
+        val groupId = (result as GroupCreationResult.Success).groupId
+
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        assertThat(savedMembers).hasSize(2)
+
+        val alice = savedMembers.first { it.name == "Alice" }
+        assertThat(alice.joinedAt).isEqualTo(explicitJoinedAt)
+
+        val bob = savedMembers.first { it.name == "Bob" }
+        assertThat(bob.joinedAt).isEqualTo(explicitJoinedAt + 1000L)
+    }
+
+    // ==================== PR1: Currency mismatch rejection ====================
+
+    @Test
+    fun `createSystemExpenseAndLinkToGroup rejects currency mismatch`() = runTest {
+        // Arrange — group with EUR default currency
+        val group = ExpenseGroup(name = "Currency Mismatch Group", defaultCurrency = "EUR")
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true)
+        )
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first().id
+
+        // Act — try to create expense with USD
+        val result = coordinator.createSystemExpenseAndLinkToGroup(
+            groupId = groupId,
+            description = "Dinner",
+            amount = 50.0,
+            paidById = aliceId,
+            currency = "USD",
+            splitType = SplitType.EQUAL,
+            date = TEST_DATE,
+            transactionType = TransactionType.PURCHASE
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        val error = result as GroupExpenseCreationResult.Error
+        assertThat(error.message).contains("does not match group currency")
+        assertThat(error.message).contains("EUR")
+        assertThat(error.message).contains("USD")
+
+        // Verify no system expense was created (atomic rollback)
+        val allExpenses = expenseDao.getAllUncapped()
+        assertThat(allExpenses).isEmpty()
     }
 }

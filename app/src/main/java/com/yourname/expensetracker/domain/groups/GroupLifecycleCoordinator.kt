@@ -135,11 +135,20 @@ class GroupLifecycleCoordinator @Inject constructor(
             return@withContext GroupCreationResult.Error("Member name cannot be blank")
         }
 
-        val result = groupCoordinator.createGroupWithMembers(name, description, currency, members)
+        val result = groupCoordinator.createGroupWithMembers(name, description, currency, members) { groupId ->
+            val event = GroupLifecycleEventEntity(
+                groupId = groupId,
+                eventType = "GROUP_CREATED",
+                createdAt = timeProvider.now()
+            )
+            lifecycleEventDao.insert(event)
+        }
         if (result is GroupCreationResult.Success) {
-            // G02: Deferred side-effects and lifecycle event for GROUP_CREATED
-            database.withTransaction {
-                emitLifecycleEvent(result.groupId, "GROUP_CREATED")
+            try {
+                budgetMonitor.get().checkBudgets()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Budget check failed for group creation")
             }
         }
         result
@@ -189,10 +198,20 @@ class GroupLifecycleCoordinator @Inject constructor(
             return@withContext Result.Error(GroupValidationError.CurrentUserAlreadyExists(currentUserId))
         }
 
-        val result = groupCoordinator.addMemberToGroup(groupId, name, email, isCurrentUser)
+        val result = groupCoordinator.addMemberToGroup(groupId, name, email, isCurrentUser) { _ ->
+            val event = GroupLifecycleEventEntity(
+                groupId = groupId,
+                eventType = "GROUP_MEMBER_ADDED",
+                createdAt = timeProvider.now()
+            )
+            lifecycleEventDao.insert(event)
+        }
         if (result is Result.Success) {
-            database.withTransaction {
-                emitLifecycleEvent(groupId, "GROUP_MEMBER_ADDED")
+            try {
+                budgetMonitor.get().checkBudgets()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Budget check failed for group member addition")
             }
         }
         result
@@ -242,11 +261,24 @@ class GroupLifecycleCoordinator @Inject constructor(
             }
 
             memberDao.delete(member)
+            
+            val event = GroupLifecycleEventEntity(
+                groupId = groupId,
+                eventType = "GROUP_MEMBER_REMOVED",
+                createdAt = timeProvider.now()
+            )
+            lifecycleEventDao.insert(event)
+            
             Result.Success(Unit)
         }
 
         if (removeResult is Result.Success) {
-            emitLifecycleEvent(groupId, "GROUP_MEMBER_REMOVED")
+            try {
+                budgetMonitor.get().checkBudgets()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Budget check failed for group member removal")
+            }
         }
 
         removeResult
@@ -326,10 +358,20 @@ class GroupLifecycleCoordinator @Inject constructor(
     suspend fun archiveGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.archiveGroup")
         val group = groupDao.getGroupById(groupId) ?: return@withContext false
-        val result = groupCoordinator.archiveGroup(groupId)
+        val result = groupCoordinator.archiveGroup(groupId) {
+            val event = GroupLifecycleEventEntity(
+                groupId = groupId,
+                eventType = LifecycleEventType.GROUP_ARCHIVED.name,
+                createdAt = timeProvider.now()
+            )
+            lifecycleEventDao.insert(event)
+        }
         if (result) {
-            database.withTransaction {
-                emitLifecycleEvent(groupId, LifecycleEventType.GROUP_ARCHIVED.name)
+            try {
+                budgetMonitor.get().checkBudgets()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Budget check failed for group archive")
             }
         }
         result
@@ -363,10 +405,20 @@ class GroupLifecycleCoordinator @Inject constructor(
         // G03: Hard delete is lifecycle-contained — requires archive first (G04 gate).
         // For emergency admin cleanup, use the direct data-layer path bypassing the coordinator.
         // All user-facing deletions must go through this method which enforces archive-then-delete.
-        val result = groupCoordinator.permanentlyDeleteGroup(groupId)
+        val result = groupCoordinator.permanentlyDeleteGroup(groupId) {
+            val event = GroupLifecycleEventEntity(
+                groupId = groupId,
+                eventType = LifecycleEventType.GROUP_PERMANENTLY_DELETED.name,
+                createdAt = timeProvider.now()
+            )
+            lifecycleEventDao.insert(event)
+        }
         if (result) {
-            database.withTransaction {
-                emitLifecycleEvent(groupId, LifecycleEventType.GROUP_PERMANENTLY_DELETED.name)
+            try {
+                budgetMonitor.get().checkBudgets()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Budget check failed for group permanent delete")
             }
         }
         result
@@ -421,6 +473,15 @@ class GroupLifecycleCoordinator @Inject constructor(
             ?: throw IllegalArgumentException("Payee member $toMemberId not found")
         if (toMember.groupId != groupId) {
             throw IllegalArgumentException("Payee member $toMemberId does not belong to group $groupId")
+        }
+
+        // PR1: Validate settlement amount is finite and positive
+        require(amount.isFinite() && amount > 0.0) {
+            "Settlement amount must be finite and positive"
+        }
+        // PR1: Reject self-settlement
+        require(fromMemberId != toMemberId) {
+            "Self-settlement is not allowed"
         }
 
         val now = timeProvider.now()

@@ -16,7 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.investment.InvestmentPerformance
-import com.yourname.expensetracker.domain.investment.PortfolioSummary
+import com.yourname.expensetracker.domain.investment.PortfolioSummaryAggregate
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
@@ -29,7 +29,7 @@ fun InvestmentPortfolioScreen(
     onAddInvestment: () -> Unit,
     viewModel: InvestmentViewModel = hiltViewModel()
 ) {
-    val portfolioSummary by viewModel.portfolioSummary.collectAsState()
+    val portfolioSummary by viewModel.portfolioSummaryAggregate.collectAsState()
     val investments by viewModel.investments.collectAsState()
     val homeCurrency = viewModel.homeCurrency.collectAsState().value ?: ""
     
@@ -77,8 +77,12 @@ fun InvestmentPortfolioScreen(
 }
 
 @Composable
-private fun PortfolioSummaryCard(summary: PortfolioSummary, homeCurrency: String) {
+private fun PortfolioSummaryCard(summary: PortfolioSummaryAggregate?, homeCurrency: String) {
     val percentFormat = NumberFormat.getPercentInstance().apply { maximumFractionDigits = 2 }
+    val totalValue = summary?.totalValueDisplay ?: 0.0
+    val totalInvested = summary?.totalInvestedDisplay ?: 0.0
+    val totalGainLoss = summary?.totalGainLossDisplay ?: 0.0
+    val totalGainLossPercent = summary?.totalGainLossPercentDisplay ?: 0.0
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -98,7 +102,7 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary, homeCurrency: String
             )
             
             Text(
-                text = CurrencyFormatter.formatMoney(summary.totalValue, homeCurrency),
+                text = CurrencyFormatter.formatMoney(totalValue, homeCurrency),
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -111,17 +115,17 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary, homeCurrency: String
             ) {
                 SummaryItem(
                     label = stringResource(R.string.label_invested),
-                    value = CurrencyFormatter.formatMoney(summary.totalInvested, homeCurrency)
+                    value = CurrencyFormatter.formatMoney(totalInvested, homeCurrency)
                 )
                 SummaryItem(
                     label = stringResource(R.string.label_gain_loss),
-                    value = CurrencyFormatter.formatMoney(summary.totalGainLoss, homeCurrency),
-                    isPositive = summary.totalGainLoss >= 0
+                    value = CurrencyFormatter.formatMoney(totalGainLoss, homeCurrency),
+                    isPositive = totalGainLoss >= 0
                 )
                 SummaryItem(
                     label = stringResource(R.string.label_return_percent),
-                    value = percentFormat.format(summary.totalGainLossPercent / 100),
-                    isPositive = summary.totalGainLossPercent >= 0
+                    value = percentFormat.format(totalGainLossPercent / 100),
+                    isPositive = totalGainLossPercent >= 0
                 )
             }
         }

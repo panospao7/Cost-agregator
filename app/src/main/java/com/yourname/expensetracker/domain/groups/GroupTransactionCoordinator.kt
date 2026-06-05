@@ -62,7 +62,8 @@ interface GroupTransactionCoordinator {
         name: String,
         description: String?,
         currency: String,
-        members: List<GroupMember>
+        members: List<GroupMember>,
+        onInsideTransaction: suspend (groupId: Long) -> Unit = {}
     ): GroupCreationResult
     
     /**
@@ -91,7 +92,8 @@ interface GroupTransactionCoordinator {
         groupId: Long,
         name: String,
         email: String? = null,
-        isCurrentUser: Boolean = false
+        isCurrentUser: Boolean = false,
+        onInsideTransaction: suspend (memberId: Long) -> Unit = {}
     ): Result<Unit, GroupValidationError>
     
     /**
@@ -209,7 +211,7 @@ interface GroupTransactionCoordinator {
      * @param groupId Group ID to archive
      * @return True if successful, false otherwise
      */
-    suspend fun archiveGroup(groupId: Long): Boolean
+    suspend fun archiveGroup(groupId: Long, onInsideTransaction: suspend () -> Unit = {}): Boolean
     
     /**
      * Permanently delete a group and all associated data.
@@ -218,5 +220,5 @@ interface GroupTransactionCoordinator {
      * @param groupId Group ID to permanently delete
      * @return True if successful, false otherwise
      */
-    suspend fun permanentlyDeleteGroup(groupId: Long): Boolean
+    suspend fun permanentlyDeleteGroup(groupId: Long, onInsideTransaction: suspend () -> Unit = {}): Boolean
 }

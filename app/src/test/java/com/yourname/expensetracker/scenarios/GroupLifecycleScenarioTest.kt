@@ -38,6 +38,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlin.test.assertFailsWith
 
 private const val TEST_DATE = 1_710_000_000_000L
 
@@ -69,6 +70,7 @@ class GroupLifecycleScenarioTest {
     private lateinit var groupDao: ExpenseGroupDao
     private lateinit var memberDao: GroupMemberDao
     private lateinit var settlementDao: GroupSettlementDao
+    private lateinit var groupLifecycleEventDao: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
     private lateinit var groupTxCoordinator: GroupTransactionCoordinator
     private lateinit var lifecycle: GroupLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
@@ -85,6 +87,7 @@ class GroupLifecycleScenarioTest {
         groupDao = database.expenseGroupDao()
         memberDao = database.groupMemberDao()
         settlementDao = database.groupSettlementDao()
+        groupLifecycleEventDao = database.groupLifecycleEventDao()
         val expenseDao = database.expenseDao()
         val transactionEventDao = database.transactionEventDao()
 
@@ -465,6 +468,96 @@ class GroupLifecycleScenarioTest {
     }
 
     @Test
+    fun `recordSettlement rejects zero amount`() = runTest {
+        val groupId = seedGroup("Settle", "EUR")
+        val aliceId = seedMember(groupId, "Alice", isCurrentUser = true)
+        val bobId = seedMember(groupId, "Bob", isCurrentUser = false)
+
+        val ex = assertFailsWith<IllegalArgumentException> {
+            lifecycle.recordSettlement(
+                groupId = groupId,
+                fromMemberId = bobId,
+                toMemberId = aliceId,
+                amount = 0.0,
+                currency = "EUR"
+            )
+        }
+        assertThat(ex.message).contains("finite and positive")
+    }
+
+    @Test
+    fun `recordSettlement rejects negative amount`() = runTest {
+        val groupId = seedGroup("Settle", "EUR")
+        val aliceId = seedMember(groupId, "Alice", isCurrentUser = true)
+        val bobId = seedMember(groupId, "Bob", isCurrentUser = false)
+
+        val ex = assertFailsWith<IllegalArgumentException> {
+            lifecycle.recordSettlement(
+                groupId = groupId,
+                fromMemberId = bobId,
+                toMemberId = aliceId,
+                amount = -10.0,
+                currency = "EUR"
+            )
+        }
+        assertThat(ex.message).contains("finite and positive")
+    }
+
+    @Test
+    fun `recordSettlement rejects NaN amount`() = runTest {
+        val groupId = seedGroup("Settle", "EUR")
+        val aliceId = seedMember(groupId, "Alice", isCurrentUser = true)
+        val bobId = seedMember(groupId, "Bob", isCurrentUser = false)
+
+        val ex = assertFailsWith<IllegalArgumentException> {
+            lifecycle.recordSettlement(
+                groupId = groupId,
+                fromMemberId = bobId,
+                toMemberId = aliceId,
+                amount = Double.NaN,
+                currency = "EUR"
+            )
+        }
+        assertThat(ex.message).contains("finite and positive")
+    }
+
+    @Test
+    fun `recordSettlement rejects infinite amount`() = runTest {
+        val groupId = seedGroup("Settle", "EUR")
+        val aliceId = seedMember(groupId, "Alice", isCurrentUser = true)
+        val bobId = seedMember(groupId, "Bob", isCurrentUser = false)
+
+        val ex = assertFailsWith<IllegalArgumentException> {
+            lifecycle.recordSettlement(
+                groupId = groupId,
+                fromMemberId = bobId,
+                toMemberId = aliceId,
+                amount = Double.POSITIVE_INFINITY,
+                currency = "EUR"
+            )
+        }
+        assertThat(ex.message).contains("finite and positive")
+    }
+
+    @Test
+    fun `recordSettlement rejects self settlement`() = runTest {
+        val groupId = seedGroup("Settle", "EUR")
+        val aliceId = seedMember(groupId, "Alice", isCurrentUser = true)
+        seedMember(groupId, "Bob", isCurrentUser = false)
+
+        val ex = assertFailsWith<IllegalArgumentException> {
+            lifecycle.recordSettlement(
+                groupId = groupId,
+                fromMemberId = aliceId,
+                toMemberId = aliceId,
+                amount = 25.0,
+                currency = "EUR"
+            )
+        }
+        assertThat(ex.message).contains("Self-settlement")
+    }
+
+    @Test
     fun `recordSettlement rejects archived group`() = runTest {
         val groupId = seedGroup("Settle", "EUR")
         val aliceId = seedMember(groupId, "Alice", isCurrentUser = true)
@@ -483,6 +576,50 @@ class GroupLifecycleScenarioTest {
         } catch (e: IllegalStateException) {
             assertThat(e.message).contains("archived")
         }
+    }
+
+    @Test
+    fun `validGroupCreateAddExpenseSettlement stillWorks`() = runTest {
+        // Create group with valid members
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true),
+            GroupMember(groupId = 0, name = "Bob", isCurrentUser = false)
+        )
+        val createResult = lifecycle.createGroup("Dinner", "Team dinner", "EUR", members)
+        assertThat(createResult).isInstanceOf(GroupCreationResult.Success::class.java)
+        val groupId = (createResult as GroupCreationResult.Success).groupId
+
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first { it.name == "Alice" }.id
+        val bobId = savedMembers.first { it.name == "Bob" }.id
+
+        // Add expense
+        val expResult = lifecycle.addExpense(
+            groupId = groupId,
+            description = "Pizza",
+            amount = 60.0,
+            paidById = aliceId,
+            currency = "EUR",
+            date = TEST_DATE
+        )
+        assertThat(expResult).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+
+        // Record settlement
+        val settlementId = lifecycle.recordSettlement(
+            groupId = groupId,
+            fromMemberId = bobId,
+            toMemberId = aliceId,
+            amount = 30.0,
+            currency = "EUR",
+            notes = "Pizza half"
+        )
+        assertThat(settlementId).isGreaterThan(0)
+
+        // Verify settlement was persisted
+        val settlements = settlementDao.getSettlementsForGroup(groupId)
+        assertThat(settlements).hasSize(1)
+        assertThat(settlements.first().amount).isEqualTo(30.0)
+        assertThat(settlements.first().notes).isEqualTo("Pizza half")
     }
 
     // ── end-to-end scenario ──────────────────────────────────────────
@@ -528,6 +665,61 @@ class GroupLifecycleScenarioTest {
         // Archive
         val archiveResult = lifecycle.archiveGroup(groupId)
         assertThat(archiveResult).isTrue()
+    }
+
+    // ── atomicity tests ──────────────────────────────────────────────
+
+    @Test
+    fun `createGroup mutation and lifecycle event are atomic`() = runTest {
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true),
+            GroupMember(groupId = 0, name = "Bob", isCurrentUser = false)
+        )
+        val result = lifecycle.createGroup("Test", null, "EUR", members)
+        assertThat(result).isInstanceOf(GroupCreationResult.Success::class.java)
+        val groupId = (result as GroupCreationResult.Success).groupId
+
+        val events = groupLifecycleEventDao.getEventsForGroup(groupId)
+        assertThat(events).isNotEmpty()
+        assertThat(events.first().eventType).isEqualTo("GROUP_CREATED")
+    }
+
+    @Test
+    fun `addMember mutation and lifecycle event are atomic`() = runTest {
+        val groupId = seedGroup("Test", "EUR")
+        seedMember(groupId, "Alice", isCurrentUser = true)
+        val result = lifecycle.addMember(groupId, "Charlie", isCurrentUser = false)
+        assertThat(result).isInstanceOf(Result.Success::class.java)
+
+        val events = groupLifecycleEventDao.getEventsForGroup(groupId)
+        assertThat(events.any { it.eventType == "GROUP_MEMBER_ADDED" }).isTrue()
+    }
+
+    @Test
+    fun `removeMember delete and lifecycle event are atomic`() = runTest {
+        val groupId = seedGroup("Test", "EUR")
+        seedMember(groupId, "Alice", isCurrentUser = true)
+        val bobId = seedMember(groupId, "Bob", isCurrentUser = false)
+        // Add an expense so there is a settled net balance (paid by Bob, split equal)
+        lifecycle.addExpense(groupId, "Lunch", 20.0, bobId, "EUR")
+
+        val members = memberDao.getAllForGroup(groupId)
+        val aliceId = members.first { it.name == "Alice" }.id
+        val result = lifecycle.removeMember(groupId, aliceId)
+        assertThat(result).isInstanceOf(Result.Success::class.java)
+
+        val events = groupLifecycleEventDao.getEventsForGroup(groupId)
+        assertThat(events.any { it.eventType == "GROUP_MEMBER_REMOVED" }).isTrue()
+    }
+
+    @Test
+    fun `archiveGroup mutation and lifecycle event are atomic`() = runTest {
+        val groupId = seedGroup("Test", "EUR")
+        val result = lifecycle.archiveGroup(groupId)
+        assertThat(result).isTrue()
+
+        val events = groupLifecycleEventDao.getEventsForGroup(groupId)
+        assertThat(events.any { it.eventType == "GROUP_ARCHIVED" }).isTrue()
     }
 
     // ── helpers ──────────────────────────────────────────────────────

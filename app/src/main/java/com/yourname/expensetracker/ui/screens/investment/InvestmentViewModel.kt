@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.investment.InvestmentPerformance
 import com.yourname.expensetracker.domain.investment.InvestmentTracker
-import com.yourname.expensetracker.domain.investment.PortfolioSummary
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,17 +18,8 @@ class InvestmentViewModel @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
-    private val _portfolioSummary = MutableStateFlow(
-        PortfolioSummary(
-            totalValue = 0.0,
-            totalInvested = 0.0,
-            totalGainLoss = 0.0,
-            totalGainLossPercent = 0.0,
-            investmentCount = 0,
-            byType = emptyMap()
-        )
-    )
-    val portfolioSummary: StateFlow<PortfolioSummary> = _portfolioSummary.asStateFlow()
+    private val _portfolioSummaryAggregate = MutableStateFlow<com.yourname.expensetracker.domain.investment.PortfolioSummaryAggregate?>(null)
+    val portfolioSummaryAggregate: StateFlow<com.yourname.expensetracker.domain.investment.PortfolioSummaryAggregate?> = _portfolioSummaryAggregate.asStateFlow()
     
     private val _investments = MutableStateFlow<List<InvestmentPerformance>>(emptyList())
     val investments: StateFlow<List<InvestmentPerformance>> = _investments.asStateFlow()
@@ -43,7 +33,10 @@ class InvestmentViewModel @Inject constructor(
     /** S12-022: null until home currency loads — never defaults to "EUR" */
     private val _homeCurrency = MutableStateFlow<String?>(null)
     val homeCurrency: StateFlow<String?> = _homeCurrency.asStateFlow()
-    
+
+    private val _portfolioDataQuality = MutableStateFlow<com.yourname.expensetracker.domain.investment.InvestmentDataQuality?>(null)
+    val portfolioDataQuality: StateFlow<com.yourname.expensetracker.domain.investment.InvestmentDataQuality?> = _portfolioDataQuality.asStateFlow()
+
     init {
         viewModelScope.launch {
             // S12-022: Collect home currency reactively — no EUR fallback
@@ -59,10 +52,11 @@ class InvestmentViewModel @Inject constructor(
             _isLoading.value = true
             _error.value = null
             try {
-                // S12-020: Use non-deprecated aggregate path
+                // S12-020: Use aggregate path via PortfolioSummaryAggregate
                 val holdings = investmentTracker.getAllActiveInvestments()
-                val (summary, _, _) = investmentTracker.getPortfolioSummaryAggregate(holdings)
-                _portfolioSummary.value = summary
+                val portfolioAggregate = investmentTracker.getPortfolioSummaryAggregate(holdings)
+                _portfolioSummaryAggregate.value = portfolioAggregate
+                _portfolioDataQuality.value = portfolioAggregate.dataQuality
 
                 // S12-021: Load individual investment performances
                 val performances = holdings.mapNotNull { investment ->

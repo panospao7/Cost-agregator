@@ -155,29 +155,28 @@ class InvestmentGoldenScenarioTest {
         val holdings = investmentDao.getAllActiveInvestments().first()
         assertThat(holdings).hasSize(2)
 
-        val (summary, aggregate, dataQuality) = tracker.getPortfolioSummaryAggregate(holdings)
+        val portfolioAggregate = tracker.getPortfolioSummaryAggregate(holdings)
 
-        // Summary totals
-        assertThat(summary.investmentCount).isEqualTo(2)
-        assertThat(summary.totalValue).isEqualTo(190.0 * 5.0 + 260.0 * 3.0) // 950 + 780 = 1730
+        // Aggregate totals
+        assertThat(portfolioAggregate.investmentCount).isEqualTo(2)
+        // totalValueDisplay comes from MoneyAggregate which may be converted
+        assertThat(portfolioAggregate.totalValueDisplay).isGreaterThan(0.0)
 
         // Aggregate must have multiple source buckets (EUR and USD)
-        assertThat(aggregate.sourceBuckets).hasSize(2)
-        val bucketCurrencies = aggregate.sourceBuckets.map { it.currency.code }
+        assertThat(portfolioAggregate.totalValue.sourceBuckets).hasSize(2)
+        val bucketCurrencies = portfolioAggregate.totalValue.sourceBuckets.map { it.currency.code }
         assertThat(bucketCurrencies).containsExactly("EUR", "USD")
 
         // Exact bucket amounts
-        val eurBucket = aggregate.sourceBuckets.first { it.currency.code == "EUR" }
-        val usdBucket = aggregate.sourceBuckets.first { it.currency.code == "USD" }
+        val eurBucket = portfolioAggregate.totalValue.sourceBuckets.first { it.currency.code == "EUR" }
+        val usdBucket = portfolioAggregate.totalValue.sourceBuckets.first { it.currency.code == "USD" }
         assertThat(eurBucket.amount).isWithin(0.01).of(950.0)  // 5 × 190
         assertThat(usdBucket.amount).isWithin(0.01).of(780.0)  // 3 × 260
 
-        // Display total in EUR: all amounts × 0.92 (mocked converter)
-        // Converter receives [(950, EUR), (780, USD)] and returns sum * 0.92
-        // = (950 + 780) * 0.92 = 1591.6
-        assertThat(aggregate.displayAmount).isWithin(1.0).of(1591.6)
+        // Display total in EUR: all amounts converted via mocked converter
+        assertThat(portfolioAggregate.totalValueDisplay).isWithin(1.0).of(1591.6)
 
-        assertThat(dataQuality.isPartial).isFalse()
+        assertThat(portfolioAggregate.dataQuality.isPartial).isFalse()
     }
 
     // ── investment performance has dataQuality per row ──────────────────────
