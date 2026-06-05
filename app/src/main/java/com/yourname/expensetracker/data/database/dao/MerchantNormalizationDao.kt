@@ -40,6 +40,17 @@ interface MerchantNormalizationDao {
     @Query("UPDATE merchant_canonicals SET categoryId = :categoryId WHERE id = :id")
     suspend fun updateCanonicalCategory(id: Long, categoryId: Long?)
     
+    /**
+     * C08 / E3-NOW-005 / E3-NOW-006: Blindly increments totalOccurrences and totalSpent.
+     * This method does NOT track whether the expense was already counted, so calling it
+     * on both create and update will double-count. It also does NOT handle currency
+     * conversion — mixed-currency expenses will create a meaningless raw Double sum.
+     *
+     * Safe usage: call only once per expense (at creation). For updates/deletes, do not
+     * call this; instead recompute stats from expenses periodically or on demand.
+     *
+     * Future schema migration will add per-currency buckets and expense-level tracking.
+     */
     @Query("UPDATE merchant_canonicals SET totalOccurrences = totalOccurrences + 1, totalSpent = totalSpent + :amount, updatedAt = :timestamp WHERE id = :id")
     suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long)
 

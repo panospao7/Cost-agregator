@@ -70,7 +70,9 @@ class TransactionSideEffectPlanner @Inject constructor(
             TransactionUpdateKind.OWNERSHIP, TransactionUpdateKind.PAYMENT_CORE -> {
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
-                actions.add(makeMerchantCanonicalStatsAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
+                // C08 / E3-NOW-005: Do NOT increment merchant stats on update.
+                // Updates can double-count if the expense was already counted at creation.
+                // True delta tracking requires schema change; deferred until baseline stable.
                 if (kind.affectsRecurringMatch()) {
                     actions.add(makeRecurringReconcileAction(expenseId, source, corrId))
                 }

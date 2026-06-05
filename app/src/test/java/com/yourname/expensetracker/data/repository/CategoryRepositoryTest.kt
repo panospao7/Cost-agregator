@@ -6,11 +6,15 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.data.repository.CategoryCorrectionScope
+import com.yourname.expensetracker.data.repository.CategoryCorrectionResult
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -79,5 +83,66 @@ class CategoryRepositoryTest {
 
         coVerify(exactly = 1) { categorizationEngine.learnMerchantCategory("Coffee Lab", 7L) }
         coVerify(exactly = 0) { merchantCategoryDao.insert(any()) }
+    }
+
+    @Test
+    fun `addCategory preserves display name case`() = runTest {
+        coEvery { categoryDao.getByName(any()) } returns null
+        coEvery { categoryDao.insert(any()) } returns 7L
+
+        val result = repository.addCategory("Dining Out", "food", "#FF0000")
+
+        // E3-NOW-008: Display name should preserve original case
+        assertEquals("Dining Out", result.name)
+    }
+
+    @Test
+    fun `addCategory detects duplicate case insensitively`() = runTest {
+        val existing = com.yourname.expensetracker.data.database.entity.Category(
+            id = 3L, name = "Dining Out", icon = "food", color = "#FF0000", isDefault = false
+        )
+        // DAO uses COLLATE NOCASE, so "dining out" should match "Dining Out"
+        coEvery { categoryDao.getByName("dining out") } returns existing
+
+        val result = repository.addCategory("DINING OUT", "food", "#FF0000")
+
+        // Should return existing category, not create a new one
+        assertEquals(3L, result.id)
+        assertEquals("Dining Out", result.name)
+    }
+
+    @Test
+    fun `updateExpenseCategoryBulk future only learns mapping`() = runTest {
+        coEvery { categorizationEngine.learnMerchantCategory("Starbucks", 5L) } returns Unit
+
+        val result = repository.updateExpenseCategoryBulk(
+            merchant = "Starbucks",
+            newCategoryId = 5L,
+            scope = CategoryCorrectionScope.FUTURE_ONLY
+        )
+
+        assertTrue(result is CategoryCorrectionResult.Learned)
+        coVerify { categorizationEngine.learnMerchantCategory("Starbucks", 5L) }
+    }
+
+    @Test
+    fun `updateExpenseCategoryBulk backfill all returns not yet implemented`() = runTest {
+        val result = repository.updateExpenseCategoryBulk(
+            merchant = "Starbucks",
+            newCategoryId = 5L,
+            scope = CategoryCorrectionScope.BACKFILL_ALL
+        )
+
+        assertTrue(result is CategoryCorrectionResult.BackfillNotYetImplemented)
+        coVerify(exactly = 0) { categorizationEngine.learnMerchantCategory(any(), any()) }
+    }
+
+    @Test
+    fun `updateExpenseCategoryBulk default scope is future only`() = runTest {
+        coEvery { categorizationEngine.learnMerchantCategory("Starbucks", 5L) } returns Unit
+
+        val result = repository.updateExpenseCategoryBulk("Starbucks", 5L)
+
+        assertTrue(result is CategoryCorrectionResult.Learned)
     }
 }

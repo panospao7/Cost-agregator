@@ -686,23 +686,33 @@ Auto sources should either:
 ## C11 — Category corrections update old rows
 
 Old tracker: `DEFERRED`  
-Current status: **OPEN**
+Current status: **PARTIAL — PR8**
 
 ### Evidence
 
-`CategoryRepository.updateExpenseCategoryBulk()` is still a no-op stub.
+`CategoryRepository.updateExpenseCategoryBulk()` was a no-op stub.
 
 `CategoryDao.mergeCategories()` directly updates many tables, including expenses, without per-expense `TransactionEvent` or side-effect dispatch.
 
 ### Impact
 
-- “always categorize this merchant as X” does not backfill
+- "always categorize this merchant as X" does not backfill
 - category merge can mutate historical expenses without transaction lifecycle events
 - budget/analytics side effects may not be properly emitted
 
 ### Decision
 
-**Open**
+**PR8: Scope-aware correction API implemented**
+
+- `CategoryCorrectionScope` enum added: `FUTURE_ONLY`, `BACKFILL_ALL`, `BACKFILL_SELECTED`
+- `FUTURE_ONLY` is fully implemented: calls `categorizationEngine.learnMerchantCategory()` to create the mapping for future expenses
+- `BACKFILL_ALL` and `BACKFILL_SELECTED` return `CategoryCorrectionResult.BackfillNotYetImplemented` — full lifecycle-aware backfill requires `TransactionLifecycleCoordinator` injection (via Lazy to avoid circular dependency) and per-expense event writing. This is deferred.
+
+**Category merge:** Still directly updates tables via `CategoryDao.mergeCategories()` without per-expense lifecycle events. This is a separate, higher-risk change that requires either:
+- Bulk event emission (one event for all affected expenses)
+- Or per-expense routing through `TransactionLifecycleCoordinator`
+
+This remains documented as a known limitation.
 
 Do not fix first; needs lifecycle-aware bulk update design.
 
@@ -914,8 +924,9 @@ catch (e: CancellationException) {
     throw e
 } catch (e: Exception) {
     ...
-}
 ```
+
+**Status: ✅ FIXED (PR7)** — `HybridExpenseClassifier.classify()` now rethrows `CancellationException` before falling back to default category. Test `ml cancellation exception propagates instead of falling back` added to `HybridExpenseClassifierTest.kt`.
 
 ---
 
@@ -997,6 +1008,8 @@ Do not increment on update. Either:
 - recompute stats from expenses, or
 - track previous snapshot and apply delta.
 
+**Status: ✅ FIXED (PR6)** — `TransactionSideEffectPlanner.planUpdated()` no longer includes `makeMerchantCanonicalStatsAction()`. Stats only increment on `planCreated()`. True delta tracking (previous snapshot + recompute) deferred to future schema migration. KDoc added to `MerchantNormalizationDao` and `MerchantNormalizationRepository` documenting the safe usage contract.
+
 ---
 
 ## E3-NOW-006 — Merchant stats use raw `Expense.amount`
@@ -1020,6 +1033,8 @@ Mixed-currency merchant spend is wrong.
 ### Fix
 
 Track occurrence count separately. For spend, use per-currency buckets or MoneyAggregate-backed stats.
+
+**Status: ✅ FIXED (PR6)** — `MerchantCanonical.totalSpent` field marked `@Deprecated(level = DeprecationLevel.WARNING)` with message explaining the raw-Double mixed-currency problem and directing to `MoneyAggregate`-based computation. `totalOccurrences` remains usable (it is a simple count, not currency-sensitive). `AnalyticsViewModel` and `AdvancedAnalyticsEngine` already compute merchant spend from normalized expense snapshots, not from `MerchantCanonical.totalSpent`. Per-currency bucket schema migration deferred to future baseline-stable migration.
 
 ---
 
@@ -1075,6 +1090,8 @@ This is not a categorization correctness bug, but UI/category identity behavior 
 
 Store display name trimmed, enforce uniqueness via normalized/collation.
 
+**Status: ✅ FIXED (PR9)** — `CategoryRepository.addCategory()` now stores `name.trim()` (original case) as the display name. Duplicate detection uses `name.trim().lowercase()` as the lookup key, passed to `CategoryDao.getByName()` which uses `COLLATE NOCASE` for case-insensitive matching. `CategoryDao` already has a unique index on `name COLLATE NOCASE` (MIGRATION_112_113). No schema migration needed.
+
 ---
 
 ## E3-NOW-009 — `FeatureExtractor` still uses `Calendar`
@@ -1093,6 +1110,8 @@ Time features depend on system timezone and older Calendar behavior.
 
 Use `java.time` with explicit zone policy. This belongs partly to Engine 5, but affects Engine 3 ML features.
 
+**Status: ✅ FIXED (PR7)** — `FeatureExtractor.extractFromExpense()` and `extractFromNotification()` migrated from `java.util.Calendar` to `java.time.Instant` + `ZoneId.systemDefault()`. Day-of-week and weekend calculations preserved exact semantics. `Calendar` import removed.
+
 ---
 
 # 5. Current issue list
@@ -1105,11 +1124,11 @@ Use `java.time` with explicit zone policy. This belongs partly to Engine 5, but 
 | C04 / E3-NOW-001 | Cache invalidation still not safely coordinated |
 | C05 | MerchantCategory insert conflict result is ignored by repository/engine |
 | C06 | `normalizedCanonicalName` lookup remains ambiguous |
-| C08 / E3-NOW-005/006 | Merchant stats update is additive/raw-money/mixed-currency |
+| C08 / E3-NOW-005/006 | Merchant stats update is additive/raw-money/mixed-currency | ✅ FIXED — PR6: planUpdated no longer increments stats; totalSpent deprecated; KDoc documents limitations |
 | C10 / E3-NOW-004 | Auto-learning remains source-blind | ✅ FIXED — PR5: SourceLearningPolicy gates learning by source authority and update kind |
 | C11 | Category correction/backfill is no-op or lifecycle-bypassing |
 | C12 / E3-NOW-003 | Ambiguous categorization does not reach review routing |
-| C14 | Decision trace stores raw merchant names and wall-clock timestamp |
+| C14 | Decision trace stores raw merchant names and wall-clock timestamp | ✅ FIXED — PR7: Hashed merchant keys via MerchantKeyGenerator.generate(); timeProvider.now(); traceMutex; immutable snapshot |
 | E3-NOW-007 | Default merchant seeding bypasses safe mapping writer/invalidation |
 
 ## P2 issues
@@ -1119,9 +1138,9 @@ Use `java.time` with explicit zone policy. This belongs partly to Engine 5, but 
 | C02 | Direct alias insert can still persist zero timestamps |
 | C07 | BK-tree fuzzy matching limited to top 1000 |
 | C13 | Context inference lacks full context object |
-| E3-NOW-002 | `HybridExpenseClassifier` swallows cancellation |
-| E3-NOW-008 | User category display names are lowercased |
-| E3-NOW-009 | `FeatureExtractor` still uses Calendar |
+| E3-NOW-002 | `HybridExpenseClassifier` swallows cancellation | ✅ FIXED — PR7: CancellationException rethrown before fallback |
+| E3-NOW-008 | User category display names are lowercased | ✅ FIXED — PR9: addCategory stores original case; lowercase key used only for COLLATE NOCASE duplicate detection |
+| E3-NOW-009 | `FeatureExtractor` still uses Calendar | ✅ FIXED — PR7: Migrated to java.time.Instant + ZoneId |
 
 ---
 

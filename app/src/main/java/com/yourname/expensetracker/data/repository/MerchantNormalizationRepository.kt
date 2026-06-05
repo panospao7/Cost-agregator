@@ -47,8 +47,17 @@ class MerchantNormalizationRepository @Inject constructor(
         dao.updateCanonicalCategory(id, categoryId)
     }
 
-    // TODO (C08): incrementMerchantStats is never called — wire it from TransactionSideEffectDispatcher
-    // after committed expense creation/update.
+    /**
+     * C08 / E3-NOW-005 / E3-NOW-006: Increments merchant stats for a newly created expense.
+     * Safe to call only ONCE per expense (at creation). Do NOT call on update or delete
+     * because the method cannot apply true deltas and will corrupt totals.
+     *
+     * totalSpent is a raw Double that does not handle currency conversion.
+     * It is marked @Deprecated in MerchantCanonical. Use expense-based computation
+     * with MoneyAggregate for any financial display.
+     *
+     * Wired from TransactionSideEffectPlanner.planCreated via makeMerchantCanonicalStatsAction.
+     */
     suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long) {
         writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.incrementMerchantStats")
         dao.incrementMerchantStats(id, amount, timestamp)

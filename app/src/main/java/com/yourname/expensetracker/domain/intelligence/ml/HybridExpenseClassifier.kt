@@ -150,6 +150,8 @@ class HybridExpenseClassifier @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            // E3-NOW-002: Coroutine cancellation must propagate, never swallow
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.tag(TAG).w(e, "ML classifier failed, using fallback")
         }
 

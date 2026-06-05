@@ -332,4 +332,26 @@ class HybridExpenseClassifierTest {
         assertFalse(result.isAmbiguous)
         assertFalse(result.requiresReview)
     }
+
+    @Test
+    fun `ml cancellation exception propagates instead of falling back`() = runBlocking {
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.classify(any()) } throws kotlinx.coroutines.CancellationException("Cancelled")
+
+        try {
+            hybridClassifier.classify(
+                merchantName = "CancelMerchant",
+                amount = 10.0
+            )
+            fail("CancellationException should have propagated, not been caught")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Expected — cancellation must propagate
+        }
+    }
 }

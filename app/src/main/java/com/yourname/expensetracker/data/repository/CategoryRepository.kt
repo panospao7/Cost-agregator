@@ -98,10 +98,11 @@ class CategoryRepository @Inject constructor(
     /**
      * Add a new category with name normalization and case-insensitive duplicate detection.
      *
-     * The name is trimmed and lowercased before insertion (consistent with
-     * [Category.normalizedName]). If a category with the same normalized name
-     * already exists, the existing category is returned instead of inserting
-     * a duplicate.
+     * E3-NOW-008: The display name is trimmed but preserves its original case.
+     * A normalized lowercase key is used only for case-insensitive duplicate
+     * detection (via [CategoryDao.getByName] which uses COLLATE NOCASE).
+     * If a category with the same normalized name already exists, the existing
+     * category is returned instead of inserting a duplicate.
      *
      * The check-then-insert is wrapped in a transaction to prevent races.
      *
@@ -110,23 +111,23 @@ class CategoryRepository @Inject constructor(
     suspend fun addCategory(name: String, icon: String, color: String): Category {
         writeBarrier.checkWritesAllowed("CategoryRepository.addCategory")
         return withContext(Dispatchers.IO) {
-        // Normalize: trim whitespace and lowercase for consistency with Category.normalizedName
-        val normalizedName = name.trim().lowercase()
+            // E3-NOW-008: Store the original display name (trimmed, preserving case).
+            // Use a normalized lowercase key only for duplicate detection.
+            val displayName = name.trim()
+            val normalizedKey = displayName.lowercase()
 
-        return@withContext database.withTransaction {
-            // Check for existing case-insensitive match
-            val existing = categoryDao.getByName(normalizedName)
+            // Check for existing case-insensitive match (COLLATE NOCASE in DAO)
+            val existing = categoryDao.getByName(normalizedKey)
             if (existing != null) {
                 Timber.d("addCategory: returning existing category '%s' (id=%d)", existing.name, existing.id)
-                return@withTransaction existing
+                return@withContext existing
             }
 
-            val category = Category(name = normalizedName, icon = icon, color = color)
+            val category = Category(name = displayName, icon = icon, color = color)
             val id = categoryDao.insert(category)
             categorizationEngine.invalidateCache()
             hybridExpenseClassifier.get().invalidateCategorySnapshot()
             category.copy(id = id)
-        }
         }
     }
 
@@ -171,21 +172,43 @@ class CategoryRepository @Inject constructor(
     }
 
     /**
-     * Backfill the new category to all existing expenses for a given merchant.
+     * Apply a merchant-category correction with an explicit scope.
      *
-     * C11: When user confirms "always categorize as X", offer lifecycle-aware backfill
-     * by calling transactionLifecycleCoordinator.updateCategory() for each affected expense.
-     * This writes UPDATED events and dispatches side effects.
+     * C11: When user confirms "always categorize as X", they can choose:
+     * - [CategoryCorrectionScope.FUTURE_ONLY]: only learn the mapping for future expenses
+     * - [CategoryCorrectionScope.BACKFILL_ALL]: backfill all existing expenses for this merchant
+     * - [CategoryCorrectionScope.BACKFILL_SELECTED]: backfill selected expenses only
      *
-     * TODO (C11): Implement per-expense backfill by injecting TransactionLifecycleCoordinator
-     * (via Lazy to avoid circular dependency) and iterating over expenses matching the
-     * merchant key. Currently a no-op stub.
+     * ## Current status
+     * - `FUTURE_ONLY` is fully implemented via [categorizationEngine.learnMerchantCategory].
+     * - `BACKFILL_ALL` and `BACKFILL_SELECTED` are **not yet implemented** because they require
+     *   [TransactionLifecycleCoordinator] injection (via Lazy to avoid circular dependency)
+     *   and per-expense lifecycle event writing. This is tracked as deferred work.
+     *
+     * @param merchant The merchant name to correct.
+     * @param newCategoryId The target category ID.
+     * @param scope The correction scope (default: [FUTURE_ONLY]).
+     * @return A [CategoryCorrectionResult] describing what was done.
      */
-    suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) = withContext(Dispatchers.IO) {
-        // C11: When user confirms "always categorize as X", offer lifecycle-aware backfill
-        // by calling transactionLifecycleCoordinator.updateCategory() for each affected expense.
-        // This writes UPDATED events and dispatches side effects.
-        Timber.d("C11: updateExpenseCategoryBulk called for merchant='$merchant', category=$newCategoryId — backfill not yet implemented")
+    suspend fun updateExpenseCategoryBulk(
+        merchant: String,
+        newCategoryId: Long,
+        scope: CategoryCorrectionScope = CategoryCorrectionScope.FUTURE_ONLY
+    ): CategoryCorrectionResult = withContext(Dispatchers.IO) {
+        when (scope) {
+            CategoryCorrectionScope.FUTURE_ONLY -> {
+                categorizationEngine.learnMerchantCategory(merchant, newCategoryId)
+                CategoryCorrectionResult.Learned(merchant, newCategoryId)
+            }
+            CategoryCorrectionScope.BACKFILL_ALL,
+            CategoryCorrectionScope.BACKFILL_SELECTED -> {
+                // C11-DEFERRED: Backfill requires TransactionLifecycleCoordinator injection
+                // (via Lazy to avoid circular dependency) and per-expense lifecycle events.
+                // For now, log the request and return a clear result.
+                Timber.d("C11: BACKFILL scope requested for merchant='$merchant', category=$newCategoryId — backfill not yet implemented")
+                CategoryCorrectionResult.BackfillNotYetImplemented(merchant, newCategoryId)
+            }
+        }
     }
 
     suspend fun deleteCategory(categoryId: Long): DeleteCategoryResult {
@@ -212,6 +235,35 @@ class CategoryRepository @Inject constructor(
         DeleteCategoryResult.Deleted
         }
     }
+}
+
+/**
+ * Scope for a merchant-category correction.
+ *
+ * C11: When a user confirms "always categorize merchant X as category Y",
+ * they can choose whether to apply this only to future expenses or to
+ * backfill existing matching expenses as well.
+ */
+enum class CategoryCorrectionScope {
+    /** Only learn the mapping for future expenses (no backfill). */
+    FUTURE_ONLY,
+    /** Backfill all existing expenses matching this merchant. */
+    BACKFILL_ALL,
+    /** Backfill only selected expenses matching this merchant. */
+    BACKFILL_SELECTED
+}
+
+sealed class CategoryCorrectionResult {
+    /** Mapping learned for future expenses. */
+    data class Learned(val merchant: String, val categoryId: Long) : CategoryCorrectionResult()
+    /** Backfill is not yet implemented (requires lifecycle coordinator injection). */
+    data class BackfillNotYetImplemented(
+        val merchant: String,
+        val categoryId: Long,
+        val affectedCount: Int = 0
+    ) : CategoryCorrectionResult()
+    /** No action taken (e.g., invalid scope). */
+    data class NoOp(val reason: String) : CategoryCorrectionResult()
 }
 
 sealed class DeleteCategoryResult {

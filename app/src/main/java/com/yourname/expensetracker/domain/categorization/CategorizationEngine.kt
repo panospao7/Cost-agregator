@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.MerchantCategoryInsertResult
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -74,8 +75,13 @@ class CategorizationEngine @Inject constructor(
     private val CACHE_EXPIRY_MS = 300_000
 
     // C14: In-memory debug ring buffer only. Not persisted, not exported.
-    // Contains raw merchant names — production logging must redact.
+    // Privacy-sanitized: stores hashed merchant keys, not raw names.
+    // Synchronized via traceMutex (separate from cacheMutex).
     private val decisionTrace = ArrayDeque<String>(100)
+
+    // C14: Trace buffer synchronization — separate from cacheMutex to avoid
+    // holding the expensive cache lock during simple trace operations.
+    private val traceMutex = Mutex()
 
     companion object {
         private val STOP_WORDS = setOf("the", "and", "for", "inc", "ltd", "com")
@@ -550,15 +556,31 @@ class CategorizationEngine @Inject constructor(
     // TODO (C04-NEXT): Create CategoryMappingWriter that emits CategoryMappingChanged.
     // TODO (C04-NEXT): Wire merchant canonical stats to TransactionSideEffectDispatcher
     
-    // C14: Record a decision in the ring-buffer trace.
-    private fun traceDecision(merchant: String, category: String, method: String) {
-        val entry = "${System.currentTimeMillis()}|$merchant|$category|$method"
-        if (decisionTrace.size >= 100) decisionTrace.removeFirst()
-        decisionTrace.addLast(entry)
+    /**
+     * C14: Record a decision in the ring-buffer trace.
+     *
+     * Privacy: Stores a **normalized merchant key** (via [MerchantKeyGenerator.generate])
+     * instead of the raw merchant name. The raw name never enters the trace buffer.
+     * Note: this is a reversible normalization (Greeklish transliteration + lowercase +
+     * strip non-alphanumeric), NOT a cryptographic hash. The true privacy protection is
+     * that the trace is in-memory only (100-entry cap) and never persisted or exported.
+     * Time source is [timeProvider] (deterministic), not [System.currentTimeMillis].
+     */
+    private suspend fun traceDecision(merchant: String, category: String, method: String) {
+        val entry = "${timeProvider.now()}|${MerchantKeyGenerator.generate(merchant)}|$category|$method"
+        traceMutex.withLock {
+            if (decisionTrace.size >= 100) decisionTrace.removeFirst()
+            decisionTrace.addLast(entry)
+        }
     }
 
-    /** Returns a snapshot of the last 100 categorization decisions. */
-    fun getRecentDecisions(): List<String> = decisionTrace.toList()
+    /**
+     * Returns a snapshot of the last 100 categorization decisions.
+     * Entries are privacy-sanitized: merchant names are replaced with normalized keys.
+     */
+    suspend fun getRecentDecisions(): List<String> = traceMutex.withLock {
+        decisionTrace.toList()
+    }
 
     // Utility methods for testing
     fun testCanonicalize(merchant: String): CanonicalResult {

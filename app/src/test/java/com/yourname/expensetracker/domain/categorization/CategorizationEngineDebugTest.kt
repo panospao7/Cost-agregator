@@ -106,7 +106,11 @@ class CategorizationEngineDebugTest {
         // Mock the DAO to return the new mapping after insertion
         val newMapping = MerchantCategory(merchantName.lowercase(), categoryId)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(newMapping)
-        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
+        coEvery { merchantCategoryRepository.insert(any()) } coAnswers {
+            // Real repository calls invalidateAllCaches() on insert success
+            engine.invalidateAllCaches()
+            MerchantCategoryInsertResult.Inserted(1L)
+        }
         
         // This should trigger invalidateCache()
         engine.learnMerchantCategory(merchantName, categoryId)
@@ -153,5 +157,65 @@ class CategorizationEngineDebugTest {
         val result2 = engine.categorize("costa")
         assertEquals(MatchType.EXACT, result2.matchType)
         assertEquals(2L, result2.categoryId)
+    }
+
+    @Test
+    fun `traceDecision stores hashed merchant key not raw name`() = runBlocking {
+        val merchantName = "McDonald's"
+        val categoryId = 5L
+        
+        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
+        
+        engine.learnMerchantCategory(merchantName, categoryId)
+        
+        val decisions = engine.getRecentDecisions()
+        assertTrue("Trace should contain decisions", decisions.isNotEmpty())
+        
+        val lastDecision = decisions.last()
+        // The hashed key for "McDonald's" should be "mcdonalds"
+        assertTrue(
+            "Trace should contain hashed key 'mcdonalds', not raw name. Got: $lastDecision",
+            lastDecision.contains("mcdonalds")
+        )
+        assertFalse(
+            "Trace should NOT contain raw merchant name 'McDonald's'. Got: $lastDecision",
+            lastDecision.contains("McDonald")
+        )
+    }
+
+    @Test
+    fun `traceDecision uses timeProvider not wall clock`() = runBlocking {
+        val fixedTime = 1_710_000_000_000L
+        every { timeProvider.now() } returns fixedTime
+        
+        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
+        
+        engine.learnMerchantCategory("TEST_MERCHANT", 5L)
+        
+        val decisions = engine.getRecentDecisions()
+        val lastDecision = decisions.last()
+        assertTrue(
+            "Trace timestamp should be from timeProvider ($fixedTime). Got: $lastDecision",
+            lastDecision.startsWith("$fixedTime|")
+        )
+    }
+
+    @Test
+    fun `getRecentDecisions returns immutable snapshot`() = runBlocking {
+        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
+        
+        engine.learnMerchantCategory("MERCHANT_A", 1L)
+        
+        val snapshot1 = engine.getRecentDecisions()
+        val size1 = snapshot1.size
+        
+        engine.learnMerchantCategory("MERCHANT_B", 2L)
+        
+        val snapshot2 = engine.getRecentDecisions()
+        assertEquals("Old snapshot should not grow", size1, snapshot1.size)
+        assertTrue("New snapshot should have more entries", snapshot2.size > size1)
     }
 }

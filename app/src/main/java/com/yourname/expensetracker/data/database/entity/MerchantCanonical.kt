@@ -29,6 +29,12 @@ data class MerchantCanonical(
     val searchKey: String,      // e.g., "mcdonalds" (stripped)
     val categoryId: Long? = null,
     @ColumnInfo(defaultValue = "0") val totalOccurrences: Int = 0,
+    @Deprecated(
+        message = "totalSpent is a raw Double that sums mixed-currency amounts without conversion. " +
+            "Do not use for financial decisions. Use expense-based computation with MoneyAggregate instead. " +
+            "Kept for backward compatibility; will be replaced with per-currency buckets in a future schema migration.",
+        level = DeprecationLevel.WARNING
+    )
     @ColumnInfo(defaultValue = "0.0") val totalSpent: Double = 0.0,
     @ColumnInfo(defaultValue = "0") val isVerified: Boolean = false,
     val logoUrl: String? = null,

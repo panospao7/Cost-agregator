@@ -82,23 +82,17 @@ class TransactionSideEffectPlannerTest {
     }
 
     @Test
-    fun `planUpdated FULL uses EXPENSE_UPDATED trigger for merchant canonical stats`() {
+    fun `planUpdated FULL does not include merchant canonical stats`() {
         val batch = planner.planUpdated(1L, "manual", "corr-2", TransactionUpdateKind.FULL)
-        val action = batch.actions.first { it.name == "merchant_canonical_stats_update" }
-
-        assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, action.triggerType)
-        assertTrue(
-            "Idempotency key should contain 'expense_updated', got: ${action.idempotencyKey}",
-            action.idempotencyKey.contains("expense_updated")
-        )
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("FULL update should not include merchant canonical stats (avoids double-count)", !hasStats)
     }
 
     @Test
-    fun `planUpdated MERCHANT uses EXPENSE_UPDATED trigger for merchant canonical stats`() {
+    fun `planUpdated MERCHANT does not include merchant canonical stats`() {
         val batch = planner.planUpdated(1L, "manual", "corr-3", TransactionUpdateKind.MERCHANT)
-        val stats = batch.actions.first { it.name == "merchant_canonical_stats_update" }
-
-        assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, stats.triggerType)
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("MERCHANT update should not include canonical stats", !hasStats)
     }
 
     // --- U-SIDEEFFECT-02: Idempotency key uniqueness between create and update ---
@@ -118,17 +112,10 @@ class TransactionSideEffectPlannerTest {
     }
 
     @Test
-    fun `create and update produce distinct idempotency keys for merchant canonical stats`() {
-        val createBatch = planner.planCreated(1L, ExpenseSource.MANUAL_ENTRY, "corr-1")
-        val updateBatch = planner.planUpdated(1L, "manual", "corr-2", TransactionUpdateKind.FULL)
-
-        val createKey = createBatch.actions.first { it.name == "merchant_canonical_stats_update" }.idempotencyKey
-        val updateKey = updateBatch.actions.first { it.name == "merchant_canonical_stats_update" }.idempotencyKey
-
-        assertNotEquals(
-            "Create and update idempotency keys must be distinct to avoid false dedup",
-            createKey, updateKey
-        )
+    fun `planCreated includes merchant canonical stats`() {
+        val batch = planner.planCreated(1L, ExpenseSource.MANUAL_ENTRY, "corr-1")
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("planCreated should include merchant canonical stats", hasStats)
     }
 
     // --- Idempotency key format verification ---
@@ -144,11 +131,10 @@ class TransactionSideEffectPlannerTest {
     }
 
     @Test
-    fun `planUpdated idempotency key format uses expense_updated`() {
+    fun `planUpdated AMOUNT does not include merchant canonical stats`() {
         val batch = planner.planUpdated(42L, "bank_sync", "corr-y", TransactionUpdateKind.AMOUNT)
-        val stats = batch.actions.first { it.name == "merchant_canonical_stats_update" }
-
-        assertEquals("expense:42:expense_updated:merchant_stats", stats.idempotencyKey)
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("AMOUNT update should not include merchant canonical stats", !hasStats)
     }
 
     // --- planUpdated CATEGORY_ONLY does NOT include merchant learning ---
@@ -178,6 +164,13 @@ class TransactionSideEffectPlannerTest {
         val budgetAction = batch.actions.first { it.name == "budget_check" }
         assertEquals(SideEffectTriggerType.EXPENSE_DELETED, budgetAction.triggerType)
         assertTrue(budgetAction.idempotencyKey.contains("expense_deleted"))
+    }
+
+    @Test
+    fun `planDeleted does not include merchant canonical stats`() {
+        val batch = planner.planDeleted(1L, "manual", "corr-6")
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("Deleted expense should not trigger merchant stats update", !hasStats)
     }
 
     // --- SourceLearningPolicy ---
@@ -225,6 +218,13 @@ class TransactionSideEffectPlannerTest {
         assertTrue("NOTIFICATION_AUTO_ACCEPT should not trigger merchant learning", !hasLearning)
     }
 
+    @Test
+    fun `planCreated with NOTIFICATION_AUTO_ACCEPT still includes merchant canonical stats`() {
+        val batch = planner.planCreated(1L, ExpenseSource.NOTIFICATION_AUTO_ACCEPT, "corr-8")
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("planCreated should include merchant canonical stats regardless of source", hasStats)
+    }
+
     // --- planUpdated source-aware learning ---
 
     @Test
@@ -267,5 +267,19 @@ class TransactionSideEffectPlannerTest {
         val batch = planner.planUpdated(1L, "SYSTEM", "corr-14", TransactionUpdateKind.FULL)
         val hasLearning = batch.actions.any { it.name == "merchant_category_pattern_learning" }
         assertTrue("SYSTEM source should not trigger merchant category learning", !hasLearning)
+    }
+
+    @Test
+    fun `planUpdated BUSINESS_FLAGS_ONLY does not include merchant canonical stats`() {
+        val batch = planner.planUpdated(1L, "manual", "corr-15", TransactionUpdateKind.BUSINESS_FLAGS_ONLY)
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("BUSINESS_FLAGS_ONLY should not include merchant canonical stats", !hasStats)
+    }
+
+    @Test
+    fun `planUpdated FULL with SYSTEM source does not include merchant canonical stats`() {
+        val batch = planner.planUpdated(1L, "SYSTEM", "corr-16", TransactionUpdateKind.FULL)
+        val hasStats = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("FULL update with SYSTEM source should not include merchant canonical stats", !hasStats)
     }
 }
