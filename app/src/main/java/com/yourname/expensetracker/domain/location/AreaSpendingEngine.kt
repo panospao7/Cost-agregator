@@ -169,8 +169,7 @@ class AreaSpendingEngine @Inject constructor() {
         converter: CurrencyConverter
     ): List<NormalizedAreaSpending> {
         val validExpenses = expenses.filter {
-            it.conversionStatus == ConversionStatus.HOME_CURRENCY ||
-            it.conversionStatus == ConversionStatus.CONVERTED
+            it.normalizedAmountOrNull != null
         }
         if (validExpenses.isEmpty()) return emptyList()
 
@@ -218,7 +217,7 @@ class AreaSpendingEngine @Inject constructor() {
         return byArea.entries.map { (areaName, areaAcc) ->
             val aggregate = MoneyAggregateBuilder.fromBuckets(
                 areaAcc.expenses.map { exp ->
-                    Pair(exp.normalizedAmount ?: exp.originalAmount, exp.normalizedCurrency)
+                    Pair(exp.normalizedAmountOrNull!!, exp.normalizedCurrency)
                 },
                 homeCurrency,
                 converter

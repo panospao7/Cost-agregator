@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SourceLearningPolicy
 import dagger.Lazy
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -93,12 +94,10 @@ class TransactionSideEffectPlannerTest {
     }
 
     @Test
-    fun `planUpdated MERCHANT uses EXPENSE_UPDATED trigger for merchant learning actions`() {
+    fun `planUpdated MERCHANT uses EXPENSE_UPDATED trigger for merchant canonical stats`() {
         val batch = planner.planUpdated(1L, "manual", "corr-3", TransactionUpdateKind.MERCHANT)
-        val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
         val stats = batch.actions.first { it.name == "merchant_canonical_stats_update" }
 
-        assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, learning.triggerType)
         assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, stats.triggerType)
     }
 
@@ -136,7 +135,7 @@ class TransactionSideEffectPlannerTest {
 
     @Test
     fun `idempotency key format is expense_id_triggertype_actionname`() {
-        val batch = planner.planCreated(42L, ExpenseSource.EMAIL_RECEIPT, "corr-x")
+        val batch = planner.planCreated(42L, ExpenseSource.REVIEW_APPROVAL, "corr-x")
         val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
         val stats = batch.actions.first { it.name == "merchant_canonical_stats_update" }
 
@@ -147,22 +146,20 @@ class TransactionSideEffectPlannerTest {
     @Test
     fun `planUpdated idempotency key format uses expense_updated`() {
         val batch = planner.planUpdated(42L, "bank_sync", "corr-y", TransactionUpdateKind.AMOUNT)
-        val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
         val stats = batch.actions.first { it.name == "merchant_canonical_stats_update" }
 
-        assertEquals("expense:42:expense_updated:merchant_category_learning", learning.idempotencyKey)
         assertEquals("expense:42:expense_updated:merchant_stats", stats.idempotencyKey)
     }
 
     // --- planUpdated CATEGORY_ONLY does NOT include merchant learning ---
 
     @Test
-    fun `planUpdated CATEGORY_ONLY does not include merchant learning actions`() {
+    fun `planUpdated CATEGORY_ONLY includes merchant category learning`() {
         val batch = planner.planUpdated(1L, "manual", "corr-4", TransactionUpdateKind.CATEGORY_ONLY)
-        val merchantActions = batch.actions.filter {
-            it.name == "merchant_category_pattern_learning" || it.name == "merchant_canonical_stats_update"
-        }
-        assertTrue("CATEGORY_ONLY should not trigger merchant learning", merchantActions.isEmpty())
+        val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
+        assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, learning.triggerType)
+        val statsPresent = batch.actions.any { it.name == "merchant_canonical_stats_update" }
+        assertTrue("CATEGORY_ONLY should not include canonical stats update", !statsPresent)
     }
 
     // --- planUpdated LOCATION_ONLY returns empty ---
@@ -181,5 +178,94 @@ class TransactionSideEffectPlannerTest {
         val budgetAction = batch.actions.first { it.name == "budget_check" }
         assertEquals(SideEffectTriggerType.EXPENSE_DELETED, budgetAction.triggerType)
         assertTrue(budgetAction.idempotencyKey.contains("expense_deleted"))
+    }
+
+    // --- SourceLearningPolicy ---
+
+    @Test
+    fun `isTrustedForLearning returns true for MANUAL_ENTRY`() {
+        assertTrue(SourceLearningPolicy.isTrustedForLearning(ExpenseSource.MANUAL_ENTRY))
+    }
+
+    @Test
+    fun `isTrustedForLearning returns false for NOTIFICATION_AUTO_ACCEPT`() {
+        assertTrue(!SourceLearningPolicy.isTrustedForLearning(ExpenseSource.NOTIFICATION_AUTO_ACCEPT))
+    }
+
+    @Test
+    fun `isTrustedForLearning String overload parses correctly`() {
+        assertTrue(SourceLearningPolicy.isTrustedForLearning("manual_entry"))
+        assertTrue(!SourceLearningPolicy.isTrustedForLearning("notification_auto_accept"))
+        assertTrue(!SourceLearningPolicy.isTrustedForLearning("nonexistent_source"))
+    }
+
+    @Test
+    fun `isTrustedForLearning returns true for USER_EDIT production string`() {
+        assertTrue(SourceLearningPolicy.isTrustedForLearning("USER_EDIT"))
+    }
+
+    @Test
+    fun `isTrustedForLearning returns false for SYSTEM production string`() {
+        assertTrue(!SourceLearningPolicy.isTrustedForLearning("SYSTEM"))
+    }
+
+    // --- planCreated source-aware learning ---
+
+    @Test
+    fun `planCreated with MANUAL_ENTRY includes merchant category learning`() {
+        val batch = planner.planCreated(1L, ExpenseSource.MANUAL_ENTRY, "corr-7")
+        val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
+        assertEquals(SideEffectTriggerType.EXPENSE_CREATED, learning.triggerType)
+    }
+
+    @Test
+    fun `planCreated with NOTIFICATION_AUTO_ACCEPT skips merchant category learning`() {
+        val batch = planner.planCreated(1L, ExpenseSource.NOTIFICATION_AUTO_ACCEPT, "corr-8")
+        val hasLearning = batch.actions.any { it.name == "merchant_category_pattern_learning" }
+        assertTrue("NOTIFICATION_AUTO_ACCEPT should not trigger merchant learning", !hasLearning)
+    }
+
+    // --- planUpdated source-aware learning ---
+
+    @Test
+    fun `planUpdated AMOUNT does not include merchant category learning`() {
+        val batch = planner.planUpdated(1L, "bank_sync", "corr-9", TransactionUpdateKind.AMOUNT)
+        val hasLearning = batch.actions.any { it.name == "merchant_category_pattern_learning" }
+        assertTrue("AMOUNT update should not include merchant category learning", !hasLearning)
+    }
+
+    @Test
+    fun `planUpdated FULL with untrusted source skips merchant category learning`() {
+        val batch = planner.planUpdated(1L, "bank_sync", "corr-10", TransactionUpdateKind.FULL)
+        val hasLearning = batch.actions.any { it.name == "merchant_category_pattern_learning" }
+        assertTrue("FULL with untrusted source should skip merchant category learning", !hasLearning)
+    }
+
+    @Test
+    fun `planUpdated FULL with trusted source includes merchant category learning`() {
+        val batch = planner.planUpdated(1L, "manual", "corr-11", TransactionUpdateKind.FULL)
+        val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
+        assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, learning.triggerType)
+    }
+
+    @Test
+    fun `planUpdated FULL with USER_EDIT source includes merchant category learning`() {
+        val batch = planner.planUpdated(1L, "USER_EDIT", "corr-12", TransactionUpdateKind.FULL)
+        val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
+        assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, learning.triggerType)
+    }
+
+    @Test
+    fun `planUpdated CATEGORY_ONLY with USER_EDIT source includes merchant category learning`() {
+        val batch = planner.planUpdated(1L, "USER_EDIT", "corr-13", TransactionUpdateKind.CATEGORY_ONLY)
+        val learning = batch.actions.first { it.name == "merchant_category_pattern_learning" }
+        assertEquals(SideEffectTriggerType.EXPENSE_UPDATED, learning.triggerType)
+    }
+
+    @Test
+    fun `planUpdated FULL with SYSTEM source skips merchant category learning`() {
+        val batch = planner.planUpdated(1L, "SYSTEM", "corr-14", TransactionUpdateKind.FULL)
+        val hasLearning = batch.actions.any { it.name == "merchant_category_pattern_learning" }
+        assertTrue("SYSTEM source should not trigger merchant category learning", !hasLearning)
     }
 }

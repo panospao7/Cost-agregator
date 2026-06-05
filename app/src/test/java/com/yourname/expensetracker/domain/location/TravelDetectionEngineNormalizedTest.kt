@@ -96,6 +96,29 @@ class TravelDetectionEngineNormalizedTest {
         assertEquals("Chicago", trip.destinationHint)
     }
 
+    @Test
+    fun `computeNormalized excludes null normalizedAmount despite converted status`() = runTest {
+        val expenses = homeSeed() + listOf(
+            // CONVERTED status but null normalizedAmount → should be excluded
+            locatedExpense(
+                lat = 41.8, lon = -87.6, date = 100_000L,
+                amount = 200.0, address = "Shop, Chicago, IL",
+                status = ConversionStatus.CONVERTED,
+                normalizedAmount = null
+            ),
+            // Valid CONVERTED expense
+            locatedExpense(
+                lat = 41.8, lon = -87.6, date = 100_000L + dayMs,
+                amount = 100.0, address = "Cafe, Chicago, IL",
+                status = ConversionStatus.CONVERTED
+            )
+        )
+        val result = engine.computeNormalized(expenses, homeCurrency, converter)
+        assertNotNull("Expected non-null insight", result)
+        // Only 1 travel expense is valid (the second one); 100.0 is travel spend
+        assertTrue("Expected travel spend >= 100.0", result!!.travelSpend >= 100.0)
+    }
+
     private fun homeSeed(): List<LocatedMoneyExpense> =
         (1..6).map { i ->
             locatedExpense(
@@ -112,12 +135,13 @@ class TravelDetectionEngineNormalizedTest {
         date: Long,
         amount: Double,
         address: String? = null,
-        status: ConversionStatus = ConversionStatus.HOME_CURRENCY
+        status: ConversionStatus = ConversionStatus.HOME_CURRENCY,
+        normalizedAmount: Double? = amount
     ) = LocatedMoneyExpense(
         expenseId = (lat * 1000 + lon * 1000 + date).toLong(),
         latitude = lat,
         longitude = lon,
-        normalizedAmount = amount,
+        normalizedAmount = normalizedAmount,
         normalizedCurrency = "EUR",
         originalAmount = amount,
         originalCurrency = "EUR",

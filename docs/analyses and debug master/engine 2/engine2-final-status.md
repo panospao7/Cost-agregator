@@ -1,7 +1,7 @@
 # Engine 2 Final Status — PR1–PR8 Summary
 
 > Companion to `engine2-implementation-plan.md` and `engine2-follow-up-implementation-plan.md`.
-> **Status: YELLOW → GREEN CANDIDATE** (validation pass required for full GREEN).
+> **Status: GREEN CANDIDATE — validation required**.
 
 ---
 
@@ -17,6 +17,16 @@
 | **PR6** | Analytics UI money null-safety | ✅ FIXED | `moneyCurrentTotalOrNull` replaces unsafe `moneyCurrentTotal`; `CurrencyCode("")` cannot be constructed in loading states |
 | **PR7** | Historical category identity | ⏭ DEFERRED | Option A (soft-delete) designed & documented in `docs/architecture/HISTORICAL_CATEGORY_IDENTITY_PLAN.md`; requires schema PR |
 | **PR8** | Final docs/tracker & guardrails | ✅ FIXED | Engine 2 status documented; guards enforced; this file created |
+
+### E2-FINAL Polish Items
+
+| ID | Title | Status | Delivered In |
+|----|-------|--------|-------------|
+| E2-FINAL-001 | `CancellationException` rethrow | ✅ FIXED | PR1 |
+| E2-FINAL-002 | Location normalized contract hardening | ✅ FIXED | PR2 |
+| E2-FINAL-003 | Deprecated `moneyCurrentTotal` guard | ✅ FIXED | PR3 |
+| E2-FINAL-004 | Invalid currency diagnostics | ✅ FIXED | PR4 |
+| E2-FINAL-005 | Stale budget comment | ✅ FIXED | PR1 |
 
 ---
 

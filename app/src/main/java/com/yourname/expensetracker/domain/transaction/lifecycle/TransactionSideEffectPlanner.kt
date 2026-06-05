@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.*
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SourceLearningPolicy
 import dagger.Lazy
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,13 +35,16 @@ class TransactionSideEffectPlanner @Inject constructor(
         correlationId: String?
     ): PostCommitActionBatch {
         val corrId = correlationId ?: CorrelationIds.newId()
-        val actions = listOf(
+        val actions = mutableListOf(
             makeBudgetCheckAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_CREATED),
             makeAnomalyAlertAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED),
-            makeMerchantCategoryLearningAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED),
             makeMerchantCanonicalStatsAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED),
             makeRecurringMatchingAction(expenseId, source, corrId)
         )
+        // C10 / E3-NOW-004: Only learn from trusted sources
+        if (SourceLearningPolicy.isTrustedForLearning(source)) {
+            actions.add(makeMerchantCategoryLearningAction(expenseId, source.name, corrId, SideEffectTriggerType.EXPENSE_CREATED))
+        }
         return PostCommitActionBatch(corrId, actions)
     }
 
@@ -66,12 +70,16 @@ class TransactionSideEffectPlanner @Inject constructor(
             TransactionUpdateKind.OWNERSHIP, TransactionUpdateKind.PAYMENT_CORE -> {
                 actions.add(makeBudgetCheckAction(expenseId, ExpenseSource.UNKNOWN, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeAnomalyAlertAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
-                actions.add(makeMerchantCategoryLearningAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 actions.add(makeMerchantCanonicalStatsAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
                 if (kind.affectsRecurringMatch()) {
                     actions.add(makeRecurringReconcileAction(expenseId, source, corrId))
                 }
             }
+        }
+
+        // C10 / E3-NOW-004: Only learn from trusted sources, and only when category may have changed
+        if (kind.involvesCategoryChange() && SourceLearningPolicy.isTrustedForLearning(source)) {
+            actions.add(makeMerchantCategoryLearningAction(expenseId, source, corrId, SideEffectTriggerType.EXPENSE_UPDATED))
         }
 
         return PostCommitActionBatch(corrId, actions)

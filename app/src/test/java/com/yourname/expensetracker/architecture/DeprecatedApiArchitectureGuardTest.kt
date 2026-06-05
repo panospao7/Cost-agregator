@@ -299,4 +299,32 @@ class DeprecatedApiArchitectureGuardTest {
             fail("W30: raw classify() called from unexpected production code:\n${violations.joinToString("\n")}")
         }
     }
+
+    // ── PR3: Deprecated AnalyticsState.moneyCurrentTotal guard ─────────────
+
+    /**
+     * PR3-GUARDRAIL: [AnalyticsState.moneyCurrentTotal] (with EUR fallback) is
+     * deprecated. Allowlisted in AnalyticsViewModel.kt (declaration site) and
+     * AnalyticsModels.kt (non-deprecated moneyCurrentTotal declarations).
+     */
+    @Test
+    fun noProductionUseOfDeprecatedAnalyticsStateMoneyCurrentTotal() {
+        assertTrue("Main source root not found: $sourceRoot", sourceRoot.exists())
+        val violations = mutableListOf<String>()
+        allKtFiles(sourceRoot).forEach { file ->
+            // Allow declaration site in AnalyticsViewModel.kt and non-deprecated
+            // moneyCurrentTotal declarations in AnalyticsModels.kt
+            if (file.name == "AnalyticsViewModel.kt" || file.name == "AnalyticsModels.kt") return@forEach
+            val content = file.readText()
+            // Match any read/reference of moneyCurrentTotal (not just declaration)
+            val regex = Regex("\\.moneyCurrentTotal\\b")
+            val matches = regex.findAll(content).toList()
+            if (matches.isNotEmpty()) {
+                violations.add("${file.name}: found ${matches.size} reference(s) to .moneyCurrentTotal")
+            }
+        }
+        if (violations.isNotEmpty()) {
+            fail("W31: Deprecated AnalyticsState.moneyCurrentTotal referenced from production code:\n${violations.joinToString("\n")}")
+        }
+    }
 }

@@ -322,6 +322,50 @@ class NotificationProcessingPipelineAtomicityTest {
         coVerify(exactly = 0) { rawDao.markProcessed(any()) }
     }
 
+    @Test
+    fun `ambiguous classification downgrades AUTO_ACCEPT to NEEDS_REVIEW`() = runBlocking {
+        val notification = testNotification()
+        val parsed = ParsedTransaction(
+            amount = 50.0,
+            currency = "EUR",
+            merchant = "AmbiguousShop",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.95f,
+            date = notification.timestamp
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(any(), any(), any(), any(), any())
+        } returns ParseOutcome.Parsed(parsed, mockk(relaxed = true))
+        coEvery { rawDao.existsByDedupeFingerprint(any()) } returns false
+        coEvery { rawDao.insertOrIgnore(any()) } returns 123L
+        coEvery {
+            confidenceRouter.route(parsed, any(), any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_ACCEPT,
+            adjustedConfidence = 0.95f,
+            reason = "high confidence"
+        )
+        coEvery {
+            hybridClassifier.classify(any(), any(), any(), any(), any())
+        } returns ClassificationResult(
+            categoryId = 1L,
+            categoryName = "Food",
+            confidence = 0.5f,
+            matchType = MatchType.RULE_MATCH,
+            isAmbiguous = true,
+            requiresReview = true,
+            classificationReason = "Ambiguous keyword match"
+        )
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns false
+        coEvery { pendingReviewDao.hasPendingDuplicateInRangeTypeAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns false
+        coEvery { pendingReviewDao.upsertByRawNotificationId(any()) } returns 789L
+
+        val result = pipeline.process(notification)
+
+        assertTrue("Expected NeedsReview due to ambiguity downgrade, got $result",
+            result is NotificationPipelineOutcome.NeedsReview)
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────────
 
     private fun testNotification(

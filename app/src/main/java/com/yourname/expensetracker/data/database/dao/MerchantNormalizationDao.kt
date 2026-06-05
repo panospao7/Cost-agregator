@@ -106,30 +106,66 @@ interface MerchantNormalizationDao {
     // ==================== Combined Operations ====================
     
     @Transaction
-    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) {
-        // TODO (C01): Check both rawName AND normalizedKey before insert; update existing alias on conflict.
-        //              Currently only checks by rawName — if a different rawName produces the same
-        //              normalizedKey, the insert silently succeeds, creating a duplicate alias entry.
-        val existing = getAliasByRawName(rawName)
-        if (existing != null) {
-            updateAlias(existing.copy(
-                canonicalId = canonicalId,
-                isUserDefined = isUserDefined || existing.isUserDefined,
-                occurrenceCount = existing.occurrenceCount + 1,
-                lastUsedAt = timestamp
-            ))
-        } else {
-            insertAlias(MerchantAlias(
-                rawName = rawName,
-                normalizedKey = normalizedKey,
-                canonicalId = canonicalId,
-                isUserDefined = isUserDefined,
-                createdAt = timestamp,
-                lastUsedAt = timestamp
-            ))
+    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long): Int {
+        // TODO(C01-FIXED): Now checks normalizedKey first, then rawName. Updates existing alias on
+        //                  same canonical, returns conflict on different canonical.
+        val existingByKey = getAliasByNormalizedKey(normalizedKey)
+        if (existingByKey != null) {
+            return if (existingByKey.canonicalId == canonicalId) {
+                updateAlias(existingByKey.copy(
+                    isUserDefined = isUserDefined || existingByKey.isUserDefined,
+                    occurrenceCount = existingByKey.occurrenceCount + 1,
+                    lastUsedAt = timestamp
+                ))
+                1 // UPDATED
+            } else {
+                2 // CONFLICT
+            }
         }
+
+        val existingByRaw = getAliasByRawName(rawName)
+        if (existingByRaw != null) {
+            return if (existingByRaw.canonicalId == canonicalId) {
+                updateAlias(existingByRaw.copy(
+                    isUserDefined = isUserDefined || existingByRaw.isUserDefined,
+                    occurrenceCount = existingByRaw.occurrenceCount + 1,
+                    lastUsedAt = timestamp
+                ))
+                1 // UPDATED
+            } else {
+                2 // CONFLICT
+            }
+        }
+
+        val canonical = getCanonicalById(canonicalId)
+        if (canonical == null) return 3 // CANONICAL_MISSING
+
+        val id = insertAlias(MerchantAlias(
+            rawName = rawName,
+            normalizedKey = normalizedKey,
+            canonicalId = canonicalId,
+            isUserDefined = isUserDefined,
+            createdAt = timestamp,
+            lastUsedAt = timestamp
+        ))
+        return if (id > 0L) 0 else -1 // CREATED or ERROR
     }
     
+    /**
+     * Atomically increments occurrenceCount for the alias identified by normalizedKey.
+     * Returns the updated alias if found, or null if no alias exists for that key.
+     */
+    @Transaction
+    suspend fun incrementAliasOccurrence(normalizedKey: String, lastUsedAt: Long): MerchantAlias? {
+        val existing = getAliasByNormalizedKey(normalizedKey) ?: return null
+        val updated = existing.copy(
+            occurrenceCount = existing.occurrenceCount + 1,
+            lastUsedAt = lastUsedAt
+        )
+        updateAlias(updated)
+        return updated
+    }
+
     @Query("SELECT COUNT(*) FROM merchant_canonicals")
     suspend fun getCanonicalCount(): Int
 }

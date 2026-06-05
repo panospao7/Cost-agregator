@@ -16,7 +16,16 @@ data class LocatedMoneyExpense(
     val merchant: String,
     val date: Long,
     val resolvedAddress: String? = null  // PR3: resolved address from geocoding backfill
-)
+) {
+    /** Returns the normalized amount only if conversion succeeded and amount is finite. */
+    val normalizedAmountOrNull: Double?
+        get() = normalizedAmount
+            ?.takeIf { it.isFinite() }
+            ?.takeIf {
+                conversionStatus == ConversionStatus.HOME_CURRENCY ||
+                conversionStatus == ConversionStatus.CONVERTED
+            }
+}
 
 enum class ConversionStatus {
     HOME_CURRENCY,    // no conversion needed

@@ -87,6 +87,7 @@ class CategoryRepository @Inject constructor(
                     normalizedCanonicalName = categorizationEngine.normalizedCanonicalNameForMerchant(mapping.merchantPattern)
                 )
             }
+            categorizationEngine.invalidateAllCaches()
             hybridExpenseClassifier.get().invalidateCategorySnapshot()
         } catch (e: Exception) {
             Timber.e(e, "Failed to seed default categories")

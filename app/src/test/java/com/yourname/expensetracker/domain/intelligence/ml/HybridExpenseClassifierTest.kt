@@ -295,4 +295,41 @@ class HybridExpenseClassifierTest {
         assertEquals(uncategorizedCategory.id, result.categoryId)
         assertEquals(MatchType.FALLBACK, result.matchType)
     }
+
+    @Test
+    fun `classifyWithMerchantDictionary propagates ambiguity from CategorizationEngine`() = runBlocking {
+        coEvery { categorizationEngine.categorize("Coffee Shop") } returns CategorizationResult(
+            categoryId = foodCategory.id,
+            categoryName = foodCategory.name,
+            matchType = CategorizationMatchType.KEYWORD,
+            isAmbiguous = true,
+            requiresReview = true,
+            confidence = 0.5,
+            explanation = "Ambiguous semantic match"
+        )
+
+        val result = hybridClassifier.classify("Coffee Shop", 0.0)
+
+        assertTrue(result.isAmbiguous)
+        assertTrue(result.requiresReview)
+        assertEquals("Ambiguous semantic match", result.classificationReason)
+    }
+
+    @Test
+    fun `classify non-ambiguous result does not require review`() = runBlocking {
+        coEvery { categorizationEngine.categorize("Starbucks") } returns CategorizationResult(
+            categoryId = foodCategory.id,
+            categoryName = foodCategory.name,
+            matchType = CategorizationMatchType.EXACT,
+            isAmbiguous = false,
+            requiresReview = false,
+            confidence = 0.98,
+            explanation = "Exact match"
+        )
+
+        val result = hybridClassifier.classify("Starbucks", 0.0)
+
+        assertFalse(result.isAmbiguous)
+        assertFalse(result.requiresReview)
+    }
 }

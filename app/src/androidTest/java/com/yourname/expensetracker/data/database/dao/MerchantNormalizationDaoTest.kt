@@ -38,7 +38,7 @@ class MerchantNormalizationDaoTest {
     private fun makeCanonical(
         name: String,
         searchKey: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = 1_700_000_000_000L
     ) = MerchantCanonical(
         normalizedName = name,
         searchKey = searchKey,
@@ -50,7 +50,7 @@ class MerchantNormalizationDaoTest {
         rawName: String,
         normalizedKey: String,
         canonicalId: Long,
-        createdAt: Long = System.currentTimeMillis(),
+        createdAt: Long = 1_700_000_000_000L,
         lastUsedAt: Long = createdAt
     ) = MerchantAlias(
         rawName = rawName,
@@ -76,30 +76,89 @@ class MerchantNormalizationDaoTest {
     @Test
     fun upsertMapping_updatesExistingAlias() = runBlocking {
         val canonicalA = dao.insertCanonical(makeCanonical("Starbucks", "starbucks"))
-        val canonicalB = dao.insertCanonical(makeCanonical("Starbucks Coffee", "starbuckscoffee"))
         val firstTs = 1_700_000_000_000L
         val secondTs = firstTs + 1_000L
 
-        dao.linkAliasToCanonical(
+        val firstResult = dao.linkAliasToCanonical(
             rawName = "STARBUCKS #123",
             normalizedKey = "starbucks123",
             canonicalId = canonicalA,
             isUserDefined = false,
             timestamp = firstTs
         )
-        dao.linkAliasToCanonical(
+        assertEquals(0, firstResult) // CREATED
+
+        val secondResult = dao.linkAliasToCanonical(
             rawName = "STARBUCKS #123",
             normalizedKey = "starbucks123",
-            canonicalId = canonicalB,
+            canonicalId = canonicalA,
             isUserDefined = true,
             timestamp = secondTs
         )
+        assertEquals(1, secondResult) // UPDATED
 
         val loaded = dao.getAliasByRawName("STARBUCKS #123")
         assertNotNull(loaded)
-        assertEquals(canonicalB, loaded!!.canonicalId)
+        assertEquals(canonicalA, loaded!!.canonicalId)
         assertEquals(2, loaded.occurrenceCount)
         assertEquals(true, loaded.isUserDefined)
+        assertEquals(secondTs, loaded.lastUsedAt)
+    }
+
+    @Test
+    fun linkAliasToCanonical_differentCanonical_returnsConflict() = runBlocking {
+        val canonicalA = dao.insertCanonical(makeCanonical("Starbucks", "starbucks"))
+        val canonicalB = dao.insertCanonical(makeCanonical("Starbucks Coffee", "starbuckscoffee"))
+        val ts = 1_700_000_000_000L
+
+        val firstResult = dao.linkAliasToCanonical(
+            rawName = "STARBUCKS #123",
+            normalizedKey = "starbucks123",
+            canonicalId = canonicalA,
+            timestamp = ts
+        )
+        assertEquals(0, firstResult) // CREATED
+
+        val secondResult = dao.linkAliasToCanonical(
+            rawName = "STARBUCKS #123",
+            normalizedKey = "starbucks123",
+            canonicalId = canonicalB,
+            timestamp = ts + 1_000L
+        )
+        assertEquals(2, secondResult) // CONFLICT
+
+        // Alias should still point to canonicalA
+        val loaded = dao.getAliasByRawName("STARBUCKS #123")
+        assertNotNull(loaded)
+        assertEquals(canonicalA, loaded!!.canonicalId)
+        assertEquals(1, loaded.occurrenceCount)
+    }
+
+    @Test
+    fun linkAliasToCanonical_sameNormalizedKeyDifferentRawName_updatesExisting() = runBlocking {
+        val canonicalId = dao.insertCanonical(makeCanonical("McDonald's", "mcdonalds"))
+        val firstTs = 1_700_000_000_000L
+        val secondTs = firstTs + 1_000L
+
+        val firstResult = dao.linkAliasToCanonical(
+            rawName = "McDonald's",
+            normalizedKey = "mcdonalds",
+            canonicalId = canonicalId,
+            timestamp = firstTs
+        )
+        assertEquals(0, firstResult) // CREATED
+
+        val secondResult = dao.linkAliasToCanonical(
+            rawName = "MCDONALDS",
+            normalizedKey = "mcdonalds",
+            canonicalId = canonicalId,
+            timestamp = secondTs
+        )
+        assertEquals(1, secondResult) // UPDATED
+
+        val loaded = dao.getAliasByNormalizedKey("mcdonalds")
+        assertNotNull(loaded)
+        assertEquals(2, loaded!!.occurrenceCount)
         assertEquals(secondTs, loaded.lastUsedAt)
     }
 
@@ -216,5 +275,18 @@ class MerchantNormalizationDaoTest {
     @Test
     fun getAliasByNormalizedKey_returns_null_for_missing_key() = runBlocking {
         assertNull(dao.getAliasByNormalizedKey("nonexistent"))
+    }
+
+    // ── E3-PR1: CANONICAL_MISSING path ──────────────────────────────────────
+
+    @Test
+    fun linkAliasToCanonical_missingCanonical_returnsCanonicalMissing() = runBlocking {
+        val result = dao.linkAliasToCanonical(
+            rawName = "Unknown Merchant",
+            normalizedKey = "unknownmerchant",
+            canonicalId = 99999L,
+            timestamp = 1_700_000_000_000L
+        )
+        assertEquals(3, result) // CANONICAL_MISSING
     }
 }

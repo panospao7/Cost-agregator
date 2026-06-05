@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MLMatchType
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.MerchantCategoryInsertResult
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
@@ -105,7 +106,7 @@ class CategorizationEngineDebugTest {
         // Mock the DAO to return the new mapping after insertion
         val newMapping = MerchantCategory(merchantName.lowercase(), categoryId)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(newMapping)
-        coEvery { merchantCategoryRepository.insert(any()) } just Runs
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
         
         // This should trigger invalidateCache()
         engine.learnMerchantCategory(merchantName, categoryId)
@@ -118,5 +119,39 @@ class CategorizationEngineDebugTest {
         
         // Verify DAO was called
         coVerify { merchantCategoryRepository.insert(any()) }
+    }
+
+    @Test
+    fun `learnMerchantCategory handles insert conflict without crashing`() = runBlocking {
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Conflict
+
+        // Should not throw
+        engine.learnMerchantCategory("EXISTING_MERCHANT", 5L)
+
+        // Verify insert was called
+        coVerify { merchantCategoryRepository.insert(any()) }
+    }
+
+    @Test
+    fun `invalidateAllCaches clears cache and next categorize reloads from repository`() = runBlocking {
+        // First call: cache is populated
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+            MerchantCategory("starbucks", 1L)
+        )
+        val result1 = engine.categorize("starbucks")
+        assertEquals(MatchType.EXACT, result1.matchType)
+
+        // Change the repository data
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+            MerchantCategory("costa", 2L)
+        )
+
+        // Without invalidation, the old cached data would still be used
+        // After invalidation, the new data should be used
+        engine.invalidateAllCaches()
+
+        val result2 = engine.categorize("costa")
+        assertEquals(MatchType.EXACT, result2.matchType)
+        assertEquals(2L, result2.categoryId)
     }
 }

@@ -1093,6 +1093,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 notificationText = notification.text,
                 packageName = notification.packageName
             )
+            // C12/E3-NOW-003: If classification is ambiguous, force review regardless of routing
+            if (classification.requiresReview && routingResult.decision == RoutingDecision.AUTO_ACCEPT) {
+                Timber.d("C12: Ambiguous classification for merchant='%s' — routing downgraded from AUTO_ACCEPT to NEEDS_REVIEW", correctedMerchant)
+                routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
+            }
             classification.categoryId.takeIf { it > 0 }
         } else {
             null

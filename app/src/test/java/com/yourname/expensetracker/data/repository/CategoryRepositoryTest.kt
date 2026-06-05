@@ -8,7 +8,6 @@ import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import dagger.Lazy
 import io.mockk.coEvery
-import io.mockk.mockk
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -38,6 +37,37 @@ class CategoryRepositoryTest {
             categorizationEngine = categorizationEngine,
             hybridExpenseClassifier = lazyClassifier
         )
+    }
+
+    @Test
+    fun `addCategory triggers categorizationEngine invalidateCache`() = runTest {
+        // Setup: category does not exist
+        coEvery { categoryDao.getByName(any()) } returns null
+        coEvery { categoryDao.insert(any()) } returns 5L
+
+        repository.addCategory("Dining", "icon", "#FF0000")
+
+        // Verify categorizationEngine.invalidateCache() was called
+        coVerify { categorizationEngine.invalidateCache() }
+    }
+
+    @Test
+    fun `deleteCategory triggers categorizationEngine invalidateCache`() = runTest {
+        val category = com.yourname.expensetracker.data.database.entity.Category(id = 1L, name = "test", icon = "icon", color = "#FF0000", isDefault = false)
+        coEvery { categoryDao.getById(1L) } returns category
+
+        repository.deleteCategory(1L)
+
+        coVerify { categorizationEngine.invalidateCache() }
+    }
+
+    @Test
+    fun `mergeCategories triggers categorizationEngine invalidateCache`() = runTest {
+        coEvery { categoryDao.mergeCategories(any(), any()) } returns 5
+
+        repository.mergeCategories(1L, 2L)
+
+        coVerify { categorizationEngine.invalidateCache() }
     }
 
     // TODO: Tautological mock test — consider adding real behavior assertion

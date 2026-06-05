@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.intelligence.ml
 
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.domain.categorization.AliasLinkResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
@@ -23,7 +24,7 @@ class MerchantNormalizerTest {
 
     @Before
     fun setup() {
-        every { timeProvider.now() } returns System.currentTimeMillis()
+        every { timeProvider.now() } returns 1_700_000_000_000L
         normalizer = MerchantNormalizer(repository, merchantRules, greeklishNormalizer, context, timeProvider)
     }
 
@@ -49,6 +50,40 @@ class MerchantNormalizerTest {
         val result = normalizer.normalize("")
         assertEquals("Unknown", result.canonical.normalizedName)
         assertEquals(MatchType.NEW_MERCHANT, result.matchType)
+    }
+
+    @Test
+    fun `linkAliasToCanonical sameNormalizedKey sameCanonical returns UpdatedExisting`() = runBlocking {
+        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns AliasLinkResult.UpdatedExisting(5L)
+        coEvery { repository.getCanonicalBySearchKey(any()) } returns null
+        coEvery { repository.getAliasByNormalizedKey(any()) } returns null
+
+        val result = normalizer.linkAliasToCanonical("Test", 1L)
+        assertTrue(result is AliasLinkResult.UpdatedExisting)
+        assertEquals(5L, (result as AliasLinkResult.UpdatedExisting).aliasId)
+    }
+
+    @Test
+    fun `linkAliasToCanonical sameNormalizedKey differentCanonical returns Conflict`() = runBlocking {
+        val existingAlias = mockk<com.yourname.expensetracker.data.database.entity.MerchantAlias>()
+        coEvery { existingAlias.canonicalId } returns 2L
+        coEvery { repository.getAliasByNormalizedKey(any()) } returns existingAlias
+        coEvery { repository.getCanonicalBySearchKey(any()) } returns null
+
+        val result = normalizer.linkAliasToCanonical("Test", 1L)
+        assertTrue(result is AliasLinkResult.Conflict)
+        assertEquals(2L, (result as AliasLinkResult.Conflict).existingCanonicalId)
+    }
+
+    @Test
+    fun `linkAliasToCanonical newAlias returns Created`() = runBlocking {
+        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns AliasLinkResult.Created(5L)
+        coEvery { repository.getCanonicalBySearchKey(any()) } returns null
+        coEvery { repository.getAliasByNormalizedKey(any()) } returns null
+
+        val result = normalizer.linkAliasToCanonical("Test Merchant", 1L)
+        assertTrue(result is AliasLinkResult.Created)
+        assertEquals(5L, (result as AliasLinkResult.Created).aliasId)
     }
 
     @Test

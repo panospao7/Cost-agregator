@@ -92,6 +92,21 @@ class CategorizationEngineTest {
     }
 
     @Test
+    fun `categorize uses cached data on second call`() = runTest {
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+            MerchantCategory("starbucks", 1L)
+        )
+
+        // First call: should fetch from repository
+        engine.categorize("starbucks")
+        coVerify(exactly = 1) { merchantCategoryRepository.getAll() }
+
+        // Second call: should use cache, not re-fetch
+        engine.categorize("starbucks")
+        coVerify(exactly = 1) { merchantCategoryRepository.getAll() } // still exactly 1
+    }
+
+    @Test
     fun `returns unknown when no match found`() = runTest {
         coEvery { merchantCategoryRepository.getCategoryForMerchant(any()) } returns null
         coEvery { merchantCategoryRepository.getAll() } returns emptyList()

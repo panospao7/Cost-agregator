@@ -103,17 +103,58 @@ class AreaSpendingEngineNormalizedTest {
         )
     }
 
+    @Test
+    fun `computeNormalized excludes converted status with null normalizedAmount`() = runTest {
+        val expenses = listOf(
+            locatedExpense(
+                lat = 40.7128, lon = -74.0060, amount = 100.0,
+                address = "Shop, Manhattan, NY",
+                status = ConversionStatus.CONVERTED,
+                normalizedAmount = null
+            ),
+            locatedExpense(
+                lat = 40.7128, lon = -74.0060, amount = 50.0,
+                address = "Cafe, Manhattan, NY",
+                status = ConversionStatus.CONVERTED
+            )
+        )
+        val result = engine.computeNormalized(expenses, homeCurrency, converter)
+        assertEquals(1, result.size)
+        assertEquals(50.0, result.first().aggregate.displayAmount, 0.01)
+    }
+
+    @Test
+    fun `computeNormalized excludes homeCurrency status with null normalizedAmount`() = runTest {
+        val expenses = listOf(
+            locatedExpense(
+                lat = 40.7128, lon = -74.0060, amount = 100.0,
+                address = "Shop, Manhattan, NY",
+                status = ConversionStatus.HOME_CURRENCY,
+                normalizedAmount = null
+            ),
+            locatedExpense(
+                lat = 40.7128, lon = -74.0060, amount = 50.0,
+                address = "Cafe, Manhattan, NY",
+                status = ConversionStatus.HOME_CURRENCY
+            )
+        )
+        val result = engine.computeNormalized(expenses, homeCurrency, converter)
+        assertEquals(1, result.size)
+        assertEquals(50.0, result.first().aggregate.displayAmount, 0.01)
+    }
+
     private fun locatedExpense(
         lat: Double,
         lon: Double,
         amount: Double,
         address: String? = null,
-        status: ConversionStatus = ConversionStatus.HOME_CURRENCY
+        status: ConversionStatus = ConversionStatus.HOME_CURRENCY,
+        normalizedAmount: Double? = amount
     ) = LocatedMoneyExpense(
         expenseId = (lat * 1000 + lon * 1000).toLong(),
         latitude = lat,
         longitude = lon,
-        normalizedAmount = amount,
+        normalizedAmount = normalizedAmount,
         normalizedCurrency = "EUR",
         originalAmount = amount,
         originalCurrency = "EUR",

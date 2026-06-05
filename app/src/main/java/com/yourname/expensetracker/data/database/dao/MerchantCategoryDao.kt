@@ -37,11 +37,16 @@ interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories WHERE merchantPattern = :merchantPattern")
     suspend fun getCategoryForMerchant(merchantPattern: String): MerchantCategory?
 
-    // TODO (E3-007): This query is ambiguous when multiple rows share the same normalizedCanonicalName.
-    // Without a UNIQUE constraint, LIMIT 1 returns an arbitrary row. Add ORDER BY timesUsed DESC,
-    // updatedAt DESC to deterministically return the most relevant mapping, or enforce UNIQUE.
-    // TODO (C06): Make normalizedCanonicalName unique, or return all candidates resolved by source/confidence/timesUsed.
-    @Query("SELECT * FROM merchant_categories WHERE normalizedCanonicalName = :normalizedCanonicalName")
+    // C06-FIXED: Query is now deterministic with documented tie-breaker.
+    // Priority order: 1) higher confidence, 2) higher timesUsed, 3) stable lexical tie-breaker by merchantPattern.
+    // This prevents random results when multiple rows share the same normalizedCanonicalName.
+    // Long-term: enforce UNIQUE on normalizedCanonicalName after duplicate cleanup.
+    @Query("""
+        SELECT * FROM merchant_categories
+        WHERE normalizedCanonicalName = :normalizedCanonicalName
+        ORDER BY confidence DESC, timesUsed DESC, merchantPattern ASC
+        LIMIT 1
+    """)
     suspend fun getCategoryByNormalizedCanonical(normalizedCanonicalName: String): MerchantCategory?
 
     @Query("SELECT * FROM merchant_categories WHERE normalizedCanonicalName LIKE :prefix || '%'")

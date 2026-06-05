@@ -19,4 +19,10 @@ enum class TransactionUpdateKind {
         FULL, MERCHANT, TYPE, TRANSFER_DETAILS, AMOUNT, DATE, CURRENCY, OWNERSHIP, PAYMENT_CORE -> true
         CATEGORY_ONLY, LOCATION_ONLY, BUSINESS_FLAGS_ONLY -> false
     }
+
+    /** Whether this update kind can change the expense category. */
+    fun involvesCategoryChange(): Boolean = when (this) {
+        FULL, CATEGORY_ONLY -> true
+        else -> false
+    }
 }

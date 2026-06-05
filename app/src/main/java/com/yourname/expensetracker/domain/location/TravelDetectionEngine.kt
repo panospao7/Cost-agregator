@@ -247,8 +247,7 @@ class TravelDetectionEngine @Inject constructor() {
         converter: CurrencyConverter
     ): NormalizedTravelInsight? {
         val validExpenses = expenses.filter {
-            it.conversionStatus == ConversionStatus.HOME_CURRENCY ||
-            it.conversionStatus == ConversionStatus.CONVERTED
+            it.normalizedAmountOrNull != null
         }
         if (validExpenses.size < MIN_EXPENSES_FOR_HOME) return null
 
@@ -376,7 +375,7 @@ class TravelDetectionEngine @Inject constructor() {
         converter: CurrencyConverter
     ): MoneyAggregate {
         if (expenses.isEmpty()) return MoneyAggregate.empty(CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR))
-        val buckets = expenses.map { Pair(it.normalizedAmount ?: it.originalAmount, it.normalizedCurrency) }
+        val buckets = expenses.map { Pair(it.normalizedAmountOrNull!!, it.normalizedCurrency) }
         return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, converter)
     }
 

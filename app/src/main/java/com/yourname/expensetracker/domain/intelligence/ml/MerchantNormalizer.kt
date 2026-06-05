@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import com.yourname.expensetracker.domain.categorization.AliasLinkResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.StringBKTree
@@ -28,16 +29,6 @@ data class MerchantLookupResult(
     val confidence: Float,
     val matchType: MatchType
 )
-
-/**
- * Result of an alias link operation.
- */
-sealed class AliasLinkResult {
-    /** Alias was linked successfully. */
-    data class Success(val aliasId: Long) : AliasLinkResult()
-    /** Link was rejected because the normalized key is already linked to a different canonical. */
-    data class Conflict(val existingCanonicalId: Long, val message: String) : AliasLinkResult()
-}
 
 /**
  * Advanced Merchant Name Normalization System.
@@ -182,6 +173,11 @@ class MerchantNormalizer @Inject constructor(
         isUserDefined: Boolean = false
     ): AliasLinkResult {
         val normalizedKey = MerchantKeyGenerator.generate(rawName)
+
+        // Fast-path conflict checks (redundant with repository but avoids DB round-trip).
+        // Note: these reads are not atomic with the DAO @Transaction, so a concurrent
+        // modification could make this fast-path stale. The DAO transaction is the
+        // authoritative source of truth; this is only an optimization.
         val existingCanonical = repository.getCanonicalBySearchKey(normalizedKey)
         if (existingCanonical != null && existingCanonical.id != canonicalId) {
             return AliasLinkResult.Conflict(
@@ -189,7 +185,6 @@ class MerchantNormalizer @Inject constructor(
                 "Normalized key '$normalizedKey' already linked to canonical ${existingCanonical.id}"
             )
         }
-        // Also check if an alias with this normalizedKey already points to a DIFFERENT canonical
         val existingAlias = repository.getAliasByNormalizedKey(normalizedKey)
         if (existingAlias != null && existingAlias.canonicalId != canonicalId) {
             return AliasLinkResult.Conflict(
@@ -197,12 +192,8 @@ class MerchantNormalizer @Inject constructor(
                 "Alias with key '$normalizedKey' already linked to canonical ${existingAlias.canonicalId}"
             )
         }
-        repository.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timeProvider.now())
-        // Retrieve the alias to return its ID
-        val alias = repository.getAliasByNormalizedKey(normalizedKey)
-        val id = alias?.id ?: -1L
-        return if (id > 0) AliasLinkResult.Success(id)
-               else AliasLinkResult.Conflict(-1, "Insert returned $id")
+
+        return repository.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timeProvider.now())
     }
 
     fun cleanMerchantName(rawName: String): String {

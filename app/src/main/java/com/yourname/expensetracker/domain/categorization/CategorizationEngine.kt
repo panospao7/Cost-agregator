@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.categorization
 
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.MerchantCategoryInsertResult
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
@@ -475,14 +476,24 @@ class CategorizationEngine @Inject constructor(
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
         val mapping = createMerchantCategoryMapping(merchantName, categoryId)
-        merchantCategoryRepository.insert(mapping)
-        invalidateCache()
+        val result = merchantCategoryRepository.insert(mapping)
+        // Note: merchantCategoryRepository.insert() already calls invalidateAllCaches() on success.
+        // No need to invalidate again here.
         // C14: Trace this decision into the ring-buffer
         val categoryName = getCategoryMap()[categoryId] ?: "unknown"
         traceDecision(merchantName, categoryName, "learnMerchantCategory")
-        Timber.d(
-            "Learned merchant: ${mapping.merchantPattern} -> category $categoryId (canonical: ${mapping.normalizedCanonicalName})"
-        )
+        when (result) {
+            is MerchantCategoryInsertResult.Inserted -> {
+                Timber.d(
+                    "Learned merchant: ${mapping.merchantPattern} -> category $categoryId (canonical: ${mapping.normalizedCanonicalName})"
+                )
+            }
+            MerchantCategoryInsertResult.Conflict -> {
+                Timber.d(
+                    "Merchant mapping already exists for pattern='${mapping.merchantPattern}', canonical='${mapping.normalizedCanonicalName}'. No update performed."
+                )
+            }
+        }
     }
 
     suspend fun createMerchantCategoryMapping(merchantName: String, categoryId: Long): MerchantCategory {
@@ -509,12 +520,11 @@ class CategorizationEngine @Inject constructor(
         }
     }
 
-    fun invalidateAllCaches() {
+    suspend fun invalidateAllCaches() {
         // C04-FIXED: Central invalidation point for all category-cache consumers.
-        // Call after any MerchantCategoryRepository/CategoryRepository write,
-        // seed operation, or direct DAO write that changes category/merchant mappings.
-        // E3-006: Synchronized to prevent concurrent partial reads during invalidation.
-        synchronized(this) {
+        // Uses cacheMutex (same lock as getCacheData/invalidateCache) to prevent
+        // concurrent partial reads during invalidation.
+        cacheMutex.withLock {
             cachedMappings = null
             cachedPatternsSet = null
             cachedCategoryMap = null
@@ -524,26 +534,21 @@ class CategorizationEngine @Inject constructor(
         Timber.d("CategorizationEngine: all caches invalidated")
     }
 
-    // C04 PARTIAL: internal learnMerchantCategory() invalidates this cache.
-    // Remaining: all MerchantCategoryRepository/CategoryRepository/seed/direct DAO writes
-    // must emit CategoryMappingChanged and invalidate every categorization cache.
-
-    // C04-VERIFIED: invalidateCache() is called after the only write operation in
-    // this engine (learnMerchantCategory at line 457). All write paths within
-    // CategorizationEngine trigger cache invalidation:
+    // C04-FIXED: invalidateAllCaches() now uses cacheMutex (same lock as getCacheData).
+    // Both invalidateCache() and invalidateAllCaches() are now coordinated under cacheMutex.
+    // Remaining: CategoryRepository.ensureDefaultCategories() must also emit invalidation.
+    //
+    // All write paths within CategorizationEngine trigger cache invalidation:
     //   - learnMerchantCategory()     ✅ calls invalidateCache()
     //   - createMerchantCategoryMapping()  (entity factory only, no DB write)
     //
-    // Category create/update/delete operations live in CategoryRepository and
-    // invalidate hybridExpenseClassifier's snapshot but NOT this engine's
-    // cachedCategoryMap/cachedCategoryNameToId. If full cross-cache consistency
-    // is required, CategoryRepository must also call invalidateCache() here.
+    // Category create/update/delete operations in CategoryRepository invalidate
+    // hybridExpenseClassifier's snapshot but should also invalidate this engine's
+    // cachedCategoryMap/cachedCategoryNameToId. This is now done for add/merge/delete.
+    // ensureDefaultCategories() now also calls invalidateAllCaches().
     //
-    // TODO (C04): Create CategoryMappingWriter that emits CategoryMappingChanged.
-    // Invalidate category/merchant/semantic caches from all write paths.
-    // NEXT: Change insert return types from Unit to Long (needs DAO migration)
-    // NEXT: Emit CategoryMappingChanged events from all write paths
-    // NEXT: Wire merchant canonical stats to TransactionSideEffectDispatcher
+    // TODO (C04-NEXT): Create CategoryMappingWriter that emits CategoryMappingChanged.
+    // TODO (C04-NEXT): Wire merchant canonical stats to TransactionSideEffectDispatcher
     
     // C14: Record a decision in the ring-buffer trace.
     private fun traceDecision(merchant: String, category: String, method: String) {

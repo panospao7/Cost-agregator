@@ -314,7 +314,59 @@ class AnalyticsRepositoryAggregateTest {
             excludedExpense.effectiveAmount, failure.originalAmount.amount, 0.001)
     }
 
-    // ── Test 5: empty period produces zero aggregate ────────────────────────
+    // ── Test 5: invalid currency warning message contains raw code ──────────
+
+    @Test
+    fun `spendingSummary_invalidCurrencyWarningMessageContainsRawCode`() = runTest {
+        // Expense with invalid currency code "XYZ"
+        val invalidCurrencyExpense = createExpense(id = 99L, amount = 50.0, currency = "XYZ", date = start)
+        val expenses = listOf(invalidCurrencyExpense)
+
+        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), any()) } returnsMany listOf(expenses, emptyList())
+
+        val warning = AnalyticsConversionWarning(
+            type = AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY,
+            message = "Analytics excluded transaction(s) with invalid currency codes.",
+            affectedTransactionCount = 1,
+            sourceCurrencies = listOf("XYZ")
+        )
+
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } returnsMany listOf(
+            AnalyticsNormalizationResult(
+                homeCurrency = homeCurrency,
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = listOf(warning),
+                latestRateTimestamp = null,
+                totalInputCount = expenses.size,
+                excludedReasons = mapOf(
+                    invalidCurrencyExpense.id to Pair(
+                        AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY,
+                        "Analytics excluded transaction(s) with invalid currency codes."
+                    )
+                )
+            ),
+            AnalyticsNormalizationResult(
+                homeCurrency = homeCurrency,
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = 0
+            )
+        )
+
+        val result = repository.getSpendingSummary(start, end).first()
+
+        assertNotNull("aggregate must not be null", result.aggregate)
+        assertNotNull("warningMessage must be present for invalid currency", result.aggregate!!.warningMessage)
+        assertTrue("warningMessage must contain raw invalid code XYZ",
+            result.aggregate!!.warningMessage!!.contains("XYZ"))
+        assertTrue("warningMessage must contain 'Invalid source currency'",
+            result.aggregate!!.warningMessage!!.contains("Invalid source currency"))
+    }
+
+    // ── Test 6: empty period produces zero aggregate ────────────────────────
 
     @Test
     fun `spendingSummary_emptyPeriodAggregateIsZeroHomeCurrency()`() = runTest {
@@ -348,7 +400,7 @@ class AnalyticsRepositoryAggregateTest {
             homeCurrency, result.aggregate!!.displayCurrency.code)
     }
 
-    // ── Test 6: sourceBuckets grouped by original currency ────────────────────
+    // ── Test 7: sourceBuckets grouped by original currency ────────────────────
 
     @Test
     fun `spendingSummary_sourceBucketsGroupByOriginalCurrency()`() = runTest {
@@ -400,7 +452,7 @@ class AnalyticsRepositoryAggregateTest {
         assertEquals("USD transactionCount must be 1", 1, usdBucket.transactionCount)
     }
 
-    // ── Test 7: rateBasis is TRANSACTION_DATE ────────────────────────────────
+    // ── Test 8: rateBasis is TRANSACTION_DATE ────────────────────────────────
 
     @Test
     fun `spendingSummary_rateBasisIsTransactionDate()`() = runTest {
@@ -439,7 +491,7 @@ class AnalyticsRepositoryAggregateTest {
             result.aggregate!!.rateBasis)
     }
 
-    // ── Test 8: conversionFailures grouped by currency and reason ────────────
+    // ── Test 9: conversionFailures grouped by currency and reason ────────────
 
     @Test
     fun `spendingSummary_conversionFailuresGroupedByCurrencyAndReason()`() = runTest {

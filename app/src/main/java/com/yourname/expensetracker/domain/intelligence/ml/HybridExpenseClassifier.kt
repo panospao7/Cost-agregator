@@ -172,7 +172,10 @@ class HybridExpenseClassifier @Inject constructor(
                     categoryId = category.id,
                     categoryName = category.name,
                     confidence = result.confidence.toFloat().coerceIn(0.0f, 1.0f),
-                    matchType = MatchType.RULE_MATCH
+                    matchType = MatchType.RULE_MATCH,
+                    isAmbiguous = result.isAmbiguous,
+                    requiresReview = result.requiresReview,
+                    classificationReason = result.explanation
                 )
             }
         }
@@ -188,7 +191,10 @@ class HybridExpenseClassifier @Inject constructor(
             categoryId = defaultCategory?.id ?: -1,
             categoryName = defaultCategory?.name ?: "Uncategorized",
             confidence = 0.0f,
-            matchType = MatchType.FALLBACK
+            matchType = MatchType.FALLBACK,
+            isAmbiguous = false,
+            requiresReview = false,
+            classificationReason = "No match found"
         )
     }
     

@@ -692,6 +692,8 @@ class AnalyticsViewModel @Inject constructor(
         // ── F13: Spending Personality Profile ────────────────────────────────
         val personalityProfile = try {
             spendingPersonalityClassifier.classify(allInput)  // A18: uses java.time, not Calendar
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             null
         }
@@ -1179,10 +1181,9 @@ class AnalyticsViewModel @Inject constructor(
         }
     }
 
-    // TODO (E2-010): Budget limit conversion currently uses the latest available rate
-    // via currencyConverter.convert(). For period-accurate budget-vs-actual comparison,
-    // the budget limit should be converted using the period-end rate (or period-average rate)
-    // to match the rate basis of the actual spending amounts.
+    // RESOLVED (E2-010): Budget limit conversion now uses period-end convertAsOf
+    // (currentEnd - 1) instead of the latest available rate. The TODO remains for
+    // a future enhancement: expose explicit rate basis in UI/model.
     private suspend fun convertBudgetAmountToHomeCurrency(
         amount: Double,
         sourceCurrency: String,

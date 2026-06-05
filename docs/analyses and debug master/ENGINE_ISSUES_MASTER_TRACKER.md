@@ -120,24 +120,31 @@
 | A19 | P1 | ExcludedExpense warning metadata missing | Enhancement | ExcludedExpense gains warningType+message; confidencePenalty populated from excludedCount/missingWarnings in Assembler | ✅ FIXED |
 | A20 | P1 | BudgetVsActualResult data quality missing | Enhancement | BudgetVsActualResult carries dataQuality; public analytics totals paired with displayCurrency | ✅ FIXED |
 
+**E2-FINAL issues (polish pass):**
+- E2-FINAL-001 (CancellationException rethrow): FIXED — PR1 rethrow guard
+- E2-FINAL-002 (Location normalized contract hardening): FIXED — PR2 computeNormalized() contract enforced
+- E2-FINAL-003 (Deprecated moneyCurrentTotal guard): FIXED — PR3 guard test prevents regression
+- E2-FINAL-004 (Invalid currency diagnostics): FIXED — PR4 warningMessage contains raw invalid code
+- E2-FINAL-005 (Stale budget comment): FIXED — PR1 stale comment removed
+
 ---
 
 # 3. Categorization / Merchant Normalization
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| C01 | P0 | Alias linking silently fails on conflict | Bug | Check rawName+normalizedKey before insert — AliasLinkResult.Conflict returned on collision | ✅ FIXED |
-| C02 | P0 | Merchant timestamps not set on creation | Bug | timeProvider.now() in create/link methods | ✅ FIXED |
+| C01 | P0 | Alias linking silently fails on conflict | Bug | PR1: DAO linkAliasToCanonical now checks normalizedKey first; same canonical updates occurrenceCount/lastUsedAt; different canonical returns conflict. Repository returns sealed AliasLinkResult. | ✅ FIXED |
+| C02 | P0 | Merchant timestamps not set on creation | Bug | PR1: createNewMerchant and DAO link path set timestamps. Repository.insertAlias guards against sentinel 0L timestamps via timeProvider coercion. | ✅ FIXED |
 | C03 | P0 | Category name lookup case-sensitive | Bug | Normalize keys with trim().lowercase() | ✅ FIXED |
-| C04 | P0 | Categorization cache stale for 5 min | Bug | Invalidate from all category/mapping writes | 📝 TODO ONLY |
-| C05 | P0 | MerchantCategoryDao.insert() returns Unit | Bug | insert(): Long, insertAll(): List<Long> — both return generated keys | ✅ FIXED |
-| C06 | P1 | normalizedCanonicalName lookup ambiguous | Bug | Make unique or return all by source/confidence | 📝 TODO ONLY |
+| C04 | P0 | Categorization cache stale for 5 min | Bug | PR2: invalidateAllCaches() now uses cacheMutex (same lock as getCacheData/invalidateCache). CategoryRepository.ensureDefaultCategories() now calls invalidateAllCaches(). CategoryRepository add/merge/delete already called invalidateCache(). | ✅ FIXED |
+| C05 | P0 | MerchantCategoryDao.insert() returns Unit | Bug | PR2: MerchantCategoryRepository.insert() now returns sealed MerchantCategoryInsertResult (Inserted/Conflict). CategorizationEngine.learnMerchantCategory() logs honestly based on result. | ✅ FIXED |
+| C06 | P1 | normalizedCanonicalName lookup ambiguous | Bug | PR3: DAO query now uses ORDER BY confidence DESC, timesUsed DESC, merchantPattern ASC LIMIT 1 for deterministic resolution. | ✅ FIXED |
 | C07 | P1 | Fuzzy search only sees top 1000 merchants | Enhancement | BK-tree from all or indexed prefix fallback | ⏭ |
 | C08 | P1 | Merchant stats not consistently updated | Bug | After committed expense, update canonical stats | 📝 TODO ONLY |
 | C09 | P1 | autoCreate=false returns placeholder display name | Bug | Match using searchKey, not normalizedName | ✅ FIXED |
-| C10 | P1 | Auto-learning can reinforce mistakes | Enhancement | Confidence gating exists; source-authority check (USER_CONFIRMED/REVIEW_APPROVED) not yet enforced — partial fix | ✅ FIXED |
+| C10 | P1 | Auto-learning can reinforce mistakes | Enhancement | PR5: SourceLearningPolicy gates merchant-category learning by source authority. planCreated/planUpdated only learn from trusted sources (MANUAL_ENTRY, MANUAL, REVIEW_APPROVAL, RECEIPT_BATCH_REVIEW, BANK_STATEMENT_REVIEW, USER_EDIT, CATEGORY_CORRECTION, BUSINESS_TAX_UPDATE, USER_ACTION). Auto-accepted notifications, OCR, bank imports, and system sources are excluded. | ✅ FIXED |
 | C11 | P1 | Category corrections don't update old rows | Enhancement | Offer lifecycle-aware backfill of existing | ⏭ |
-| C12 | P1 | Semantic keyword collisions likely | Enhancement | Conflict policy: alternatives, lower confidence | 📝 TODO ONLY |
+| C12 | P1 | Semantic keyword collisions likely | Enhancement | PR4: ClassificationResult now carries isAmbiguous/requiresReview. HybridExpenseClassifier propagates ambiguity from CategorizationEngine. NotificationProcessingPipeline downgrades AUTO_ACCEPT to NEEDS_REVIEW when requiresReview is true. | ✅ FIXED |
 | C13 | P1 | Context inference too isolated | Enhancement | Expand CategorizationContext fields | ⏭ |
 | C14 | P1 | Debug trace not persisted | Enhancement | Add CategorizationDecisionTrace ring buffer | 📝 TODO ONLY |
 
@@ -254,3 +261,4 @@ Final counts: 70 FIXED, 14 TODO ONLY, 13 DEFERRED, 15 DEFERRED_DESIGN.
 - **Deferred items remaining:** W03, W08, W24, C07, C11, C13, G10, T04, M02, M05, M06, M09, M13, M14 (12 deferred, 2 deferred-design).
 Final counts: 80 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.
 **Honest-assessment pass (2026-05-09):** 7 items downgraded from ✅ FIXED → ⚠ PARTIAL after rigorous review. Groups: G03 (hard-delete bypass documented), G06 (conversion basis mismatch). Investment: I05 (raw summary endpoint still exposed), I09 (staleness thresholds hardcoded). Tax: T01 (partial quality propagation), T06 (category breakdown aggregate map incomplete), T08 (income tax still on TaxConfiguration). All 7 have real, production-quality code with documented caveats — safe for beta, not yet fully hardened. ⚠ PARTIAL status tracks these honestly without blocking release.
+**Engine 3 PR5 (2026-06-04):** C10 / E3-NOW-004 — Source-aware learning policy implemented. `SourceLearningPolicy` gates `makeMerchantCategoryLearningAction` in `TransactionSideEffectPlanner` by source authority and update kind. `TransactionUpdateKind.involvesCategoryChange()` added. Production source strings (`USER_EDIT`, `SYSTEM`, etc.) explicitly mapped. 1 new file, 2 modified files, 1 test file updated. Status: 84 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.

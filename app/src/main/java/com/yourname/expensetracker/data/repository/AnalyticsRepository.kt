@@ -253,6 +253,7 @@ class AnalyticsRepository @Inject constructor(
         }
 
         // Group excluded expenses by (originalCurrency, failureReason) and sum transactionCount
+        val invalidCurrencies = mutableSetOf<String>()
         val conversionFailures = normalization.excludedReasons
             .mapNotNull { (expenseId, reasonPair) ->
                 val originalExpense = originalExpenses.find { it.id == expenseId }
@@ -270,8 +271,12 @@ class AnalyticsRepository @Inject constructor(
             .map { (key, entries) ->
                 val (currency, reason) = key
                 val totalAmount = entries.sumOf { it.third }
+                val parsedCurrency = CurrencyCode.parse(currency)
+                if (parsedCurrency == null) {
+                    invalidCurrencies.add(currency)
+                }
                 ConversionFailure(
-                    originalAmount = MoneyAmount(totalAmount, CurrencyCode.parseOr(currency, CurrencyCode.EUR)),
+                    originalAmount = MoneyAmount(totalAmount, parsedCurrency ?: CurrencyCode.EUR),
                     targetCurrency = CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR),
                     reason = reason,
                     transactionCount = entries.size
@@ -282,6 +287,14 @@ class AnalyticsRepository @Inject constructor(
         val displayAmount = normalization.normalizedExpenses.sumOf { it.normalizedEffectiveAmount }
         val isPartial = normalization.hasWarnings || normalization.excludedCount > 0
 
+        val baseWarning = if (isPartial) normalization.warnings.firstOrNull()?.message else null
+        val invalidCurrencyWarning = if (invalidCurrencies.isNotEmpty()) {
+            "Invalid source currency(s): ${invalidCurrencies.joinToString()}. Amounts excluded."
+        } else null
+        val warningMessage = listOfNotNull(baseWarning, invalidCurrencyWarning)
+            .joinToString(" ")
+            .takeIf { it.isNotBlank() }
+
         return MoneyAggregate(
             displayAmount = displayAmount,
             displayCurrency = CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR),
@@ -289,7 +302,7 @@ class AnalyticsRepository @Inject constructor(
             conversionFailures = conversionFailures,
             isPartial = isPartial,
             rateBasis = RateBasis.TRANSACTION_DATE,
-            warningMessage = if (isPartial) normalization.warnings.firstOrNull()?.message else null
+            warningMessage = warningMessage
         )
     }
 

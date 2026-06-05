@@ -172,7 +172,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             MerchantCategory(merchantPattern = "lidl", categoryId = 2L)
         )
 
-        val merchantNormalizationRepository = MerchantNormalizationRepository(mockk(relaxed = true), merchantNormalizationDao)
+        val merchantNormalizationRepository = MerchantNormalizationRepository(mockk(relaxed = true), merchantNormalizationDao, timeProvider)
         val greeklishNormalizer = GreeklishNormalizer()
         val merchantNormalizer = MerchantNormalizer(
             repository = merchantNormalizationRepository,

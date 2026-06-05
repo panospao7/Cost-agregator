@@ -3,7 +3,9 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
 import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.domain.categorization.AliasLinkResult
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
@@ -12,7 +14,8 @@ import javax.inject.Singleton
 @Singleton
 class MerchantNormalizationRepository @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
-    private val dao: MerchantNormalizationDao
+    private val dao: MerchantNormalizationDao,
+    private val timeProvider: TimeProvider
 ) {
     suspend fun insertCanonical(merchant: MerchantCanonical): Long {
         writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.insertCanonical")
@@ -53,17 +56,29 @@ class MerchantNormalizationRepository @Inject constructor(
 
     suspend fun insertAlias(alias: MerchantAlias): Long {
         writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.insertAlias")
-        val id = dao.insertAlias(alias)
-        // E3-001: If insert was ignored (alias already exists for same normalizedKey),
-        // update the existing alias's occurrenceCount and lastUsedAt.
+        val safeAlias = if (alias.createdAt <= 0L || alias.lastUsedAt <= 0L) {
+            val now = timeProvider.now()
+            alias.copy(createdAt = now, lastUsedAt = now)
+        } else alias
+        val id = dao.insertAlias(safeAlias)
         if (id <= 0L) {
-            val existing = dao.getAliasByNormalizedKey(alias.normalizedKey)
-            if (existing != null) {
-                dao.updateAlias(existing.copy(
-                    occurrenceCount = existing.occurrenceCount + 1,
-                    lastUsedAt = alias.lastUsedAt
+            writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.insertAlias fallback")
+            // Try normalizedKey first (E3-001 fallback)
+            val updated = dao.incrementAliasOccurrence(safeAlias.normalizedKey, safeAlias.lastUsedAt)
+            if (updated != null) return updated.id
+
+            // Fallback: try rawName conflict (same rawName, different normalizedKey)
+            // Note: getAliasByRawName + updateAlias are separate calls, not wrapped in a
+            // @Transaction. This is a small TOCTOU window. The primary path is
+            // linkAliasToCanonical which is fully atomic. This fallback is only hit on
+            // direct insertAlias calls with a rawName conflict, which is rare.
+            val existingByRaw = dao.getAliasByRawName(safeAlias.rawName)
+            if (existingByRaw != null) {
+                dao.updateAlias(existingByRaw.copy(
+                    occurrenceCount = existingByRaw.occurrenceCount + 1,
+                    lastUsedAt = safeAlias.lastUsedAt
                 ))
-                return existing.id
+                return existingByRaw.id
             }
         }
         return id
@@ -111,11 +126,33 @@ class MerchantNormalizationRepository @Inject constructor(
         return dao.deleteUnusedAliasesOlderThan(olderThan)
     }
 
-    // TODO (E3-002): linkAliasToCanonical should return AliasLinkResult (Created/Updated/Conflict)
-    // instead of Unit, so callers can distinguish new alias creation from update of existing alias.
-    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) {
+    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long): AliasLinkResult {
         writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.linkAliasToCanonical")
-        dao.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timestamp)
+        val resultCode = dao.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timestamp)
+        return when (resultCode) {
+            0 -> {
+                val alias = dao.getAliasByNormalizedKey(normalizedKey)
+                if (alias != null) AliasLinkResult.Created(alias.id)
+                else AliasLinkResult.Ignored("Created but alias not found by normalizedKey")
+            }
+            1 -> {
+                val alias = dao.getAliasByNormalizedKey(normalizedKey)
+                if (alias != null) AliasLinkResult.UpdatedExisting(alias.id)
+                else AliasLinkResult.Ignored("Updated but alias not found by normalizedKey")
+            }
+            2 -> {
+                val existing = dao.getAliasByNormalizedKey(normalizedKey)
+                // If the alias was deleted between the DAO transaction and this read,
+                // existingCanonicalId falls back to -1. Callers should treat -1 as
+                // "unknown conflicting canonical" and not use it as a valid DB key.
+                AliasLinkResult.Conflict(
+                    existing?.canonicalId ?: -1,
+                    "Alias with normalized key '$normalizedKey' already linked to a different canonical"
+                )
+            }
+            3 -> AliasLinkResult.CanonicalMissing(canonicalId)
+            else -> AliasLinkResult.Ignored("Unknown result code: $resultCode")
+        }
     }
 
     suspend fun getCanonicalCount(): Int =
