@@ -33,6 +33,8 @@ import java.util.Calendar
 class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
     private lateinit var businessExpenseRepository: BusinessExpenseRepository
+    private lateinit var currencySettingsRepo: CurrencySettingsRepository
+    private lateinit var taxSettingsRepo: TaxSettingsRepository
     private lateinit var taxEstimator: TaxEstimator
 
     @Before
@@ -40,8 +42,8 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         super.setUp()
         businessExpenseRepository = mockk(relaxed = true)
 
-        val currencySettingsRepo = mockk<CurrencySettingsRepository>(relaxed = true)
-        val taxSettingsRepo = mockk<TaxSettingsRepository>(relaxed = true)
+        currencySettingsRepo = mockk(relaxed = true)
+        taxSettingsRepo = mockk(relaxed = true)
         every { taxSettingsRepo.getFilingCurrency() } returns "EUR"
         every { taxSettingsRepo.getTaxCountry() } returns "GR"
         every { taxSettingsRepo.getFiscalYearStartMonth() } returns 1
@@ -324,10 +326,23 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
-        // This is a structural check — the aggregate target currency should be filing currency
-        // Since we mock the DAO and converter, verify the method runs with filingCurrency
+        // Structural check: aggregate target currency should be filing currency.
+        // Since we mock the DAO and converter, verify the method runs correctly.
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, "EUR")
         assertThat(estimate).isNotNull()
+        assertThat(estimate.isPartial).isFalse()
+    }
+
+    @Test
+    fun `estimateTaxes returns non-partial when income currency matches filing currency`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+
+        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, "EUR")
+        assertThat(estimate.isPartial).isFalse()
+        assertThat(estimate.notes).doesNotContain("Income currency")
     }
 
     @Test
@@ -341,6 +356,18 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         assertThat(estimate.isPartial).isTrue()
         assertThat(estimate.notes).contains("USD")
         assertThat(estimate.notes).contains("filing currency")
+    }
+
+    @Test
+    fun `estimateTaxes warns when home currency differs from filing currency`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+        every { currencySettingsRepo.homeCurrency() } returns flowOf("USD")
+
+        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0)
+        assertThat(estimate.notes).contains("Home currency (USD) differs from tax filing currency (EUR)")
     }
 
     // =========================================================================
