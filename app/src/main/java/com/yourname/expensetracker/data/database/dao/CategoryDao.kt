@@ -75,6 +75,25 @@ interface CategoryDao {
     @Query("SELECT * FROM categories WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun getByName(name: String): Category?
 
+    /**
+     * Atomically returns the existing case-insensitive category or inserts [category].
+     *
+     * This keeps the repository-level check-then-insert race-free even on upgraded
+     * databases where the historical supplemental NOCASE unique index may not be
+     * present in Room's entity schema.
+     */
+    @Transaction
+    suspend fun getOrInsertByNameNoCase(category: Category): Category {
+        getByName(category.name)?.let { return it }
+        val id = insert(category)
+        if (id > 0L) return category.copy(id = id)
+
+        // If a DB-level unique constraint or another serialized writer won the
+        // race, return the row that now exists instead of leaking id=0/-1.
+        return getByName(category.name)
+            ?: error("Category insert was ignored but no existing category was found for '${category.name}'")
+    }
+
     @Query("SELECT COUNT(*) FROM categories WHERE name = :name COLLATE NOCASE")
     suspend fun existsByName(name: String): Int
 

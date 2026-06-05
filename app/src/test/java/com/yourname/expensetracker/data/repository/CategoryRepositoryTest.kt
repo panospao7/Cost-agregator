@@ -46,8 +46,12 @@ class CategoryRepositoryTest {
     @Test
     fun `addCategory triggers categorizationEngine invalidateCache`() = runTest {
         // Setup: category does not exist
-        coEvery { categoryDao.getByName(any()) } returns null
-        coEvery { categoryDao.insert(any()) } returns 5L
+        coEvery { categoryDao.getOrInsertByNameNoCase(any()) } returns com.yourname.expensetracker.data.database.entity.Category(
+            id = 5L,
+            name = "Dining",
+            icon = "icon",
+            color = "#FF0000"
+        )
 
         repository.addCategory("Dining", "icon", "#FF0000")
 
@@ -87,8 +91,12 @@ class CategoryRepositoryTest {
 
     @Test
     fun `addCategory preserves display name case`() = runTest {
-        coEvery { categoryDao.getByName(any()) } returns null
-        coEvery { categoryDao.insert(any()) } returns 7L
+        coEvery { categoryDao.getOrInsertByNameNoCase(any()) } returns com.yourname.expensetracker.data.database.entity.Category(
+            id = 7L,
+            name = "Dining Out",
+            icon = "food",
+            color = "#FF0000"
+        )
 
         val result = repository.addCategory("Dining Out", "food", "#FF0000")
 
@@ -101,8 +109,7 @@ class CategoryRepositoryTest {
         val existing = com.yourname.expensetracker.data.database.entity.Category(
             id = 3L, name = "Dining Out", icon = "food", color = "#FF0000", isDefault = false
         )
-        // DAO uses COLLATE NOCASE, so "dining out" should match "Dining Out"
-        coEvery { categoryDao.getByName("dining out") } returns existing
+        coEvery { categoryDao.getOrInsertByNameNoCase(any()) } returns existing
 
         val result = repository.addCategory("DINING OUT", "food", "#FF0000")
 

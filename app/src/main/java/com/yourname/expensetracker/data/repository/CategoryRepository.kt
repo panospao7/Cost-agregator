@@ -104,7 +104,8 @@ class CategoryRepository @Inject constructor(
      * If a category with the same normalized name already exists, the existing
      * category is returned instead of inserting a duplicate.
      *
-     * The check-then-insert is wrapped in a transaction to prevent races.
+     * The check-then-insert is delegated to [CategoryDao.getOrInsertByNameNoCase],
+     * which is Room-transactional to prevent races.
      *
      * @return the newly created or existing [Category].
      */
@@ -114,20 +115,12 @@ class CategoryRepository @Inject constructor(
             // E3-NOW-008: Store the original display name (trimmed, preserving case).
             // Use a normalized lowercase key only for duplicate detection.
             val displayName = name.trim()
-            val normalizedKey = displayName.lowercase()
-
-            // Check for existing case-insensitive match (COLLATE NOCASE in DAO)
-            val existing = categoryDao.getByName(normalizedKey)
-            if (existing != null) {
-                Timber.d("addCategory: returning existing category '%s' (id=%d)", existing.name, existing.id)
-                return@withContext existing
-            }
 
             val category = Category(name = displayName, icon = icon, color = color)
-            val id = categoryDao.insert(category)
+            val saved = categoryDao.getOrInsertByNameNoCase(category)
             categorizationEngine.invalidateCache()
             hybridExpenseClassifier.get().invalidateCategorySnapshot()
-            category.copy(id = id)
+            saved
         }
     }
 
