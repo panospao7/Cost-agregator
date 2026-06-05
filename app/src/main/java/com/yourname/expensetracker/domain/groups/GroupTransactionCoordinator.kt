@@ -123,7 +123,8 @@ interface GroupTransactionCoordinator {
         currency: String? = null,
         splitType: SplitType = SplitType.EQUAL,
         customSplitsJson: String? = null,
-        date: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
+        date: Long = 0L, // sentinel — callers MUST supply an explicit boundary timestamp
+        idempotencyKey: String? = null
     ): GroupExpenseCreationResult
     
     /**
@@ -149,7 +150,8 @@ interface GroupTransactionCoordinator {
         currency: String? = null,
         splitType: SplitType = SplitType.EQUAL,
         customSplitsJson: String? = null,
-        date: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
+        date: Long = 0L, // sentinel — callers MUST supply an explicit boundary timestamp
+        idempotencyKey: String? = null
     ): GroupExpenseCreationResult
     
     /**
@@ -185,7 +187,8 @@ interface GroupTransactionCoordinator {
         customSplitsJson: String? = null,
         date: Long = 0L,
         transactionType: TransactionType = TransactionType.PURCHASE,
-        notes: String? = null
+        notes: String? = null,
+        idempotencyKey: String? = null
     ): GroupExpenseCreationResult
 
     /**

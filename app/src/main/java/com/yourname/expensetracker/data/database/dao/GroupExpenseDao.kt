@@ -77,4 +77,8 @@ interface GroupExpenseDao {
         memberPrefixPattern: String,
         memberMiddlePattern: String
     ): Int
+
+    /** Looks up a group expense by its idempotency key. Returns null if not found. */
+    @Query("SELECT * FROM group_expenses WHERE groupId = :groupId AND idempotencyKey = :idempotencyKey LIMIT 1")
+    suspend fun getByIdempotencyKey(groupId: Long, idempotencyKey: String): GroupExpense?
 }

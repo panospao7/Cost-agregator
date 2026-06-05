@@ -25,7 +25,8 @@ data class SharedExpenseMember(
     val name: String,
     val email: String? = null,
     val isCurrentUser: Boolean = false,
-    val joinedAt: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
+    val joinedAt: Long = 0L, // sentinel — callers MUST supply an explicit boundary timestamp
+    val leftAt: Long? = null  // NEW
 )
 
 /**

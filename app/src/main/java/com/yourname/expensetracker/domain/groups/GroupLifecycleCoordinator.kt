@@ -186,8 +186,8 @@ class GroupLifecycleCoordinator @Inject constructor(
         if (name.isBlank()) {
             return@withContext Result.Error(GroupValidationError.BlankMemberName)
         }
-        // Check for duplicate member name
-        val existingMembers = memberDao.getAllForGroup(groupId)
+        // Check for duplicate member name (only active members)
+        val existingMembers = memberDao.getActiveMembersForGroup(groupId)
         if (existingMembers.any { it.name.equals(name, ignoreCase = true) }) {
             val existingId = existingMembers.first { it.name.equals(name, ignoreCase = true) }.id
             return@withContext Result.Error(GroupValidationError.UserAlreadyMember(existingId))
@@ -218,7 +218,7 @@ class GroupLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Removes a member from a group.
+     * Soft-removes a member from a group (sets leftAt timestamp).
      *
      * ## Validations
      * - Group must exist and be active
@@ -249,7 +249,7 @@ class GroupLifecycleCoordinator @Inject constructor(
             ))
         }
 
-        // E4-006: Wrap balance check + delete + event in transaction to prevent race
+        // E4-006: Wrap balance check + soft-remove + event in transaction to prevent race
         val removeResult = database.withTransaction {
             // G05: Balance gate — check if member has outstanding balance
             val balance = balanceCalculator.calculateMemberBalance(groupId, memberId)
@@ -260,7 +260,7 @@ class GroupLifecycleCoordinator @Inject constructor(
                 ))
             }
 
-            memberDao.delete(member)
+            memberDao.update(member.copy(leftAt = timeProvider.now()))
             
             val event = GroupLifecycleEventEntity(
                 groupId = groupId,

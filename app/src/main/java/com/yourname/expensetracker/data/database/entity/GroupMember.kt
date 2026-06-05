@@ -28,7 +28,7 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["groupId"]),
         Index(value = ["groupId", "isCurrentUser"]),
-        Index(value = ["groupId", "name"], unique = true),
+        Index(value = ["groupId", "name"]),
         Index(value = ["currentUserGroupKey"], unique = true)
     ]
 )
@@ -53,5 +53,7 @@ data class GroupMember(
      * correctly enforces "at most one current user" via the UNIQUE index + NULL
      * exemption.
      */
-    val currentUserGroupKey: Long? = null
+    val currentUserGroupKey: Long? = null,
+    /** Timestamp when this member left the group, or null if still active. */
+    val leftAt: Long? = null
 )

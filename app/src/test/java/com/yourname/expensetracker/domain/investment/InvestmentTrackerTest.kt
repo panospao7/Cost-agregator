@@ -28,6 +28,7 @@ class InvestmentTrackerTest {
     private val investmentDao = mockk<InvestmentDao>(relaxed = true)
     private val investmentValueDao = mockk<InvestmentValueDao>(relaxed = true)
     private val timeProvider = FakeTimeProvider(fixedTime = 1_700_000_000_000L) // ~Nov 2023
+    private val currencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true)
 
     private lateinit var tracker: InvestmentTracker
 
@@ -40,7 +41,7 @@ class InvestmentTrackerTest {
             investmentTransactionDao = mockk(relaxed = true),
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = currencySettingsRepository,
             writeBarrier = mockk(relaxed = true),
             ioDispatcher = Dispatchers.Unconfined
         )

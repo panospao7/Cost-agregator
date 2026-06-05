@@ -58,10 +58,14 @@ object SplitCalculator {
         if (members.isEmpty()) return emptyList()
 
         return when (expense.splitType) {
-            SplitType.EQUAL -> members.filter { it.joinedAt <= expense.date }
+            SplitType.EQUAL -> members.filter {
+                it.joinedAt <= expense.date && (it.leftAt == null || it.leftAt > expense.date)
+            }
             SplitType.CUSTOM_PERCENT,
             SplitType.CUSTOM_AMOUNT,
-            SplitType.UNEQUAL -> members
+            SplitType.UNEQUAL -> members.filter {
+                it.leftAt == null || it.leftAt > expense.date
+            }
         }
     }
 

@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Singleton
 
 /**
@@ -28,7 +29,8 @@ class SharedExpenseDataPortAdapter @Inject constructor(
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
-    private val transactionCoordinator: GroupTransactionCoordinator
+    private val transactionCoordinator: GroupTransactionCoordinator,
+    private val timeProvider: TimeProvider
 ) : SharedExpenseDataPort {
 
     override suspend fun createGroupWithMembers(
@@ -51,6 +53,7 @@ class SharedExpenseDataPortAdapter @Inject constructor(
             isCurrentUser = member.isCurrentUser
         )) {
             is com.yourname.expensetracker.domain.groups.Result.Success -> {
+                // Use getAllForGroup to check against all members including left ones for re-admission
                 memberDao.getAllForGroup(member.groupId)
                     .firstOrNull {
                         it.name.equals(member.name, ignoreCase = true) &&
@@ -68,7 +71,7 @@ class SharedExpenseDataPortAdapter @Inject constructor(
 
     override suspend fun removeMember(member: SharedExpenseMember) {
         writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.removeMember")
-        memberDao.delete(member.toEntity())
+        memberDao.update(member.toEntity().copy(leftAt = timeProvider.now()))
     }
 
     override suspend fun addExpense(expense: SharedGroupExpense): Long {
@@ -125,6 +128,7 @@ class SharedExpenseDataPortAdapter @Inject constructor(
         groupExpenseDao.getExpensesForGroup(groupId).map { expenses -> expenses.map { it.toDomain() } }
 
     override suspend fun getGroupMembersOnce(groupId: Long): List<SharedExpenseMember> =
+        // Returns all members including left ones for historical display
         memberDao.getAllForGroup(groupId).map { it.toDomain() }
 
     override suspend fun getGroupExpensesOnce(groupId: Long): List<SharedGroupExpense> =
@@ -171,7 +175,8 @@ class SharedExpenseDataPortAdapter @Inject constructor(
         name = name,
         email = email,
         isCurrentUser = isCurrentUser,
-        joinedAt = joinedAt
+        joinedAt = joinedAt,
+        leftAt = leftAt
     )
 
     private fun SharedExpenseMember.toEntity(): GroupMember = GroupMember(
@@ -180,7 +185,8 @@ class SharedExpenseDataPortAdapter @Inject constructor(
         name = name,
         email = email,
         isCurrentUser = isCurrentUser,
-        joinedAt = joinedAt
+        joinedAt = joinedAt,
+        leftAt = leftAt
     )
 
     private fun GroupExpense.toDomain(): SharedGroupExpense = SharedGroupExpense(

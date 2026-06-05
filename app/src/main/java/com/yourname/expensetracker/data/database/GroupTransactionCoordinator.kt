@@ -285,7 +285,7 @@ class GroupTransactionCoordinator @Inject constructor(
                     return@withTransaction Result.Error(GroupValidationError.InvalidGroup)
                 }
 
-                val members = memberDao.getAllForGroup(groupId)
+                val members = memberDao.getActiveMembersForGroup(groupId)
                 if (members.any { it.name.equals(name, ignoreCase = true) }) {
                     val existingMember = members.first { it.name.equals(name, ignoreCase = true) }
                     return@withTransaction Result.Error(
@@ -341,7 +341,8 @@ class GroupTransactionCoordinator @Inject constructor(
         currency: String?,
         splitType: SplitType,
         customSplitsJson: String?,
-        date: Long
+        date: Long,
+        idempotencyKey: String?
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseToGroup")
@@ -352,13 +353,13 @@ class GroupTransactionCoordinator @Inject constructor(
                     return@withTransaction GroupExpenseCreationResult.Error("Group not found or inactive")
                 }
                 
-                // Verify payer is a member of the group
-                val members = memberDao.getAllForGroup(groupId)
+                // Verify payer is an active member of the group
+                val members = memberDao.getActiveMembersForGroup(groupId)
                 if (members.none { it.id == paidById }) {
                     return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
                 }
 
-                // J1 + S3: Validate custom split payload for non-EQUAL split types
+                // J1 + S3: Validate custom split payload format for non-EQUAL split types
                 validateCustomSplitPayloadFormat(
                     splitType = splitType,
                     customSplitsJson = customSplitsJson,
@@ -390,6 +391,16 @@ class GroupTransactionCoordinator @Inject constructor(
                         "Expense currency '$currency' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
                     )
                 }
+
+                // PR8: Idempotency key — if duplicate exists, return existing expense
+                val key = idempotencyKey ?: "group_expense:${groupId}:${java.util.UUID.randomUUID()}"
+                val existing = groupExpenseDao.getByIdempotencyKey(groupId, key)
+                if (existing != null) {
+                    return@withTransaction GroupExpenseCreationResult.Success(
+                        groupExpenseId = existing.id,
+                        expenseId = existing.expenseId ?: 0L
+                    )
+                }
                 
                 // Create the group expense (without system link - expenseId is null for standalone)
                 val expense = GroupExpense(
@@ -401,7 +412,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     date = date,
                     currency = expenseCurrency,
                     splitType = splitType,
-                    customSplitsJson = customSplitsJson
+                    customSplitsJson = customSplitsJson,
+                    idempotencyKey = key
                 )
                 
                 val expenseId = groupExpenseDao.insert(expense)
@@ -441,7 +453,8 @@ class GroupTransactionCoordinator @Inject constructor(
         currency: String?,
         splitType: SplitType,
         customSplitsJson: String?,
-        date: Long
+        date: Long,
+        idempotencyKey: String?
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseWithLink")
@@ -456,8 +469,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     )
                 }
 
-                // Verify payer is a member
-                val members = memberDao.getAllForGroup(groupId)
+                // Verify payer is an active member
+                val members = memberDao.getActiveMembersForGroup(groupId)
                 if (members.none { it.id == paidById }) {
                     return@withTransaction GroupMutationTxOutcome(
                         GroupExpenseCreationResult.Error("Payer is not a member of this group"),
@@ -539,6 +552,19 @@ class GroupTransactionCoordinator @Inject constructor(
                     )
                 }
 
+                // PR8: Idempotency key — if duplicate exists, return existing expense
+                val key = idempotencyKey ?: "group_expense:${groupId}:${java.util.UUID.randomUUID()}"
+                val existing = groupExpenseDao.getByIdempotencyKey(groupId, key)
+                if (existing != null) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Success(
+                            groupExpenseId = existing.id,
+                            expenseId = existing.expenseId ?: 0L
+                        ),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
+                }
+
                 val expenseCurrency = currency ?: group.defaultCurrency
 
                 // Create the group expense with system link
@@ -551,7 +577,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     date = date,
                     currency = expenseCurrency,
                     splitType = splitType,
-                    customSplitsJson = customSplitsJson
+                    customSplitsJson = customSplitsJson,
+                    idempotencyKey = key
                 )
 
                 val groupExpenseId = groupExpenseDao.insert(expense)
@@ -756,7 +783,8 @@ class GroupTransactionCoordinator @Inject constructor(
         customSplitsJson: String?,
         date: Long,
         transactionType: TransactionType,
-        notes: String?
+        notes: String?,
+        idempotencyKey: String?
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup")
@@ -771,8 +799,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     )
                 }
 
-                // 2. Validate payer is a member of the group
-                val members = memberDao.getAllForGroup(groupId)
+                // 2. Validate payer is an active member of the group
+                val members = memberDao.getActiveMembersForGroup(groupId)
                 if (members.none { it.id == paidById }) {
                     return@withTransaction GroupMutationTxOutcome(
                         GroupExpenseCreationResult.Error("Payer is not a member of this group"),
@@ -846,6 +874,19 @@ class GroupTransactionCoordinator @Inject constructor(
                     )
                 }
 
+                // PR8: Idempotency key — if duplicate exists, return existing expense
+                val key = idempotencyKey ?: "group_expense:${groupId}:${java.util.UUID.randomUUID()}"
+                val existing = groupExpenseDao.getByIdempotencyKey(groupId, key)
+                if (existing != null) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Success(
+                            groupExpenseId = existing.id,
+                            expenseId = existing.expenseId ?: 0L
+                        ),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
+                }
+
                 // 3. Create system expense via TransactionLifecycleCoordinator
                 // Side effects are returned as PostCommitActionBatch and run after outer commit
                 val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(
@@ -885,7 +926,8 @@ class GroupTransactionCoordinator @Inject constructor(
                             date = date,
                             currency = expenseCurrency,
                             splitType = splitType,
-                            customSplitsJson = customSplitsJson
+                            customSplitsJson = customSplitsJson,
+                            idempotencyKey = key
                         )
 
                         val groupExpenseId = groupExpenseDao.insert(groupExpense)
@@ -1170,7 +1212,7 @@ class GroupTransactionCoordinator @Inject constructor(
         return when {
             "index_group_members_groupId_name" in constraintMessage ||
                 "group_members.groupId, group_members.name" in constraintMessage -> {
-                val existingMemberId = memberDao.getAllForGroup(groupId)
+                val existingMemberId = memberDao.getActiveMembersForGroup(groupId)
                     .firstOrNull { it.name.equals(name, ignoreCase = true) }
                     ?.id
                     ?: 0L

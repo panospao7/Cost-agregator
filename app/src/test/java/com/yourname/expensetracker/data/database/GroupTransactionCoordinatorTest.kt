@@ -1149,4 +1149,90 @@ class GroupTransactionCoordinatorTest {
         val allExpenses = expenseDao.getAllUncapped()
         assertThat(allExpenses).isEmpty()
     }
+
+    // =========================================================================
+    // PR8 — Idempotency keys and soft-delete
+    // =========================================================================
+
+    @Test
+    fun `addExpenseToGroup with same idempotencyKey returns existing expense`() = runTest {
+        val group = ExpenseGroup(name = "Idempotency Group", defaultCurrency = "EUR")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val aliceId = memberDao.getMembersForGroup(groupId).first().first().id
+
+        val key = "test-key-123"
+        val result1 = coordinator.addExpenseToGroup(
+            groupId = groupId, description = "Dinner", amount = 50.0,
+            paidById = aliceId, date = TEST_DATE, idempotencyKey = key
+        )
+        assertThat(result1).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val success1 = result1 as GroupExpenseCreationResult.Success
+
+        val result2 = coordinator.addExpenseToGroup(
+            groupId = groupId, description = "Dinner", amount = 50.0,
+            paidById = aliceId, date = TEST_DATE, idempotencyKey = key
+        )
+        assertThat(result2).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val success2 = result2 as GroupExpenseCreationResult.Success
+
+        // Same idempotency key → same expense returned
+        assertThat(success2.groupExpenseId).isEqualTo(success1.groupExpenseId)
+        assertThat(groupExpenseDao.getExpensesForGroupOnce(groupId)).hasSize(1)
+    }
+
+    @Test
+    fun `addExpenseToGroup without idempotencyKey creates unique expenses each time`() = runTest {
+        val group = ExpenseGroup(name = "UUID Group", defaultCurrency = "EUR")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val aliceId = memberDao.getMembersForGroup(groupId).first().first().id
+
+        val result1 = coordinator.addExpenseToGroup(
+            groupId = groupId, description = "Dinner", amount = 50.0,
+            paidById = aliceId, date = TEST_DATE
+        )
+        val result2 = coordinator.addExpenseToGroup(
+            groupId = groupId, description = "Dinner", amount = 50.0,
+            paidById = aliceId, date = TEST_DATE
+        )
+
+        assertThat(result1).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        assertThat(result2).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        assertThat(groupExpenseDao.getExpensesForGroupOnce(groupId)).hasSize(2)
+    }
+
+    @Test
+    fun `soft-deleted member can be re-added with same name`() = runTest {
+        val group = ExpenseGroup(name = "Re-add Group", defaultCurrency = "EUR")
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true),
+            GroupMember(groupId = 0, name = "Bob", isCurrentUser = false)
+        )
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val all = memberDao.getMembersForGroup(groupId).first()
+        val bobId = all.first { it.name == "Bob" }.id
+
+        // Soft-delete Bob directly via DAO update (removeMember lives in GroupLifecycleCoordinator, not this coordinator)
+        val bobBefore = memberDao.getById(bobId)!!
+        memberDao.update(bobBefore.copy(leftAt = TEST_DATE))
+
+        // Verify Bob is soft-deleted (leftAt set) but still in DB
+        val afterRemoval = memberDao.getAllForGroup(groupId)
+        assertThat(afterRemoval).hasSize(2)
+        val bobAfter = afterRemoval.first { it.name == "Bob" }
+        assertThat(bobAfter.leftAt).isNotNull()
+
+        // Verify Bob is not in active members
+        val active = memberDao.getActiveMembersForGroup(groupId)
+        assertThat(active).hasSize(1)
+        assertThat(active.first().name).isEqualTo("Alice")
+
+        // Re-add Bob with same name — should succeed because active-member check excludes left members
+        val addResult = coordinator.addMemberToGroup(groupId, "Bob")
+        assertThat(addResult.isSuccess).isTrue()
+
+        val finalActive = memberDao.getActiveMembersForGroup(groupId)
+        assertThat(finalActive).hasSize(2)
+    }
 }

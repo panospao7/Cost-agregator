@@ -116,7 +116,9 @@ data class GroupExpense(
     @ColumnInfo(defaultValue = "0") val isReimbursable: Boolean = false,  // Whether this expense is eligible for reimbursement
     @ColumnInfo(defaultValue = "0.0") val reimbursedAmount: Double = 0.0,  // Amount already reimbursed to payer
     val settledAt: Long? = null,  // When the expense was fully settled (null = pending)
-    val myShareAmount: Double? = null  // Pre-calculated share for current user (for quick lookup)
+    val myShareAmount: Double? = null,  // Pre-calculated share for current user (for quick lookup)
+    /** Application-level idempotency key for duplicate-prevention. Format: "group_expense:{groupId}:{uuid}" */
+    val idempotencyKey: String? = null
 ) {
     @get:Ignore
     val totalMoneyAmount: MoneyAmount get() = MoneyAmount(totalAmount, CurrencyCode(currency))

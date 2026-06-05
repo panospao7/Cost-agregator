@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * When adding a new schema version:
  * 1. Bump APP_DATABASE_SCHEMA_VERSION
  * 2. Export the new schema JSON
- * 3. Create a MIGRATION_145_146 (or N-1 → N) object
+ * 3. Create a MIGRATION_N-1_N (e.g. MIGRATION_146_147) object
  * 4. Add it to [ALL]
  * 5. Test with MigrationTestHelper
  */
@@ -41,6 +41,20 @@ object DatabaseMigrations {
         }
     }
 
+    val MIGRATION_146_147 = object : Migration(146, 147) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            // Feature B: leftAt tracking for soft-deleted members
+            database.execSQL("ALTER TABLE group_members ADD COLUMN leftAt INTEGER")
+            // Feature A: idempotency key for group expense deduplication
+            database.execSQL("ALTER TABLE group_expenses ADD COLUMN idempotencyKey TEXT")
+            // Drop the unique index on (groupId, name) — soft-deleted members must not
+            // block re-admission of members with the same name.
+            database.execSQL("DROP INDEX IF EXISTS index_group_members_groupId_name")
+            // Recreate as a non-unique index to preserve query performance
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members(groupId, name)")
+        }
+    }
+
     /** All registered migrations, starting from v145 baseline. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_145_146)
+    val ALL: Array<Migration> = arrayOf(MIGRATION_145_146, MIGRATION_146_147)
 }

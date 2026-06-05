@@ -286,9 +286,15 @@ class GroupLifecycleScenarioTest {
         val result = lifecycle.removeMember(groupId, bob.id)
 
         assertThat(result.isSuccess).isTrue()
-        val remaining = memberDao.getAllForGroup(groupId)
-        assertThat(remaining).hasSize(1)
-        assertThat(remaining.first().name).isEqualTo("Alice")
+        // Soft-delete: Bob should still be in getAllForGroup but not in getActiveMembersForGroup
+        val allMembers = memberDao.getAllForGroup(groupId)
+        assertThat(allMembers).hasSize(2)
+        val bobAfter = allMembers.first { it.name == "Bob" }
+        assertThat(bobAfter.leftAt).isNotNull()
+
+        val activeMembers = memberDao.getActiveMembersForGroup(groupId)
+        assertThat(activeMembers).hasSize(1)
+        assertThat(activeMembers.first().name).isEqualTo("Alice")
     }
 
     @Test

@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -52,6 +53,7 @@ class GroupsRepositoryImplTest {
             groupExpenseDao = groupExpenseDao,
             coordinator = coordinator,
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            timeProvider = mockk<TimeProvider>(relaxed = true),
             ioDispatcher = testDispatcher,
         )
     }
@@ -154,7 +156,7 @@ class GroupsRepositoryImplTest {
 
         assertTrue(result is DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits)
         assertEquals(1, (result as DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits).expenseCount)
-        coVerify(exactly = 0) { memberDao.delete(any()) }
+        coVerify(exactly = 0) { memberDao.update(any()) }
     }
 
     @Test
@@ -188,7 +190,7 @@ class GroupsRepositoryImplTest {
         val result = repository.deleteMember(groupId = groupId, memberId = memberId)
 
         assertTrue(result is DeleteGroupMemberResult.Success)
-        coVerify(exactly = 1) { memberDao.delete(targetMember) }
+        coVerify(exactly = 1) { memberDao.update(match { it.id == targetMember.id && it.leftAt != null }) }
     }
 
     @Test

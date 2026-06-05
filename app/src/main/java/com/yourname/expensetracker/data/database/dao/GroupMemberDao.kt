@@ -106,6 +106,18 @@ interface GroupMemberDao {
     @Query("SELECT COUNT(*) FROM group_members WHERE groupId = :groupId")
     suspend fun getMemberCount(groupId: Long): Int
     
+    /** Returns only active members (leftAt IS NULL) for the given group. */
+    @Query("SELECT * FROM group_members WHERE groupId = :groupId AND leftAt IS NULL ORDER BY name")
+    suspend fun getActiveMembersForGroup(groupId: Long): List<GroupMember>
+
+    /** Returns only active members (leftAt IS NULL) for the given group, as a Flow. */
+    @Query("SELECT * FROM group_members WHERE groupId = :groupId AND leftAt IS NULL ORDER BY name")
+    fun getActiveMembersForGroupFlow(groupId: Long): Flow<List<GroupMember>>
+
+    /** Counts only active members (leftAt IS NULL) for the given group. */
+    @Query("SELECT COUNT(*) FROM group_members WHERE groupId = :groupId AND leftAt IS NULL")
+    suspend fun getActiveMemberCountForGroup(groupId: Long): Int
+    
     // Legacy method - deprecated, use getAllForGroup instead
     @Deprecated(
         message = "Use getAllForGroup() instead",

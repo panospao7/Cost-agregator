@@ -28,11 +28,15 @@ class GroupBalanceCalculator @Inject constructor(
         val isSettled: Boolean get() = kotlin.math.abs(netBalance) <= BALANCE_EPSILON
     }
 
+    /**
+     * Calculates the balance for a single member, considering only active members
+     * for split calculations. Left members are excluded from balance computations.
+     */
     suspend fun calculateMemberBalance(groupId: Long, memberId: Long): GroupMemberBalance {
         val group = groupDao.getGroupById(groupId)
         val currency = group?.defaultCurrency ?: "EUR"
         val expenses = groupExpenseDao.getExpensesForGroupOnce(groupId)
-        val members = memberDao.getAllForGroup(groupId)
+        val members = memberDao.getActiveMembersForGroup(groupId)
         val settlements = settlementDao.getSettlementsForGroup(groupId)
 
         val paidTotal = expenses.filter { it.paidById == memberId }.sumOf { it.totalAmount }

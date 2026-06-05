@@ -13,6 +13,7 @@ import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
@@ -34,6 +35,7 @@ class GroupsRepositoryImpl @Inject constructor(
     private val groupExpenseDao: GroupExpenseDao,
     private val coordinator: GroupTransactionCoordinator,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : GroupsRepository {
 
@@ -221,7 +223,7 @@ class GroupsRepositoryImpl @Inject constructor(
                     return@withTransaction DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(splitReferenceCount)
                 }
 
-                memberDao.delete(member)
+                memberDao.update(member.copy(leftAt = timeProvider.now()))
                 DeleteGroupMemberResult.Success
             }
         } catch (_: SQLiteConstraintException) {
@@ -244,6 +246,7 @@ class GroupsRepositoryImpl @Inject constructor(
     }
 
     private suspend fun countSplitReferences(groupId: Long, member: GroupMember): Int {
+        // Use getAllForGroup (not active-only) to include left members in split reference counting
         val memberIds = memberDao.getAllForGroup(groupId).map { it.id }.toSet()
         if (memberIds.isEmpty()) return 0
 
