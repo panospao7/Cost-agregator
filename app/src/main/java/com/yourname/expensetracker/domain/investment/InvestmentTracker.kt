@@ -146,18 +146,33 @@ class InvestmentTracker @Inject constructor(
      * @param investment The investment to add (must have quantity > 0, purchasePrice > 0,
      *                   and non-blank currency).
      * @return [Result.success] with the generated ID, or [Result.failure] if validation fails.
-     * @throws IllegalArgumentException if any validation constraint is violated.
      */
     suspend fun addHolding(investment: Investment): Result<Long> {
         writeBarrier.checkWritesAllowed("InvestmentTracker.addHolding")
-        require(investment.symbol.trim().isNotBlank()) { "Symbol is required" }
-        require(investment.name.trim().isNotBlank()) { "Name is required" }
-        require(investment.quantity.isFinite() && investment.quantity > 0.0) { "Quantity must be finite and positive" }
-        require(investment.purchasePrice.isFinite() && investment.purchasePrice > 0.0) { "Purchase price must be finite and positive" }
-        require(investment.currency.trim().uppercase().matches(Regex("^[A-Z]{3}$"))) { "Currency must be a valid 3-letter code" }
-        require(investment.purchaseDate > 0L) { "Purchase date must be set" }
-        require(investment.currentPrice.isFinite() && investment.currentPrice > 0.0) { "Current price must be finite and positive" }
-        require(investment.purchaseFees.isFinite() && investment.purchaseFees >= 0.0) { "Purchase fees must be finite and non-negative" }
+        if (investment.symbol.trim().isBlank()) {
+            return Result.failure(IllegalArgumentException("Symbol is required"))
+        }
+        if (investment.name.trim().isBlank()) {
+            return Result.failure(IllegalArgumentException("Name is required"))
+        }
+        if (!investment.quantity.isFinite() || investment.quantity <= 0.0) {
+            return Result.failure(IllegalArgumentException("Quantity must be finite and positive"))
+        }
+        if (!investment.purchasePrice.isFinite() || investment.purchasePrice <= 0.0) {
+            return Result.failure(IllegalArgumentException("Purchase price must be finite and positive"))
+        }
+        if (!investment.currency.trim().uppercase().matches(Regex("^[A-Z]{3}$"))) {
+            return Result.failure(IllegalArgumentException("Currency must be a valid 3-letter code"))
+        }
+        if (investment.purchaseDate <= 0L) {
+            return Result.failure(IllegalArgumentException("Purchase date must be set"))
+        }
+        if (!investment.currentPrice.isFinite() || investment.currentPrice <= 0.0) {
+            return Result.failure(IllegalArgumentException("Current price must be finite and positive"))
+        }
+        if (!investment.purchaseFees.isFinite() || investment.purchaseFees < 0.0) {
+            return Result.failure(IllegalArgumentException("Purchase fees must be finite and non-negative"))
+        }
         val now = timeProvider.now()
         val validated = investment.copy(
             createdAt = if (investment.createdAt > 0) investment.createdAt else now,
