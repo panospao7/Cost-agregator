@@ -460,23 +460,8 @@ class InvestmentTracker @Inject constructor(
     suspend fun getInvestmentPerformances(): List<InvestmentPerformance> = withContext(ioDispatcher) {
         val investments = investmentDao.getAllActiveInvestments().first()
 
-        // Build per-currency buckets for current value and cost basis
-        val currentValueBuckets = investments.map { inv ->
-            Pair(inv.currentPrice * inv.quantity, inv.currency.uppercase())
-        }
-        val costBasisBuckets = investments.map { inv ->
-            Pair((inv.purchasePrice * inv.quantity) + inv.purchaseFees, inv.currency.uppercase())
-        }
-
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
-
-        val currentValueAggregate = MoneyAggregateBuilder.fromBuckets(
-            currentValueBuckets, homeCurrency, currencyConverter
-        )
-        val costBasisAggregate = MoneyAggregateBuilder.fromBuckets(
-            costBasisBuckets, homeCurrency, currencyConverter
-        )
 
         // I09-FIXED: Mark price as stale if not updated within 7 days
         val staleThresholdMs = 7 * 24 * 60 * 60 * 1000L
@@ -487,6 +472,12 @@ class InvestmentTracker @Inject constructor(
             val investedValue = (investment.purchasePrice * investment.quantity) + investment.purchaseFees
             val gainLoss = currentValue - investedValue
             val gainLossPercent = if (investedValue > 0) (gainLoss / investedValue) * 100 else 0.0
+            val currentValueAggregate = MoneyAggregateBuilder.fromBuckets(
+                listOf(Pair(currentValue, investment.currency.uppercase())), homeCurrency, currencyConverter
+            )
+            val costBasisAggregate = MoneyAggregateBuilder.fromBuckets(
+                listOf(Pair(investedValue, investment.currency.uppercase())), homeCurrency, currencyConverter
+            )
 
             val isPriceStale = (now - investment.lastUpdated) > staleThresholdMs
             InvestmentPerformance(

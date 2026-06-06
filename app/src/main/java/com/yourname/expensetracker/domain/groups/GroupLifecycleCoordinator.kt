@@ -336,12 +336,30 @@ class GroupLifecycleCoordinator @Inject constructor(
             splitType = splitType,
             customSplitsJson = customSplitsJson,
             date = date
-        )
+        ) { groupExpenseId ->
+            val event = GroupLifecycleEventEntity(
+                groupId = groupId,
+                eventType = "GROUP_EXPENSE_ADDED",
+                relatedExpenseId = groupExpenseId,
+                createdAt = timeProvider.now()
+            )
+            lifecycleEventDao.insert(event)
+        }
 
         if (result is GroupExpenseCreationResult.Success) {
-            val expenseId = result.expenseId
-            database.withTransaction {
-                emitLifecycleEvent(groupId, "GROUP_EXPENSE_ADDED", expenseId = expenseId)
+            try {
+                budgetMonitor.get().checkBudgets()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Budget check failed for group expense addition")
+            }
+            if (result.expenseId > 0L) {
+                try {
+                    sideEffectDispatcher.dispatchOnCreated(result.expenseId, ExpenseSource.GROUP_EXPENSE)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Timber.w(e, "Side effects failed for expense %d (group %d)", result.expenseId, groupId)
+                }
             }
         }
         result

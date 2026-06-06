@@ -342,7 +342,8 @@ class GroupTransactionCoordinator @Inject constructor(
         splitType: SplitType,
         customSplitsJson: String?,
         date: Long,
-        idempotencyKey: String?
+        idempotencyKey: String?,
+        onInsideTransaction: suspend (groupExpenseId: Long) -> Unit
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseToGroup")
@@ -421,6 +422,8 @@ class GroupTransactionCoordinator @Inject constructor(
                 if (expenseId <= 0) {
                     return@withTransaction GroupExpenseCreationResult.Error("Failed to create expense")
                 }
+
+                onInsideTransaction(expenseId)
                 
                 GroupExpenseCreationResult.Success(
                     groupExpenseId = expenseId,
@@ -566,6 +569,15 @@ class GroupTransactionCoordinator @Inject constructor(
                 }
 
                 val expenseCurrency = currency ?: group.defaultCurrency
+
+                if (expenseCurrency != group.defaultCurrency) {
+                    return@withTransaction GroupMutationTxOutcome(
+                        GroupExpenseCreationResult.Error(
+                            "Expense currency '$expenseCurrency' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
+                        ),
+                        PostCommitActionBatch.empty(correlationId)
+                    )
+                }
 
                 // Create the group expense with system link
                 val expense = GroupExpense(

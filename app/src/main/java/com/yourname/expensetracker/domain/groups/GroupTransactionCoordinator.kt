@@ -124,7 +124,8 @@ interface GroupTransactionCoordinator {
         splitType: SplitType = SplitType.EQUAL,
         customSplitsJson: String? = null,
         date: Long = 0L, // sentinel — callers MUST supply an explicit boundary timestamp
-        idempotencyKey: String? = null
+        idempotencyKey: String? = null,
+        onInsideTransaction: suspend (groupExpenseId: Long) -> Unit = {}
     ): GroupExpenseCreationResult
     
     /**

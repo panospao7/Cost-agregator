@@ -38,7 +38,7 @@ class GroupBalanceCalculatorTest {
         val alice = GroupMember(id = 10L, groupId = groupId, name = "Alice", joinedAt = 1_000L)
         val bob = GroupMember(id = 20L, groupId = groupId, name = "Bob", joinedAt = 1_000L)
         val charlie = GroupMember(id = 30L, groupId = groupId, name = "Charlie", joinedAt = 5_000L) // joined later
-        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(alice, bob, charlie)
+        coEvery { memberDao.getAllForGroup(groupId) } returns listOf(alice, bob, charlie)
 
         // Old expense before Charlie joined
         val oldExpense = GroupExpense(
@@ -65,7 +65,7 @@ class GroupBalanceCalculatorTest {
 
         val alice = GroupMember(id = 11L, groupId = groupId, name = "Alice", joinedAt = 1_000L)
         val bob = GroupMember(id = 21L, groupId = groupId, name = "Bob", joinedAt = 3_000L) // joined after expense
-        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns listOf(alice, bob)
+        coEvery { memberDao.getAllForGroup(groupId) } returns listOf(alice, bob)
 
         val expense = GroupExpense(
             id = 101L, groupId = groupId, expenseId = null, paidById = 11L,
@@ -90,7 +90,7 @@ class GroupBalanceCalculatorTest {
     fun `cancelled settlement does not affect balance`() = runTest {
         val groupId = 3L
         coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Test Group", defaultCurrency = "EUR")
-        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns emptyList()
+        coEvery { memberDao.getAllForGroup(groupId) } returns emptyList()
         coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns emptyList()
 
         val cancelledSettlement = GroupSettlementEntity(
@@ -108,7 +108,7 @@ class GroupBalanceCalculatorTest {
     fun `foreign currency settlement is ignored`() = runTest {
         val groupId = 4L
         coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Test Group", defaultCurrency = "EUR")
-        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns emptyList()
+        coEvery { memberDao.getAllForGroup(groupId) } returns emptyList()
         coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns emptyList()
 
         val usdSettlement = GroupSettlementEntity(
@@ -126,7 +126,7 @@ class GroupBalanceCalculatorTest {
     fun `valid settlement still updates balance`() = runTest {
         val groupId = 5L
         coEvery { groupDao.getGroupById(groupId) } returns ExpenseGroup(id = groupId, name = "Test Group", defaultCurrency = "EUR")
-        coEvery { memberDao.getActiveMembersForGroup(groupId) } returns emptyList()
+        coEvery { memberDao.getAllForGroup(groupId) } returns emptyList()
         coEvery { expenseDao.getExpensesForGroupOnce(groupId) } returns emptyList()
 
         val validSettlement = GroupSettlementEntity(

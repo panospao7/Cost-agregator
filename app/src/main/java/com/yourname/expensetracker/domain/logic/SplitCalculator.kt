@@ -64,7 +64,7 @@ object SplitCalculator {
             SplitType.CUSTOM_PERCENT,
             SplitType.CUSTOM_AMOUNT,
             SplitType.UNEQUAL -> members.filter {
-                it.leftAt == null || it.leftAt > expense.date
+                it.joinedAt <= expense.date && (it.leftAt == null || it.leftAt > expense.date)
             }
         }
     }

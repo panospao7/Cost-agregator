@@ -159,6 +159,8 @@ private fun SummaryItem(
 @Composable
 private fun InvestmentCard(performance: InvestmentPerformance, homeCurrency: String) {
     val percentFormat = NumberFormat.getPercentInstance().apply { maximumFractionDigits = 2 }
+    val displayValue = performance.currentValueAggregate?.displayAmount ?: performance.currentValue
+    val displayCurrency = performance.currentValueAggregate?.displayCurrency?.code ?: homeCurrency
     
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -188,7 +190,7 @@ private fun InvestmentCard(performance: InvestmentPerformance, homeCurrency: Str
                 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = CurrencyFormatter.formatMoney(performance.currentValue, homeCurrency),
+                        text = CurrencyFormatter.formatMoney(displayValue, displayCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
