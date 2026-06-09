@@ -19,6 +19,20 @@
 10. [DAO/Repository Map](#10-daorepository-map)
 11. [Location Services Dependency Map](#11-location-services-dependency-map)
 12. [AI Provider Dependency Map](#12-ai-provider-dependency-map)
+13. [Stage 1 Architecture Foundations](#13-stage-1-architecture-foundations)
+14. [Provenance / Source Link Dependency Chain](#14-provenance--source-link-dependency-chain)
+15. [Notification Intake / Capture Subsystem](#15-notification-intake--capture-subsystem)
+16. [Domain Side-Effect Framework](#16-domain-side-effect-framework)
+17. [Anomaly / Alerts Dependency Chain](#17-anomaly--alerts-dependency-chain)
+18. [Financial Rescue Dependency Chain](#18-financial-rescue-dependency-chain)
+19. [Business / Income / Lifestyle Engines Dependency Chain](#19-business--income--lifestyle-engines-dependency-chain)
+20. [Domain Engine Layer](#20-domain-engine-layer)
+
+Also see:
+- [GroupBalanceCalculator Dependency Chain](#groupbalancecalculator-dependency-chain-2026-05-10)
+- [Negotiation Dependency Chain](#negotiation-dependency-chain-2026-05-09)
+- [Natural Language Search Dependency Chain](#natural-language-search-dependency-chain-2026-05-09)
+- [ViewModel Constructor Injection Reference](#viewmodel-constructor-injection-reference)
 
 ---
 
@@ -37,6 +51,21 @@ NotificationCaptureService              [service/NotificationCaptureService.kt]
   │
   ├──► RestoreMaintenanceMode            [data/backup/RestoreMaintenanceMode.kt]
   │     └── isActive() → pauses capture during restore
+  │
+  ▼
+NotificationIntakeCoordinator           [domain/notification/capture/NotificationIntakeCoordinator.kt]
+  │
+  ├──► NotificationCaptureGate           [domain/notification/capture/NotificationCaptureGate.kt]
+  ├──► NotificationCaptureDeduper        [domain/notification/capture/NotificationCaptureDeduper.kt]
+  ├──► NotificationTransientPayloadCrypto [domain/notification/capture/NotificationTransientPayloadCrypto.kt]
+  ├──► NotificationIntakeDao             [data/database/dao/NotificationIntakeDao.kt]
+  │     └──► NotificationIntakeEntity    [data/database/entity/NotificationIntakeEntity.kt]
+  ├──► NotificationIntakePayloadRepairer  [domain/notification/capture/NotificationIntakePayloadRepairer.kt]
+  ├──► NotificationIntakeRecoveryScheduler [domain/notification/capture/NotificationIntakeRecoveryScheduler.kt]
+  │
+  ▼
+NotificationIntakeWorker                [worker/NotificationIntakeWorker.kt]
+  │  (processes queued intake entities asynchronously)
   │
   ▼
 NotificationProcessingPipeline           [data/repository/NotificationProcessingPipeline.kt]
@@ -91,6 +120,8 @@ ReviewQueueRepository                    [data/repository/ReviewQueueRepository.
 | `ReviewViewModel` | `ui/screens/review/ReviewViewModel.kt` | `NotificationRepository`, `ReviewQueueRepository` |
 | `DebugViewModel` | `ui/screens/debug/DebugViewModel.kt` | `NotificationRepository` |
 | `CategorizationDebugViewModel` | `ui/screens/debug/CategorizationDebugViewModel.kt` | `CategorizationEngine` |
+| `NotificationIntakeCoordinator` | `domain/notification/capture/NotificationIntakeCoordinator.kt` | `NotificationCaptureGate`, `NotificationCaptureDeduper`, `NotificationIntakeDao` |
+| `NotificationIntakeWorker` | `worker/NotificationIntakeWorker.kt` | `NotificationIntakeDao`, `NotificationRepository`, `NotificationProcessingPipeline` |
 
 ---
 
@@ -125,10 +156,28 @@ TransactionLifecycleCoordinator          [domain/transaction/lifecycle/Transacti
        │
        ▼
 TransactionSideEffectDispatcher          [domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt]
-       │
-        ├──► BudgetMonitor.checkBudget()
-        ├──► AnomalyAlertOrchestrator.checkAndAlert()
-        └──► MerchantCategoryRepository.learnPattern()
+  │  Compatibility facade — delegates to Planner + PostCommitActionRunner
+  │  (retained for backward compat; new callers go through Planner directly)
+  │
+  ▼
+TransactionSideEffectPlanner             [domain/transaction/lifecycle/TransactionSideEffectPlanner.kt]
+  │  (builds PostCommitAction batches for onCreated/onUpdated/onDeleted)
+  │
+  ▼
+PostCommitActionRunner                   [domain/sideeffect/PostCommitActionRunner.kt]
+  │  (executes side-effect batches after DB transaction commits)
+  │
+  ├──► PostCommitActionBatch             [domain/sideeffect/PostCommitActionBatch.kt]
+  ├──► SideEffectPriority                [domain/sideeffect/SideEffectPriority.kt]
+  ├──► SideEffectTriggerType             [domain/sideeffect/SideEffectTriggerType.kt]
+  ├──► SideEffectCategory               [domain/sideeffect/SideEffectCategory.kt]
+  ├──► PostCommitActionRunnerImpl        [domain/sideeffect/PostCommitActionRunnerImpl.kt]
+  │
+  ├──► BudgetMonitor.checkBudget()
+  ├──► AnomalyAlertOrchestrator.checkAndAlert()
+  ├──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()
+  ├──► MerchantCategoryRepository.learnPattern()
+  └──► MerchantNormalizationRepository   [data/repository/MerchantNormalizationRepository.kt]
 ```
 
 ### Full Call Chain
@@ -147,7 +196,7 @@ ViewModel
               └──► Side effects dispatcher
 ```
 
-### Consumer Classes (10+ callers of TransactionLifecycleCoordinator)
+### Consumer Classes (12+ callers of TransactionLifecycleCoordinator)
 
 | Consumer | File | Path |
 |----------|------|------|
@@ -158,6 +207,8 @@ ViewModel
 | `GroupTransactionCoordinator` | `data/database/GroupTransactionCoordinator.kt` | Atomic group ops |
 | `EmailReceiptIngestionService` | `data/email/EmailReceiptIngestionService.kt` | Email receipts |
 | `BankApiIntegration` | `domain/bank/BankApiIntegration.kt` | Bank sync |
+| `BusinessExpenseRepository` | `data/repository/BusinessExpenseRepository.kt` | Business expense report |
+| `FinancialRescueCoordinator` | `data/rescue/FinancialRescueCoordinator.kt` | SQLite rescue import |
 
 ### Targeted Update Methods (Phase C migration)
 
@@ -175,12 +226,31 @@ each writing TransactionEvent.UPDATED or BULK_UPDATED with before/after snapshot
 | bulkUpdateCategory(merchant, newCategoryId) | categoryId (all matching rows) | BULK_UPDATED |
 | bulkUpdateMerchant(oldMerchant, newMerchant) | merchant, merchantKey, dedupeKey (all matching rows) | BULK_UPDATED |
 
-### Side-Effect Dispatchers (Phase C extension)
-TransactionSideEffectDispatcher now provides three dispatch methods:
+### Side-Effect Dispatchers → Planner → PostCommitActionRunner (Phase C + Engine 3)
+
+TransactionSideEffectDispatcher is now a **compatibility facade** that delegates
+to TransactionSideEffectPlanner + PostCommitActionRunner. The planner builds
+typed PostCommitAction batches; the runner executes them after the DB transaction
+commits. The full side-effect framework lives in `domain/sideeffect/` (19 files).
+
+```
+TransactionLifecycleCoordinator.createExpense()
+  │
+  ├──► TransactionSideEffectDispatcher.dispatchOnCreated()  (facade)
+  │     └──► TransactionSideEffectPlanner.planOnCreated()
+  │           └──► PostCommitActionRunner.runAll()
+  │                 ├──► BudgetMonitor.checkBudget()
+  │                 ├──► AnomalyAlertOrchestrator.checkAndAlert()
+  │                 ├──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()
+  │                 └──► MerchantCategoryRepository.learnPattern()
+  │
+  └──► TransactionSideEffectPlanner (direct — new callers)
+        └──► PostCommitActionRunner
+```
 
 | Method | Called by | Systems |
 |--------|-----------|---------|
-| dispatchOnCreated(expenseId, source) | createExpense() | budget, anomaly, merchant learning |
+| dispatchOnCreated(expenseId, source) | createExpense() | budget, anomaly, merchant learning, recurring linking |
 | dispatchOnUpdated(expenseId, source) | updateCategory, updateMerchant, updateType, updateTransferDetails, updateOwnership | budget, anomaly, merchant learning |
 | dispatchOnDeleted(expenseId, source) | deleteExpense() | budget |
 
@@ -210,13 +280,28 @@ ReceiptLifecycleCoordinator              [domain/receipt/lifecycle/ReceiptLifecy
        │
        ▼
 ReceiptSideEffectDispatcher              [domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt]
-       │
-       ├──► AutoCreateWarrantyFromReceiptUseCase
-       │     └──► WarrantyDao, ReturnWindowDao
-       ├──► ReceiptItemCategorizationService
-       │     └──► ReceiptItemCategorizationDao
-       ├──► ReceiptTransactionMatcher    [domain/receiptmatching/ReceiptTransactionMatcher.kt]
-       └──► PriceProtectionTracker       [domain/price/PriceProtectionTracker.kt]
+  │  Compatibility facade → delegates to ReceiptSideEffectPlanner + PostCommitActionRunner
+  │
+  ▼
+ReceiptSideEffectPlanner                 [domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt]
+  │
+  ▼
+PostCommitActionRunner                   [domain/sideeffect/PostCommitActionRunner.kt]
+        │
+        ├──► AutoCreateWarrantyFromReceiptUseCase
+        │     └──► WarrantyDao, ReturnWindowDao
+        ├──► ReceiptItemCategorizationService
+        │     └──► ReceiptItemCategorizationDao
+        ├──► ReceiptTransactionMatcher    [domain/receiptmatching/ReceiptTransactionMatcher.kt]
+        └──► PriceProtectionTracker       [domain/price/PriceProtectionTracker.kt]
+
+BankStatementLifecycleProcessor           [domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt]
+  │  Processes bank statement imports through the receipt lifecycle
+  ├──► ReceiptParser
+  ├──► ReceiptAssetStore
+  ├──► ReceiptInputValidator
+  ├──► ScannedReceiptDao
+  └──► ReceiptEventDao
 
 ReceiptLinkService                        [domain/receipt/lifecycle/ReceiptLinkService.kt]
        │   Constructor dependencies (9 total):
@@ -522,7 +607,7 @@ AccountingExportPolicy                    [domain/export/AccountingExportPolicy.
   └──► AccountingExporters                — Export pipeline validation
 ```
 
-### Barriers
+### Barriers & Infrastructure (17 files in data/backup/)
 
 ```
 DatabaseReadBarrier                       [data/backup/DatabaseReadBarrier.kt]
@@ -530,13 +615,40 @@ DatabaseReadBarrier                       [data/backup/DatabaseReadBarrier.kt]
   └── checkReadAllowed(operation) — throws IllegalStateException during restore
       (NORMAL and BACKUP_EXPORTING modes pass through)
 
+DatabaseReadBarrierFlowExt                [data/backup/DatabaseReadBarrierFlowExt.kt]
+  └── Flow extension for read-barrier-guarded reactive streams
+
 DatabaseWriteBarrier                      [data/backup/DatabaseWriteBarrier.kt]
   └── Constructor: RestoreMaintenanceMode
   └── checkWritesAllowed(operation) — throws IllegalStateException during restore
       (delegates to RestoreMaintenanceMode.isWritesAllowed())
+
+MaintenanceOperationRunner                [data/backup/MaintenanceOperationRunner.kt]
+  └── Manages backup/restore as maintenance operations with lifecycle hooks
+
+AppOperationalState                       [data/backup/AppOperationalState.kt]
+  └── Tracks NORMAL / BACKUP_EXPORTING / RESTORING operational modes
+
+RestoreJournalImporter                    [data/backup/RestoreJournalImporter.kt]
+  └── Handles import of restore journal from backup bundles
+
+SqliteSnapshotCreator                     [data/backup/SqliteSnapshotCreator.kt]
+  └── Creates SQLite-level snapshots for crash-safe backup
+
+BackupVerifier                            [data/backup/BackupVerifier.kt]
+  └── Post-restore integrity verification
+
+RestoreDatabaseOpener                     [data/backup/RestoreDatabaseOpener.kt]
+  └── Opens database in restore context with special write permissions
+
+RestoreInternalWriteScope                 [data/backup/RestoreInternalWriteScope.kt]
+  └── Scoped write access during restore for internal operations
+
+RestoreDiagnosticsSink                    [data/backup/RestoreDiagnosticsSink.kt]
+  └── Diagnostic logging during restore operations
 ```
 
-### Workers paused during restore
+### Workers paused during restore (core 7 via WorkerRegistry + 2 independent)
 
 | Worker | File | Normal Schedule |
 |--------|------|-----------------|
@@ -547,6 +659,8 @@ DatabaseWriteBarrier                      [data/backup/DatabaseWriteBarrier.kt]
 | `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | Every 6h |
 | `ReceiptMatchingWorker` | `service/receiptmatching/ReceiptMatchingWorker.kt` | Every 2h |
 | `DataRetentionWorker` | `data/privacy/DataRetentionWorker.kt` | Every 24h |
+| `SourceLinkBackfillWorker` | `domain/provenance/SourceLinkBackfillWorker.kt` | One-shot (backfill) |
+| `NotificationIntakeWorker` | `worker/NotificationIntakeWorker.kt` | On-demand (intake queue) |
 
 ---
 
@@ -566,14 +680,17 @@ PrivacySettingsRepositoryImpl             [data/privacy/PrivacySettingsRepositor
 CompositePrivacyGate                      [domain/privacy/CompositePrivacyGate.kt]
   │
   ├──► NotificationPrivacyGate            — NOTIFICATION_CAPTURE, NOTIFICATION_PACKAGE_ALLOWLIST
+  │     └──► NotificationCaptureGate      [domain/privacy/NotificationCaptureGate.kt]
   ├──► LocationPrivacyGate                — EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, GPS, OVERPASS
   ├──► CloudAiPrivacyGate                 — CLOUD_AI_* capabilities, RECEIPT_IMAGE_CLOUD_UPLOAD
-  └──► BackupPrivacyGate                  — RAWBACKUP_EXPORT, ENCRYPTED_BACKUP
+  ├──► BackupPrivacyGate                  — RAWBACKUP_EXPORT, ENCRYPTED_BACKUP
+  └──► ExportPrivacyGate                  — EXPORT_* capabilities
        │
        ▼
   PrivacyDecision (Allowed | Denied | FailClosed)
 
 PrivacyAuditLogger                        [domain/privacy/PrivacyAuditLogger.kt]
+  │  Interface + impl (PrivacyAuditLoggerImpl in data/privacy/)
   │  (logs every gate check → PrivacyAuditEvent entity → PrivacyAuditDao)
   │  (now logs PrivacyBlocked subclass type via `privacyBlockedType: String`)
   │
@@ -590,6 +707,15 @@ PrivacyBlocked                            [domain/privacy/PrivacyBlocked.kt]
   ├──► NotificationCaptureDisabled
   ├──► RawExportDisabled
   └──► Custom(capability, reason)
+
+PrivacyCapability                         [domain/privacy/PrivacyCapability.kt]
+  │  Enum of all gated capabilities
+
+PrivacyCapabilityHandlingPolicy           [domain/privacy/PrivacyCapabilityHandlingPolicy.kt]
+  │  Policy resolution for capability gating
+
+PrivacySettings                           [domain/privacy/PrivacySettings.kt]
+  │  Domain model for all privacy toggles
 
 AtRestEncryptionService                   [data/privacy/AtRestEncryptionService.kt]
   │  (AES-256-GCM via Android Keystore for ML model data at rest)
@@ -610,14 +736,42 @@ RawContentSanitizer                       [domain/privacy/RawContentSanitizer.kt
 RawStorageMode                            [domain/privacy/RawStorageMode.kt]
   │  (Enum: STORE_RAW, REDACT, STRIP)
 
+RawPersistencePolicy                      [domain/privacy/RawPersistencePolicy.kt]
+RawPersistencePolicyResolver              [domain/privacy/RawPersistencePolicyResolver.kt]
+RawSourceType                             [domain/privacy/RawSourceType.kt]
+  │  Determines persistence behavior per source type (notification/email/receipt/bank)
+
 EffectiveCloudAiPolicy                    [domain/privacy/EffectiveCloudAiPolicy.kt]
   │  (Resolves effective cloud AI policy based on settings + capability)
   │  (Used by HybridRouter via CloudPayloadPolicy)
 
 CloudPayloadPolicy                        [domain/privacy/CloudPayloadPolicy.kt]
-  │  (Replaces CloudPayloadRedactor — controls which fields are sent to cloud AI)
+  │  (Interface — replaces CloudPayloadRedactor — controls which fields are sent to cloud AI)
   │  (Used by all hybrid cloud AI services)
-```
+  │
+  ▼
+DefaultCloudPayloadPolicy                 [data/privacy/DefaultCloudPayloadPolicy.kt]
+DefaultCloudPayloadRedactor               [data/privacy/DefaultCloudPayloadRedactor.kt]
+  │  Data-layer implementations
+
+SensitiveHashingService                   [domain/privacy/SensitiveHashingService.kt]
+  │  Interface
+  ▼
+DefaultSensitiveHashingService            [data/privacy/DefaultSensitiveHashingService.kt]
+
+RetentionRegistry                         [domain/privacy/RetentionRegistry.kt]
+RetentionTarget                           [domain/privacy/RetentionTarget.kt]
+  │  Registry of 5 data retention targets for DataRetentionWorker
+
+Persistence Payloads (per-source-type privacy wrappers):
+  ├── NotificationPersistencePayload       [domain/privacy/NotificationPersistencePayload.kt]
+  ├── EmailReceiptPersistencePayload        [domain/privacy/EmailReceiptPersistencePayload.kt]
+  ├── ReceiptPersistencePayload             [domain/privacy/ReceiptPersistencePayload.kt]
+  ├── BankTransactionPersistencePayload     [domain/privacy/BankTransactionPersistencePayload.kt]
+  └── PreparedCloudPayload                  [domain/privacy/PreparedCloudPayload.kt]
+
+SafePrivacyMetadata                        [domain/privacy/SafePrivacyMetadata.kt]
+PrivacyAuditContext                        [domain/privacy/PrivacyAuditContext.kt]
 
 ### Gate Consumers (who calls PrivacyGate.check())
 
@@ -634,10 +788,11 @@ CloudPayloadPolicy                        [domain/privacy/CloudPayloadPolicy.kt]
 | `BACKGROUND_LOCATION_BACKFILL` | `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` |
 | `RAWBACKUP_EXPORT` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 | `ENCRYPTED_BACKUP` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
-| `CLOUD_AI_WARRANTY_EXTRACTION` | `HybridWarrantyExtractionService` | `data/ai/provider/HybridWarrantyExtractionService.kt` |
+| `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` | `data/ai/provider/CloudWarrantyExtractionService.kt` |
 | `CLOUD_AI_RECEIPT_ITEM_CATEGORIZATION` | `HybridReceiptItemCategorizationService` | `data/ai/provider/HybridReceiptItemCategorizationService.kt` |
 | `DEVICE_GPS_LOCATION` | `AndroidForegroundLocationProvider` | `data/location/AndroidForegroundLocationProvider.kt` |
 | `OVERPASS_API` | `OverpassNearbyService` | `data/location/OverpassNearbyService.kt` |
+| `BACKUP_EXPORT` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 
 ---
 
@@ -768,9 +923,27 @@ RetryableWorkerException                  [domain/workers/RetryableWorkerExcepti
       a plain RuntimeException with a non-transient message is a PERMANENT failure.
       Used by LocationBackfillWorker + MerchantKeyBackfillWorker no-progress paths.
 
+WorkerDrainController                     [domain/workers/WorkerDrainController.kt]
+  └── Interface for draining/running workers during maintenance windows.
+      NoOpWorkerDrainController provides no-op impl for normal operation.
+
+WorkerLease                               [domain/workers/WorkerLease.kt]
+  └── Exclusive lease mechanism to prevent concurrent worker execution.
+      WorkerLeaseRegistry + WorkerLeaseRegistryImpl manage lease state.
+
+WorkerRunContext                          [domain/workers/WorkerRunContext.kt]
+  └── Context object passed through guarded execution.
+
+NotificationPermissionChecker             [domain/workers/NotificationPermissionChecker.kt]
+  └── Interface + impl (AndroidNotificationPermissionChecker in data/service/).
+      Checked by WorkerExecutionGuard for notification-dependent workers.
+
+PrivacyRuntimeWorkerPolicy               [domain/workers/PrivacyRuntimeWorkerPolicy.kt]
+  └── Runtime privacy policy checks for workers.
+
 WorkerRegistry                            [domain/workers/WorkerRegistry.kt]
   └── Kotlin `object`. Centralized single-source-of-truth registry for all 7
-      background workers. Each `Entry` has specName (matching WorkerSpec.DEFAULTS)
+      managed background workers. Each `Entry` has specName (matching WorkerSpec.DEFAULTS)
       and schedule lambda. `scheduleAll(context)` iterates entries with runCatching.
       Replaces hardcoded worker lists in RestoreMaintenanceMode and AppStartupCoordinator.
       
@@ -782,6 +955,9 @@ WorkerRegistry                            [domain/workers/WorkerRegistry.kt]
         bill_reminder_periodic  → BillReminderWorker.schedule()
         receipt_matching        → ReceiptMatchingWorker.schedule()
         ai_daily_briefing       → WorkerSpecScheduler.scheduleAtMidnight()
+
+  Note: SourceLinkBackfillWorker and NotificationIntakeWorker are NOT in the
+  registry (they are one-shot/on-demand workers with independent scheduling).
 ```
 
 ### Worker → DAO Dependencies
@@ -800,6 +976,8 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 | `DataRetentionWorker` | RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `SourceLinkBackfillWorker` | RawNotificationDao, ExpenseDao, ScannedReceiptDao, PendingReviewDao, ReceiptExpenseLinkDao, EmailReceiptDao, EntitySourceLinkDao | DatabaseWriteBarrier, TimeProvider |
+| `NotificationIntakeWorker` | NotificationIntakeDao, NotificationRepository | DatabaseWriteBarrier, WorkerExecutionGuard, NotificationTransientPayloadCrypto, NotificationFilter |
 
 ---
 
@@ -857,6 +1035,8 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `DiagnosticsModule` | `di/DiagnosticsModule.kt` | `DiagnosticEventWriter`, `TransactionLifecycleEventWriter`, `ReceiptLifecycleEventWriter`, `RecurringLifecycleEventWriter`, `OperationRunRecorder`, `WorkerRunLogger`, `DiagnosticsRepository` | Diagnostics pipeline |
 | `ProvenanceModule` | `di/ProvenanceModule.kt` | Provenance event recording | Provenance tracking |
 | `RetentionModule` | `di/RetentionModule.kt` | `RetentionRegistry` with 5 `RetentionTarget` entries | Data retention workers |
+| `NegotiationModule` | `di/NegotiationModule.kt` | `StaticMarketRateProvider` | BillNegotiationEngine, BillNegotiationViewModel |
+| `EmptyStatePresentationModule` | `ui/components/emptystate/EmptyStatePresentationModule.kt` | `EmptyStateRegistryInitializer` multibind (via `DefaultEmptyStateRegistryInitializer`) | Empty state UI |
 
 ---
 
@@ -917,6 +1097,32 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `PipelineDiagnosticEvent` | `PipelineDiagnosticEventDao` | `NotificationProcessingPipeline` | Cross-pipeline diagnostics |
 | `OperationRun` | `OperationRunDao` | `CompositeOperationRunRecorder` | Durable operation run tracking |
 | `OperationRunEvent` | `OperationRunEventDao` | `CompositeOperationRunRecorder` | Durable operation run events |
+| `EntitySourceLink` | `EntitySourceLinkDao` | `SourceLinkWriterImpl`, `SourceLinkBackfillWorker` | Provenance tracing |
+| `NotificationIntakeEntity` | `NotificationIntakeDao` | `NotificationIntakeWorker`, `NotificationIntakeCoordinator` | Queued notification intake |
+| `BankStatementImportRun` | `BankStatementImportRunDao` | (Direct DAO usage) | Bank statement import |
+| `BankStatementImportItem` | `BankStatementImportItemDao` | (Direct DAO usage) | Bank statement import |
+| `NegotiationOutcomeEntity` | `NegotiationOutcomeDao` | `SmartBillNegotiationEngine` | Bill negotiation |
+| `Enriched entities not in original table:` | | | |
+| `MerchantCanonical` | `MerchantNormalizationDao` | `MerchantNormalizationRepository` | Merchant normalization |
+| `MerchantAlias` | `MerchantNormalizationDao` | `MerchantNormalizationRepository` | Merchant alias resolution |
+| `MerchantCategory` | `MerchantCategoryDao` | `MerchantCategoryRepository` | Merchant→category mapping |
+| `MerchantLocation` | `MerchantLocationDao` | `MerchantLocationRepository` | Merchant geo-location |
+| `MerchantLocationCorrection` | `MerchantLocationDao` | `MerchantLocationRepository` | Manual corrections |
+| `RecommendationEntity` | `RecommendationDao` | `RecommendationRepository` | Dashboard recommendations |
+| `MileageTracking` | `MileageTrackingDao` | (Direct DAO usage) | Mileage tracking |
+| `BudgetForecast` | `BudgetForecastDao` | `BudgetForecastingEngine` | Budget forecasting |
+| `Investment` | `InvestmentDao` | (Direct DAO usage) | Investment ViewModel |
+| `InvestmentValue` | `InvestmentValueDao` | (Direct DAO usage) | Investment ViewModel |
+| `InvestmentTransaction` | `InvestmentTransactionDao` | `InvestmentTracker` | Investment audit |
+| `HealthScoreHistory` | `HealthScoreHistoryDao` | `FinancialHealthScoreV2` | Health score history |
+| `SavingsSweepPlan` | `SavingsSweepPlanDao` | `AutomatedSavingsRuleEngine` | Automated savings |
+| `BudgetAdjustmentRecommendation` | `BudgetAdjustmentDao` | `BudgetRecommendationEngine` | Budget adjustments |
+| `BudgetAdjustmentEvent` | `BudgetAdjustmentDao` | `BudgetAutopilotEngine` | Budget adjustment audit |
+| `SpendingPersonalityProfileEntity` | `SpendingPersonalityProfileDao` | `SpendingPersonalityClassifier` | Analytics profiling |
+| `StressForecastSnapshot` | `StressForecastSnapshotDao` | `FinancialStressForecastEngine` | Stress test snapshots |
+| `SpendingChallengeEntity` | `SpendingChallengeDao` | `SpendingChallengeRepository` | Spending challenges |
+| `WarrantyLifecycleEvent` | `WarrantyLifecycleEventDao` | `WarrantyTrackerRepository` | Warranty lifecycle audit |
+| `WarrantyReminderDelivery` | `WarrantyReminderDeliveryDao` | `WarrantyExpirationWorker` | Reminder sent-state tracking |
 
 ---
 
@@ -1044,12 +1250,23 @@ All Hybrid services use:
 | `ManualRecurringExpenseViewModel` | ManualRecurringExpenseRepository |
 | `SourceLinkDebugViewModel` | SourceLinkQueryService |
 | `SourceLinkBackfillViewModel` | SourceLinkBackfillWorker |
+| `BillNegotiationViewModel` | SmartBillNegotiationEngine, MarketRateProvider |
+| `BudgetForecastingViewModel` | BudgetForecastingEngine, BudgetForecastDao |
+| `CategoryViewModel` | CategoryRepository |
+| `CategorizationDebugViewModel` | CategorizationEngine |
+| `ExportOptionsViewModel` | AccountingExportPolicy, AccountingExporters |
+| `LifestyleInflationViewModel` | LifestyleInflationDetector, ExpenseRepository |
+| `MainViewModel` | (App-level state holder, no injected deps) |
+| `NaturalLanguageSearchViewModel` | NaturalLanguageSearchEngine, AiChatRepository |
+| `PriceProtectionViewModel` | PriceProtectionTracker |
+| `SpendingChallengesViewModel` | SpendingChallengeRepository |
+| `TaxConfigurationViewModel` | TaxConfiguration, TaxSettingsRepository |
 
 ---
 
-> **Generated:** Manual analysis of 926+ source files across 3 layers (UI/Domain/Data),  
-> 31 Hilt @Module files, 41 @HiltViewModel, 65+ repositories, ~69 DAOs, 64+ entities.  
-> DB schema version: v143  
+> **Generated:** Manual analysis of 1100+ source files across 3 layers (UI/Domain/Data),  
+> 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 41 @HiltViewModel, 46+ repositories, ~68 DAOs, 70+ entities.  
+> DB schema version: v147  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---
@@ -1151,3 +1368,262 @@ NaturalLanguageSearchEngine               [domain/naturallanguage/NaturalLanguag
   └──► ExpenseDao.getExpensesFilteredKeyset()  [data/database/dao/ExpenseDao.kt]
         Filtered Room @Query with categoryIds, transactionType, merchant LIKE, keyword LIKE, DESC ordering
 ```
+
+---
+
+## 14. Provenance / Source Link Dependency Chain
+
+```
+Expense / RawNotification / ScannedReceipt / ReceiptExpenseLink / PendingReview / EmailReceiptSource
+  │
+  ▼
+SourceLinkWriter                           [domain/provenance/SourceLinkWriter.kt]
+  │  Interface
+  ▼
+SourceLinkWriterImpl                       [domain/provenance/SourceLinkWriterImpl.kt]
+  │  @Singleton @Inject
+  │
+  ├──► EntitySourceLinkDao                 — INSERT link rows
+  ├──► SafeProvenanceMetadata              — Build metadata from source
+  └──► SourceIdentityKeyFactory            — Deterministic identity keys
+       │
+       ▼
+  Consumed by:
+  ├──► NotificationRepository              — On notification → expense creation
+  ├──► EmailReceiptIngestionService        — On email → expense creation
+  ├──► ReceiptRepository                   — On receipt → expense creation
+  └──► BankApiIntegration                  — On bank sync → expense creation
+
+SourceIdentityKeyFactory                   [domain/provenance/SourceIdentityKeyFactory.kt]
+  └── Creates deterministic identity keys per source type
+
+SourceLinkPayload                          [domain/provenance/SourceLinkPayload.kt]
+  │  Sealed interface for typed source link payloads:
+  ├──► NotificationSourceLinkPayloadFactory
+  ├──► ReceiptSourceLinkPayloadFactory
+  ├──► BankSourceLinkPayloadFactory
+  ├──► ImportSourceLinkPayloadFactory
+  └──► PendingReviewSourcePayloadFactory
+
+PendingReviewSourceLinkPromoter            [domain/provenance/PendingReviewSourceLinkPromoter.kt]
+  │  Promotes pending-review source links to full EntitySourceLink rows
+  ├──► PendingReviewDao
+  ├──► EntitySourceLinkDao
+  └──► PendingReviewSourceContext
+
+SourceLinkQueryService                     [domain/provenance/SourceLinkQueryService.kt]
+  │  Read-only query service for source link debugging
+  └──► EntitySourceLinkDao
+
+SourceLinkBackfillWorker                   [domain/provenance/SourceLinkBackfillWorker.kt]
+  │  One-shot backfill: migrates legacy source metadata into entity_source_links
+  ├──► ExpenseDao, RawNotificationDao, ScannedReceiptDao, PendingReviewDao
+  ├──► ReceiptExpenseLinkDao, EmailReceiptDao, EntitySourceLinkDao
+  └──► DatabaseWriteBarrier, TimeProvider
+
+DuplicateSourceLinkPolicy                  [domain/provenance/DuplicateSourceLinkPolicy.kt]
+SourceLinkFallbackPolicy                   [domain/provenance/SourceLinkFallbackPolicy.kt]
+SourceLinkWriteException                   [domain/provenance/SourceLinkWriteException.kt]
+SourceLinkWriteResult                      [domain/provenance/SourceLinkWriteResult.kt]
+SourceLinkExportRef                        [domain/export/SourceLinkExportRef.kt]
+SourceLinkEnums                            [domain/provenance/SourceLinkEnums.kt]
+```
+
+---
+
+## 15. Notification Intake / Capture Subsystem
+
+```
+AndroidNotificationListener
+  │
+  ▼
+NotificationCaptureService                 [service/NotificationCaptureService.kt]
+  │
+  ├──► PrivacyGate.check(NOTIFICATION_CAPTURE)
+  ├──► RestoreMaintenanceMode.isActive()
+  ├──► NotificationFilter
+  │
+  ▼
+NotificationIntakeCoordinator              [domain/notification/capture/NotificationIntakeCoordinator.kt]
+  │  @Singleton @Inject
+  │  Queues incoming notifications as NotificationIntakeEntity rows
+  │  instead of processing inline (crash-safe decoupling)
+  │
+  ├──► NotificationCaptureGate             [domain/notification/capture/NotificationCaptureGate.kt]
+  │     └──► PrivacyCapabilityHandlingPolicy resolution
+  ├──► NotificationCaptureDeduper          [domain/notification/capture/NotificationCaptureDeduper.kt]
+  │     └──► Deduplicates by fingerprint + transient key
+  ├──► NotificationTransientKeyProvider    [domain/notification/capture/NotificationTransientKeyProvider.kt]
+  ├──► NotificationTransientPayloadCrypto  [domain/notification/capture/NotificationTransientPayloadCrypto.kt]
+  ├──► NotificationIntakeDao               — INSERT intake rows
+  │     └──► NotificationIntakeEntity      — status: PENDING / PROCESSING / COMPLETED / FAILED
+  ├──► NotificationIntakePayloadRepairer   [domain/notification/capture/NotificationIntakePayloadRepairer.kt]
+  └──► NotificationIntakeRecoveryScheduler [domain/notification/capture/NotificationIntakeRecoveryScheduler.kt]
+       │
+       ▼
+  NotificationIntakeWorker                 [worker/NotificationIntakeWorker.kt]
+    │  @HiltWorker
+    │  Processes queued intake rows asynchronously
+    │  Steps:
+    │   1. Decrypt transient payload (NotificationTransientPayloadCrypto)
+    │   2. Check RestoreMaintenanceMode + DatabaseWriteBarrier
+    │   3. Apply NotificationFilter
+    │   4. Parse via NotificationProcessingPipeline
+    │   5. Create expense via NotificationRepository
+    │   6. Mark intake row COMPLETED or FAILED
+    │
+    ├──► NotificationIntakeDao
+    ├──► NotificationFilter
+    ├──► NotificationProcessingPipeline
+    ├──► NotificationRepository
+    ├──► RestoreMaintenanceMode
+    ├──► DatabaseWriteBarrier
+    ├──► WorkerExecutionGuard
+    └──► NotificationTransientPayloadCrypto
+
+NotificationDomain Data Types:
+  ├── CaptureSource                        — Enum: NOTIFICATION, SMS, WEARABLE
+  ├── NotificationCaptureDecision          — CAPTURE / SILENCE / BLOCK
+  ├── NotificationIntakeCaptureResult      — INTAKE_QUEUED / DEDUP_SKIPPED / BLOCKED / ERROR
+  ├── NotificationPersistenceContext       — Context for write/redact decisions
+  ├── NotificationPipelineOutcome          — CREATED / UPDATED / SKIPPED / DUPLICATE
+  ├── RawNotificationFingerprint           — Hash-based dedup fingerprint
+  ├── RawNotificationInsertResult          — INSERTED / DUPLICATE / BLOCKED
+  └── NotificationMoneySignalDetector      [domain/notification/money/] — Signal detection
+```
+
+---
+
+## 16. Domain Side-Effect Framework
+
+```
+PostCommitActionRunner                     [domain/sideeffect/PostCommitActionRunner.kt]
+  │  Interface — runs post-DB-transaction side-effect batches
+  │
+  ▼
+PostCommitActionRunnerImpl                 [domain/sideeffect/PostCommitActionRunnerImpl.kt]
+  │  @Singleton @Inject
+  │  Iterates PostCommitAction items, executes by priority order,
+  │  collects SideEffectBatchResult, logs via SideEffectEventWriter
+  │
+  ├──► PostCommitActionBatch               — Immutable batch of actions
+  │     └──► PostCommitAction              — Single action: actionId, trigger, priority, category, suspend () -> SideEffectOutcome
+  ├──► SideEffectPriority                  — CRITICAL / HIGH / NORMAL / LOW
+  ├──► SideEffectCategory                  — BUDGET / ANOMALY / MERCHANT_LEARNING / RECURRING / etc.
+  ├──► SideEffectTriggerType               — ON_CREATED / ON_UPDATED / ON_DELETED
+  ├──► SideEffectExecutionContext          — Context passed to each action
+  ├──► SideEffectActionResult              — Per-action result
+  ├──► SideEffectBatchResult               — Aggregate batch result
+  ├──► SideEffectOutcome                   — SUCCESS / SKIPPED / FAILED / RETRY
+  ├──► SideEffectSkipReason                — Why action was skipped
+  ├──► SideEffectEventWriter               — Interface for recording side-effect events
+  ├──► CompositeSideEffectEventWriter      — Delegates to multiple writers
+  ├──► DiagnosticSideEffectEventWriter     — Writes diagnostic events
+  ├──► TransactionSideEffectFailureEventWriter — Records transaction-level failures
+  └──► SideEffectMetadataFactory           — Builds metadata for events
+
+TransactionLifecycleCoordinator
+  ├──► TransactionSideEffectPlanner        — Builds batches for expense CRUD
+  │     ├──► BudgetMonitor
+  │     ├──► AnomalyAlertOrchestrator
+  │     ├──► RecurringLifecycleCoordinator
+  │     ├──► MerchantCategoryRepository
+  │     └──► MerchantNormalizationRepository
+  └──► PostCommitActionRunner              — Executes the planned batch
+
+ReceiptLifecycleCoordinator
+  ├──► ReceiptSideEffectPlanner            — Builds batches for receipt CRUD
+  │     ├──► AutoCreateWarrantyFromReceiptUseCase
+  │     ├──► ReceiptItemCategorizationService
+  │     ├──► ReceiptTransactionMatcher
+  │     └──► PriceProtectionTracker
+  └──► PostCommitActionRunner
+
+MutationResult                             [domain/sideeffect/MutationResult.kt]
+  └── Typed result wrapper for lifecycle mutations (success with eventId / failure)
+```
+
+---
+
+## 17. Anomaly / Alerts Dependency Chain
+
+```
+AnomalyAlertOrchestrator                   [domain/alerts/AnomalyAlertOrchestrator.kt]
+  │  @Singleton @Inject
+  │  Central alert orchestrator — checks all anomaly detectors
+  │  Called by TransactionSideEffectPlanner on expense create/update/delete
+  │
+  ├──► AnomalyDetector                     [domain/analytics/AnomalyDetector.kt]
+  │     └──► MultiCurrencyRepository, ExpenseDao
+  ├──► AnomalyAlertDao                     — Persist triggered alerts
+  │     └──► AnomalyAlert                  — Entity: type, severity, message, expenseId
+  └──► TimeProvider
+
+AnomalyAlertRepository                     [domain/alerts/AnomalyAlertRepository.kt]
+  │  Domain interface
+  ▼
+AnomalyAlertRepositoryImpl                 [data/repository/AnomalyAlertRepositoryImpl.kt]
+  └──► AnomalyAlertDao, DashboardAnomalyModule (DI binding)
+
+Dashboard consumer:
+  └──► DashboardAnomalyModule              — Provides AnomalyAlertRepository (domain + dashboard)
+```
+
+---
+
+## 18. Financial Rescue Dependency Chain
+
+```
+FinancialRescueCoordinator                 [data/rescue/FinancialRescueCoordinator.kt]
+  │  Raw SQLite import path — bypasses Room migration chain for emergency data rescue
+  │  Used when schema version mismatch prevents normal DB open
+  │
+  ├──► RescueConfig                        [data/rescue/RescueConfig.kt]
+  │     └── Configuration for rescue operation
+  ├──► FinancialRescueSnapshot             [data/rescue/FinancialRescueSnapshot.kt]
+  │     └── Captures snapshots during rescue for rollback
+  ├──► RescueActivity                      [data/rescue/RescueActivity.kt]
+  │     └── UI activity for rescue flow
+  └──► TransactionLifecycleCoordinator     — Dedup mode SKIP_FOR_DEBUG_RESTORE
+```
+
+---
+
+## 19. Business / Income / Lifestyle Engines Dependency Chain
+
+```
+BusinessExpenseReportGenerator             [domain/business/BusinessExpenseReportGenerator.kt]
+  │  @Singleton @Inject
+  │  Generates business expense reports with tax categorization
+  │
+  ├──► ExpenseDao
+  ├──► CategoryDao
+  ├──► BusinessExpenseRepository            [data/repository/BusinessExpenseRepository.kt]
+  └──► TaxConfiguration                    [domain/tax/TaxConfiguration.kt]
+
+RecurringIncomeTracker                     [domain/income/RecurringIncomeTracker.kt]
+  │  Tracks recurring income patterns alongside expenses
+  └──► ExpenseDao, CategoryDao
+
+LifestyleInflationDetector                 [domain/lifestyle/LifestyleInflationDetector.kt]
+  │  Detects lifestyle inflation by comparing spending over time
+  └──► ExpenseDao, MultiCurrencyRepository
+
+SpendingChallengeManager                   [domain/challenge/SpendingChallengeManager.kt]
+  │  Manages user-defined spending challenges
+  └──► SpendingChallengeDao
+```
+
+---
+
+## 20. Domain Engine Layer
+
+```
+DashboardFollowThroughEngine               [domain/engine/DashboardFollowThroughEngine.kt]
+  │  Follow-through engine for dashboard recommendations
+  │  Monitors whether users actioned suggested changes
+  │
+  └──► RecommendationDao, ExpenseDao
+```
+
+---```

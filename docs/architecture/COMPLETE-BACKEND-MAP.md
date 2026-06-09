@@ -1,14 +1,14 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-06-01  
-**Total Files Mapped:** 1044 (518 domain + 298 data + 167 UI + 34 DI + 17 Service + 3 Startup + 2 Receiver + 1 Worker + 3 Util)  
-**Test Coverage:** 475+ test files (historical; expanding)
+**Generated:** 2026-06-09  
+**Total Files Mapped:** 1050 (520 domain + 305 data + 167 UI + 35 di (32 @Module) + 17 service + 3 startup + 2 receiver + 1 worker + 3 util)  
+**Test Coverage:** 600+ unit test files + 27 instrumented tests
 
 ---
 
 ## Table of Contents
 
-1. [Domain Package (518 files)](#domain-package)
+1. [Domain Package (520 files)](#domain-package)
    - [AI/ML Subsystem](#ai-subsystem)
    - [Alerts & Anomalies](#alerts--anomalies)
    - [Analytics & Insights](#analytics--insights)
@@ -49,7 +49,7 @@
    - [Utilities](#utilities)
    - [Widget](#widget)
    - [Workers](#workers)
-2. [Data Package (298 files)](#data-package)
+2. [Data Package (305 files)](#data-package)
    - [Database Layer](#database-layer)
    - [Repositories](#repositories)
    - [AI Providers](#ai-providers)
@@ -60,7 +60,7 @@
    - [Security Services](#security-services)
    - [Speech Services](#speech-services)
    - [Other Services](#other-services)
-   3. [DI/Modules Package (34 files)](#dimodules-package)
+   3. [DI/Modules Package (32 @Module + 1 @EntryPoint)](#dimodules-package)
   4. [App Services Package (17 files)](#app-services-package)
  5. [Dependency Graph & Data Flow](#dependency-graph--data-flow)
 
@@ -167,16 +167,22 @@
 | `analytics/NormalizedAnalyticsInput.kt` | NormalizedAnalyticsInput | Currency-normalized analytics input | Model | - | No |
 | `analytics/AnalyticsInputAssembler.kt` | AnalyticsInputAssembler | Assembles analytics inputs | Engine | - | No |
 
-### Backup & Export (7 files)
+### Backup & Export (11 files)
 
 **Location:** `com.yourname.expensetracker.domain.backup`, `export`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
+| `backup/BackupPrivacyMode.kt` | BackupPrivacyMode | Privacy mode for backups | Model | - | No |
 | `backup/DatabaseBackupRepository.kt` | DatabaseBackupRepository | Database backup interface | Repository | - | No |
 | `backup/DatabaseOperationResults.kt` | DatabaseOperationResults | Backup operation result models | Model | - | No |
+| `export/AccountantReportPdfExporter.kt` | AccountantReportPdfExporter | PDF report exporter | Service | - | No |
+| `export/AccountingExportPolicy.kt` | AccountingExportPolicy | Export policy validation | Service | - | No |
 | `export/AccountingExporters.kt` | AccountingExporters | Accounting system exporters | Service | - | No |
+| `export/CsvCellSanitizer.kt` | CsvCellSanitizer | CSV cell sanitization | Utility | - | No |
+| `export/ExpenseExportMapper.kt` | ExpenseExportMapper | Maps expenses for export | Mapper | - | No |
 | `export/ExportTransaction.kt` | ExportTransaction | Transaction export models | Model | - | No |
+| `export/SourceLinkExportRef.kt` | SourceLinkExportRef | Source link export reference | Model | - | No |
 
 ### Bank API Integration (2 files)
 
@@ -252,22 +258,35 @@
 | `currency/CurrencySettingsRepository.kt` | CurrencySettingsRepository | Currency settings interface | Repository | - | No |
 | `currency/ExchangeRateContracts.kt` | ExchangeRateContracts | Exchange rate interfaces | Service | - | No |
 
-### Core Money Types (9 files)
+### Core Money Types (24 files)
 
 **Location:** `com.yourname.expensetracker.domain.core.money`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `core/money/CurrencyCode.kt` | CurrencyCode | Type-safe ISO 4217 wrapper | Model | - | No |
-| `core/money/MoneyAmount.kt` | MoneyAmount | Amount + currency pair with safe arithmetic | Model | CurrencyCode | No |
-| `core/money/ConvertedMoney.kt` | ConvertedMoney | Conversion trace with rate metadata | Model | MoneyAmount | No |
-| `core/money/MoneyBucket.kt` | MoneyBucket | Per-currency subtotal bucket | Model | CurrencyCode | No |
-| `core/money/MoneyAggregate.kt` | MoneyAggregate | Primary aggregation return type | Model | MoneyBucket | No |
+| `core/money/BucketDatePolicy.kt` | BucketDatePolicy | Date policy for money buckets | Policy | - | No |
 | `core/money/ConversionFailure.kt` | ConversionFailure | Failed conversion record | Model | CurrencyCode | No |
+| `core/money/ConversionOutcome.kt` | ConversionOutcome | Outcome of a conversion operation | Model | - | No |
+| `core/money/ConversionPath.kt` | ConversionPath | Path taken during conversion | Model | - | No |
+| `core/money/ConversionQuality.kt` | ConversionQuality | Quality rating of a conversion | Enum | - | No |
+| `core/money/ConvertedMoney.kt` | ConvertedMoney | Conversion trace with rate metadata | Model | MoneyAmount | No |
 | `core/money/CurrencyAssumption.kt` | CurrencyAssumption | Why a currency was assigned | Enum | - | No |
-| `core/money/MoneyMappers.kt` | MoneyMappers | Bridge legacy to new money types | Utility | MoneyAmount | No |
-| `core/money/MoneyFormatUtils.kt` | MoneyFormatUtils | Money formatting extensions | Utility | CurrencyCode | No |
+| `core/money/CurrencyCode.kt` | CurrencyCode | Type-safe ISO 4217 wrapper | Model | - | No |
+| `core/money/HomeCurrencyForMoneyMath.kt` | HomeCurrencyForMoneyMath | Home currency resolution for math operations | Service | - | No |
+| `core/money/MoneyAggregate.kt` | MoneyAggregate | Primary aggregation return type | Model | MoneyBucket | No |
 | `core/money/MoneyAggregateBuilder.kt` | MoneyAggregateBuilder | Builder for MoneyAggregate | Utility | MoneyAggregate | No |
+| `core/money/MoneyAggregateMetadata.kt` | MoneyAggregateMetadata | Metadata for aggregation results | Model | - | No |
+| `core/money/MoneyAggregateResult.kt` | MoneyAggregateResult | Sealed result for aggregation | Model | - | No |
+| `core/money/MoneyAmount.kt` | MoneyAmount | Amount + currency pair with safe arithmetic | Model | CurrencyCode | No |
+| `core/money/MoneyBucket.kt` | MoneyBucket | Per-currency subtotal bucket | Model | CurrencyCode | No |
+| `core/money/MoneyBucketInput.kt` | MoneyBucketInput | Input for creating money buckets | Model | - | No |
+| `core/money/MoneyFormatUtils.kt` | MoneyFormatUtils | Money formatting extensions | Utility | CurrencyCode | No |
+| `core/money/MoneyMappers.kt` | MoneyMappers | Bridge legacy to new money types | Utility | MoneyAmount | No |
+| `core/money/MoneyNormalizationEngine.kt` | MoneyNormalizationEngine | Normalizes money across currencies | Engine | - | No |
+| `core/money/NormalizationResult.kt` | NormalizationResult | Result of normalization | Model | - | No |
+| `core/money/RateBasis.kt` | RateBasis | Basis for exchange rates | Model | - | No |
+| `core/money/StaleRatePolicy.kt` | StaleRatePolicy | Policy for handling stale rates | Policy | - | No |
+| `core/money/TransactionTypeFilter.kt` | TransactionTypeFilter | Filter for transaction types | Model | - | No |
 
 ### Core Time Types (2 files)
 
@@ -339,13 +358,26 @@
 | `debug/NotificationSeeder.kt` | NotificationSeeder | Seeds test notifications | Utility | - | No |
 | `debug/ServiceDiagnostics.kt` | ServiceDiagnostics | Service diagnostics | Utility | - | No |
 
-### Diagnostics (1 file)
+### Diagnostics (14 files)
 
 **Location:** `com.yourname.expensetracker.domain.diagnostics`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
+| `diagnostics/AppPipeline.kt` | AppPipeline | Enum of application pipelines | Enum | - | No |
+| `diagnostics/CompositeDiagnosticEventWriter.kt` | CompositeDiagnosticEventWriter | Composite of diagnostic event writers | Service | - | No |
+| `diagnostics/CompositeOperationRunRecorder.kt` | CompositeOperationRunRecorder | Composite run recorder | Service | - | No |
+| `diagnostics/CorrelationIds.kt` | CorrelationIds | Correlation ID model | Model | - | No |
 | `diagnostics/DatabaseIntegrityScanner.kt` | DatabaseIntegrityScanner | Scans DB integrity | Engine | - | No |
+| `diagnostics/DiagnosticEventWriter.kt` | DiagnosticEventWriter | Interface for writing diagnostic events | Service | - | No |
+| `diagnostics/DiagnosticReasonCode.kt` | DiagnosticReasonCode | Enum of reason codes | Enum | - | No |
+| `diagnostics/EventMetadataSanitizer.kt` | EventMetadataSanitizer | Sanitizes event metadata | Utility | - | No |
+| `diagnostics/EventOutcome.kt` | EventOutcome | Enum of event outcomes | Enum | - | No |
+| `diagnostics/EventSeverity.kt` | EventSeverity | Enum of event severity levels | Enum | - | No |
+| `diagnostics/NotificationDiagnosticEmitter.kt` | NotificationDiagnosticEmitter | Emits notification diagnostics | Service | - | No |
+| `diagnostics/OperationRunRecorder.kt` | OperationRunRecorder | Interface for recording operation runs | Service | - | No |
+| `diagnostics/SafeEventMetadata.kt` | SafeEventMetadata | Sanitized event metadata model | Model | - | No |
+| `diagnostics/SideEffectDiagnosticRecorder.kt` | SideEffectDiagnosticRecorder | Records side effect diagnostics | Service | - | No |
 
 ### DTOs (4 files)
 
@@ -358,17 +390,23 @@
 | `dto/ReceiptItemCategorizationSnapshot.kt` | ReceiptItemCategorizationSnapshot | Categorization snapshot DTO | Model | - | No |
 | `dto/ReviewPriorityInput.kt` | ReviewPriorityInput | Review priority input DTO | Model | - | No |
 
-### Forecasting & Financial (8 files)
+### Forecasting & Financial (12 files)
 
 **Location:** `com.yourname.expensetracker.domain.forecasting`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
+| `forecasting/AccountBalanceProvider.kt` | AccountBalanceProvider | Provides account balances for forecasting | Service | - | No |
 | `forecasting/DataQualityAssessor.kt` | DataQualityAssessor | Assesses historical data quality | Engine | - | No |
 | `forecasting/FinancialStressForecastEngine.kt` | FinancialStressForecastEngine | Stress tests financial scenarios | Engine | - | No |
+| `forecasting/ForecastDataQuality.kt` | ForecastDataQuality | Data quality models for forecasts | Model | - | No |
+| `forecasting/ForecastInputAssembler.kt` | ForecastInputAssembler | Assembles forecast inputs | Engine | - | No |
 | `forecasting/HistoricalSpendingDistribution.kt` | HistoricalSpendingDistribution | Models spending distribution | Model | - | No |
+| `forecasting/MergedRecurringPatternsProvider.kt` | MergedRecurringPatternsProvider | Merges recurring patterns for forecasts | Service | - | No |
 | `forecasting/MonteCarloResult.kt` | MonteCarloResult | Monte Carlo simulation results | Model | - | No |
 | `forecasting/MonteCarloSpendingSimulator.kt` | MonteCarloSpendingSimulator | Simulates spending scenarios | Engine | - | No |
+| `forecasting/NetCashflowBalanceProvider.kt` | NetCashflowBalanceProvider | Provides net cashflow balance | Service | - | No |
+| `forecasting/NormalizedForecastInput.kt` | NormalizedForecastInput | Normalized forecast input model | Model | - | No |
 
 ### Groups & Shared Expenses (11 files)
 
@@ -501,52 +539,73 @@
 | `receipt/WarrantyTextExtractor.kt` | WarrantyTextExtractor | Extracts warranty text | Engine | - | No |
 | `receiptmatching/ReceiptTransactionMatcher.kt` | ReceiptTransactionMatcher | Matches receipts to transactions | Engine | - | No |
 
-### Privacy & Data Protection (17 files)
+### Privacy & Data Protection (34 files)
 
 **Location:** `com.yourname.expensetracker.domain.privacy`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `privacy/PrivacyCapability.kt` | PrivacyCapability | Enum of 23 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, CLOUD_AI_BANK_STATEMENT, AI_BANK_STATEMENT_PARSING, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, RAW_NOTIFICATION_RETENTION, etc.) | Enum | - | No |
-| `privacy/PrivacyGate.kt` | PrivacyGate | Gate check interface. Fail-closed, audit-logged, deterministic. | Service | - | No |
-| `privacy/PrivacyDecision.kt` | PrivacyDecision | Sealed interface: `Allowed` or `Denied(reason)`. Updated with FailClosed default. | Model | - | No |
-| `privacy/PrivacySettings.kt` | PrivacySettings | 10 boolean toggles + 2 retention day settings | Model | - | No |
-| `privacy/PrivacySettingsRepository.kt` | PrivacySettingsRepository | Settings read/write interface | Repository | - | No |
+| `privacy/BackupPrivacyGate.kt` | BackupPrivacyGate | Backup capability gate | Service | PrivacyGate | No |
+| `privacy/BankTransactionPersistencePayload.kt` | BankTransactionPersistencePayload | Bank transaction persistence payload | Model | - | No |
+| `privacy/CloudAiPrivacyGate.kt` | CloudAiPrivacyGate | Cloud AI capability gate | Service | PrivacyGate | No |
+| `privacy/CloudPayloadPolicy.kt` | CloudPayloadPolicy | Policy for what data is sent to cloud AI providers | Service | - | No |
+| `privacy/CloudPayloadRedactor.kt` | CloudPayloadRedactor | Redacts cloud payload data | Security | - | No |
+| `privacy/CompositePrivacyGate.kt` | CompositePrivacyGate | Chains all sub-gates | Service | All sub-gates | No |
+| `privacy/EffectiveCloudAiPolicy.kt` | EffectiveCloudAiPolicy | Resolves effective cloud AI policy from user settings + capability | Service | PrivacySettings, PrivacyGate | No |
+| `privacy/EmailReceiptPersistencePayload.kt` | EmailReceiptPersistencePayload | Email receipt persistence payload | Model | - | No |
+| `privacy/ExportPrivacyGate.kt` | ExportPrivacyGate | Export capability gate | Service | PrivacyGate | No |
+| `privacy/LocationPrivacyGate.kt` | LocationPrivacyGate | Location capability gate | Service | PrivacyGate | No |
+| `privacy/NotificationCaptureGate.kt` | NotificationCaptureGate | Notification capture gate | Service | PrivacyGate | No |
+| `privacy/NotificationPersistencePayload.kt` | NotificationPersistencePayload | Notification persistence payload | Model | - | No |
+| `privacy/NotificationPrivacyGate.kt` | NotificationPrivacyGate | Notification capture gate (alias) | Service | PrivacyGate | No |
+| `privacy/PreparedCloudPayload.kt` | PreparedCloudPayload | Prepared cloud payload model | Model | - | No |
+| `privacy/PrivacyAuditContext.kt` | PrivacyAuditContext | Audit context data class | Model | - | No |
 | `privacy/PrivacyAuditLogger.kt` | PrivacyAuditLogger | Gate check audit logging | Service | - | No |
 | `privacy/PrivacyBlocked.kt` | PrivacyBlocked | Sealed result for blocked operations with detailed reason | Model | PrivacyDecision | No |
-| `privacy/RawStorageMode.kt` | RawStorageMode | Enum controlling raw notification/OCR storage policies | Enum | - | No |
+| `privacy/PrivacyCapability.kt` | PrivacyCapability | Enum of gated capabilities | Enum | - | No |
+| `privacy/PrivacyCapabilityHandlingPolicy.kt` | PrivacyCapabilityHandlingPolicy | Policy for capability handling | Service | - | No |
+| `privacy/PrivacyDecision.kt` | PrivacyDecision | Sealed interface: Allowed or Denied(reason) | Model | - | No |
+| `privacy/PrivacyGate.kt` | PrivacyGate | Gate check interface. Fail-closed, audit-logged, deterministic. | Service | - | No |
+| `privacy/PrivacySettings.kt` | PrivacySettings | 10 boolean toggles + 2 retention day settings | Model | - | No |
+| `privacy/PrivacySettingsRepository.kt` | PrivacySettingsRepository | Settings read/write interface | Repository | - | No |
 | `privacy/RawContentSanitizer.kt` | RawContentSanitizer | Sanitizes raw notification content before storage | Utility | - | No |
-| `privacy/CloudPayloadPolicy.kt` | CloudPayloadPolicy | Policy for what data is sent to cloud AI providers | Service | - | No |
-| `privacy/EffectiveCloudAiPolicy.kt` | EffectiveCloudAiPolicy | Resolves effective cloud AI policy from user settings + capability | Service | PrivacySettings, PrivacyGate | No |
-| `privacy/NotificationPrivacyGate.kt` | NotificationPrivacyGate | Notification capture gate | Service | PrivacyGate | No |
-| `privacy/CloudAiPrivacyGate.kt` | CloudAiPrivacyGate | Cloud AI capability gate | Service | PrivacyGate | No |
-| `privacy/LocationPrivacyGate.kt` | LocationPrivacyGate | Location capability gate | Service | PrivacyGate | No |
-| `privacy/BackupPrivacyGate.kt` | BackupPrivacyGate | Backup capability gate | Service | PrivacyGate | No |
-| `privacy/CompositePrivacyGate.kt` | CompositePrivacyGate | Chains all sub-gates | Service | All sub-gates | No |
-| `privacy/RedactionSanitizer.kt` | RedactionSanitizer | PII redaction utility. Also: `DefaultRedactionSanitizer` implementation. | Utility | - | No |
+| `privacy/RawPersistencePolicy.kt` | RawPersistencePolicy | Persistence policy for raw data | Service | - | No |
+| `privacy/RawPersistencePolicyResolver.kt` | RawPersistencePolicyResolver | Resolves raw persistence policies | Service | - | No |
+| `privacy/RawSourceType.kt` | RawSourceType | Enum for raw source types | Enum | - | No |
+| `privacy/RawStorageMode.kt` | RawStorageMode | Enum controlling raw notification/OCR storage policies | Enum | - | No |
+| `privacy/ReceiptPersistencePayload.kt` | ReceiptPersistencePayload | Receipt persistence payload | Model | - | No |
+| `privacy/RedactionSanitizer.kt` | RedactionSanitizer | PII redaction utility | Utility | - | No |
+| `privacy/RetentionRegistry.kt` | RetentionRegistry | Registry of retention targets | Service | - | No |
+| `privacy/RetentionTarget.kt` | RetentionTarget | Single retention target definition | Model | - | No |
+| `privacy/SafePrivacyMetadata.kt` | SafePrivacyMetadata | Sanitized privacy metadata | Model | - | No |
+| `privacy/SensitiveHashingService.kt` | SensitiveHashingService | Hashing for sensitive fields | Service | - | No |
 
-### Receipt Lifecycle (10 files)
+### Receipt Lifecycle (18 files)
 
 **Location:** `com.yourname.expensetracker.domain.receipt.lifecycle`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | ReceiptLifecycleCoordinator | Single entry for ALL receipt processing | Engine | - | No |
-| `receipt/lifecycle/ReceiptMatchLifecycleService.kt` | ReceiptMatchLifecycleService | Lifecycle-aware receipt match mutations + events (P3) | Service | AppDatabase, ScannedReceiptDao, ReceiptEventDao, DatabaseWriteBarrier, TimeProvider | No |
-| `receipt/lifecycle/ReceiptLinkService.kt` | ReceiptLinkService | Centralized receipt-expense linking | Service | - | No |
-| `receipt/lifecycle/ReceiptAssetStore.kt` | ReceiptAssetStore | File persistence, hashing, backup | Service | - | No |
-| `receipt/lifecycle/ReceiptInputValidator.kt` | ReceiptInputValidator | URI/MIME/size validation | Service | - | No |
-| `receipt/lifecycle/ReceiptDuplicateDetector.kt` | ReceiptDuplicateDetector | 3-signal dedup engine | Engine | - | No |
-| `receipt/lifecycle/ReceiptSideEffectDispatcher.kt` | ReceiptSideEffectDispatcher | Document-type-gated side effects | Engine | - | No |
 | `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific processing | Engine | - | No |
-| `receipt/lifecycle/ReceiptDebugExporter.kt` | ReceiptDebugExporter | Debug export of receipt lifecycle data | Utility | - | No |
-| `receipt/ReceiptReceiptSourceType.kt` | ReceiptSourceType | Enum: 9 receipt source types | Enum | - | No |
+| `receipt/lifecycle/BankStatementResult.kt` | BankStatementResult | Structured result | Model | - | No |
+| `receipt/lifecycle/EmailReceiptProcessResult.kt` | EmailReceiptProcessResult | Email receipt processing result | Model | - | No |
+| `receipt/lifecycle/ReceiptAssetStore.kt` | ReceiptAssetStore | File persistence, hashing, backup | Service | - | No |
+| `debug/ReceiptDebugExporter.kt` | ReceiptDebugExporter | Debug export of receipt lifecycle data | Utility | - | No |
+| `receipt/lifecycle/ReceiptDuplicateDetector.kt` | ReceiptDuplicateDetector | 3-signal dedup engine | Engine | - | No |
+| `receipt/lifecycle/ReceiptInputValidator.kt` | ReceiptInputValidator | URI/MIME/size validation | Service | - | No |
+| `receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | ReceiptLifecycleCoordinator | Single entry for ALL receipt processing | Engine | - | No |
+| `receipt/lifecycle/ReceiptLifecycleEventTypes.kt` | ReceiptLifecycleEventTypes | Event type enums for lifecycle | Enum | - | No |
+| `receipt/lifecycle/ReceiptLifecycleEventWriter.kt` | ReceiptLifecycleEventWriter | Writes lifecycle events | Service | - | No |
+| `receipt/lifecycle/ReceiptLinkService.kt` | ReceiptLinkService | Centralized receipt-expense linking | Service | - | No |
+| `receipt/lifecycle/ReceiptMatchLifecycleService.kt` | ReceiptMatchLifecycleService | Lifecycle-aware receipt match mutations + events (P3) | Service | AppDatabase, ScannedReceiptDao, ReceiptEventDao, DatabaseWriteBarrier, TimeProvider | No |
+| `receipt/lifecycle/ReceiptSideEffectDispatcher.kt` | ReceiptSideEffectDispatcher | Document-type-gated side effects | Engine | - | No |
+| `receipt/lifecycle/ReceiptSideEffectInput.kt` | ReceiptSideEffectInput | Input models for side effects | Model | - | No |
+| `receipt/EmailReceiptData.kt` | EmailReceiptData | Structured email receipt data | Model | - | No |
 | `receipt/ReceiptDocumentType.kt` | ReceiptDocumentType | Enum: 6 document types | Enum | - | No |
 | `receipt/ReceiptProcessingStatus.kt` | ReceiptProcessingStatus | Enum: 14 processing states | Enum | - | No |
-| `receipt/EmailReceiptData.kt` | EmailReceiptData | Structured email receipt data | Model | - | No |
-| `receipt/lifecycle/BankStatementResult.kt` | BankStatementResult | Structured result: receiptId, transactionsFound, reviewsCreated, duplicatesSkipped | Model | - | No |
+| `receipt/ReceiptReceiptSourceType.kt` | ReceiptSourceType | Enum: 9 receipt source types | Enum | - | No |
 
-### Recurring Expenses (15 files)
+### Recurring Expenses (10 files)
 
 **Location:** `com.yourname.expensetracker.domain.recurring`
 
@@ -619,7 +678,7 @@
 | `transaction/lifecycle/TransactionLifecycleCoordinator.kt` | TransactionLifecycleCoordinator | Single entry point for ALL expense CUD | Engine | - | No |
 | `transaction/lifecycle/TransactionSideEffectDispatcher.kt` | TransactionSideEffectDispatcher | Post-creation side effects | Engine | - | No |
 
-### Use Cases (41 files)
+### Use Cases (31 files)
 
 **Location:** `com.yourname.expensetracker.domain.usecase`
 
@@ -674,9 +733,68 @@
 |------|-------|---------|------|--------------|-------|
 | `usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` | AutoCreateWarrantyFromReceiptUseCase | Creates warranty from receipt | UseCase | - | No |
 
-### Utilities (24 files)
+### Side Effect System (19 files)
 
-**Location:** `com.yourname.expensetracker.domain.util`
+**Location:** `com.yourname.expensetracker.domain.sideeffect`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `sideeffect/CompositeSideEffectEventWriter.kt` | CompositeSideEffectEventWriter | Composite event writer for side effects | Service | - | No |
+| `sideeffect/DiagnosticSideEffectEventWriter.kt` | DiagnosticSideEffectEventWriter | Diagnostic implementation of event writer | Service | - | No |
+| `sideeffect/MutationResult.kt` | MutationResult | Result type for mutations | Model | - | No |
+| `sideeffect/PostCommitAction.kt` | PostCommitAction | Interface for post-commit action | Service | - | No |
+| `sideeffect/PostCommitActionBatch.kt` | PostCommitActionBatch | Batch of post-commit actions | Model | - | No |
+| `sideeffect/PostCommitActionRunner.kt` | PostCommitActionRunner | Interface for running post-commit actions | Service | - | No |
+| `sideeffect/PostCommitActionRunnerExtensions.kt` | PostCommitActionRunnerExtensions | Extension functions for runner | Utility | - | No |
+| `sideeffect/PostCommitActionRunnerImpl.kt` | PostCommitActionRunnerImpl | Implementation of post-commit runner | Service | - | No |
+| `sideeffect/SideEffectActionResult.kt` | SideEffectActionResult | Result type for side effect actions | Model | - | No |
+| `sideeffect/SideEffectBatchResult.kt` | SideEffectBatchResult | Result type for batch execution | Model | - | No |
+| `sideeffect/SideEffectCategory.kt` | SideEffectCategory | Enum categorizing side effects | Enum | - | No |
+| `sideeffect/SideEffectExecutionContext.kt` | SideEffectExecutionContext | Context passed during side effect execution | Model | - | No |
+| `sideeffect/SideEffectEventWriter.kt` | SideEffectEventWriter | Interface for writing side effect events | Service | - | No |
+| `sideeffect/SideEffectMetadataFactory.kt` | SideEffectMetadataFactory | Factory for side effect metadata | Utility | - | No |
+| `sideeffect/SideEffectOutcome.kt` | SideEffectOutcome | Enum for side effect outcomes | Enum | - | No |
+| `sideeffect/SideEffectPriority.kt` | SideEffectPriority | Enum for priority levels | Enum | - | No |
+| `sideeffect/SideEffectSkipReason.kt` | SideEffectSkipReason | Enum for why a side effect was skipped | Enum | - | No |
+| `sideeffect/SideEffectTriggerType.kt` | SideEffectTriggerType | Enum for what triggered the side effect | Enum | - | No |
+| `sideeffect/TransactionSideEffectFailureEventWriter.kt` | TransactionSideEffectFailureEventWriter | Handles transaction failure side effects | Service | - | No |
+
+### Provenance & Source Links (28 files)
+
+**Location:** `com.yourname.expensetracker.domain.provenance`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `provenance/BankSourceEventMetadataBuilder.kt` | BankSourceEventMetadataBuilder | Builder for bank event metadata | Utility | - | No |
+| `provenance/BankSourceLinkPayloadFactory.kt` | BankSourceLinkPayloadFactory | Factory for bank source payloads | Factory | - | No |
+| `provenance/CreateExpenseSourceLinkMapper.kt` | CreateExpenseSourceLinkMapper | Mapper for expense source links | Mapper | - | No |
+| `provenance/CreateExpenseSourceLinkRequirements.kt` | CreateExpenseSourceLinkRequirements | Requirements for creating expense links | Model | - | No |
+| `provenance/DuplicateSourceLinkPolicy.kt` | DuplicateSourceLinkPolicy | Policy for handling duplicate links | Policy | - | No |
+| `provenance/ImportSourceLinkPayloadFactory.kt` | ImportSourceLinkPayloadFactory | Factory for import source payloads | Factory | - | No |
+| `provenance/NotificationSourceLinkPayloadFactory.kt` | NotificationSourceLinkPayloadFactory | Factory for notification source payloads | Factory | - | No |
+| `provenance/PendingReviewPromotionResult.kt` | PendingReviewPromotionResult | Result for promoting pending review | Model | - | No |
+| `provenance/PendingReviewSourceContext.kt` | PendingReviewSourceContext | Context for pending-review sources | Model | - | No |
+| `provenance/PendingReviewSourceLinkPromoter.kt` | PendingReviewSourceLinkPromoter | Interface for promoting pending review | Service | - | No |
+| `provenance/PendingReviewSourceLinkPromoterImpl.kt` | PendingReviewSourceLinkPromoterImpl | Implementation of promoter | Service | - | No |
+| `provenance/PendingReviewSourceLinkResult.kt` | PendingReviewSourceLinkResult | Result for pending-review source linking | Model | - | No |
+| `provenance/PendingReviewSourceLinkService.kt` | PendingReviewSourceLinkService | Interface for review source link service | Service | - | No |
+| `provenance/PendingReviewSourceLinkServiceImpl.kt` | PendingReviewSourceLinkServiceImpl | Implementation of review link service | Service | - | No |
+| `provenance/PendingReviewSourcePayloadFactory.kt` | PendingReviewSourcePayloadFactory | Factory for review source payloads | Factory | - | No |
+| `provenance/ReceiptSourceLinkPayloadFactory.kt` | ReceiptSourceLinkPayloadFactory | Factory for receipt source payloads | Factory | - | No |
+| `provenance/SafeProvenanceMetadata.kt` | SafeProvenanceMetadata | Sanitized metadata for provenance | Model | - | No |
+| `provenance/SourceIdentityKeyFactory.kt` | SourceIdentityKeyFactory | Factory for source identity keys | Utility | - | No |
+| `provenance/SourceLinkBackfillWorker.kt` | SourceLinkBackfillWorker | Worker for backfilling source links (non-registry) | Worker | - | No |
+| `provenance/SourceLinkEnums.kt` | SourceLinkEnums | Enums for source link types | Enum | - | No |
+| `provenance/SourceLinkEventMetadataBuilder.kt` | SourceLinkEventMetadataBuilder | Builder for event metadata | Utility | - | No |
+| `provenance/SourceLinkFallbackPolicy.kt` | SourceLinkFallbackPolicy | Fallback policy for missing links | Policy | - | No |
+| `provenance/SourceLinkPayload.kt` | SourceLinkPayload | Base payload interface for source links | Model | - | No |
+| `provenance/SourceLinkQueryService.kt` | SourceLinkQueryService | Service for querying source links | Service | - | No |
+| `provenance/SourceLinkWriteException.kt` | SourceLinkWriteException | Exception type for write failures | Model | - | No |
+| `provenance/SourceLinkWriteResult.kt` | SourceLinkWriteResult | Result type for source link writes | Model | - | No |
+| `provenance/SourceLinkWriter.kt` | SourceLinkWriter | Interface for writing source links | Service | - | No |
+| `provenance/SourceLinkWriterImpl.kt` | SourceLinkWriterImpl | Implementation of source link writer | Service | - | No |
+
+### Utilities (24 files)
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
@@ -707,13 +825,40 @@
 |------|-------|---------|------|--------------|-------|
 | `common/Hashing.kt` | *(extension)* | SHA-256 hash prefix utility (`String.sha256Prefix()`) | Utility | - | No |
 
-### Notification Utilities — `domain/notification/` (1 file)
+### Notification Utilities — `domain/notification/` (16 files)
 
 **Location:** `com.yourname.expensetracker.domain.notification`
 
+**Root (4 files):**
+
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
+| `notification/NotificationPersistenceContext.kt` | NotificationPersistenceContext | Persistence context for notifications | Model | - | No |
+| `notification/NotificationPipelineOutcome.kt` | NotificationPipelineOutcome | Pipeline outcome models | Model | - | No |
 | `notification/RawNotificationFingerprint.kt` | RawNotificationFingerprint | SHA-256 fingerprinting for notification deduplication | Utility | MessageDigest | No |
+| `notification/RawNotificationInsertResult.kt` | RawNotificationInsertResult | Insert result models | Model | - | No |
+
+**Capture subsystem — `notification/capture/` (11 files):**
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `notification/capture/NotificationCaptureCrypto.kt` | NotificationCaptureCrypto | Cryptographic operations for capture | Security | - | No |
+| `notification/capture/NotificationCaptureDeduplicationGate.kt` | NotificationCaptureDeduplicationGate | Deduplication gate | Engine | - | No |
+| `notification/capture/NotificationCaptureRepair.kt` | NotificationCaptureRepair | Repair utilities for capture | Utility | - | No |
+| `notification/capture/NotificationCaptureVibrator.kt` | NotificationCaptureVibrator | Haptic feedback for capture | Service | - | No |
+| `notification/capture/NotificationIntakeEvent.kt` | NotificationIntakeEvent | Intake event models | Model | - | No |
+| `notification/capture/NotificationIntakeWorker.kt` | NotificationIntakeWorker | (domain-side spec) Intake worker spec | Model | - | No |
+| `notification/capture/NotificationRateLimiter.kt` | NotificationRateLimiter | Rate limiting for capture | Service | - | No |
+| `notification/capture/NotificationRawBackupPolicy.kt` | NotificationRawBackupPolicy | Raw backup policy | Service | - | No |
+| `notification/capture/PendingNotificationStatus.kt` | PendingNotificationStatus | Status enum for pending notifications | Enum | - | No |
+| `notification/capture/UploadedNotification.kt` | UploadedNotification | Uploaded notification models | Model | - | No |
+| `notification/capture/UploadedNotificationQueue.kt` | UploadedNotificationQueue | Queue for uploaded notifications | Service | - | No |
+
+**Money signal subsystem — `notification/money/` (1 file):**
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `notification/money/NotificationMoneySignalDetector.kt` | NotificationMoneySignalDetector | Detects money-related signals in notifications | Engine | - | No |
 
 ### Widget (2 files)
 
@@ -724,21 +869,26 @@
 | `widget/model/WidgetStyle.kt` | WidgetStyle | Widget style models | Model | - | No |
 | `widget/service/WidgetStyleRepository.kt` | WidgetStyleRepository | Widget style interface | Repository | - | No |
 
-### Workers (9 files)
+### Workers (14 files)
 
 **Location:** `com.yourname.expensetracker.domain.workers`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
+| `workers/NoOpWorkerDrainController.kt` | NoOpWorkerDrainController | No-op drain controller (testing) | Service | - | No |
+| `workers/NotificationPermissionChecker.kt` | NotificationPermissionChecker | Checks Android notification permission before worker dispatch | Service | Context | No |
+| `workers/PrivacyRuntimeWorkerPolicy.kt` | PrivacyRuntimeWorkerPolicy | Privacy-gated worker execution policy | Service | PrivacyGate | No |
+| `workers/RetryableWorkerException.kt` | RetryableWorkerException | Typed exception for retryable worker failures | Model | - | No |
+| `workers/WorkerDrainController.kt` | WorkerDrainController | Interface for draining/pausing workers | Service | - | No |
+| `workers/WorkerExecutionGuard.kt` | WorkerExecutionGuard | Prevents concurrent worker execution with timeout-based locking | Service | - | No |
+| `workers/WorkerLease.kt` | WorkerLease | Lease model for worker execution | Model | - | No |
+| `workers/WorkerLeaseRegistry.kt` | WorkerLeaseRegistry | Interface for lease registration | Service | - | No |
+| `workers/WorkerLeaseRegistryImpl.kt` | WorkerLeaseRegistryImpl | Implementation of lease registry | Service | - | No |
+| `workers/WorkerRegistry.kt` | WorkerRegistry | Central registry of all registered workers | Service | - | No |
+| `workers/WorkerRunContext.kt` | WorkerRunContext | Context data class for worker execution runs | Model | - | No |
+| `workers/WorkerRunLogger.kt` | WorkerRunLogger | Interface for logging worker execution runs | Service | - | No |
 | `workers/WorkerSpec.kt` | WorkerSpec | Worker specification data class | Model | - | No |
 | `workers/WorkerSpecScheduler.kt` | WorkerSpecScheduler | Centralized worker scheduling | Service | - | No |
-| `workers/WorkerRunLogger.kt` | WorkerRunLogger | Interface for logging worker execution runs | Service | - | No |
-| `workers/WorkerExecutionGuard.kt` | WorkerExecutionGuard | Prevents concurrent worker execution with timeout-based locking | Service | - | No |
-| `workers/WorkerRegistry.kt` | WorkerRegistry | Central registry of all registered workers | Service | - | No |
-| `workers/RetryableWorkerException.kt` | RetryableWorkerException | Typed exception for retryable worker failures | Model | - | No |
-| `workers/PrivacyRuntimeWorkerPolicy.kt` | PrivacyRuntimeWorkerPolicy | Privacy-gated worker execution policy | Service | PrivacyGate | No |
-| `workers/NotificationPermissionChecker.kt` | NotificationPermissionChecker | Checks Android notification permission before worker dispatch | Service | Context | No |
-| `workers/WorkerRunContext.kt` | WorkerRunContext | Context data class for worker execution runs | Model | - | No |
 
 ---
 
@@ -752,7 +902,7 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `database/AppDatabase.kt` | AppDatabase | Room database definition (v143) | Database | All entities, DAOs | No |
+| `database/AppDatabase.kt` | AppDatabase | Room database definition (v147) | Database | All entities, DAOs | No |
 | `database/GroupTransactionCoordinator.kt` | GroupTransactionCoordinator | Coordinates group transactions | Engine | GroupExpenseDao, GroupMemberDao | No |
 
 #### Type Converters (1 file)
@@ -761,7 +911,7 @@
 |------|-------|---------|------|--------------|-------|
 | `database/converter/Converters.kt` | Converters | Room type converters | Converter | - | No |
 
-#### DAOs (67 files)
+#### DAOs (69 files)
 
 **Location:** `com.yourname.expensetracker.data.database.dao`
 
@@ -798,6 +948,7 @@
 | `dao/MerchantLocationDao.kt` | MerchantLocationDao | Merchant locations DAO | DAO | - | No |
 | `dao/MerchantNormalizationDao.kt` | MerchantNormalizationDao | Merchant normalization DAO | DAO | - | No |
 | `dao/MileageTrackingDao.kt` | MileageTrackingDao | Mileage tracking DAO | DAO | - | No |
+| `dao/NegotiationOutcomeDao.kt` | NegotiationOutcomeDao | Negotiation outcome DAO | DAO | - | No |
 | `dao/NotificationIntakeDao.kt` | NotificationIntakeDao | Notification intake DAO | DAO | - | No |
 | `dao/OperationRunDao.kt` | OperationRunDao | Operation run DAO | DAO | - | No |
 | `dao/OperationRunEventDao.kt` | OperationRunEventDao | Operation run event DAO | DAO | - | No |
@@ -815,6 +966,7 @@
 | `dao/RecurringExpenseDao.kt` | RecurringExpenseDao | Recurring expenses DAO | DAO | - | No |
 | `dao/RecurringOccurrenceDao.kt` | RecurringOccurrenceDao | Recurring occurrences DAO | DAO | - | No |
 | `dao/RecurringReminderDeliveryDao.kt` | RecurringReminderDeliveryDao | Recurring reminder delivery DAO | DAO | - | No |
+| `dao/RestrictedExpenseDaoMutation.kt` | RestrictedExpenseDaoMutation | Restricted DAO mutation wrapper | DAO | - | No |
 | `dao/ReturnWindowDao.kt` | ReturnWindowDao | Return windows DAO | DAO | - | No |
 | `dao/SavingsGoalDao.kt` | SavingsGoalDao | Savings goals DAO | DAO | - | No |
 | `dao/SavingsSweepPlanDao.kt` | SavingsSweepPlanDao | Savings sweep plans DAO | DAO | - | No |
@@ -835,7 +987,7 @@
 | `dao/WarrantyLifecycleEventDao.kt` | WarrantyLifecycleEventDao | Warranty lifecycle events DAO | DAO | - | No |
 | `dao/WarrantyReminderDeliveryDao.kt` | WarrantyReminderDeliveryDao | Warranty reminder delivery DAO | DAO | - | No |
 
-#### Entities (69 files)
+#### Entities (70 files)
 
 **Location:** `com.yourname.expensetracker.data.database.entity`
 
@@ -875,6 +1027,7 @@
 | `entity/MerchantLocation.kt` | MerchantLocation | Merchant location entity | Entity | - | No |
 | `entity/MerchantLocationCorrection.kt` | MerchantLocationCorrection | Location correction entity | Entity | - | No |
 | `entity/MileageTracking.kt` | MileageTracking | Mileage tracking entity | Entity | - | No |
+| `entity/NegotiationOutcomeEntity.kt` | NegotiationOutcomeEntity | Negotiation outcome entity | Entity | - | No |
 | `entity/NotificationIntakeEntity.kt` | NotificationIntakeEntity | Notification intake entity | Entity | - | No |
 | `entity/OperationRun.kt` | OperationRun | Operation run entity | Entity | - | No |
 | `entity/OperationRunEvent.kt` | OperationRunEvent | Operation run event entity | Entity | - | No |
@@ -1137,7 +1290,7 @@
 
 ## DI/MODULES PACKAGE
 
-**Location:** `com.yourname.expensetracker.di` — 34 Hilt @Module files + qualifier annotations
+**Location:** `com.yourname.expensetracker.di` — 32 Hilt @Module files (+ 1 @EntryPoint in startup/) + qualifier annotations
 
 | File | Class | Purpose | Type | Provides | Tests |
 |------|-------|---------|------|----------|-------|
@@ -1145,7 +1298,7 @@
 | `BackupRepositoryModule.kt` | BackupRepositoryModule | Backup binding | Module | DatabaseBackupRepository | No |
 | `CashFlowModule.kt` | CashFlowModule | Cash flow binding | Module | CashFlowCalculator | No |
 | `CurrencyModule.kt` | CurrencyModule | Currency binding | Module | CurrencySettingsRepository, CurrencyRatesRepository, ExchangeRateStore | No |
-| `DaoModule.kt` | DaoModule | DAO injection (67 DAOs) | Module | All DAOs except AiModule-provided | No |
+| `DaoModule.kt` | DaoModule | DAO injection (68 DAOs) | Module | All DAOs except AiModule-provided | No |
 | `DashboardAnomalyModule.kt` | DashboardAnomalyModule | Anomaly alert binding | Module | AnomalyAlertRepository (domain + dashboard) | No |
 | `DashboardContractsModule.kt` | DashboardContractsModule | Dashboard contracts (7 adapters) | Module | DashboardRepositoryContracts | No |
 | `DatabaseModule.kt` | DatabaseModule | Database initialization | Module | AppDatabase, GroupTransactionCoordinator | No |
@@ -1157,6 +1310,7 @@
 | `GroupsModule.kt` | GroupsModule | Groups binding | Module | GroupsRepository, SharedExpenseDataPort, Use cases | No |
 | `LocationResolverPortsModule.kt` | LocationResolverPortsModule | Location ports | Module | LocationCachePort, MerchantClusterPort | No |
 | `NaturalLanguageModule.kt` | NaturalLanguageModule | NL binding | Module | NaturalLanguageExpenseQueryRepository | No |
+| `NegotiationModule.kt` | NegotiationModule | Negotiation binding (NEW) | Module | MarketRateProvider → StaticMarketRateProvider | No |
 | `NetworkModule.kt` | NetworkModule | Network client | Module | @LocationHttpClient, @CloudAiHttpClient OkHttpClient | No |
 | `OcrImprovementsModule.kt` | OcrImprovementsModule | OCR binding | Module | EnhancedMerchantExtractor, OcrLanguageProcessor, OcrPreprocessingPipeline | No |
 | `ParserModule.kt` | ParserModule | Bank parser binding | Module | GreekBankParser | No |
@@ -1164,17 +1318,17 @@
 | `ProvenanceModule.kt` | ProvenanceModule | Provenance tracking | Module | Provenance event recording | No |
 | `ReceiptParsingModule.kt` | ReceiptParsingModule | Receipt parsing | Module | MerchantRulesPolicy binding | No |
 | `ReminderSettingsModule.kt` | ReminderSettingsModule | Reminder settings binding (P4) | Module | BillReminderSettingsRepository | No |
-| `RetentionModule.kt` | RetentionModule | Data retention policy | Module | RetentionRegistry with 5 targets | No |
+| `RetentionModule.kt` | RetentionModule | Data retention policy | Module | RetentionRegistry with 10 targets (raw_notifications, scanned_receipts.rawOcrText, ai_artifacts, ai_chat_messages, email_receipt_sources, notification_intake, pipeline_diagnostic_events, pending_reviews.notificationText, background_job_runs.errorMessage, bank_statement_import_items.merchant) | No |
 | `SavingsModule.kt` | SavingsModule | Savings binding | Module | SmartSavingsEngine, AutomatedSavingsRule*, SavingsGamificationEngine | No |
 | `SavingsRepositoryBindingsModule.kt` | SavingsRepositoryBindingsModule | Savings repos | Module | DomainSavingsGoalRepository binding | No |
 | `SecurityModule.kt` | SecurityModule | Security binding | Module | SecureKeyStorage | No |
 | `ServiceModule.kt` | ServiceModule | Services binding | Module | Gson, NotificationService, GeocodingService, NearbyPoi, Location, Widget, Speech | No |
 | `TaxModule.kt` | TaxModule | Tax binding | Module | TaxConfiguration → GreeceTaxConfiguration | No |
 | `TimeModule.kt` | TimeModule | Time provider | Module | TimeProvider → SystemTimeProvider | No |
-| `WorkerModule.kt` | WorkerModule | Worker logging | Module | WorkerRunLogger → WorkerRunLoggerImpl | No |
+| `WorkerModule.kt` | WorkerModule | Worker execution infrastructure | Module | WorkerLeaseRegistry → WorkerLeaseRegistryImpl, WorkerDrainController → WorkerLeaseRegistryImpl, NotificationPermissionChecker → AndroidNotificationPermissionChecker, WorkManager provider | No |
 | *(ui)* `EmptyStatePresentationModule.kt` | EmptyStatePresentationModule | Empty state UI bindings | Module | EmptyStatePresentationModel | No |
 | *(startup)* `AppStartupDelegate.kt` | AppStartupDelegate | @EntryPoint for app startup | EntryPoint | InitializationProvider | No |
-| *(startup)* `AppStartupInitializer.kt` | AppStartupInitializer | App startup initializer | Module | ContentProvider-based init | No |
+
 
 ---
 
@@ -1444,19 +1598,21 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 518 |
-| **Data Files** | 298 |
-| **DI / @Module Files** | 34 |
-| **Total Source Files** | 1044 |
-| **Test Files** | 475+ |
-| **Database Version** | 143 |
-| **Database Entities** | 69 |
-| **DAOs** | 67 |
-| **Repositories** | 65 (52 data + 13 domain interfaces) |
-| **Use Cases** | 41 |
-| **ViewModels** | 41 |
-| **Engines** | 70+ |
-| **AI Providers** | 44 |
+| **Domain Files** | 520 (55 subdirectories) |
+| **Data Files** | 305 (16 sub-packages) |
+| **DI / @Module Files** | 32 (in di/) + 1 (in ui/) + 1 @EntryPoint |
+| **Total Source Files** | 1050 (production .kt) |
+| **Test Files** | 600+ unit + 27 instrumented |
+| **Database Version** | 147 |
+| **Database Entities** | 69 (70 files in entity/ dir, 69 with @Entity) |
+| **DAOs** | 68 (69 files in dao/ dir, 68 with @Dao) |
+| **Navigation Destinations** | 40 |
+| **Repositories** | 62 (46 data + 16 domain interfaces) |
+| **Use Cases** | 31 |
+| **ViewModels** | 41 (40 @HiltViewModel + 1 inline) |
+| **Engines (*Engine.kt files)** | 29 |
+| **AI Services (domain/ai/service/)** | 18 |
+| **AI Use Cases (domain/ai/usecase/)** | 25 |
 
 ---
 

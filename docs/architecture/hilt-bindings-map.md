@@ -1,6 +1,6 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 31 Hilt @Module files (+ 1 @EntryPoint).
+> Complete interface → implementation binding map for all 33 Hilt @Module files (+ 1 @EntryPoint).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -21,11 +21,11 @@ Dependencies:
 
 ### `DaoModule` — `di/DaoModule.kt`
 ```
-Provides (~63 DAOs):
+Provides (64 DAOs):
   PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, NotificationIntakeDao,
   BlockedPackageDao, ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao,
   MerchantCategoryDao, PendingReviewDao, UserCorrectionDao, SourceStatsDao,
-  SourceStatsEventDao, RecurringExpenseDao (deprecated),
+  NegotiationOutcomeDao, RecurringExpenseDao (deprecated),
   ManualRecurringExpenseDao, MerchantNormalizationDao, MerchantLocationDao,
   RecommendationDao, ReceiptItemCategorizationDao, WarrantyDao, ReturnWindowDao,
   WarrantyLifecycleEventDao, WarrantyReminderDeliveryDao,
@@ -48,7 +48,7 @@ Dependencies:
 Additional DAOs provided via AiModule (3):
   AiArtifactDao, AiChatSessionDao, AiChatMessageDao
 
-Total DAOs: ~69 (~63 DaoModule + 3 AiModule + ~3 unbound/auto-provided)
+Total DAOs: 68 (64 DaoModule + 3 AiModule + 1 unbound: SourceStatsEventDao)
 ```
 
 ### `DispatchersModule` — `di/DispatchersModule.kt`
@@ -112,6 +112,15 @@ Dependencies:
   various geocoding services, Android system services
 ```
 
+### `NegotiationModule` — `di/NegotiationModule.kt`
+```
+Binds:
+  MarketRateProvider                          → StaticMarketRateProvider
+Dependencies:
+  (none)
+```
+Previously auto-provided via `@Inject constructor`, now explicitly bound for clarity.
+
 ---
 
 ## 2. AI Modules
@@ -125,7 +134,8 @@ Binds:
   AiChatRepository                            → AiChatRepositoryImpl
   AiPolicy                                    → AiPolicyImpl
   AiCapabilityRouter                          → DefaultAiCapabilityRouter
-  HybridRouter                                → DefaultHybridRouter
+  CloudProviderConnectionTester               → OkHttpCloudProviderConnectionTester
+  HybridRouter                                → HybridRouter (generic, @Inject constructor)
   AiEnvironmentMonitor                        → DefaultAiEnvironmentMonitor
   AiWorkScheduler                             → AiWorkSchedulerImpl
   DashboardBriefingService                    → HybridDashboardBriefingService
@@ -145,8 +155,8 @@ Provides:
   AiChatSessionDao                            → database.aiChatSessionDao()
   AiChatMessageDao                            → database.aiChatMessageDao()
   OnDeviceReceiptItemCategorizationService    → new instance
-  CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy
-  CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy
+  CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
+  CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
 ```
 
 ### `OcrImprovementsModule` — `di/OcrImprovementsModule.kt`
@@ -170,9 +180,12 @@ Binds:
 ### `CashFlowModule` — `di/CashFlowModule.kt`
 ```
 Provides:
+  AccountBalanceProvider                      → NetCashflowBalanceProvider
   CashFlowCalculator                          → CashFlowCalculator(
       ExpenseRepository, MergedRecurringPatternsProvider, TimeProvider,
-      RecurringLifecycleCoordinator, RecurringOccurrenceDao)
+      RecurringLifecycleCoordinator, RecurringOccurrenceDao,
+      AnalyticsCurrencyNormalizer, CurrencySettingsRepository, CurrencyConverter,
+      DatabaseReadBarrier, MoneyNormalizationEngine)
 ```
 
 ### `CurrencyModule` — `di/CurrencyModule.kt`
@@ -239,12 +252,11 @@ Auto-provided via @Inject constructor:
 ### `GroupsModule` — `di/GroupsModule.kt` (continued)
 ```
 Auto-provided via @Inject constructor:
-  StaticMarketRateProvider                    → @Singleton @Inject constructor (seed-data impl of MarketRateProvider, no Dagger module needed)
   GroupLifecycleCoordinator                   → @Singleton @Inject constructor (domain interface, no Dagger cycle)
   GroupBalanceCalculator                      → @Singleton @Inject constructor (per-member net balance calculator)
 ```
 
-Note: `MarketRateProvider` interface is consumed by `SmartBillNegotiationEngine`; `StaticMarketRateProvider` is the single `@Inject`-constructor implementation, satisfying Hilt's auto-binding rules for single-implementation interfaces.
+Note: `MarketRateProvider` is now explicitly bound by `NegotiationModule` (see section 1).
 
 ### Analytics Engines — Auto-provided (no module needed)
 
@@ -391,12 +403,18 @@ Binds:
 - `OperationRunRecorder` → `CompositeOperationRunRecorder`
 - `WorkerRunLogger` → `WorkerRunLoggerImpl`
 - `DiagnosticsRepository` → `DiagnosticsRepositoryImpl`
+- `PostCommitActionRunner` → `PostCommitActionRunnerImpl`
+- `SideEffectEventWriter` → `CompositeSideEffectEventWriter`
+- `TransactionDatePolicy` → `DefaultTransactionDatePolicy`
 
 ---
 
 ### `RetentionModule` — `di/RetentionModule.kt`
 `@Module @InstallIn(SingletonComponent::class)` providing:
-- `RetentionRegistry` with 5 registered `RetentionTarget` entries: `raw_notifications`, `scanned_receipts.rawOcrText`, `ai_artifacts`, `ai_chat_messages`, `email_receipt_sources`
+- `RetentionRegistry` with 10 registered `RetentionTarget` entries:
+  - `raw_notifications`, `scanned_receipts.rawOcrText`, `ai_artifacts`, `ai_chat_messages`, `email_receipt_sources`
+  - `notification_intake`, `pipeline_diagnostic_events`, `pending_reviews.notificationText`
+  - `background_job_runs.errorMessage`, `bank_statement_import_items.merchant`
 
 ---
 
@@ -436,4 +454,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 31 Hilt @Module files · 65+ repositories · ~69 DAOs (~63 DaoModule + 3 AiModule + ~3 unbound) · 64+ entities · DB v143
+**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 64+ entities · DB v147

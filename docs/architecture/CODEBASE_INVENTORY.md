@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-06-01 (snapshot)  
-**Database Version:** v143  
+**Generated:** 2026-06-09 (updated snapshot)  
+**Database Version:** v147  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -27,7 +27,7 @@ All 12 pipelines (P1-P12) are hardened and complete. Universal PRs U-PR1 through
 - **`BillReminderWorker`** — checks runtime settings before dispatching.
 - **`TransactionUpdateKind`** expanded — `AMOUNT`, `DATE`, `CURRENCY`, `OWNERSHIP`, `PAYMENT_CORE`. `affectsRecurringMatch()` centralizes reconciliation triggers.
 - **DB v131 → v141** — 8 version bumps for new tables/columns.
-- **`AppDatabase`** — 69 entities.
+- **`AppDatabase`** — 70 entities.
 - **Single-writer principal** enforced for `RecurringRuleLifecycleCoordinator` — no direct DAO mutations outside coordinator.
 - `TransactionLifecycleCoordinator` — depends on `CurrencySettingsRepository` to resolve the user's home currency for base snapshot conversion metadata.
 - Reminder action receivers (`SnoozeReminderReceiver`, `DismissReminderReceiver`) are Hilt entry points; both enforce `RestoreMaintenanceMode` write gating and use `TimeProvider`.
@@ -114,7 +114,10 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - DebugScreen + DebugViewModel (not navigable)
 - DebugViewerScreen (no ViewModel)
 - CategorizationDebugScreen + CategorizationDebugViewModel (not navigable)
+- SourceLinkDebugScreen + SourceLinkDebugViewModel (not navigable)
 - DebugDataStorage, DebugIssueDetector (utilities)
+
+> **Note:** `BackupRestoreScreen` + `BackupRestoreViewModel`, `PrivacySettingsScreen` + `PrivacySettingsViewModel` exist in code and NavigationDestination but share space with settings routes rather than shell/feature destinations.
 
 ---
 
@@ -464,6 +467,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - BankStatementImportRun — Bank statement import run metadata
 - BankStatementImportItem — Bank statement import line items
 - WarrantyReminderDelivery — Durable warranty reminder delivery tracking (table: `warranty_reminder_deliveries`)
+- NegotiationOutcomeEntity — Negotiation outcomes (table: `negotiation_outcomes`, added in v145→v146)
 
 ### DAOs
 One DAO per entity (mostly 1-to-1 mapping)
@@ -483,10 +487,13 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **BankStatementImportRunDao** — Bank statement import run metadata
 - **BankStatementImportItemDao** — Bank statement import line items
 - **WarrantyReminderDeliveryDao** — Warranty reminder delivery tracking
+- **NegotiationOutcomeDao** — Negotiation outcome tracking
+- **RestrictedExpenseDaoMutation** — Restricted DAO mutation wrapper
 
 ### Migration History
-- Database Version: 143 (incremental: 120→121→122→...→143). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table.
-- Migration methods: current chain in `AppDatabase.kt`
+- Database Version: **147** (incremental: 120→121→122→...→145→146→147). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table, 143→145 for schema cleanup (pending_reviews rebuild, index cleanup), 145→146 for `negotiation_outcomes` table, 146→147 for `group_members.leftAt` + `group_expenses.idempotencyKey`.
+- **Active migrations:** `DatabaseMigrations.ALL` = `[MIGRATION_145_146, MIGRATION_146_147]` (defined in `DatabaseMigrations.kt`)
+- Historical migrations defined in `AppDatabase.kt` companion but **not registered** in the active chain.
 - Export schema: Enabled
 - Type converters: Defined in `converter/Converters.kt`
 
@@ -512,15 +519,16 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **CurrencyModule** - Currency conversion
 - **ExportModule** - Export functionality
 - **GroupsModule** - Shared expenses
+- **NegotiationModule** - Negotiation/MarketRateProvider binding (NEW)
 - **OcrImprovementsModule** - OCR & receipts
 - **SavingsModule** - Savings engines
 - **SavingsRepositoryBindingsModule** - Savings repository bindings
-- **WorkerModule** - Worker run logging binding (WorkerRunLogger interface → WorkerRunLoggerImpl)
+- **WorkerModule** - Worker execution infrastructure (binds WorkerLeaseRegistry, WorkerDrainController, NotificationPermissionChecker, WorkManager)
 - **TaxModule** - Tax estimation
 - **NaturalLanguageModule** - Natural language search bindings
 - **EmailIngestionModule** - Email receipt ingestion
-- **RetentionModule** - Retention target bindings
-- **DiagnosticsModule** - Pipeline diagnostics wiring
+- **RetentionModule** - Retention target bindings (10 targets)
+- **DiagnosticsModule** - Pipeline diagnostics wiring (also binds WorkerRunLogger)
 - **ProvenanceModule** - Data provenance
 - **ReminderSettingsModule** - Bill reminder dispatch settings
 
@@ -543,25 +551,26 @@ One DAO per entity (mostly 1-to-1 mapping)
 ### Services
 - **NotificationCaptureService**
   - Type: NotificationListenerService
-  - Foreground: dataSync|location
+  - Foreground: dataSync (FOREGROUND_SERVICE_LOCATION permission declared separately)
   - Exported: true
 
-### Receivers
-- **BootReceiver** - BOOT_COMPLETED, MY_PACKAGE_REPLACED
-- **ServiceRestartReceiver** - Service keep-alive
-- **SnoozeReminderReceiver** - Hilt @AndroidEntryPoint for reminder snooze (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
-- **DismissReminderReceiver** - Hilt @AndroidEntryPoint for reminder dismiss (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
+### Receivers (4)
+- **BootReceiver** (`receiver/`) - BOOT_COMPLETED, MY_PACKAGE_REPLACED
+- **ServiceRestartReceiver** (`receiver/`) - Service keep-alive
+- **SnoozeReminderReceiver** (`service/reminder/`) - Hilt @AndroidEntryPoint for reminder snooze (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
+- **DismissReminderReceiver** (`service/reminder/`) - Hilt @AndroidEntryPoint for reminder dismiss (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
 
 ### Permissions (13)
-- Foreground service (3): FOREGROUND_SERVICE, DATA_SYNC, LOCATION
+- Foreground service (3): FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC, FOREGROUND_SERVICE_LOCATION
 - Notifications (2): POST_NOTIFICATIONS, RECEIVE_BOOT_COMPLETED
 - Camera (1): CAMERA permission + hardware feature
 - Location (2): ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION
-- File access (2): READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
+- File access (2): READ_EXTERNAL_STORAGE (maxSdkVersion=32), WRITE_EXTERNAL_STORAGE (maxSdkVersion=28)
 - Network (2): INTERNET, ACCESS_NETWORK_STATE
 - System (1): WAKE_LOCK
 
-### Providers
+### Providers (2)
+- `androidx.startup.InitializationProvider` - Disables default WorkManager initializer (Hilt takes over)
 - FileProvider for camera file sharing
 
 ---
@@ -687,9 +696,10 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Proactive Briefing  
 
 ### Screen Status Notes
-- `RecurringExpensesScreen` remains a secondary recurring-management surface alongside `ManualRecurringExpenseScreen`.
+- `RecurringExpensesScreen` remains a secondary recurring-management surface alongside `ManualRecurringExpenseScreen`. Note: `RecurringExpensesViewModel` is defined inline within the screen file (not a separate file).
 - `AiSettingsScreen` is a routed settings surface.
 - `CategoryScreen` is a routed category-management surface.
+- `SourceLinkDebugScreen` (conditional) was added alongside the provenance tracking system — its ViewModel is listed in Section 2.
 
 ---
 
@@ -719,7 +729,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 143 with current migration chain (120→121→122→...→143)  
+✅ Version 147 with current migration chain (120→121→122→...→145→146→147; active migrations in `DatabaseMigrations.ALL`)  
 ✅ Export schema enabled  
 ✅ Type converters defined
 

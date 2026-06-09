@@ -29,11 +29,11 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v143 (`APP_DATABASE_SCHEMA_VERSION = 143`). Migration 142→143 adds `warranty_reminder_deliveries` (durable warranty-reminder sent-state; replaces the old SharedPreferences flag). Earlier: v131 through v139–v141 for recurring lifecycle hardening, occurrence status typing, and reminder delivery FK enforcement; 141→142 relaxed `budget_forecasts.budgetId` FK to CASCADE.
-- 1636 Kotlin source files across domain, data, ui, di, util, service, startup, and worker packages
-- 67 DAOs (63 in DaoModule + 3 in AiModule + 1 unbound), 69 entities registered in AppDatabase
+- Database version: v147 (`APP_DATABASE_SCHEMA_VERSION = 147`). Latest migrations: v142→143 warranty_reminder_deliveries; v143→144 raw_notifications index cleanup; v144→145 pending_reviews rebuild with correct nullable schema + stale index cleanup; v145→146 baseline consolidation — DatabaseMigrations.ALL replaces historical migration chain; v146→147 PrivacySettings wired to FeatureConfig + budget rolloverDeficitTracking migration.
+- ~1054 production Kotlin source files (~1681 including tests) across domain, data, ui, di, util, service, startup, and worker packages
+- 68 DAOs (64 in DaoModule + 3 in AiModule + 1 unbound), 70 entities registered in AppDatabase
 - 41 @HiltViewModel (40 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
-- 32 @Module Hilt modules
+- 33 @Module Hilt modules
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
 - Bank statement AI parsing: **complete** (on-device→cloud→parser 3-tier validation with per-transaction source tracking)
@@ -42,10 +42,10 @@
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
-- Worker instrumentation: `WorkerRunLogger` (`domain/workers/WorkerRunLogger.kt`) provides per-run success/skipped/retry/failure tracking via `BackgroundJobRunDao`. `WorkerExecutionGuard` (`domain/workers/WorkerExecutionGuard.kt`) provides structured guarded execution with logging, exception handling, and restore-mode gating. Both bound via `WorkerModule` (`di/WorkerModule.kt`).
+- Worker instrumentation: `WorkerRunLogger` (`domain/workers/WorkerRunLogger.kt`) provides per-run success/skipped/retry/failure tracking via `BackgroundJobRunDao`. `WorkerExecutionGuard` (`domain/workers/WorkerExecutionGuard.kt`) provides structured guarded execution with logging, exception handling, and restore-mode gating. Both bound via `WorkerModule` (`di/WorkerModule.kt`). There is also a `NotificationIntakeWorker` that is allowlisted (not gated by the guard).
 - **Worker retry contract (P9-NEW-13):** a worker that wants WorkManager to retry must throw `RetryableWorkerException` (`domain/workers/RetryableWorkerException.kt`). The guard's catch precedence is: `CancellationException` (rethrown) → `RetryableWorkerException` (Retry) → `classifyTransient(...)` (Retry) → otherwise **permanent Failed**. `classifyTransient` only matches the keyword set `timeout` / `interrupted` / `deadlock` / `SQLITE_BUSY` / `database is locked` (case-insensitive) or an `IOException`. A plain `RuntimeException` with a non-transient message is therefore classified as a permanent failure and burns the attempt budget. `LocationBackfillWorker` and `MerchantKeyBackfillWorker` use `RetryableWorkerException` for their no-progress/transient paths.
 - **Worker notification-permission gate (P9-NEW-04):** `WorkerExecutionGuard` enforces `WorkerGuardRequest.requiresNotificationPermission` via an injected `NotificationPermissionChecker` (`AndroidNotificationPermissionChecker`, bound in `WorkerModule`). When notifications are disabled the run is durably skipped with `DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED`. `WarrantyExpirationWorker` sets this flag.
-- **Worker run counts (P9-NEW-03):** 6 of 7 workers run via `runGuardedWithContext` and feed `rowsScanned`/`rowsUpdated`/`notificationsSent` into `BackgroundJobRun` — `BillReminderWorker` (already), plus `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `DataRetentionWorker`, `ReceiptMatchingWorker`, `DailyBriefingWorker` (migrated in S4). `WarrantyExpirationWorker` is the 7th and still uses plain `runGuarded`. **Known limitation:** `WorkerRunContext` also collects `rowsSkipped`/`errors`, but the guard's `run.success()` does not yet persist those two columns (follow-up).
+- **Worker run counts (P9-NEW-03):** 6 of 7 managed workers run via `runGuardedWithContext` and feed `rowsScanned`/`rowsUpdated`/`notificationsSent` into `BackgroundJobRun` — `BillReminderWorker` (already), plus `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `DataRetentionWorker`, `ReceiptMatchingWorker`, `DailyBriefingWorker` (migrated in S4). `WarrantyExpirationWorker` is the 7th and still uses plain `runGuarded`. **Known limitation:** `WorkerRunContext` also collects `rowsSkipped`/`errors`, but the guard's `run.success()` does not yet persist those two columns (follow-up). There is also 1 allowlisted CoroutineWorker (`NotificationIntakeWorker`) not gated by the guard.
 - **Privacy → worker gating (P9-P1-11 / S7):** `PrivacyRuntimeWorkerPolicy` (`domain/workers/PrivacyRuntimeWorkerPolicy.kt`) maps privacy toggles to the workers they gate; `PrivacySettingsRepositoryImpl.applyPrivacyChange()` is policy-driven (no hardcoded names). Disabling background location does **not** cancel `merchant_key_backfill` (it is local). `data_retention` is **never** cancelled by a privacy toggle. Re-enabling a toggle reschedules its workers.
 - **Worker guard architecture test (P9-P1-02 / S8):** `WorkerGuardArchitectureGuardTest` asserts every `CoroutineWorker` in main source uses `WorkerExecutionGuard`. Allowlist: `NotificationIntakeWorker` only.
 - `DatabaseReadBarrier` (`data/backup/DatabaseReadBarrier.kt`) and `DatabaseWriteBarrier` (`data/backup/DatabaseWriteBarrier.kt`) provide operation-level read/write blocking during restore — throw `IllegalStateException` if writes are attempted in non-NORMAL/BACKUP_EXPORTING modes.
@@ -194,7 +194,7 @@
 - **Pipeline 5 (Budget/Forecast):** Currency normalization completed in `BudgetForecastingEngine` — all monetary operations route through `AnalyticsCurrencyNormalizer`. `PeriodKind.toPeriodRange()` extension unified period-to-range conversion. Double-counting fixed in `ForecastInputAssembler` and `MonthlySavingsSweepUseCase` via occurrence-based dedup.
 - **Pipeline 6 (Analytics/Insights):** `DailyBucketEngine` and `BudgetVsActualEngine` hardened with `NormalizedAnalyticsInput` shared normalization pass. All 12+ analytics engines accept `NormalizedAnalyticsInput` with single normalization per period. `DataQualityReport` unified quality contract across analytics, forecasting, currency, and AI.
 - **Pipeline 7 (Backup/Restore/Audit):** `DatabaseReadBarrier`/`DatabaseWriteBarrier` wired into `SubscriptionManagerEngine` and `EnhancedSplitManager`. `RestoreJournal.ASSETS_RESTORING` state added. `BackupVerifier` TIER_1_EXACT for lifecycle/event tables. All 7 workers pause on restore.
-- **Pipeline 8 (Privacy/AI Gating):** `PrivacyDecision.FailClosed` variant — 30+ callers across backup/export/geocoding/location/currency/warranty use `blocksExecution()`. `PrivacyBlockedCard` reusable Compose UI. `PrivacyCapabilityHandlingPolicy` covering all 26 capabilities. `CompositePrivacyGate` fails closed for unhandled sensitive capabilities.
+- **Pipeline 8 (Privacy/AI Gating):** `PrivacyDecision.FailClosed` variant — 30+ callers across backup/export/geocoding/location/currency/warranty use `blocksExecution()`. `PrivacyBlockedCard` reusable Compose UI. `PrivacyCapabilityHandlingPolicy` covering all 27 capabilities. `CompositePrivacyGate` fails closed for unhandled sensitive capabilities.
 - **Pipeline 9 (Worker/Notification):** `WorkerExecutionGuard` structured execution with `RetryableWorkerException` retry contract. `NotificationPermissionChecker` gating. `WorkerRegistry` single-source-of-truth for all 7 workers. `PrivacyRuntimeWorkerPolicy` maps privacy toggles to gated workers. Worker guard architecture test asserts all `CoroutineWorker` instances use the guard.
 - **Pipeline 10 (Receipt/Email Lifecycle):** `ReceiptMatchLifecycleService` lifecycle-aware match mutations. `ReceiptDebugExporter` audit instrumentation with privacy-by-default redaction. `DeprecationLevel.ERROR` sweep for legacy receipt methods. Exception message redaction policy for URIs, file paths, URLs, emails, numbers.
 - **Pipeline 11 (Recurring Lifecycle Hardening):** `RecurringRuleLifecycleCoordinator` expanded as single writer for all rule lifecycle mutations (create/activate/update/deactivate/delete). `OccurrenceGenerationOptions`, `RecurringExpenseReconcileResult`, `RecurringOccurrenceStatus` typed domain models. `RecurringLifecycleEventWriter` critical/diagnostic split. `BillReminderSettings` + `ReminderSettingsModule`. 14 static architecture guard tests. DB v131→v141 (8 bumps).
@@ -212,6 +212,46 @@
 
 #### Completed Pipeline Status
 - **All 12 pipelines (P1-P12) fixed and hardened.** 178+ issues resolved across structured hardening. 7 lifecycle coordinators, 3 normalizer/validator middleware services, 15+ materialized-key constraints deployed.
+
+### Architecture Drift Updates (2026-05-28 through 2026-06-09 — Engine 1-4 Hardening & DB Baseline)
+
+#### Engine 1 — Warranty, Subscription, Location & NLP Hardening (PR1-PR9)
+- **Warranty**: legacy data guards, provider quote validation, deterministic fallback, negotiation service detection, energy skip, non-EUR guard, write-barrier ordering fix. Final-gate gaps closed (PR1-PR6).
+- **Subscription**: `LocationBackfillWorker` and `MerchantKeyBackfillWorker` now use `RetryableWorkerException` for no-progress/transient paths.
+- **Location**: Location enrichment hardening, Overpass Nearby Service integration.
+- **NLP**: Natural language search hardened with keyset pagination (`SearchCursor`), structured `QueryDataQuality` tracking.
+
+#### Engine 2 — Analytics Hardening (PR1-PR8 + final polish PR1-PR5)
+- **Aggregate null-safety**: all analytics engines hardened against null/empty inputs.
+- **Location normalized APIs**: `AreaSpendingEngine.computeNormalized()` and `TravelDetectionEngine.computeNormalized()` use `MoneyAggregate`-based computation via `AnalyticsCurrencyNormalizer`.
+- **Tests**: comprehensive test coverage + compilation fixes.
+
+#### Engine 3 — Merchant Normalization & Categorization Hardening (PR1-PR9)
+- **Alias contract**: deterministic canonical names, cache invalidation, ambiguity routing, source learning policy.
+- **Stats correctness**: merchant stats now accurate with proper dedup.
+- **Diagnostics privacy**: merchant normalization debug data redacted.
+- **Category correction scope**: category assignment respects user corrections.
+- **Display name case preservation**.
+- **TOCTOU race fix**: `addCategory` uses atomic `getOrInsertByNameNoCase`.
+
+#### Engine 4 — Tax/Group/Investment/Business Hardening (PR1-PR8)
+- **Tax**: strengthened tax currency test coverage (PR7). `TaxEstimator` validation returns `Result.failure` instead of throwing.
+- **Group/Investment**: `GroupLifecycleCoordinator` atomic `addExpense` lifecycle event, `addExpenseWithLink` currency validation, historical balance participation. `SplitCalculator` `joinedAt` filter for non-EQUAL splits. UI aggregate display values corrected.
+- **Schema-backed PR8 improvements**: idempotency keys + `leftAt` tracking for group members.
+- **InvestmentTracker**: per-row investment aggregates, validation returns `Result.failure`.
+
+#### DB Baseline Migration (v145 baseline)
+- `MIGRATION_144_145`: drops/recreates `pending_reviews` with correct nullable schema, removes stale indices.
+- `MIGRATION_145_146`: **baseline consolidation** — `DatabaseMigrations.ALL` replaces the full historical migration chain. Fresh installs start at v146 with all table creation callbacks, skipping 145 individual migrations.
+- `MIGRATION_146_147`: wires `PrivacySettings` to `FeatureConfig` for Features Menu visibility + budget `rolloverDeficitTracking` migration.
+- Fixes: `pending_reviews` `rawNotificationId` index made UNIQUE (matches entity schema); `PRAGMA foreign_keys=OFF` during destructive DDL.
+
+#### Additional Guard Scripts
+- `scripts/verify_source_provenance_boundaries.py` — provenance boundary verification
+- `scripts/verify_event_writers.py` — event writer contract verification
+- `scripts/verify_db_access_boundaries.py` — DB access boundary verification
+- `scripts/guards/check_raw_money_aggregates.kts` — raw money aggregate guard
+- `scripts/guards/check_direct_time_calls.kts` — flags direct `System.currentTimeMillis()` / `Instant.now()` calls (enforces `TimeProvider` usage)
 
 ### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
 - **Database version upgraded to v129** (from v124) — later superseded by v130→v131 in the currency/privacy overhaul. Migrations 124→129 add durable diagnostics tables (`operation_runs`, `operation_run_events`), expand `pipeline_diagnostic_events` with 9 new columns, add `correlationId`/`causationId` to `transaction_events`, and add `isTerminal`/`eventId` to `operation_run_events`.
@@ -318,17 +358,42 @@ ui/
 │   ├── BudgetBlockPartyCard.kt # Budget visualization
 │   └── ...
 ├── screens/                     # Shell screens + feature surfaces
-│   ├── home/                    # Home / dashboard
-│   ├── transactions/            # Activity / transaction flow
-│   ├── review/                  # Review queue
-│   ├── budget/                  # Budget + budget detail
+│   ├── addexpense/              # Add expense form
+│   ├── aisettings/              # AI assistant settings
 │   ├── analytics/               # Analytics views
-│   ├── map/                     # Spending map / location views
-│   ├── cashflow/                # Cash flow calendar
+│   ├── assistant/               # AI assistant chat
+│   ├── backup/                  # Backup & restore
 │   ├── bank/                    # Bank connections
-│   ├── investment/              # Investment portfolio
+│   ├── budget/                  # Budget + budget detail
+│   ├── carbon/                  # Carbon footprint
+│   ├── categories/              # Category management
+│   ├── cashflow/                # Cash flow calendar
+│   ├── challenge/               # Spending challenges
 │   ├── currency/                # Currency management
+│   ├── debug/                   # Debug views
+│   ├── export/                  # Export options
+│   ├── groups/                  # Shared expense groups
+│   ├── home/                    # Home / dashboard
+│   ├── investment/              # Investment portfolio
+│   ├── lifestyle/               # Lifestyle inflation
+│   ├── map/                     # Spending map / location views
+│   ├── naturallanguage/         # Natural language search
+│   ├── negotiation/             # Bill negotiation
+│   ├── price/                   # Price protection
+│   ├── privacysettings/         # Privacy settings
+│   ├── receiptmatching/         # Receipt matching
+│   ├── receiptscan/             # Receipt scanning
+│   ├── recurring/               # Recurring expenses
+│   ├── recurringmanual/         # Manual recurring expenses
+│   ├── reminder/                # Bill reminders
+│   ├── review/                  # Review queue
+│   ├── savings/                 # Savings goals
+│   ├── settings/                # App settings
+│   ├── split/                   # Visual split editor
+│   ├── subscription/            # Subscription management
 │   ├── tax/                     # Tax configuration
+│   ├── transactions/            # Activity / transaction flow
+│   ├── warranty/                # Warranty tracker
 │   └── ...
 └── util/
     ├── HapticFeedback.kt       # Haptic feedback utilities
@@ -341,20 +406,45 @@ domain/
 ├── ai/                          # AI capabilities, policies, models, use cases
 ├── alerts/                      # Anomaly alert orchestration
 ├── analytics/                   # Insights, totals, advanced analytics
+├── backup/                      # Backup/restore domain models
 ├── bank/                        # Bank API integration
 ├── budget/                      # Budget management
 ├── business/                    # Business expense reporting
 ├── categorization/               # Merchant categorization pipeline
 ├── carbon/                      # Carbon footprint
 ├── cashflow/                    # Cash flow calculator
+├── challenge/                   # Spending challenges
+├── common/                      # Common domain utilities
+├── config/                      # Feature configuration
+├── currency/                    # Currency management domain
+├── engine/                      # Domain engine utilities
+├── forecast/                    # Forecast domain logic
 ├── forecasting/                 # Monte Carlo + stress forecast engines
 ├── groups/                      # Shared expense and settlement flows
+├── health/                      # Financial health scoring
+├── income/                      # Income tracking
+├── intelligence/                # ML classification (HybridExpenseClassifier etc.)
+├── investment/                  # Investment tracking
+├── lifestyle/                   # Lifestyle inflation detection
 ├── location/                    # Location enrichment and POI lookup
+├── logic/                       # Legacy domain logic (SynthesisEngine, RecurringExpenseEngine)
+├── model/                       # Shared domain models (dashboard, navigation)
+├── naturallanguage/             # Natural language search engine + query repository
+├── notification/                # Notification processing domain
 ├── parser/                      # Notification parsing
 ├── receipt/                     # OCR, receipt processing, lifecycle models
 │   ├── ReceiptSourceType.kt     # Enum: CAMERA, GALLERY, FILE_IMPORT, EMAIL, etc.
 │   ├── ReceiptDocumentType.kt   # Enum: RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, etc.
 │   ├── ReceiptProcessingStatus.kt # Enum: CAPTURED → DELETED (14 values)
+│   ├── ReceiptParser.kt         # Receipt parsing
+│   ├── ReceiptOcrService.kt     # OCR service for receipts
+│   ├── BankStatementParser.kt   # Bank statement specific parser
+│   ├── EnhancedMerchantExtractor.kt # Enhanced merchant extraction from OCR text
+│   ├── MerchantRulesPolicy.kt   # Merchant matching rules policy
+│   ├── OcrPreprocessingPipeline.kt  # Preprocessing pipeline for OCR
+│   ├── OcrLanguageProcessor.kt  # Language processing for OCR
+│   ├── ReceiptSource.kt         # Receipt source tracking
+│   ├── WarrantyTextExtractor.kt # Warranty info extraction from receipt text
 │   ├── EmailReceiptData.kt      # Structured email receipt data
 │   └── lifecycle/               # Receipt lifecycle coordinator + services
 │       ├── ReceiptLifecycleCoordinator.kt   # Single entry point for all receipt processing
@@ -364,25 +454,49 @@ domain/
 │       ├── ReceiptInputValidator.kt         # URI / MIME / size validation
 │       ├── ReceiptDuplicateDetector.kt      # 3-signal dedup (hash, text, semantic)
 │       ├── ReceiptSideEffectDispatcher.kt   # Document-type-gated downstream effects
+│       ├── ReceiptSideEffectPlanner.kt      # Plans side effects before receipt DB transaction
+│       ├── ReceiptSideEffectInput.kt        # Input data for receipt side effects
+│       ├── ReceiptLifecycleEventWriter.kt   # Durable event writer for receipt lifecycle
+│       ├── ReceiptLifecycleEventTypes.kt    # Typed receipt lifecycle event types
+│       ├── ReceiptTimestampPolicy.kt        # Timestamp handling policy for receipts
+│       ├── EmailReceiptProcessResult.kt     # Sealed result for email receipt processing
 │       └── BankStatementLifecycleProcessor.kt # Statement-specific processing
 ├── split/                       # Split-template and expense splitting logic
 ├── privacy/                     # Privacy capability gates, audit logger, sanitizer, storage modes
-│   ├── PrivacyCapability.kt    # Enum of 21 gated capabilities
+│   ├── PrivacyCapability.kt    # Enum of 27 gated capabilities
 │   ├── PrivacyGate.kt          # Interface for capability evaluation
-│   ├── PrivacyDecision.kt      # Sealed: Allowed / Denied(reason)
+│   ├── PrivacyDecision.kt      # Sealed: Allowed / Denied / FailClosed
 │   ├── PrivacyBlocked.kt       # Sealed interface: CloudAiDisabled, ReceiptImageUploadDisabled, etc.
 │   ├── PrivacySettings.kt      # Data class with 10+ privacy toggles + 2 retention settings
 │   ├── PrivacySettingsRepository.kt  # Interface for reading/writing settings
+│   ├── PrivacyAuditContext.kt        # Typed audit context with forCloudCall() factory
 │   ├── PrivacyAuditLogger.kt   # Logs every gate check decision
 │   ├── NotificationPrivacyGate.kt    # Guards notification capture/allowlist
+│   ├── NotificationCaptureGate.kt    # Checks settings + PrivacyGate before extras extraction
 │   ├── CloudAiPrivacyGate.kt         # Guards all CLOUD_AI_* capabilities
 │   ├── LocationPrivacyGate.kt        # Guards geocoding, GPS, backfill, Overpass
 │   ├── BackupPrivacyGate.kt          # Guards raw/encrypted backup
+│   ├── ExportPrivacyGate.kt          # Guards EXPENSE_EXPORT_RAW/ENCRYPTED/REDACTED/DEBUG_RAW_EXPORT/RAW_DATABASE_EXPORT
 │   ├── CompositePrivacyGate.kt       # Chains all gates; first Denied short-circuits
+│   ├── PrivacyCapabilityHandlingPolicy.kt # Covers all 27 PrivacyCapability values
 │   ├── RedactionSanitizer.kt         # PII redaction before cloud calls
 │   ├── RawStorageMode.kt             # Enum: STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE
 │   ├── RawContentSanitizer.kt        # Applies RawStorageMode to OCR/email content at write time
-│   └── EffectiveCloudAiPolicy.kt     # Resolves effective cloud AI policy from privacy + AI settings
+│   ├── RawPersistencePolicy.kt       # Raw persistence policy (hashMode + storageMode)
+│   ├── RawPersistencePolicyResolver.kt # Resolves RawPersistencePolicy per source type
+│   ├── RawSourceType.kt             # Enum for raw data source types
+│   ├── SafePrivacyMetadata.kt       # Blocks 14 sensitive key substrings; sanitizes values
+│   ├── SensitiveHashingService.kt   # Interface + DefaultSensitiveHashingService (HMAC-SHA256)
+│   ├── EffectiveCloudAiPolicy.kt    # Resolves effective cloud AI policy from privacy + AI settings
+│   ├── CloudPayloadPolicy.kt        # Interface + DefaultCloudPayloadPolicy for cloud payloads
+│   ├── CloudPayloadRedactor.kt      # Cloud AI redaction contract (replaced by CloudPayloadPolicy)
+│   ├── PreparedCloudPayload.kt      # Contract for all 7 cloud providers
+│   ├── BankTransactionPersistencePayload.kt # Bank tx persistence with hashed IDs/redacted fields
+│   ├── EmailReceiptPersistencePayload.kt    # Email receipt persistence with hashed fields
+│   ├── ReceiptPersistencePayload.kt         # Receipt persistence payload
+│   ├── NotificationPersistencePayload.kt    # Notification persistence payload (sanitized per mode)
+│   ├── RetentionRegistry.kt         # Registry with 5 registered retention targets
+│   └── RetentionTarget.kt           # Retention target interface + RetentionPurgeResult
 ├── service/                     # Domain service interfaces
 ├── usecase/                     # Use cases / orchestration
 ├── model/                       # Shared domain models
@@ -397,9 +511,20 @@ domain/
 │   ├── CreateExpenseRequest.kt  # Source-neutral creation request (40+ fields)
 │   ├── CreateExpenseResult.kt   # Sealed result (Created, DuplicateSkipped, etc.)
 │   ├── ExpenseUpdates.kt        # Patch-style update model
+│   ├── SideEffectMode.kt        # Enum: IMMEDIATE / DEFER for side effect scheduling
+│   ├── SourceLearningPolicy.kt  # Source-aware merchant learning policy
+│   ├── DefaultExpenseCategoryAssignmentService.kt # Default category assignment
+│   ├── ExpenseCategoryAssignmentPort.kt           # Category assignment port interface
+│   ├── BusinessExpenseUpdateResult.kt              # Sealed result for business expense updates
+│   ├── BusinessExpensePatch.kt                     # Patch model for business expense fields
 │   └── lifecycle/               # Lifecycle coordinator + dispatcher
 │       ├── TransactionLifecycleCoordinator.kt    # Single entry point for ALL expense CUD
-│       └── TransactionSideEffectDispatcher.kt    # Post-creation side effects (budget, anomaly, learning)
+│       ├── TransactionSideEffectDispatcher.kt    # Post-creation side effects (budget, anomaly, learning)
+│       ├── TransactionSideEffectPlanner.kt       # Plans side effects before DB transaction
+│       ├── TransactionUpdateKind.kt              # Enum with AMOUNT/DATE/CURRENCY/OWNERSHIP/PAYMENT_CORE etc.
+│       ├── TransactionLifecycleEventWriter.kt    # Durable event writer for transaction lifecycle
+│       ├── DebugExpenseAuditWriter.kt            # Debug audit writer for expenses
+│       └── BulkChangedField.kt                   # Tracks bulk-updated fields
 ├── recurring/                   # Recurring occurrence lifecycle
 │   ├── RecurringOccurrenceExpander.kt    # Expands recurrence rules into concrete occurrences
 │   ├── OccurrenceConflictResolver.kt     # Resolves candidates vs actual expenses
@@ -411,22 +536,39 @@ domain/
 │       ├── OccurrenceGenerationOptions.kt        # Controls reminder creation during generation
 │       ├── RecurringExpenseReconcileResult.kt    # Sealed result for link/unlink operations
 │       └── RecurringOccurrenceStatus.kt          # Typed enum replacing raw status strings
+├── naturallanguage/             # Natural language search engine + query repository
+├── notification/                # Notification processing domain models
+├── negotiation/                 # Market-rate provider for bill negotiation
+├── performance/                 # Performance helpers
+├── price/                       # Price protection tracking
+├── provenance/                  # Data provenance tracking
+├── receiptmatching/             # Receipt matching domain models
 ├── reminder/                    # Bill reminder manager
+├── savings/                     # Savings goals domain
+├── sideeffect/                  # Side effect domain models
 ├── subscription/                # Subscription detection / management
 ├── tax/                         # Tax configuration and estimation
+├── text/                        # Text processing utilities
+├── widget/                      # Dashboard widget domain models
 ├── export/                      # Export flows
-├── performance/                 # Performance helpers
 ├── debug/                       # Debug-only diagnostics
 ├── diagnostics/                 # Database integrity
 ├── dto/                         # Data transfer objects
 ├── util/                        # Shared utilities
-└── workers/                     # Worker specifications, run logging, execution guard, and registry
+└── workers/                     # Worker specifications, run logging, execution guard, registry, and policies
     ├── WorkerSpec.kt            # Worker default specs (interval, constraints, backoff, oneShotPolicy)
     ├── WorkerSpecScheduler.kt   # Centralized scheduling with version-change detection
     ├── WorkerRunLogger.kt       # Per-run lifecycle tracking (start/success/skipped/retry/failure)
+    ├── WorkerRunContext.kt      # Collects rowsScanned/rowsUpdated/notificationsSent/rowsSkipped/errors
     ├── WorkerExecutionGuard.kt  # Structured guarded execution wrapper
+    ├── WorkerLease.kt           # Worker lease data class
+    ├── WorkerLeaseRegistry.kt   # Interface for worker lease registry
+    ├── WorkerLeaseRegistryImpl.kt # Implementation of worker lease registry
+    ├── WorkerDrainController.kt # Interface for worker drain control
+    ├── NoOpWorkerDrainController.kt # No-op implementation of drain controller
     ├── RetryableWorkerException.kt  # Typed retry signal (highest non-cancellation precedence in guard)
     ├── NotificationPermissionChecker.kt  # Guard-enforced notification-permission gate
+    ├── PrivacyRuntimeWorkerPolicy.kt # Maps privacy toggles to gated workers
     └── WorkerRegistry.kt        # Single source-of-truth for all 7 workers (specName + schedule lambda)
 ```
 
@@ -434,12 +576,15 @@ domain/
 ```
 data/
 ├── repository/                   # Data access (single source of truth)
-├── backup/                       # **NEW — Phase 9: .costbackup bundle format + restore engine**
+├── backup/                       # .costbackup bundle format + restore engine
 │   ├── CostbackupBundle.kt      # AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
-│   ├── RestoreMaintenanceMode.kt # 8-state mode manager; pauses 7 workers + notification capture during restore
+│   ├── RestoreMaintenanceMode.kt # 8-state mode manager; pauses workers + notification capture during restore
 │   ├── RestoreJournal.kt        # Crash-safe 8-state restore journal (PREPARING → COMPLETE/FAILED)
-│   └── BackupVerifier.kt        # Full 56-entity 3-tier verification (EXACT / VALIDITY / OPTIONAL)
+│   ├── BackupVerifier.kt        # Full 56-entity 3-tier verification (EXACT / VALIDITY / OPTIONAL)
+│   ├── DatabaseReadBarrier.kt   # Operation-level read blocking during restore
+│   └── DatabaseWriteBarrier.kt  # Operation-level write blocking during restore
 ├── ai/provider/                 # Cloud + on-device AI providers
+├── currency/                    # Currency exchange rate data
 ├── email/provider/              # Email receipt parsers (Amazon, Uber, Apple, etc.)
 ├── location/                    # Location services and geocoding implementations
 │   ├── CompositeGeocodingService.kt    # Multi-provider fallback chain
@@ -448,20 +593,23 @@ data/
 │   ├── GooglePlacesGeocodingService.kt # Google Places API geocoding
 │   ├── PhotonGeocodingService.kt       # Photon API geocoding
 │   ├── LocationBackfillWorker.kt       # Periodic location backfill worker
-│       └── MerchantKeyBackfillWorker.kt    # One-shot merchant key backfill
+│   └── MerchantKeyBackfillWorker.kt    # One-shot merchant key backfill
 ├── negotiation/                  # Market-rate data implementations
 │   └── StaticMarketRateProvider.kt     # @Singleton @Inject seed-data impl
+├── provider/                    # General data providers
+├── rescue/                      # Financial rescue path (raw SQLite import)
+├── store/                       # Data store implementations
 ├── tax/                          # Tax-rate data implementations
 │   └── DemoTaxRateProvider.kt         # @Singleton @Inject seed-data impl
 ├── security/                    # Secure storage / crypto helpers
 ├── speech/                      # Speech input services
-├── privacy/                     # **NEW — Privacy data layer**
+├── privacy/                     # Privacy data layer
 │   ├── PrivacySettingsRepositoryImpl.kt  # DataStore-backed settings
 │   ├── BackupEncryptionService.kt        # AES-256-GCM encrypt/decrypt
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v143) — 64 entities registered
+│   ├── AppDatabase.kt          # Room database (v147) — 70 entities registered
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   ├── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -474,9 +622,6 @@ data/
 │   │   └── PipelineDiagnosticEventDao.kt
 │   ├── model/                   # Database models
 │   └── converter/               # Type converters
-├── backup/                      # Backup infrastructure additions
-│   ├── DatabaseReadBarrier.kt   # Operation-level read blocking during restore
-│   └── DatabaseWriteBarrier.kt  # Operation-level write blocking during restore
 ├── service/
 │   └── AndroidNotificationService.kt # Android notifications
 └── provider/
@@ -584,7 +729,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v143 |
+| Database | `data/database/AppDatabase.kt` | Room DB v147 |
 | NotificationCaptureService | `service/NotificationCaptureService.kt` | Android notification listener service |
 
 ### Core Engines
@@ -692,7 +837,7 @@ FinancialWeatherRepository
 
 ## Dependency Injection
 
-### Hilt Modules (31 total)
+### Hilt Modules (33 total)
 - **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`, `WorkerModule`
 - **AI:** `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`
 - **Dashboard:** `DashboardContractsModule`, `DashboardAnomalyModule`
@@ -700,6 +845,7 @@ FinancialWeatherRepository
 - **Shared expense / groups:** `GroupsModule`, `BackupRepositoryModule`
 - **Location / network:** `LocationResolverPortsModule`, `NetworkModule`
 - **Security & privacy:** `SecurityModule`, `PrivacyModule`, `ParserModule`, `ReceiptParsingModule`, `EmptyStateModule`, `EmptyStatePresentationModule`, `EmailIngestionModule`
+- **Negotiation:** `NegotiationModule` (market rate provider bindings)
 - **Specialized:** `RetentionModule` (retention targets), `DiagnosticsModule` (pipeline diagnostics), `ProvenanceModule` (data provenance), `ReminderSettingsModule` (bill reminder dispatch settings)
 
 ### Key Bindings
@@ -969,7 +1115,7 @@ backup encryption, and an export anonymizer for the expense tracker database.
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `PrivacyCapability` | `domain/privacy/PrivacyCapability.kt` | Enum of 21 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, etc.) |
+| `PrivacyCapability` | `domain/privacy/PrivacyCapability.kt` | Enum of 27 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, EXPENSE_EXPORT_RAW, DEBUG_RAW_EXPORT, RAW_DATABASE_EXPORT, etc.) |
 | `PrivacyGate` (interface) | `domain/privacy/PrivacyGate.kt` | Contract: `check(capability, context) → PrivacyDecision`. Fail-closed, audit-logged, deterministic per capability+settings. |
 | `PrivacyDecision` | `domain/privacy/PrivacyDecision.kt` | Sealed interface: `Allowed` or `Denied(reason)` |
 | `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with 10 privacy toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings |
@@ -1133,7 +1279,7 @@ crash-safe journaling, worker pausing, and full 56-entity verification.
     → blocks writes until app restart
 ```
 
-**DB impact:** No migration. Database stays at **v106** at this point (Phase 9 adds no entities or columns — the bundle packages the existing schema).
+**DB impact:** No migration. Database stayed at **v106** at this point (Phase 9 added no entities or columns — the bundle packages the existing schema).
 
 ---
 
@@ -1219,7 +1365,7 @@ forecasting, and AI surface:
 5. **Hardcoded defaults** surfaced and documented with migration paths
 6. **Data quality** standardized via a shared report contract
 
-**DB impact:** No migration. Database stays at **v106** at this point (Phase 10 adds no entities or columns).
+**DB impact:** No migration. Database stayed at **v106** at this point (Phase 10 added no entities or columns).
 
 ---
 
@@ -1341,10 +1487,10 @@ KDoc annotation of EUR defaults applied across 4 analytics engines (`InsightsEng
 
 ## Database Schema
 
-### Version: v143 (current) — see drift entries above for P3/P4 changes
-### Historical: v120 (post-hardening; latest migration at that time: 119→120 for InvestmentTransaction, WarrantyLifecycleEvent, GroupSettlementEntity)
+### Version: v147 (current) — see drift entries below for Engine 1-4 hardening & migration baseline changes
+### Historical: v146 (post-hardening pre-baseline; latest migration at that time: 119→120 for InvestmentTransaction, WarrantyLifecycleEvent, GroupSettlementEntity)
 
-The Room schema in v120 includes all tables from v106 plus:
+The Room schema at v120 (historical reference) included all tables from v106 plus:
 
 **Phase 5b additions (migration 100→101→102):**
 
@@ -1370,7 +1516,7 @@ The Room schema in v120 includes all tables from v106 plus:
 
 - **New table:** `background_job_runs` — persistent record of worker executions. Columns: id, workerName, startedAt, finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned, rowsUpdated, notificationsSent, retryReason, errorMessage. Indices on `(workerName, startedAt)` and `(status)`.
 
-**Post-Phase 10 hardening migrations (v107→v120):**
+**Post-Phase 10 hardening migrations (v107→v147):**
 
 | Migration | Purpose | Schema Change |
 |-----------|---------|---------------|
@@ -1385,6 +1531,36 @@ The Room schema in v120 includes all tables from v106 plus:
 | **114→115** | I8: BudgetForecast unique index on (budgetId, forecastDate) | Partial unique index on `budget_forecasts` |
 | **115→116** | DB-8: BudgetForecast FK CASCADE→RESTRICT | FK constraint change on `budget_forecasts.budgetId` |
 | **116→117** | SourceStatsEvent table for event-based notification stats | New table `source_stats_events` with indices | Callback-triggered index creation for fresh installs |
+| **117→118** | (No schema change — migration gap) | Code-only |
+| **118→119** | GroupLifecycleEvent table for group audit log | New table `group_lifecycle_events` |
+| **119→120** | InvestmentTransaction, WarrantyLifecycleEvent, GroupSettlementEntity | New tables + FK enforcement |
+| **120→121** | P4 recurring lifecycle hardening — migration chain continued | Occurrence keys, status typing |
+| **121→122** | P4 continued — FK enforcement on recurring_reminder_deliveries.occurrenceId | FK constraint with CASCADE delete |
+| **122→123** | (No schema change) | Code-only |
+| **123→124** | Forensic/debug fields for pipeline diagnostics | New columns on pipeline_diagnostic_events |
+| **124→125** | (No schema change) | Code-only |
+| **125→126** | (No schema change) | Code-only |
+| **126→127** | (No schema change) | Code-only |
+| **127→128** | (No schema change) | Code-only |
+| **128→129** | Durable diagnostics tables (operation_runs, operation_run_events) + transaction_events expansion | New tables + 9 new columns |
+| **129→130** | Email receipt source nullable fields + hash columns (privacy) | Nullable emailSender/emailSubject, hash columns |
+| **130→131** | Backfill validDate for legacy exchange_rates | Data backfill |
+| **131→132** | (No schema change — migration gap) | Code-only |
+| **132→133** | (No schema change — migration gap) | Code-only |
+| **133→134** | (No schema change — migration gap) | Code-only |
+| **134→135** | (No schema change — migration gap) | Code-only |
+| **135→136** | (No schema change — migration gap) | Code-only |
+| **136→137** | (No schema change — migration gap) | Code-only |
+| **137→138** | (No schema change — migration gap) | Code-only |
+| **138→139** | (No schema change — migration gap) | Code-only |
+| **139→140** | Canonicalize occurrence keys with full dedup strategy | Occurrence key canonicalization |
+| **140→141** | FOREIGN KEY on recurring_reminder_deliveries.occurrenceId → recurring_occurrences.id CASCADE | FK constraint |
+| **141→142** | Relax budget_forecasts.budgetId FK to CASCADE | FK constraint change |
+| **142→143** | warranty_reminder_deliveries table — durable warranty sent-state | New table (replaces SharedPreferences flag) |
+| **143→144** | raw_notifications index cleanup | Drop stale indices |
+| **144→145** | pending_reviews rebuild with correct nullable schema + stale index cleanup | DROP+CREATE pending_reviews, index cleanup |
+| **145→146** | DB baseline — replace historical migrations with DatabaseMigrations.ALL | Migration chain consolidated |
+| **146→147** | PrivacySettings wired to FeatureConfig + budget rolloverDeficitTracking migration | FeatureConfig integration |
 
 The full schema now covers:
 
@@ -1617,7 +1793,7 @@ Cross-cutting fixes applied after architecture review tightened correctness, con
 | Budget alerts | `BudgetMonitor`, notification service bindings |
 | Parser failing | `AppParserRegistry`, specific parsers, `ConfidenceRouter` |
 | OCR / receipt issues | `ReceiptOcrService`, `ReceiptParser`, AI receipt categorization flow |
-| Category wrong | `CategorizationEngine`, `MerchantCanonicalizer`, `HybridExpenseClassifier` |
+| Category wrong | `CategorizationEngine`, `MerchantCanonicalizer`, `HybridExpenseClassifier` (at `domain/intelligence/ml/`) |
 | Recurring missed | recurring-expense engine + repositories |
 | Analytics slow | `InsightsEngine`, `AdvancedAnalyticsEngine`, totals aggregation |
 | Navigation broken | `NavigationDestination`, `NavigationController`, `MainActivity.handleIntent()` |
@@ -1821,4 +1997,4 @@ After the initial feature-wave rollout, the codebase underwent 12 structured har
 - 7 lifecycle coordinators introduced (transaction, receipt, recurring, group, plus 3 domain-use-case coordinators)
 - 3 normalizer/validator middleware services added (currency, privacy, AI-output)
 - 15+ materialized-key constraints deployed
-- Database version advanced from v68 to v120
+- Database version advanced from v68 to v147

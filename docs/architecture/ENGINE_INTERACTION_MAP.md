@@ -17,8 +17,8 @@
 | **TimeProvider/TimePeriodUtils** | ALL pipelines (timestamps, periods, scheduling) | 🔴 CRITICAL |
 | **PrivacyGate/CloudPayloadPolicy** | 1 (Notification), 3 (Receipt), 8 (AI), 10 (Bank), 11 (Email), 7 (Backup) | 🟡 HIGH |
 | **TransactionSideEffectDispatcher** | 2 (Lifecycle), 4 (Recurring match), 5 (Budget recheck), Analytics | 🟡 HIGH |
-| **WarrantyExtractor** | 3 (Receipt side effects) only | 🟢 LOW |
-| **SubscriptionDetector** | 4 (Recurring detection) only | 🟢 LOW |
+| **WarrantyTextExtractor** | 3 (Receipt side effects) only | 🟢 LOW |
+| **NotificationSubscriptionDetector** | 4 (Recurring detection) only | 🟢 LOW |
 | **LocationBackfill/Geocoding** | Location enrichment only | 🟢 LOW |
 | **NLP/AI Categorization** | 1 (Notification), 3 (Receipt), 11 (Email) | 🟡 HIGH |
 | **InvestmentTracker** | Investment portfolio only | 🟢 LOW |
@@ -32,12 +32,12 @@
 | **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
 | **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
 | **WorkerExecutionGuard** | ALL workers (9-Notification), 7 (Backup restore gating) | 🟡 HIGH |
-| **WorkerRegistry** | 12 (Startup), 7 (Backup pause/resume) | 🟢 LOW |
+| **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
 | **GroupLifecycleCoordinator** | Groups, Expenses, Budget offsets, Analytics | 🟡 HIGH |
 | **GroupBalanceCalculator** | Groups, Settlements | 🟢 LOW |
 | **HybridRouter** | 8 (AI cloud/on-device routing), 10 (Bank statement), 3 (Receipt) | 🟡 HIGH |
 | **AccountingExportPolicy** | 12 (Export), Tax reports | 🟢 LOW |
-| **NetCashflowBalanceProvider** | 1 (Forecast), 6 (Budget/Forecast/Cashflow) | 🟢 LOW |
+| **NetCashflowBalanceProvider** | 6 (Budget/Forecast/Cashflow) | 🟢 LOW |
 
 ---
 
@@ -74,18 +74,18 @@ MerchantNormalizer.normalize()
   ├── RecurringLifecycleCoordinator (occurrence matching)
   ├── EmailReceiptIngestionService (expense creation)
   ├── MerchantKeyBackfillWorker (backfill existing rows)
-  └── AnalyticsEngine (merchant grouping)
+  └── MerchantInsightEngine (merchant grouping)
 ```
 
 ### CategorizationEngine changes affect:
 ```
-CategorizationEngine.classify()
+CategorizationEngine.categorize() / categorizeWithContext()
   ├── NotificationProcessingPipeline (auto-categorize)
   ├── ReviewQueueRepository (suggested category)
-  ├── ReceiptItemCategorizationService (line items)
+  ├── ReceiptItemCategorizationService (interface — Cloud/OnDevice/Hybrid variants)
   ├── EmailReceiptIngestionService (email expense category)
   ├── BudgetRepository (category budget matching)
-  └── AnalyticsEngine (category analytics)
+  └── AdvancedAnalyticsEngine (category analytics)
 ```
 
 ### ReceiptMatchLifecycleService changes affect:
@@ -93,7 +93,7 @@ CategorizationEngine.classify()
 ReceiptMatchLifecycleService.saveMatchSuggestion() / approveMatchSuggestion()
   ├── ReceiptMatchingWorker (auto-match)
   ├── ReceiptMatchingViewModel (user-match UI)
-  └── ReceiptEvent (MATCH_SUGGESTED / MATCH_APPROVED / MATCH_REJECTED / MATCH_CLEARED)
+  └── ReceiptLifecycleEventTypes (MATCH_SUGGESTED / MATCH_APPROVED / MATCH_REJECTED / MATCH_CLEARED)
 ```
 
 ### RecurringRuleLifecycleCoordinator changes affect:
@@ -111,7 +111,7 @@ RecurringRuleLifecycleCoordinator.createRule() / updateRule() / deactivateRule()
 ```
 BillReminderWorker.doWork()
   ├── RecurringLifecycleCoordinator.getDispatchableClaimedReminder()
-  ├── NotificationManager.sendNotification() → NotificationSendResult
+  ├── BillReminderWorker.sendNotification() → NotificationSendResult (private sealed interface)
   └── BillReminderSettingsRepository (runtime enabled/quiet hours check)
 ```
 
@@ -128,9 +128,10 @@ WorkerExecutionGuard.runGuardedWithContext()
 
 ### WorkerRegistry changes affect:
 ```
-WorkerRegistry.scheduleAll() / pauseAllWorkers() / resumeAllWorkers()
+WorkerRegistry.scheduleAll() / entries
   ├── AppStartupCoordinator (startup scheduling)
-  ├── RestoreMaintenanceMode (pause/resume on backup restore)
+  ├── RestoreMaintenanceMode (pause via WorkerSpec.DEFAULTS keys)
+  ├── PrivacySettingsRepositoryImpl (resume via Entry.schedule lookup)
   └── WorkerSpecScheduler (centralized scheduling)
 ```
 
@@ -146,7 +147,7 @@ GroupLifecycleCoordinator.createGroup() / addMember() / removeMember() / addExpe
 
 ### HybridRouter changes affect:
 ```
-HybridRouter.route()
+HybridRouter.execute()
   ├── HybridDashboardBriefingService (cloud/on-device/fallback)
   ├── HybridCategorizationAssistService
   ├── HybridDedupeJudgeService
@@ -175,7 +176,7 @@ PrivacyGate.check(capability, context)
   ├── LocationBackfillWorker (background location)
   ├── DataRetentionWorker (data purging)
   └── DailyBriefingWorker (AI briefing)
-  ↑ PrivacyDecision.FailClosed: 30+ callers now use blocksExecution()
+  ↑ PrivacyDecision.FailClosed: 39+ callers now use blocksExecution()
     which returns true for both Denied and FailClosed variants,
     providing consistent fail-closed behavior across all pipelines.
 ```
@@ -185,8 +186,8 @@ PrivacyGate.check(capability, context)
 ## Safe vs Dangerous Changes
 
 ### SAFE to change (isolated engines):
-- WarrantyExtractor — only affects receipt side effects
-- SubscriptionDetector — only affects recurring detection
+- WarrantyTextExtractor — only affects receipt side effects
+- NotificationSubscriptionDetector — only affects recurring detection
 - InvestmentTracker — isolated portfolio domain
 - TaxEstimator — isolated tax reports
 - LocationBackfill — isolated enrichment
@@ -216,4 +217,4 @@ PrivacyGate.check(capability, context)
 - ExpenseDao queries — verify every repository and coordinator
 - Room migrations — verify backup/restore compatibility
 - Hilt modules — verify entire DI graph
-- PrivacyDecision sealed interface — adding/modifying variants affects 30+ callers using blocksExecution() and reason() across backup/export/geocoding/location/currency/warranty/AI pipelines
+- PrivacyDecision sealed interface — adding/modifying variants affects 39+ callers using blocksExecution() and reason() across backup/export/geocoding/location/currency/warranty/AI pipelines

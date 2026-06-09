@@ -1,24 +1,24 @@
 # Backend Map - Test Coverage & Cross-References
 
-**Generated:** 2026-06-01
+**Generated:** 2026-06-09
 
 ---
 
 ## Test Coverage Summary
 
-**Total Test Files:** 317
+**Total Test Files:** 600+ (unit) + 27 (instrumented)
 
 ### Test Categories
 
 | Category | Count | Files |
 |----------|-------|-------|
-| Consistency Tests | 15+ | `consistency/*Test.kt` |
-| AI Provider Tests | 20+ | `data/ai/provider/*Test.kt` |
-| Repository Tests | 30+ | `data/repository/*Test.kt` |
-| Data Layer Tests | 25+ | `data/*/` |
-| Domain Logic Tests | 40+ | `domain/*/` |
-| Integration Tests | 80+ | Various |
-| Unit Tests | 100+ | Various |
+| Consistency Tests | 13 | `consistency/*Test.kt` |
+| AI Provider Tests | 23 | `data/ai/provider/*Test.kt` |
+| Repository Tests | 41 | `data/repository/*Test.kt` |
+| Engine Tests | 42 | `domain/*/engine/*Test.kt` |
+| Domain Logic Tests | 254 | `domain/*/` |
+| Privacy Tests | 22 | `domain/privacy/*Test.kt` |
+| Parser Tests | 25 | `domain/parser/*`, `data/email/provider/*` |
 
 ### Files With Test Coverage
 
@@ -326,7 +326,7 @@ ReceiptSideEffectDispatcher (document-type-gated)
     └─ PriceProtectionTracker
 ```
 
-**Files:** `receipt/lifecycle/ReceiptLifecycleCoordinator.kt`, `receipt/lifecycle/ReceiptLinkService.kt`, `receipt/lifecycle/ReceiptMatchLifecycleService.kt`, `receipt/lifecycle/ReceiptSideEffectDispatcher.kt`, `receipt/lifecycle/ReceiptDuplicateDetector.kt`, `receipt/lifecycle/ReceiptAssetStore.kt`, `receipt/lifecycle/ReceiptInputValidator.kt`, `receipt/lifecycle/ReceiptDebugExporter.kt`
+**Files:** `receipt/lifecycle/ReceiptLifecycleCoordinator.kt`, `receipt/lifecycle/ReceiptLinkService.kt`, `receipt/lifecycle/ReceiptMatchLifecycleService.kt`, `receipt/lifecycle/ReceiptSideEffectDispatcher.kt`, `receipt/lifecycle/ReceiptDuplicateDetector.kt`, `receipt/lifecycle/ReceiptAssetStore.kt`, `receipt/lifecycle/ReceiptInputValidator.kt`, `debug/ReceiptDebugExporter.kt`
 
 ---
 
@@ -495,12 +495,12 @@ ReceiptItemCategorizationService
 
 ```
 DatabaseModule (root)
-    ├─ Provides: AppDatabase (v143, 69 entities)
+    ├─ Provides: AppDatabase (v147, 69 entities)
     ├─ Uses: DaoModule
     └─ Provides: GroupTransactionCoordinator
 
 DaoModule
-    └─ Provides: All 67 DAOs
+    └─ Provides: All 68 DAOs
 
 DiagnosticsModule
     └─ Provides: DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository
@@ -520,6 +520,7 @@ WorkerModule
 RepositoryModules (multiple)
     ├─ SavingsRepositoryBindingsModule
     ├─ BackupRepositoryModule
+    ├─ SavingsModule
     └─ Others
 
 ServiceModule
@@ -579,6 +580,28 @@ TaxModule
 
 CashFlowModule
     └─ Provides: CashFlowCalculator
+
+NaturalLanguageModule
+    └─ Binds: NaturalLanguageExpenseQueryRepository → NaturalLanguageExpenseQueryRepositoryImpl
+
+NegotiationModule
+    └─ Binds: MarketRateProvider → StaticMarketRateProvider
+
+OcrImprovementsModule
+    ├─ Provides: EnhancedMerchantExtractor
+    ├─ OcrLanguageProcessor
+    └─ OcrPreprocessingPipeline
+
+DashboardContractsModule
+    └─ Binds: 7 dashboard repository interfaces → DashboardContractsAdapter implementations
+
+ExportModule
+    ├─ FreshBooksExporter
+    ├─ QuickBooksIIFExporter
+    └─ XeroCSVExporter
+
+EmptyStateModule
+    └─ @Multibinds for empty-state extension points
 ```
 
 ---

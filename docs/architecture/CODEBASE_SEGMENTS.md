@@ -331,8 +331,7 @@ Owns bank account sync/import and bank-facing adapters.
 Owns holdings, portfolio tracking, and investment metrics.
 
 **Representative files**
-- `domain/investment/InvestmentTracker.kt` — houses `InvestmentDataQuality` data class (staleness model: `isPartial`, `staleHoldingCount`, `missingPriceCount`, `lastUpdatedAt`)
-- `domain/investment/InvestmentPerformance.kt` — includes `currentValueAggregate` and `costBasisAggregate` MoneyAggregate fields
+- `domain/investment/InvestmentTracker.kt` — houses `InvestmentDataQuality` data class (staleness model: `isPartial`, `staleHoldingCount`, `missingPriceCount`, `lastUpdatedAt`); investment performance fields (`currentValueAggregate`, `costBasisAggregate`) live inside this file
 - `data/database/entity/Investment.kt`
 - `data/database/entity/InvestmentValue.kt`
 - `data/database/entity/InvestmentTransaction.kt`
@@ -572,16 +571,15 @@ Owns debug surfaces, diagnostics pipeline, pipeline diagnostics, data integrity 
 - `domain/debug/NotificationSeeder.kt`
 - `domain/diagnostics/DatabaseIntegrityScanner.kt` — Scans for 11 invariant violations (duplicate active budgets, current user per group, fingerprint collisions, etc.)
 - `domain/diagnostics/DiagnosticsModule.kt` — Diagnostics DI wiring
-- `data/database/entity/PipelineDiagnosticEvent.kt` — Cross-pipeline diagnostic event (table: `pipeline_diagnostic_events`)
-- `data/database/dao/PipelineDiagnosticEventDao.kt` — DAO for pipeline diagnostic events
 - `data/database/entity/OperationRunEvent.kt` — Operation run event record
 - `data/database/dao/OperationRunEventDao.kt` — DAO for operation run events
 - `data/database/entity/OperationRun.kt` — Operation run record
 - `data/database/dao/OperationRunDao.kt` — DAO for operation runs
-- `domain/diagnostics/RetentionTarget.kt` — Interface for retention-purgeable targets
-- `domain/diagnostics/RetentionRegistry.kt` — Registry with 5 registered retention targets
-- `domain/diagnostics/RetentionPurgeResult.kt` — Result type for retention purge operations
+- `domain/privacy/RetentionTarget.kt` — Interface for retention-purgeable targets (owned here, privacy-aligned)
+- `domain/privacy/RetentionRegistry.kt` — Registry with 5 registered retention targets
 - `di/RetentionModule.kt` — DI bindings for retention targets
+
+**Boundary note:** `PipelineDiagnosticEvent` / `PipelineDiagnosticEventDao` are owned by Segment 8 (Analytics) and listed there; this segment consumes them via the diagnostics pipeline.
 
 ## SEGMENT 30: Dependency Injection
 
@@ -701,6 +699,7 @@ Owns receipt-to-transaction matching and reconciliation UI. Link persistence goe
 
 **Representative files**
 - `domain/receiptmatching/ReceiptTransactionMatcher.kt`
+- `domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt`
 - `ui/screens/receiptmatching/ReceiptMatchingScreen.kt`
 
 **Boundary note:** OCR capture stays in Segment 4 and item-level AI categorization stays in Segment 5. Link mutations via `ReceiptLinkService` are owned by Segment 4.

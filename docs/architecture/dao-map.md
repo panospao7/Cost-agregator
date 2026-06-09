@@ -1,8 +1,8 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all ~69 DAOs (~63 in DaoModule + 3 in AiModule + ~3 unbound) to their entities and consuming repositories/services.
+> Complete mapping of all ~67 DAOs (~64 in DaoModule + 3 in AiModule) to their entities and consuming repositories/services.
 >
-> Last updated: 2026-06-01
+> Last updated: 2026-06-09
 
 ---
 
@@ -62,6 +62,7 @@
 | `RecurringOccurrenceDao` | `RecurringOccurrence` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer`, `RecurringRuleLifecycleCoordinator` (P4) | RecurringExpensesVM, BillReminderWorker |
 | `RecurringReminderDeliveryDao` | `RecurringReminderDelivery` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer`, `RecurringRuleLifecycleCoordinator` (P4) | BillReminderWorker |
 | `RecurringLifecycleEventDao` | `RecurringLifecycleEvent` | `RecurringLifecycleCoordinator`, `RecurringLifecycleEventWriter` (P4), `RecurringRuleLifecycleCoordinator` (P4) | Recurring audit log |
+| `RecurringExpenseDao` ⚠️ | `ManualRecurringExpense` | *(deprecated — use `ManualRecurringExpenseDao`)* | — |
 
 ## Currency Domain
 
@@ -117,6 +118,12 @@
 | `SubscriptionCandidateDao` | `SubscriptionCandidate` | `SubscriptionManagementRepository` | SubscriptionVM |
 | `SubscriptionPriceHistoryDao` | `SubscriptionPriceHistory` | `SubscriptionManagementRepository` | SubscriptionVM |
 | `SubscriptionUsageDao` | `SubscriptionUsage` | `SubscriptionManagementRepository` | SubscriptionVM |
+
+## Bill Negotiation Domain
+
+| DAO | Entity | Repository Consumers | Ultimate Consumers |
+|-----|--------|---------------------|-------------------|
+| `NegotiationOutcomeDao` | `NegotiationOutcomeEntity` | `SmartBillNegotiationEngine` | BillNegotiationVM |
 
 ## Warranty Domain
 
@@ -197,6 +204,7 @@
 | `ReceiptEventDao` | **3** consumers | 🟢 MEDIUM — receipt lifecycle |
 | `NotificationIntakeDao` | **1** consumer | 🟢 MEDIUM — notification intake |
 | `EntitySourceLinkDao` | **1** consumer | 🟢 LOW — source link tracking |
+| `NegotiationOutcomeDao` | **1** consumer | 🟢 LOW — bill negotiation outcome tracking |
 | `BankStatementImportRunDao` | **0** direct | 🟢 LOW — bank statement import |
 | `BankStatementImportItemDao` | **0** direct | 🟢 LOW — bank statement import |
-| **Total: ~69 DAOs (~63 DaoModule + 3 AiModule + ~3 unbound)** | | |
+| **Total: ~67 DAOs (~64 DaoModule + 3 AiModule)** | | |

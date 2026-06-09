@@ -13,33 +13,33 @@ CREATE expense:
   Any source (UI/notification/receipt/email/bank/import/group)
     → TransactionLifecycleCoordinator.createExpense() or createExpenseStandalone()
     → ExpenseDao.insertAtomic() [ONLY from coordinator]
-    → TransactionEvent.CREATED
-    → Post-commit side effects via TransactionSideEffectDispatcher
+    → TransactionEvent with LifecycleEventType.CREATED
+    → Post-commit side effects via TransactionSideEffectPlanner → TransactionSideEffectDispatcher
 
 FORBIDDEN:
   ❌ ExpenseDao.insert() from any repository directly
   ❌ ExpenseDao.insertAll() outside debug/migration
-  ❌ Any expense insert without TransactionEvent
+  ❌ Any expense insert without TransactionEvent (LifecycleEventType.CREATED)
 ```
 
 ```
 UPDATE expense:
   → TransactionLifecycleCoordinator.updateCategory/updateMerchant/updateType/etc.
-  → TransactionEvent.UPDATED
-  → Post-update side effects
+  → TransactionEvent with LifecycleEventType.UPDATED
+  → Post-update side effects via TransactionSideEffectPlanner.planUpdated()
 
 FORBIDDEN:
   ❌ ExpenseDao.update() from repositories directly
   ❌ ExpenseDao.updateCategory() outside coordinator
-  ❌ Any expense update without TransactionEvent
+  ❌ Any expense update without TransactionEvent (LifecycleEventType.UPDATED)
 ```
 
 ```
 DELETE expense:
   → TransactionLifecycleCoordinator.deleteExpense(id)
   → Loads snapshot INSIDE transaction
-  → TransactionEvent.DELETED
-  → Post-delete side effects (budget, recurring unlink)
+  → TransactionEvent with LifecycleEventType.DELETED
+  → Post-delete side effects via TransactionSideEffectPlanner.planDeleted()
 
 FORBIDDEN:
   ❌ ExpenseDao.delete() from repositories directly
@@ -145,7 +145,7 @@ GENERATE occurrences:
 
 LINK expense to occurrence:
   → RecurringLifecycleCoordinator.linkExpenseToOccurrenceDetailed()
-  → Returns RecurringExpenseReconcileResult (Linked/Unlinked/Relinked/UpdatedLinkedSnapshot/NoMatch/Skipped)
+  → Returns RecurringExpenseReconcileResult (Linked/Unlinked/Relinked/UpdatedLinkedSnapshot/NoMatch/Skipped/Error)
   → Atomic conditional claim (WHERE status=PLANNED AND linkedExpenseId IS NULL)
   → Fulfills planned + suppresses reminders
 
@@ -352,10 +352,13 @@ FORBIDDEN:
 ```
 EVERY pipeline exit must write a durable event:
   → PipelineDiagnosticEvent (notification, receipt, email, worker)
-  → TransactionEvent (expense lifecycle)
+  → TransactionEvent (expense lifecycle — LifecycleEventType)
   → ReceiptEvent (receipt lifecycle)
   → RecurringLifecycleEvent (recurring lifecycle)
+  → GroupLifecycleEvent (group lifecycle)
+  → InvestmentEvent (investment lifecycle)
   → BackgroundJobRun (worker lifecycle)
+  → BankStatementImportRun (bank statement lifecycle)
 
 Exception messages sanitized via EventMetadataSanitizer.sanitizeExceptionMessage():
   → Digit sequences (12+), IBANs, JWT tokens, Bearer tokens → [REDACTED]
@@ -387,4 +390,618 @@ DIAGNOSTIC event (informational — REMINDER_SCHEDULE_SKIPPED, etc.):
 FORBIDDEN:
   ❌ Writing lifecycle events directly through DAO insert
   ❌ Swallowing writeCritical() failures (must fail the operation)
+```
+
+---
+
+## Investment Mutations
+
+```
+ADD HOLDING:
+  → InvestmentTracker.addHolding(investment)
+  → DatabaseWriteBarrier check → validation (symbol/name/quantity/purchasePrice/currency/purchaseDate/currentPrice/purchaseFees)
+  → database.withTransaction {
+      InvestmentDao.insert(validated)
+      InvestmentValueDao.insert(initial snapshot with purchasePrice * quantity)
+      InvestmentTransactionDao.insert(type="BUY")
+    }
+  → Result.success(id) or Result.failure(IllegalArgumentException)
+
+UPDATE PRICE:
+  → InvestmentTracker.updatePrice(investmentId, newPrice)
+  → DatabaseWriteBarrier check
+  → require(newPrice > 0 finite)
+  → database.withTransaction {
+      InvestmentDao.updatePrice(id, newPrice, timestamp)
+      InvestmentValueDao.insert(snapshot with dayChange/dayChangePercent)
+    }
+
+FORBIDDEN:
+  ❌ InvestmentDao.insert() outside InvestmentTracker
+  ❌ InvestmentDao.update() outside InvestmentTracker
+  ❌ InvestmentDao.updatePrice() directly (must pass through tracker validation + value history)
+  ❌ InvestmentValueDao.insert() outside updatePrice/addHolding transaction
+  ❌ InvestmentTransactionDao.insert() outside addHolding transaction
+  ❌ InvestmentDao.getTotalPortfolioValue/getTotalUnrealizedGainLoss/getTotalInvestedAmount()
+      [all @Deprecated — raw Double may mix currencies; use getPortfolioSummaryAggregate()]
+  ❌ InvestmentTracker.getPortfolioSummary() [Deprecated — raw Double; use getPortfolioSummaryAggregate()]
+  ❌ Summing investment values across different currencies without MoneyAggregateBuilder
+```
+
+---
+
+## Group Mutations
+
+```
+CREATE group:
+  → GroupLifecycleCoordinator.createGroup(name, members, defaultCurrency)
+  → GroupTransactionCoordinator.createGroupWithMembersAtomic()
+  → Atomic inserts: ExpenseGroupDao.insert + GroupMemberDao.insertAll
+  → GroupLifecycleEvent (eventType="GROUP_CREATED")
+
+ADD member:
+  → GroupLifecycleCoordinator.addMember(groupId, name)
+  → GroupTransactionCoordinator.addMemberToGroup()
+  → Validates: group exists + active, name not blank, no duplicate name, max members
+  → GroupMemberDao.insert within transaction
+  → GroupLifecycleEvent (eventType="MEMBER_ADDED")
+
+REMOVE member:
+  → GroupLifecycleCoordinator.removeMember(groupId, memberId)
+  → Validates: not the only member, not currentUser if others exist
+  → GroupMemberDao.delete or leftAt update
+  → GroupLifecycleEvent (eventType="MEMBER_REMOVED")
+
+ADD expense to group (standalone — no system link):
+  → GroupLifecycleCoordinator.addExpense(groupId, expenseInput)
+  → GroupTransactionCoordinator.addExpenseToGroup()
+  → Validates: group active, members exist, split valid
+  → GroupExpenseDao.insert within transaction
+  → GroupLifecycleEvent (eventType="EXPENSE_ADDED")
+
+ADD expense to group (with system expense link):
+  → TransactionLifecycleCoordinator.createExpense() → get expenseId
+  → GroupTransactionCoordinator.addExpenseWithLink(groupId, expenseId, ...)
+  → Ownership update on system expense
+  → GroupExpenseDao.insert with expenseId FK
+
+CREATE system expense AND link to group (atomic):
+  → GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup()
+  → database.withTransaction { TransactionLifecycleCoordinator.createExpense(DEFER) + GroupExpenseDao.insert }
+  → Throws on failure → rollback both
+
+RECORD settlement:
+  → GroupLifecycleCoordinator.recordSettlement(groupId, fromMemberId, toMemberId, amount)
+  → GroupSettlementDao.insert
+  → GroupLifecycleEvent (eventType="SETTLEMENT_RECORDED")
+
+ARCHIVE / DELETE group:
+  → GroupLifecycleCoordinator.archiveGroup() / deleteGroupPermanently()
+  → archiveGroup: sets isActive=false (soft delete)
+  → deleteGroupPermanently: GroupTransactionCoordinator.permanentlyDeleteGroup()
+    → Hard delete with cascade cleanup via ExpenseGroupDao + GroupExpenseDao + GroupMemberDao + GroupSettlementDao
+  → GroupLifecycleEvent (eventType="GROUP_ARCHIVED" / "GROUP_PERMANENTLY_DELETED")
+
+CALCULATE balances:
+  → GroupBalanceCalculator.calculateMemberBalance(groupId, memberId)
+  → Read-only: sums paidTotal, owedShareTotal via SplitCalculator, settlements
+  → Returns GroupMemberBalance (isSettled when |netBalance| <= 0.01)
+
+FORBIDDEN:
+  ❌ ExpenseGroupDao.insert() outside GroupTransactionCoordinator
+  ❌ GroupMemberDao.insert() outside GroupTransactionCoordinator
+  ❌ GroupExpenseDao.insert() outside GroupTransactionCoordinator
+  ❌ GroupSettlementDao.insert() outside GroupLifecycleCoordinator
+  ❌ GroupLifecycleEventDao.insert() directly (must go through coordinator)
+  ❌ Any group mutation without GroupLifecycleEvent
+  ❌ Hard-deleting a group without checking for linked system expenses
+```
+
+---
+
+## Subscription Mutations
+
+```
+CREATE / ACCEPT subscription:
+  → SubscriptionManagerEngine.validateAndCreate(subscription input / candidate)
+  → DatabaseWriteBarrier check
+  → Atomic: inserts subscription + price history + candidate resolution + usage baseline
+  → Uses RecurringExpenseRepository + SubscriptionPriceHistoryDao + SubscriptionUsageDao
+  → Returns Result<Long>
+
+RECORD price change:
+  → SubscriptionManagerEngine.recordPriceChange(subscriptionId, newPrice, effectiveDate)
+  → Atomic: updates subscription.currentPrice + inserts SubscriptionPriceHistory row
+  → Returns Result<Unit>
+
+RECORD usage:
+  → SubscriptionManagerEngine.recordUsage(subscriptionId, usageData)
+  → SubscriptionUsageDao.insert within transaction scope
+
+ANALYZE subscription health:
+  → SubscriptionManagerEngine.analyzeSubscription(subscriptionId)
+  → Read-only: computes health score 0-100 (price fairness + usage + renewal risk + market rate)
+  → Generates recommendations list
+
+CALCULATE savings:
+  → SubscriptionManagerEngine.calculatePotentialSavings()
+  → Returns MoneyAggregate (preserves currency safety across subscriptions)
+
+FORBIDDEN:
+  ❌ SubscriptionPriceHistoryDao.insert() outside recordPriceChange
+  ❌ SubscriptionCandidateDao.insert/delete outside validateAndCreate/acceptCandidate
+  ❌ SubscriptionManagerEngine.getTotalMonthlySubscriptionCost() [Deprecated — raw Double across currencies]
+  ❌ SubscriptionManagerEngine.calculatePotentialSavings() using raw Double [uses MoneyAggregate now]
+  ❌ Direct DAO mutations bypassing engine validation
+```
+
+---
+
+## Categorization / Merchant Learning
+
+```
+CATEGORIZE expense (auto):
+  → CategorizationEngine.categorize(merchantName, amount, categoryContext, existingCategory)
+  → Read-only: 6-layer cascade (Exact → Canonical → Greeklish → Fuzzy → Semantic → Context)
+  → Returns CategorizationResult with MatchType + confidence
+  → No persistent side effects
+
+LEARN merchant category (user feedback):
+  → CategorizationEngine.learnMerchantCategory(merchantName, categoryId)
+  → DatabaseWriteBarrier check
+  → MerchantCategoryRepository.insert(merchantName → categoryId)
+  → Invalidates all caches
+
+DEBUG categorize:
+  → CategorizationEngine.debugCategorize(merchantName, amount)
+  → Same 6-layer cascade with full trace logging
+  → Returns DebugCategorizationResult (prediction + layerDebugStack + candidateDebugInfo)
+
+FORBIDDEN:
+  ❌ MerchantCategoryRepository.insert() outside CategorizationEngine.learnMerchantCategory()
+  ❌ MerchantCanonicalizer.canonicalize() used for writes (read-only normalization)
+  ❌ Direct cache map mutation (must go through invalidateAllCaches)
+  ❌ Skipping layers in the cascade (must respect 6-layer priority order)
+```
+
+---
+
+## Bank Statement Mutations
+
+```
+PROCESS bank statement (image/PDF):
+  → BankStatementLifecycleProcessor.processBankStatement(uri)
+  → SHA-256 pre-OCR dedup check against BankStatementImportRunDao
+  → OCR execution → transaction parsing
+  → AiSettings.AI_BANK_STATEMENT privacy check
+  → ValidateBankStatementTransactionsUseCase.validateTransactions()
+  → PendingReviewDao.insert for human review
+  → Three-layer dedup against ExpenseDao + BankStatementImportItemDao
+  → BankStatementImportRunDao.insertRun() ledger entry
+  → PendingReviewDao.batchInsert() all validated items
+  → Full lifecycle: import is NOT a separate step — everything happens in processBankStatement()
+
+FORBIDDEN:
+  ❌ BankStatementImportItemDao.insert outside processor
+  ❌ BankStatementImportRunDao.insertRun outside processor
+  ❌ Bypassing pre-OCR dedup (creates duplicate import runs)
+  ❌ Bypassing AI validation when AiSettings.AI_BANK_STATEMENT is enabled
+  ❌ Skipping three-layer dedup (expense-level + item-level + run-level)
+```
+
+---
+
+## Split / Template Mutations
+
+```
+CREATE split template:
+  → EnhancedSplitManager.createTemplate(name, totalSplits, splitType, shares)
+  → DatabaseWriteBarrier check → validation
+  → SplitTemplateDao.insertTemplate with serialized shares
+  → Returns template ID
+
+ASSIGN split items to participants:
+  → EnhancedSplitManager.assignItemsToParticipants(expenseId, assignments)
+  → DatabaseWriteBarrier check
+  → Atomic within database.withTransaction:
+      SplitItemAssignmentDao.deleteAllForExpense(expenseId)
+      SplitItemAssignmentDao.insertAssignments(assignments)
+
+FORBIDDEN:
+  ❌ SplitTemplateDao.insertTemplate outside EnhancedSplitManager.createTemplate()
+  ❌ SplitItemAssignmentDao.insertAssignments without clearing old assignments for same expense
+  ❌ Direct SplitItemAssignmentDao.deleteAllForExpense + insertAssignments without transaction wrapping
+  ❌ Splitting expenses with raw Double (must use Money/BigDecimal precision via Money)
+```
+
+---
+
+## Notification Capture
+
+```
+CAPTURE notification (system/messaging):
+  → NotificationIntakeCoordinator.capture(notificationData, source)
+  → Computes dedup fingerprint (packageName + tag + key + hash)
+  → Checks RawStorageMode: if DO_NOT_STORE/METADATA_ONLY, encrypts/redacts payload
+  → NotificationIntakeDao.insert with dedupeKey + encrypted payload
+  → Enqueues NotificationIntakeWorker via WorkManager
+
+CAPTURE for retry:
+  → NotificationIntakeCoordinator.captureForRetry(notificationData, source)
+  → Same flow with 5-second enqueue delay
+
+FORBIDDEN:
+  ❌ NotificationIntakeDao.insert outside coordinator
+  ❌ Storing raw notification text when RawStorageMode is DO_NOT_STORE
+  ❌ Skipping dedup fingerprint computation
+  ❌ Direct WorkManager enqueue outside capture flow
+```
+
+---
+
+## Anomaly Alerting
+
+```
+CHECK AND ALERT:
+  → AnomalyAlertOrchestrator.checkAndAlert(expense)
+  → Guard: skips non-PURCHASE and isNotMine expenses
+  → In-flight dedup via inFlightExpenseIds set
+  → AnomalyDetector checks amount vs 90-day category history
+  → Cooldown check: 24h per merchant, 12h per category
+  → Dedup check against recent alerts (same expenseId)
+  → Severity filter: only HIGH severity triggers notification
+  → NotificationService.send() if all checks pass
+  → AnomalyAlertDao.insert for audit trail
+
+FORBIDDEN:
+  ❌ Bypassing cooldown window for alert creation
+  ❌ Sending notifications for LOW/MEDIUM severity alerts
+  ❌ AnomalyAlertDao.insert outside orchestrator
+  ❌ Skipping dedup check against recent alerts
+  ❌ Skipping in-flight dedup check (inFlightExpenseIds)
+```
+
+---
+
+## Bill Negotiation
+
+```
+ANALYZE negotiation opportunities:
+  → SmartBillNegotiationEngine.analyzeNegotiationOpportunities()
+  → Read-only: detects service type (MOBILE/INTERNET/STREAMING/INSURANCE/ENERGY/etc.)
+  → Queries MarketRateProvider for comparable rates
+  → Calculates negotiation power score + savings potential
+  → Generates negotiation scripts + retention offers
+  → Returns List<NegotiationOpportunity>
+
+RECORD outcome:
+  → SmartBillNegotiationEngine.recordNegotiationOutcome(subscriptionId, outcome, newPrice, savings, notes)
+  → DatabaseWriteBarrier check → validation (oldAmount, currency, newPrice)
+  → Atomic within database.withTransaction:
+      NegotiationOutcomeDao.insert(outcomeEntity)
+      If SUCCESS/PARTIAL + valid newPrice: priceHistoryDao.insert() + recurringExpenseRepository.update()
+  → Returns Result<Unit>
+  → Negotiation history via getNegotiationHistory()
+
+FORBIDDEN:
+  ❌ MarketRateProvider queries for non-eligible service types
+  ❌ SubscriptionPriceHistoryDao.insert outside recordNegotiationOutcome
+  ❌ Skipping negotiation power validation before generating offers
+  ❌ NegotiationOutcomeDao.insert() outside recordNegotiationOutcome
+  ❌ Skipping input validation (oldAmount, currency, newPrice)
+```
+
+---
+
+## Warranty Auto-Create
+
+```
+AUTO-CREATE warranty from receipt:
+  → AutoCreateWarrantyFromReceiptUseCase.execute(receiptId, ocrText)
+  → WarrantyTextExtractor extracts warranty terms via regex patterns
+  → Confidence threshold: high ≥ 70%, medium ≥ 40%, low < 40%
+  → Checks existing warranties on same receipt (dedup)
+  → High confidence → auto-create Warranty record
+  → Low/medium confidence → creates WarrantyReviewDraft for user approval
+  → Half-open (exclusive) end-date semantics
+  → PrivacyGate.check() before accessing receipt data
+
+FORBIDDEN:
+  ❌ Creating warranty without confidence assessment
+  ❌ Auto-creating warranty below 70% confidence threshold
+  ❌ Creating duplicate warranties for same receipt
+  ❌ Accessing receipt data without PrivacyGate check
+  ❌ Using inclusive end-date semantics for warranty expiry
+```
+
+---
+
+## Location Resolution
+
+```
+RESOLVE location for merchant/expense:
+  → LocationResolver.resolve(merchantName, addressHint, lat/lng hint)
+  → Priority cascade:
+      1. User correction override → return immediately
+      2. LocationCache → return cached result
+      3. GPS bias → Nominatim with GPS coordinates
+      4. Name-only → Nominatim with merchant name
+      5. Overpass POIs → query nearby points of interest
+      6. Unresolved → return null with UNRESOLVED status
+  → Privacy gates: DeviceGpsDisabled, ExternalGeocodingDisabled, OverpassDisabled
+  → Haversine distance + Null Island filter (0,0)
+  → Merchant cluster affinity for grouped location suggestions
+  → Cache write on successful resolution
+
+FORBIDDEN:
+  ❌ Skipping privacy gate checks for GPS/geocoding/Overpass
+  ❌ Using location resolution when ExternalGeocodingDisabled is active
+  ❌ Returning Null Island (0,0) coordinates without filtering
+  ❌ Cache write without successful resolution
+  ❌ Bypassing user correction priority
+```
+
+---
+
+## Business Reports / Tax
+
+```
+GENERATE business expense report:
+  → BusinessExpenseReportGenerator.generateReport(year, project/category filters)
+  → Read-only: aggregates expenses by category/project
+  → Includes mileage deduction reports from business mileage log
+  → Identifies missing receipts for audit trail
+  → Enforces purchase-only filtering at boundary (excludes transfers)
+  → Returns BusinessExpenseReport (text + CSV ready)
+
+ESTIMATE taxes:
+  → TaxEstimator.estimateTaxes(fiscalYear, income, deductions)
+  → Configurable tax rates + progressive brackets
+  → VAT calculations per jurisdiction
+  → MoneyAggregate for multi-currency income/deductions
+  → [DEFERRED_DESIGN] — placeholder implementation, rates are configurable not hardcoded
+
+GENERATE CSV export:
+  → BusinessExpenseReportGenerator.generateCSVExport(report)
+  → CsvCellSanitizer.sanitize() on all cell values (formula injection guard)
+  → Returns CSV string for file write
+
+FORBIDDEN:
+  ❌ Including non-purchase transactions in business report
+  ❌ CsvCellSanitizer bypass for any CSV export cell
+  ❌ TaxEstimator with hardcoded tax rates (must use configuration)
+  ❌ Single-currency assumption for multi-currency business expenses
+```
+
+---
+
+## Analytics
+
+```
+CATEGORY analytics:
+  → AdvancedAnalyticsEngine.getCategoryAnalytics(normalizedInput)
+  → Requires NormalizedAnalyticsInput (from AnalyticsInputAssembler.build())
+  → Returns: spending totals, trends, sparklines, percentiles, velocity, category comparisons
+  → [Deprecated self-fetching overload exists at DeprecationLevel.WARNING]
+
+MERCHANT analytics:
+  → AdvancedAnalyticsEngine.getMerchantAnalytics(normalizedInput)
+  → Requires NormalizedAnalyticsInput
+  → Returns: visit frequency, loyalty score, price trends, consistency, streaks, day-of-week distribution
+  → [Deprecated self-fetching overload exists at DeprecationLevel.ERROR]
+
+SPENDING patterns:
+  → AdvancedAnalyticsEngine.getSpendingPatterns(normalizedInput)
+  → Requires NormalizedAnalyticsInput
+  → Returns: day-of-week, time-of-day, detected patterns
+  → [Deprecated self-fetching overload exists at DeprecationLevel.WARNING]
+
+STATISTICAL insights:
+  → AdvancedAnalyticsEngine.getStatisticalInsights(normalizedInput)
+  → Requires NormalizedAnalyticsInput
+  → Returns: histogram, percentiles, volatility, coefficient of variation
+  → [Deprecated self-fetching overload exists at DeprecationLevel.WARNING]
+
+ASSEMBLE analytics input:
+  → AnalyticsInputAssembler.build(filters)
+  → Fetches expenses, filters (spending-only, exclude-not-mine)
+  → Normalizes via AnalyticsCurrencyNormalizer
+  → Categorizes included/excluded expenses
+  → Computes data quality metrics (confidence penalty/multiplier)
+  → Returns NormalizedAnalyticsInput (self-contained)
+
+FINANCIAL health score:
+  → FinancialHealthCalculator.calculateHealthScores(expenses, budgetStatuses, pendingReviews, todayStreak, weekStreak, monthStreak, noSpendStreak)
+  → Combines: budget health (max 25) + spending control (max 25) + cleanliness (max 10) + bonus (max 10)
+  → Composite: Today 20% + Week 30% + Month 50% → score 0-100
+  → Returns HealthScoreResult
+
+FORBIDDEN:
+  ❌ AdvancedAnalyticsEngine.getMerchantAnalytics() with self-fetching [DeprecationLevel.ERROR]
+  ❌ AdvancedAnalyticsEngine.getCategoryAnalytics/getSpendingPatterns/getStatisticalInsights with self-fetching
+  ❌ Bypassing AnalyticsInputAssembler for analytics computations
+  ❌ Using raw Double totals across different currencies in analytics output
+  ❌ Dropping data quality metrics (confidence penalty/multiplier) in adapter mapping
+```
+
+---
+
+## Import
+
+```
+IMPORT expenses from file/content:
+  → ImportCoordinator.importFromContent(content, sourceFormat)
+  → Detects format: CSV_LEGACY / CSV_FULL / JSON_V1 / JSON_V2 / UNKNOWN
+  → Delegates to CsvExpenseImporter or JsonExpenseImporter
+  → Each importer: parses → validates → calls TransactionLifecycleCoordinator.createExpense() per row
+  → Returns ImportResult(imported, skipped, errors, total)
+
+FORBIDDEN:
+  ❌ CsvExpenseImporter/JsonExpenseImporter used outside ImportCoordinator
+  ❌ Importing without format detection
+  ❌ Bypassing TransactionLifecycleCoordinator for imported expense creation
+  ❌ Skipping validation errors (must report in ImportResult)
+```
+
+---
+
+## Financial Rescue Path
+
+```
+RESCUE database (last resort — bypasses migration chain):
+  → FinancialRescueCoordinator.runRescueIfNeeded()
+  → Guard: RescueConfig.ENABLE_FINANCIAL_RESCUE must be true [compile-time toggle, default false]
+  → Guard: rescue_completed.txt marker check (one-shot; returns ALREADY_DONE if present)
+  → Guard: DB file existence check (returns SKIPPED/NO_DB if no file)
+
+  STEP 1 — Read user version:
+    → Raw SQLiteDatabase.openDatabase(READ_ONLY) on old DB
+    → Read db.version (Room schema version)
+
+  STEP 2 — Snapshot financial tables:
+    → Raw SELECT * on 6 tables (categories, expenses, expense_groups, group_members, group_expenses, split_item_assignments)
+    → Dynamic column mapping via PRAGMA table_info (handles schema drift)
+    → Gracefully skips missing tables
+    → Returns FinancialRescueSnapshot
+
+  STEP 3 — Write JSON safety net:
+    → Serializes snapshot to {filesDir}/rescue_snapshot.json
+
+  STEP 4 — Backup DB files:
+    → Copies *.db / *.db-wal / *.db-shm / *.db-journal → {filesDir}/db_backups/*.rescue_backup
+
+  STEP 5 — Move aside old DB:
+    → Renames *.db → *.legacy.<timestamp> (removes from Room's view)
+    → Room creates fresh database on next access
+
+  STEP 6 — Create fresh Room DB + import:
+    → AppDatabase.fileBuilder(context).build() (empty tables, latest schema)
+    → BEGIN TRANSACTION:
+        importCategories: INSERT OR REPLACE (sanitized name/icon/color)
+        importExpenses: INSERT OR REPLACE (FK validated, nulls inapplicable columns)
+        importExpenseGroups: INSERT OR REPLACE
+        importGroupMembers: INSERT OR REPLACE (dedup by groupId+name, single currentUser)
+        importGroupExpenses: INSERT OR REPLACE (FK validated against valid groups/members/expenses)
+        importSplitItemAssignments: INSERT OR REPLACE (FK validated against valid expenses)
+    → COMMIT
+
+  STEP 7 — Mark done:
+    → Write rescue_completed.txt with timestamp
+
+  ON FAILURE (any exception):
+    → Rollback transaction (fresh DB stays clean)
+    → Restore moved-aside files → original names
+    → Return FAILURE(error)
+
+FORBIDDEN:
+  ❌ RescueConfig.ENABLE_FINANCIAL_RESCUE = true in production builds (compile-time default false)
+  ❌ Running rescue when rescue_completed.txt already exists
+  ❌ Skipping backup before moving DB files
+  ❌ Skipping JSON snapshot before destructive operations
+  ❌ Importing without FK validation (orphaned rows produce data corruption)
+  ❌ Using Room migrations instead of raw SQLite for rescue path (by design)
+  ❌ Manual invocation outside RescueActivity
+  ❌ Leaving ENABLE_FINANCIAL_RESCUE = true after rescue completes
+  ❌ Any rescue operation without rollback capability
+```
+
+---
+
+## Category Assignment
+
+```
+ASSIGN default category to expense:
+  → DefaultExpenseCategoryAssignmentService.assignDefaultCategory(expenseId, categoryId)
+  → DatabaseWriteBarrier check
+  → Guard: skips if expense already has a category set
+  → database.withTransaction {
+      ExpenseDao.updateCategory(expenseId, categoryId)
+      TransactionEventDao.insert with LifecycleEventType.UPDATED + category-change metadata
+    }
+  → Returns Unit
+
+FORBIDDEN:
+  ❌ ExpenseDao.updateCategory() outside DefaultExpenseCategoryAssignmentService
+  ❌ Skipping TransactionEvent write during category assignment
+  ❌ Assigning category without checking if category already set
+```
+
+---
+
+## Budget Forecasting
+
+```
+GENERATE spending forecast:
+  → BudgetForecastingEngine.generateAndSaveForecast(budgetId, period)
+  → Reads historical expense data via ExpenseDao + ExpenseRepository
+  → Normalizes via AnalyticsCurrencyNormalizer
+  → Computes projected spending using time-series patterns
+  → BudgetForecastDao.saveBudgetForecast() persists result
+
+FORBIDDEN:
+  ❌ BudgetForecastDao.saveBudgetForecast() outside BudgetForecastingEngine
+  ❌ Forecasting without historical expense normalization
+  ❌ Persisting forecasts without AnalyticsCurrencyNormalizer normalization
+```
+
+---
+
+## Shared Expense Management (Groups — Alternative Facade)
+
+```
+CREATE shared group expense:
+  → SharedExpenseManager.createGroup(name, members)
+  → SharedExpenseDataPort.createGroup() → delegates to multi-table write
+
+ADD shared expense:
+  → SharedExpenseManager.addExpense(groupId, input)
+  → SplitCalculator computes member shares
+  → SharedExpenseDataPort.createExpense() → multi-table atomic write
+
+REMOVE shared expense member:
+  → SharedExpenseManager.removeMember(groupId, memberId)
+  → SharedExpenseDataPort.removeMember()
+
+FORBIDDEN:
+  ❌ SharedExpenseDataPort.createExpense() outside SharedExpenseManager
+  ❌ SharedExpenseManager CRUD outside GroupLifecycleCoordinator (preferred path)
+```
+
+---
+
+## Recurring Plan Projection
+
+```
+PROJECT future occurrences:
+  → RecurringPlanProjectionService.projectOccurrences(ruleId, windowStart, windowEnd)
+  → Reads recurring rule + existing occurrences
+  → Computes projected dates using RecurringLifecycleCoordinator
+  → PlannedExpenseDao.insert() for each projected occurrence
+  → Used by UI to show upcoming planned expenses before materialization
+
+FORBIDDEN:
+  ❌ PlannedExpenseDao.insert() outside RecurringPlanProjectionService
+  ❌ Projecting occurrences without validating rule is active
+  ❌ Duplicate projection without clearing stale planned rows first
+```
+
+---
+
+## Spending Challenges
+
+```
+DEACTIVATE expired challenges:
+  → SpendingChallengeManager.refreshChallenges()
+  → Queries ExpenseDao for per-challenge spending aggregates
+  → SpendingChallengeRepository.deactivateChallenges() for expired challenges
+  → Returns updated challenge progress list
+
+CALCULATE challenge progress:
+  → SpendingChallengeManager.calculateProgress(challenge)
+  → Read-only: aggregates expense amounts matching challenge criteria
+  → Returns progress percentage against challenge target
+
+FORBIDDEN:
+  ❌ SpendingChallengeRepository.deactivateChallenges() directly without expense check
+  ❌ Challenge progress calculation without considering isNotMine/isReimbursable flags
 ```
