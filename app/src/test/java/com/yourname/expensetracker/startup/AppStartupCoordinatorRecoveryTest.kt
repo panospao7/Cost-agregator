@@ -90,7 +90,7 @@ class AppStartupCoordinatorRecoveryTest {
     @Test
     fun `failed crash recovery enters CRITICAL_RECOVERY_REQUIRED and blocks writes`() {
         val mode = RestoreMaintenanceMode(context)
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         writeUnrecoverableSwapJournal(journal)
 
         newCoordinator(mode, journal).checkRestoreJournal()
@@ -110,7 +110,7 @@ class AppStartupCoordinatorRecoveryTest {
         // ── First startup: recovery fails, enters critical mode, renames journal away ──
         run {
             val mode = RestoreMaintenanceMode(context)
-            val journal = RestoreJournal(context)
+            val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
             writeUnrecoverableSwapJournal(journal)
             newCoordinator(mode, journal).checkRestoreJournal()
             assertEquals(
@@ -121,7 +121,7 @@ class AppStartupCoordinatorRecoveryTest {
 
         // ── Second startup (process restart): fresh instances read persisted prefs/files ──
         val mode2 = RestoreMaintenanceMode(context)
-        val journal2 = RestoreJournal(context)
+        val journal2 = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         // No active journal exists now, so checkAndRecover() returns NoAction.
         assertFalse("No active journal should remain on second startup", journal2.hasJournal())
         assertEquals(
@@ -152,7 +152,7 @@ class AppStartupCoordinatorRecoveryTest {
         )
 
         // Fresh startup, no journal on disk.
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         assertFalse(journal.hasJournal())
         newCoordinator(mode, journal).checkRestoreJournal()
 

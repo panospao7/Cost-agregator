@@ -109,7 +109,7 @@ class P7BugFixesTest {
         // journalLock so concurrent calls do not interleave their
         // read-modify-write sequences and lose events.
 
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         val entry = journal.beginJournal(
             sourceBackupPath = "/tmp/src.costbackup",
             stagedDbPath = "/tmp/staged.db",

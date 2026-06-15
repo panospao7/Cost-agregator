@@ -741,7 +741,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             purchasesMine(start, end)
                 .groupBy {
                     val weekStart = TimePeriodUtils.getStartOfWeek(it.date)
-                    "${TimePeriodUtils.getYear(weekStart)}-W${TimePeriodUtils.getWeekOfYear(weekStart)}"
+                    TimePeriodUtils.getAppCalendarWeekKey(weekStart)
                 }
                 .map { (weekKey, rows) ->
                     val first = rows.minOf { it.date }

@@ -2,7 +2,8 @@ package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
-import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.core.time.PeriodRange
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.util.Calendar
@@ -77,7 +78,7 @@ class BudgetCalculator @Inject constructor(
                 // Resolve the active anchored cycle containing `now` instead of
                 // pinning start = budget.startDate forever.
                 val window = calculatePeriodWindowForTime(budget.period, budget.startDate, now)
-                window.start to window.end
+                window.startInclusiveMillis to window.endExclusiveMillis
             }
             PeriodMode.CALENDAR -> {
                 // Use natural calendar boundaries via TimePeriodUtils.
@@ -116,7 +117,7 @@ class BudgetCalculator @Inject constructor(
             BudgetPeriod.DAILY -> {
                 val start = cal.timeInMillis
                 cal.add(Calendar.DAY_OF_YEAR, 1)
-                PeriodRange(start, cal.timeInMillis)
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = cal.timeInMillis, label = "Budget")
             }
             BudgetPeriod.WEEKLY -> {
                 // NEW-P6-016: Use ISO week fields instead of Calendar.WEEK_OF_YEAR,
@@ -132,7 +133,7 @@ class BudgetCalculator @Inject constructor(
                 }
                 val start = evalDate.atStartOfDay(zone).toInstant().toEpochMilli()
                 val end = evalDate.plusWeeks(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                PeriodRange(start, end)
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
             BudgetPeriod.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
@@ -167,7 +168,7 @@ class BudgetCalculator @Inject constructor(
                 cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
                 
                 val end = cal.timeInMillis
-                PeriodRange(start, end)
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
             BudgetPeriod.YEARLY -> {
                 val anchorMonth = anchorCal.get(Calendar.MONTH)
@@ -192,7 +193,7 @@ class BudgetCalculator @Inject constructor(
                 val start = cal.timeInMillis
                 cal.add(Calendar.YEAR, 1)
                 val end = cal.timeInMillis
-                PeriodRange(start, end)
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
         }
     }

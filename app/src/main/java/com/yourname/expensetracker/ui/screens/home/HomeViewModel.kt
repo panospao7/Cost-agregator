@@ -776,7 +776,7 @@ class HomeViewModel @Inject constructor(
         } else {
             // Fallback: return current year/week if parsing fails
             val now = timeProvider.now()
-            Pair(TimePeriodUtils.getYear(now), TimePeriodUtils.getWeekOfYear(now))
+            Pair(TimePeriodUtils.getAppCalendarWeekYear(now), TimePeriodUtils.getAppCalendarWeekNumber(now))
         }
     }
 

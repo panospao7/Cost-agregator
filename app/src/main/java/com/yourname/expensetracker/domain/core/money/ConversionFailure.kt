@@ -15,7 +15,8 @@ data class ConversionFailure(
     val originalAmount: MoneyAmount,
     val targetCurrency: CurrencyCode,
     val reason: FailureReason,
-    val transactionCount: Int = 0  // E1: how many transactions this failure affects
+    val transactionCount: Int = 0,  // E1: how many transactions this failure affects
+    val rawOriginalCurrency: String? = null  // Raw currency string when parse failed
 ) {
 
     /** Human-readable description of the failure. */
@@ -23,6 +24,7 @@ data class ConversionFailure(
         get() = when (reason) {
             FailureReason.MISSING_RATE -> "Missing exchange rate from ${originalAmount.currency.code} to ${targetCurrency.code}"
             FailureReason.INVALID_AMOUNT -> "Invalid amount: ${originalAmount.amount} ${originalAmount.currency.code}"
+            FailureReason.INVALID_CURRENCY -> "Invalid currency code: ${rawOriginalCurrency ?: originalAmount.currency.code}"
             FailureReason.RATE_STALE -> "Exchange rate from ${originalAmount.currency.code} to ${targetCurrency.code} is too old"
             FailureReason.UNKNOWN -> "Unknown conversion error for ${originalAmount.amount} ${originalAmount.currency.code}"
         }
@@ -34,6 +36,7 @@ data class ConversionFailure(
 enum class FailureReason {
     MISSING_RATE,
     INVALID_AMOUNT,
+    INVALID_CURRENCY,
     RATE_STALE,
     UNKNOWN
 }

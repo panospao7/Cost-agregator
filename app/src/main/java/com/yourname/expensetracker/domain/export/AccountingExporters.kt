@@ -60,9 +60,16 @@ class QuickBooksIIFExporter {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val fundingAccount = expense.sourceAccountName
         val categoryAccount = categories[expense.categoryId] ?: "Uncategorized"
-        val safeAmount = expense.amount.takeIf { it.isFinite() } ?: 0.0
-        val amount = CurrencyFormatter.formatForExport(safeAmount)
-        val splitAmount = CurrencyFormatter.formatForExport(-safeAmount)
+        val amount = try {
+            CurrencyFormatter.formatForExport(expense.amount)
+        } catch (e: IllegalArgumentException) {
+            "INVALID"
+        }
+        val splitAmount = try {
+            CurrencyFormatter.formatForExport(-expense.amount)
+        } catch (e: IllegalArgumentException) {
+            "INVALID"
+        }
         // P12-CURRENT-015: route ALL IIF string fields through the shared
         // CsvCellSanitizer.sanitizeIif(), which neutralizes formula-leading
         // characters (=, +, -, @) in addition to stripping tab/newline/CR.
@@ -94,11 +101,29 @@ class XeroCSVExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
-        val amount = CsvCellSanitizer.sanitize(CurrencyFormatter.formatForExport(expense.amount))
+        val amount = CsvCellSanitizer.sanitize(
+            try {
+                CurrencyFormatter.formatForExport(expense.amount)
+            } catch (e: IllegalArgumentException) {
+                "INVALID"
+            }
+        )
         val account = CsvCellSanitizer.sanitize(categories[expense.categoryId] ?: "Uncategorized")
         val reference = expense.id.toString()
-        val conversionRate = expense.conversionRateUsed?.let { CurrencyFormatter.formatForExport(it) } ?: ""
-        val originalAmount = expense.originalAmount?.let { CurrencyFormatter.formatForExport(it) } ?: ""
+        val conversionRate = expense.conversionRateUsed?.let {
+            try {
+                CurrencyFormatter.formatForExport(it)
+            } catch (e: IllegalArgumentException) {
+                "INVALID"
+            }
+        } ?: ""
+        val originalAmount = expense.originalAmount?.let {
+            try {
+                CurrencyFormatter.formatForExport(it)
+            } catch (e: IllegalArgumentException) {
+                "INVALID"
+            }
+        } ?: ""
 
         writer.append(
             "${CsvCellSanitizer.sanitize(date)},$description,$amount,${CsvCellSanitizer.sanitize(expense.currency)}," +
@@ -128,11 +153,29 @@ class FreshBooksExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = CsvCellSanitizer.sanitize(expense.merchant)
-        val amount = CsvCellSanitizer.sanitize(CurrencyFormatter.formatForExport(expense.amount))
+        val amount = CsvCellSanitizer.sanitize(
+            try {
+                CurrencyFormatter.formatForExport(expense.amount)
+            } catch (e: IllegalArgumentException) {
+                "INVALID"
+            }
+        )
         val category = CsvCellSanitizer.sanitize(categories[expense.categoryId] ?: "Uncategorized")
         val vendor = CsvCellSanitizer.sanitize(expense.merchant)
-        val conversionRate = expense.conversionRateUsed?.let { CurrencyFormatter.formatForExport(it) } ?: ""
-        val originalAmount = expense.originalAmount?.let { CurrencyFormatter.formatForExport(it) } ?: ""
+        val conversionRate = expense.conversionRateUsed?.let {
+            try {
+                CurrencyFormatter.formatForExport(it)
+            } catch (e: IllegalArgumentException) {
+                "INVALID"
+            }
+        } ?: ""
+        val originalAmount = expense.originalAmount?.let {
+            try {
+                CurrencyFormatter.formatForExport(it)
+            } catch (e: IllegalArgumentException) {
+                "INVALID"
+            }
+        } ?: ""
 
         writer.append(
             "${CsvCellSanitizer.sanitize(date)},$description,$amount,${CsvCellSanitizer.sanitize(expense.currency)}," +

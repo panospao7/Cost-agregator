@@ -131,6 +131,55 @@ class CurrencyNormalizationBehavioralTest {
         assertEquals(90.0, aggregate.displayAmount, 0.01)
     }
 
+    // --- Invalid currency handling (PR2) ---
+
+    @Test
+    fun `normalizeExpense with invalid currency returns excluded with INVALID_CURRENCY`() = runTest {
+        val engine = MoneyNormalizationEngine(converter)
+        val expense = fakeExpense(1, 100.0, "123", NOW) // numeric currency is invalid
+        val result = engine.normalizeExpense(expense, CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE)
+
+        assertTrue("Expected Excluded for invalid currency", result is NormalizationResult.Excluded)
+        val excluded = result as NormalizationResult.Excluded
+        assertEquals(FailureReason.INVALID_CURRENCY, excluded.failure.reason)
+    }
+
+    @Test
+    fun `aggregate expenses with invalid currency returns excluded row not crash`() = runTest {
+        store.rates["USD_EUR"] = DomainExchangeRate("USD", "EUR", 0.92, lastUpdated = NOW, source = "api", validDate = NOW)
+        val engine = MoneyNormalizationEngine(converter)
+        val expenses = listOf(
+            fakeExpense(1, 100.0, "USD", NOW),
+            fakeExpense(2, 50.0, "AB1", NOW),   // invalid currency (contains digit)
+            fakeExpense(3, 20.0, "E1R", NOW)   // invalid (contains digit)
+        )
+        val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE)
+
+        assertTrue(aggregate.isPartial)
+        // USD should convert; two invalid currencies should be excluded
+        assertEquals(2, aggregate.conversionFailures.size)
+        assertEquals(92.0, aggregate.displayAmount, 0.01)
+        assertEquals(
+            2,
+            aggregate.conversionFailures.count { it.reason == FailureReason.INVALID_CURRENCY }
+        )
+    }
+
+    @Test
+    fun `aggregate expenses all invalid currency returns UNAVAILABLE quality`() = runTest {
+        val engine = MoneyNormalizationEngine(converter)
+        val expenses = listOf(
+            fakeExpense(1, 100.0, "XYZ123", NOW),
+            fakeExpense(2, 50.0, "AB", NOW) // too short
+        )
+        val aggregate = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE)
+
+        assertTrue(aggregate.isPartial)
+        assertEquals(ConversionQuality.UNAVAILABLE, aggregate.conversionQuality)
+        assertEquals(0.0, aggregate.displayAmount, 0.0)
+        assertEquals(2, aggregate.conversionFailures.size)
+    }
+
     // --- BucketDatePolicy enforcement ---
 
     @Test

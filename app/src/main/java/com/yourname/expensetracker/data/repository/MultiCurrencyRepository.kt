@@ -986,14 +986,12 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Format a week key from a timestamp using ISO week-based year.
-     * Always use [TimePeriodUtils.getWeekBasedYear] with [TimePeriodUtils.getWeekOfYear]
-     * to avoid year-boundary mismatches (e.g. 2021-01-01 → "2020-W53").
+     * Format a week key from a timestamp using ISO-8601 week numbering.
+     * Uses [TimePeriodUtils.getIsoWeekKey] for consistent ISO week-based year
+     * and week number pairing.
      */
     private fun getWeekKey(timestamp: Long): String {
-        val year = TimePeriodUtils.getWeekBasedYear(timestamp)
-        val week = TimePeriodUtils.getWeekOfYear(timestamp)
-        return "$year-W${week.toString().padStart(2, '0')}"
+        return TimePeriodUtils.getIsoWeekKey(timestamp)
     }
 
     /**

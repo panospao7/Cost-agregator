@@ -572,8 +572,8 @@ class TimePeriodUtilsValidationTest {
     @Test
     fun `getCanonicalWeekRangeFromKey handles year rollover deterministically`() {
         val dec31 = createDate(2025, 12, 31, 12, 0, 0)
-        val year = TimePeriodUtils.getYear(dec31)
-        val week = TimePeriodUtils.getWeekOfYear(dec31).toString().padStart(2, '0')
+        val year = TimePeriodUtils.getAppCalendarWeekYear(dec31)
+        val week = TimePeriodUtils.getAppCalendarWeekNumber(dec31).toString().padStart(2, '0')
         val key = "$year-$week"
 
         val (start, end) = TimePeriodUtils.getCanonicalWeekRangeFromKey(key)

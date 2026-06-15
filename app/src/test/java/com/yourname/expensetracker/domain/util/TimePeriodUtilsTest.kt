@@ -753,4 +753,121 @@ class TimePeriodUtilsTest {
         assertEquals("Calendar year should be 2021", 2021,
             TimePeriodUtils.getYear(jan1_2021))
     }
+
+    // ============================================================================
+    // ISO-8601 & APP-CALENDAR WEEK HELPER TESTS (PR5)
+    // ============================================================================
+
+    @Test
+    fun `getIsoWeekNumber returns ISO week 53 for Jan 1 2021`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(53, TimePeriodUtils.getIsoWeekNumber(jan1_2021))
+    }
+
+    @Test
+    fun `getIsoWeekBasedYear returns 2020 for Jan 1 2021`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(2020, TimePeriodUtils.getIsoWeekBasedYear(jan1_2021))
+    }
+
+    @Test
+    fun `getIsoWeekKey returns correct format for Jan 1 2021`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals("2020-W53", TimePeriodUtils.getIsoWeekKey(jan1_2021))
+    }
+
+    @Test
+    fun `getIsoWeekNumber returns 1 for Jan 4 2021`() {
+        val jan4_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 4, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(1, TimePeriodUtils.getIsoWeekNumber(jan4_2021))
+    }
+
+    @Test
+    fun `getAppCalendarWeekNumber returns 1 for Jan 1 2021`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(1, TimePeriodUtils.getAppCalendarWeekNumber(jan1_2021))
+    }
+
+    @Test
+    fun `getAppCalendarWeekYear returns 2021 for Jan 1 2021`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(2021, TimePeriodUtils.getAppCalendarWeekYear(jan1_2021))
+    }
+
+    @Test
+    fun `getAppCalendarWeekKey returns correct format for Jan 1 2021`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals("2021-W01", TimePeriodUtils.getAppCalendarWeekKey(jan1_2021))
+    }
+
+    @Test
+    fun `getAppCalendarWeekNumber and getAppCalendarWeekYear are consistent at year boundary`() {
+        val dec31_2020 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2020, Calendar.DECEMBER, 31, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val weekYear = TimePeriodUtils.getAppCalendarWeekYear(dec31_2020)
+        val weekNum = TimePeriodUtils.getAppCalendarWeekNumber(dec31_2020)
+        assertEquals(2020, weekYear)
+        assertEquals(53, weekNum)
+        assertEquals("2020-W53", TimePeriodUtils.getAppCalendarWeekKey(dec31_2020))
+    }
+
+    @Test
+    fun `getIsoWeekNumber and getIsoWeekBasedYear are consistent at year boundary`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val weekYear = TimePeriodUtils.getIsoWeekBasedYear(jan1_2021)
+        val weekNum = TimePeriodUtils.getIsoWeekNumber(jan1_2021)
+        assertEquals(2020, weekYear)
+        assertEquals(53, weekNum)
+        assertEquals("2020-W53", TimePeriodUtils.getIsoWeekKey(jan1_2021))
+    }
+
+    @Test
+    fun `getAppCalendarWeekNumber matches getWeekOfYear for compatibility`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(
+            TimePeriodUtils.getWeekOfYear(jan1_2021),
+            TimePeriodUtils.getAppCalendarWeekNumber(jan1_2021)
+        )
+    }
+
+    @Test
+    fun `getIsoWeekBasedYear matches getWeekBasedYear for compatibility`() {
+        val jan1_2021 = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(2021, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(
+            TimePeriodUtils.getWeekBasedYear(jan1_2021),
+            TimePeriodUtils.getIsoWeekBasedYear(jan1_2021)
+        )
+    }
 }

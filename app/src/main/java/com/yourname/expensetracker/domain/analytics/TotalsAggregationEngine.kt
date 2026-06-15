@@ -511,8 +511,8 @@ class TotalsAggregationEngine @Inject constructor(
     }
 
     private fun weekKey(weekStart: Long): String {
-        val year = TimePeriodUtils.getYear(weekStart)
-        val week = TimePeriodUtils.getWeekOfYear(weekStart)
+        val year = TimePeriodUtils.getAppCalendarWeekYear(weekStart)
+        val week = TimePeriodUtils.getAppCalendarWeekNumber(weekStart)
         return "%04d-W%d".format(year, week)
     }
 

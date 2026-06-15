@@ -224,7 +224,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreJournal initial state is clean`() {
         // GIVEN: a fresh RestoreJournal with no prior journal file
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
         // THEN: no journal exists
         assertFalse("hasJournal should return false initially", journal.hasJournal())
@@ -234,7 +234,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreJournal checkAndRecover returns NoAction when clean`() {
         // GIVEN: a fresh RestoreJournal with no journal file
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
         // WHEN: checking and recovering
         val result = journal.checkAndRecover()
@@ -249,7 +249,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreJournal beginJournal creates a journal entry`() {
         // GIVEN: a fresh RestoreJournal
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
         // WHEN: beginning a journal
         val sourcePath = "/tmp/source.costbackup"
@@ -279,7 +279,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreJournal transitionTo updates state`() {
         // GIVEN: an existing journal entry
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         val entry = journal.beginJournal(
             sourceBackupPath = "/tmp/source.costbackup",
             stagedDbPath = "/tmp/staged.db",
@@ -303,7 +303,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreJournal commitJournal clears the journal file`() {
         // GIVEN: an existing journal entry
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         journal.beginJournal(
             sourceBackupPath = "/tmp/source.costbackup",
             stagedDbPath = "/tmp/staged.db",
@@ -322,7 +322,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreJournal failJournal clears the journal file`() {
         // GIVEN: an existing journal entry
-        val journal = RestoreJournal(context)
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         journal.beginJournal(
             sourceBackupPath = "/tmp/source.costbackup",
             stagedDbPath = "/tmp/staged.db",

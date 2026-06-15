@@ -86,9 +86,9 @@ class TimePeriodAlignmentTest {
         )
         val utilsStart = TimePeriodUtils.getStartOfMonth(ref)
         val utilsEnd = TimePeriodUtils.getEndOfMonth(ref)
-        assertEquals("Budget MONTHLY start should match", utilsStart, budgetRange.start)
+        assertEquals("Budget MONTHLY start should match", utilsStart, budgetRange.startInclusiveMillis)
         assertTrue("Budget MONTHLY end should be start of next month",
-            budgetRange.end >= utilsEnd && budgetRange.end <= utilsEnd + 86400000)
+            budgetRange.endExclusiveMillis >= utilsEnd && budgetRange.endExclusiveMillis <= utilsEnd + 86400000)
     }
 
     @Test

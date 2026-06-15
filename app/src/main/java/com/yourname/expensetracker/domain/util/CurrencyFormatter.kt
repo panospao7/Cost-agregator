@@ -14,15 +14,15 @@ object CurrencyFormatter {
     // For UI display, this is desired. For machine-readable output (CSV, API), use
     // String.format(Locale.US, "%.2f", amount) to enforce period-as-decimal.
     private const val DEFAULT_CURRENCY = "EUR"
-    private val DEFAULT_SYMBOL = "€"
 
     @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatMoney(amount, currencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
     fun format(amount: Double, currencyCode: String = DEFAULT_CURRENCY, showCents: Boolean = true): String {
-        return currencyNumberFormat(currencyCode, showCents).format(amount)
+        return formatExplicit(amount, currencyCode, showCents)
     }
 
     @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatMoneyCompact(amount, currencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
     fun formatCompact(amount: Double, currencyCode: String = DEFAULT_CURRENCY): String {
+        require(amount.isFinite()) { "Cannot format non-finite amount: $amount" }
         val symbol = getCurrencySymbol(currencyCode)
         return when {
             amount >= 1_000_000 -> "$symbol${String.format(Locale.getDefault(), "%.1f", amount / 1_000_000)}M"
@@ -33,6 +33,7 @@ object CurrencyFormatter {
 
     @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatMoneyWithSign(amount, currencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
     fun formatWithSign(amount: Double, currencyCode: String = DEFAULT_CURRENCY): String {
+        require(amount.isFinite()) { "Cannot format non-finite amount: $amount" }
         val absolute = format(kotlin.math.abs(amount), currencyCode)
         return when {
             amount < 0 -> "-$absolute"
@@ -48,7 +49,7 @@ object CurrencyFormatter {
      * This is the safe replacement for the deprecated [format] overload.
      */
     fun formatMoney(amount: Double, currencyCode: String, showCents: Boolean = true): String {
-        return format(amount, currencyCode, showCents)
+        return formatExplicit(amount, currencyCode, showCents)
     }
 
     /**
@@ -67,29 +68,40 @@ object CurrencyFormatter {
         return formatWithSign(amount, currencyCode)
     }
 
-    fun formatForExport(amount: Double, locale: Locale = Locale.getDefault()): String {
-        val safeAmount = if (amount.isFinite()) amount else 0.0
-        return String.format(Locale.US, "%.2f", safeAmount)
+    /**
+     * Format a monetary amount for machine-readable export (CSV, IIF, API).
+     *
+     * Always uses [Locale.US] to enforce period-as-decimal (e.g. "1234.56").
+     * Rejects non-finite amounts (NaN, Infinity) with [IllegalArgumentException].
+     */
+    fun formatForExport(amount: Double): String {
+        require(amount.isFinite()) { "Cannot export non-finite monetary amount: $amount" }
+        return String.format(Locale.US, "%.2f", amount)
     }
 
-    @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use getCurrencySymbol(explicitCurrencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
-    fun getCurrencySymbol(currencyCode: String = DEFAULT_CURRENCY): String {
+    fun getCurrencySymbol(currencyCode: String): String {
         return try {
             Currency.getInstance(currencyCode).getSymbol(Locale.getDefault())
-        } catch (e: Exception) {
-            DEFAULT_SYMBOL
+        } catch (e: IllegalArgumentException) {
+            currencyCode // Return raw code instead of EUR symbol
         }
     }
 
-    private fun currencyNumberFormat(currencyCode: String, showCents: Boolean): NumberFormat {
-        return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
-            val resolvedCurrency = runCatching { Currency.getInstance(currencyCode) }
-                .getOrElse { Currency.getInstance(DEFAULT_CURRENCY) }
-            currency = resolvedCurrency
-            // Use the currency's default fraction digits (e.g., EUR/USD → 2, JPY → 0, BHD → 3)
-            val fractionDigits = if (showCents) resolvedCurrency.defaultFractionDigits else 0
-            minimumFractionDigits = fractionDigits
-            maximumFractionDigits = fractionDigits
+    private fun formatExplicit(amount: Double, currencyCode: String, showCents: Boolean): String {
+        require(amount.isFinite()) { "Cannot format non-finite amount: $amount" }
+        return try {
+            val format = NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
+                val resolvedCurrency = Currency.getInstance(currencyCode)
+                currency = resolvedCurrency
+                val fractionDigits = if (showCents) resolvedCurrency.defaultFractionDigits else 0
+                minimumFractionDigits = fractionDigits
+                maximumFractionDigits = fractionDigits
+            }
+            format.format(amount)
+        } catch (e: IllegalArgumentException) {
+            // Invalid currency code — show raw amount with raw code instead of EUR symbol
+            val fractionDigits = if (showCents) 2 else 0
+            String.format(Locale.getDefault(), "%.${fractionDigits}f %s", amount, currencyCode)
         }
     }
 }

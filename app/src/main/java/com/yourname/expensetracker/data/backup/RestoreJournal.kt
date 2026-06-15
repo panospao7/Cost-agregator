@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.backup
 
 import android.content.Context
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
 import timber.log.Timber
@@ -33,7 +34,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class RestoreJournal @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) {
 
     data class AssetRestoreTask(
@@ -50,7 +52,7 @@ class RestoreJournal @Inject constructor(
         val operationId: String = UUID.randomUUID().toString(),
         val operationCorrelationId: String = UUID.randomUUID().toString(),
         val state: JournalState = JournalState.PREPARING,
-        val startedAt: Long = System.currentTimeMillis(),
+        val startedAt: Long = 0L, // Must be set explicitly by beginJournal() using timeProvider
         val sourceBackupPath: String? = null,
         val stagedDbPath: String? = null,
         val safetyBackupPath: String? = null,
@@ -109,6 +111,7 @@ class RestoreJournal @Inject constructor(
                         JournalState.PREPARING
                     }
                 },
+                // M10-LEGACY: Fallback for old JSON without startedAt; uses wall-clock only when parsing legacy journals
                 startedAt = json.optLong("startedAt", System.currentTimeMillis()),
                 // DDL-016-05: read both old name and new _prefixed name for recovery paths
                 sourceBackupPath = (json.optString("_sourceBackupPath").takeIf { it.isNotEmpty() && it != "null" }
@@ -246,7 +249,7 @@ class RestoreJournal @Inject constructor(
             val newEvent = RestoreJournalEvent(
                 correlationId = correlationId,
                 stage = stage, outcome = outcome, severity = severity,
-                reasonCode = reasonCode, occurredAt = System.currentTimeMillis(),
+                reasonCode = reasonCode, occurredAt = timeProvider.now(),
                 metadataJson = metadataJson,
                 exceptionClass = exceptionClass, exceptionMessageSafe = exceptionMessageSafe,
                 isTerminal = isTerminal
@@ -374,7 +377,7 @@ class RestoreJournal @Inject constructor(
             val file = File(context.filesDir, SUCCESS_JOURNAL_FILENAME)
             if (!file.exists()) return
             val json = JSONObject(file.readText())
-            json.put("importedAt", System.currentTimeMillis())
+            json.put("importedAt", timeProvider.now())
             json.put("importedCorrelationId", correlationId)
             file.writeText(json.toString(2))
         } catch (e: Exception) {
@@ -428,7 +431,7 @@ class RestoreJournal @Inject constructor(
             val file = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
             if (!file.exists()) return
             val json = JSONObject(file.readText())
-            json.put("importedAt", System.currentTimeMillis())
+            json.put("importedAt", timeProvider.now())
             json.put("importedCorrelationId", correlationId)
             file.writeText(json.toString(2))
         } catch (e: Exception) {
@@ -549,6 +552,7 @@ class RestoreJournal @Inject constructor(
         }
         val entry = JournalEntry(
             state = JournalState.PREPARING,
+            startedAt = timeProvider.now(),
             sourceBackupPath = sourceBackupPath,
             stagedDbPath = stagedDbPath,
             liveDbPath = liveDbPath

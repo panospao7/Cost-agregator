@@ -30,8 +30,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
 
         val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, evaluationTime)
 
-        val start = Calendar.getInstance().apply { timeInMillis = window.start }
-        val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
         assertEquals(2026, start.get(Calendar.YEAR))
         assertEquals(Calendar.JANUARY, start.get(Calendar.MONTH))
@@ -49,8 +49,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
 
         val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, evaluationTime)
 
-        val start = Calendar.getInstance().apply { timeInMillis = window.start }
-        val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
         assertEquals(2025, start.get(Calendar.YEAR))
         assertEquals(Calendar.FEBRUARY, start.get(Calendar.MONTH))
@@ -68,8 +68,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
 
         val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.WEEKLY, anchorDate, evaluationTime)
 
-        val start = Calendar.getInstance().apply { timeInMillis = window.start }
-        val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
         assertEquals(Calendar.MONDAY, start.get(Calendar.DAY_OF_WEEK))
         assertEquals(2026, start.get(Calendar.YEAR))
@@ -91,13 +91,13 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
             val dstCalculator = BudgetCalculator(fakeTimeProvider)
 
             val window = dstCalculator.calculatePeriodWindow(BudgetPeriod.DAILY, fakeTimeProvider.now())
-            val duration = window.end - window.start
+            val duration = window.endExclusiveMillis - window.startInclusiveMillis
             val expectedDuration = 23L * 60L * 60L * 1000L
 
             assertEquals(expectedDuration, duration)
 
-            val start = Calendar.getInstance().apply { timeInMillis = window.start }
-            val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
             assertEquals(29, start.get(Calendar.DAY_OF_MONTH))
             assertEquals(30, end.get(Calendar.DAY_OF_MONTH))
@@ -275,8 +275,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
         val evaluationTime = atDateTime(2025, 2, 15, 12, 0)
 
         val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, evaluationTime)
-        val start = Calendar.getInstance().apply { timeInMillis = window.start }
-        val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
         assertEquals(Calendar.JANUARY, start.get(Calendar.MONTH))
         assertEquals(30, start.get(Calendar.DAY_OF_MONTH))
@@ -291,8 +291,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
         val evaluationTime = atDateTime(2024, 2, 15, 12, 0)
 
         val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, evaluationTime)
-        val start = Calendar.getInstance().apply { timeInMillis = window.start }
-        val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
         assertEquals(Calendar.JANUARY, start.get(Calendar.MONTH))
         assertEquals(30, start.get(Calendar.DAY_OF_MONTH))
@@ -311,8 +311,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
         val pastEval = atDateTime(2025, 8, 20, 10, 0)
 
         val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, pastEval)
-        val start = Calendar.getInstance().apply { timeInMillis = window.start }
-        val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
         // Aug 20 >= anchor day 15, so cycle is Aug 15 – Sep 15
         assertEquals(Calendar.AUGUST, start.get(Calendar.MONTH))
@@ -328,8 +328,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
         val futureEval = atDateTime(2027, 1, 10, 10, 0)
 
         val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, futureEval)
-        val start = Calendar.getInstance().apply { timeInMillis = window.start }
-        val end = Calendar.getInstance().apply { timeInMillis = window.end }
+        val start = Calendar.getInstance().apply { timeInMillis = window.startInclusiveMillis }
+        val end = Calendar.getInstance().apply { timeInMillis = window.endExclusiveMillis }
 
         // Jan 10 < anchor day 15 → cycle started in previous month: Dec 15, 2026
         assertEquals(Calendar.DECEMBER, start.get(Calendar.MONTH))
@@ -350,8 +350,8 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
         val convenienceResult = calculator.calculatePeriodWindow(BudgetPeriod.MONTHLY, anchorDate)
         val explicitResult = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchorDate, now)
 
-        assertEquals(explicitResult.start, convenienceResult.start)
-        assertEquals(explicitResult.end, convenienceResult.end)
+        assertEquals(explicitResult.startInclusiveMillis, convenienceResult.startInclusiveMillis)
+        assertEquals(explicitResult.endExclusiveMillis, convenienceResult.endExclusiveMillis)
     }
 
     private fun budget(periodMode: String, period: BudgetPeriod, startDate: Long): Budget {

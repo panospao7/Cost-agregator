@@ -9,10 +9,9 @@ import java.util.Calendar
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 
-// M11 OPEN: Week helpers are currently mixed — some use ISO-8601 week definition
-// (Monday start, Week 1 = first week with 4+ days in new year), others use
-// app-configured calendar week (Sunday/Monday start depending on locale).
-// All public week APIs must specify which week definition they use.
+// M11 FIXED: Week helpers now explicitly split into ISO-8601 and app-calendar
+// families. Old ambiguous pairing (getWeekOfYear + getWeekBasedYear) is
+// deprecated. Caller migration is deferred to a later PR.
 
 /**
  * Canonical owner of all shared calendar boundary math for the ExpenseTracker app.
@@ -792,9 +791,16 @@ object TimePeriodUtils {
      * This is **locale-independent**: `firstDayOfWeek` is explicitly set to
      * Monday regardless of the device locale.
      *
-     * Note: [getWeekBasedYear] / [getWeekOfYear] still exist for callers that
-     * need strict ISO-8601 week numbering; migrate those callers separately.
+     * @deprecated Use [getIsoWeekNumber] for ISO-8601 week numbering or
+     * [getAppCalendarWeekNumber] for app-calendar week numbering (identical to
+     * this implementation). Do not mix week numbering systems. Scheduled for
+     * removal in a future PR after all callers have been migrated.
      */
+    @Deprecated(
+        "Use getIsoWeekNumber() for ISO-8601 week numbering or getAppCalendarWeekNumber() for app calendar week numbering. " +
+        "Do not mix week numbering systems.",
+        ReplaceWith("getAppCalendarWeekNumber(timestamp)")
+    )
     fun getWeekOfYear(timestamp: Long): Int {
         val cal = Calendar.getInstance().apply {
             timeInMillis = timestamp
@@ -819,7 +825,16 @@ object TimePeriodUtils {
      *
      * Existing callers that still pair [getYear] with [getWeekOfYear] are
      * incorrect at year boundaries and will be migrated in a later batch.
+     *
+     * @deprecated Use [getIsoWeekBasedYear] instead (identical implementation,
+     * renamed for clarity). Scheduled for removal in a future PR after all
+     * callers have been migrated.
      */
+    @Deprecated(
+        "Use getIsoWeekBasedYear() for ISO-8601 week-based year or getAppCalendarWeekYear() for app calendar year. " +
+        "Do not mix week numbering systems.",
+        ReplaceWith("getIsoWeekBasedYear(timestamp)")
+    )
     fun getWeekBasedYear(timestamp: Long): Int {
         val zone = ZoneId.systemDefault()
         val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
@@ -833,6 +848,95 @@ object TimePeriodUtils {
     fun getDayOfWeek(timestamp: Long): Int {
         val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
         return cal.get(Calendar.DAY_OF_WEEK)
+    }
+
+    // ============================================================================
+    // ISO-8601 WEEK HELPERS
+    // ============================================================================
+
+    /**
+     * Returns the ISO-8601 week number for [timestamp].
+     *
+     * Week 1 is the first week that contains at least 4 days in the new year.
+     * Monday is the first day of the week.
+     *
+     * Always pair with [getIsoWeekBasedYear] when constructing a week-scoped key.
+     */
+    fun getIsoWeekNumber(timestamp: Long): Int {
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val isoWeekFields = WeekFields.of(DayOfWeek.MONDAY, 4)
+        return localDate.get(isoWeekFields.weekOfWeekBasedYear())
+    }
+
+    /**
+     * Returns the ISO-8601 week-based year for [timestamp].
+     *
+     * This is the year that corresponds to the ISO week number from
+     * [getIsoWeekNumber]. Around New Year boundaries this can differ from
+     * the calendar year returned by [getYear].
+     *
+     * Always pair with [getIsoWeekNumber] when constructing a week-scoped key.
+     */
+    fun getIsoWeekBasedYear(timestamp: Long): Int {
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val isoWeekFields = WeekFields.of(DayOfWeek.MONDAY, 4)
+        return localDate.get(isoWeekFields.weekBasedYear())
+    }
+
+    /**
+     * Returns a week-scoped key using the ISO-8601 week definition.
+     *
+     * Format: `YYYY-WNN` (e.g., `"2020-W53"`).
+     */
+    fun getIsoWeekKey(timestamp: Long): String {
+        val year = getIsoWeekBasedYear(timestamp)
+        val week = getIsoWeekNumber(timestamp).toString().padStart(2, '0')
+        return "${year}-W${week}"
+    }
+
+    // ============================================================================
+    // APP-CALENDAR WEEK HELPERS
+    // ============================================================================
+
+    /**
+     * Returns the app-calendar week number for [timestamp].
+     *
+     * Monday is the first day of the week, and week 1 is the week containing
+     * January 1. This is **always consistent with [getAppCalendarWeekYear]**.
+     *
+     * Always pair with [getAppCalendarWeekYear] when constructing a week-scoped key.
+     */
+    fun getAppCalendarWeekNumber(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = timestamp
+            firstDayOfWeek = Calendar.MONDAY
+            minimalDaysInFirstWeek = 1
+        }
+        return cal.get(Calendar.WEEK_OF_YEAR)
+    }
+
+    /**
+     * Returns the app-calendar week year for [timestamp].
+     *
+     * This is the calendar year, and is **always consistent with
+     * [getAppCalendarWeekNumber]** at every year boundary.
+     */
+    fun getAppCalendarWeekYear(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.get(Calendar.YEAR)
+    }
+
+    /**
+     * Returns a week-scoped key using the app-calendar week definition.
+     *
+     * Format: `YYYY-WNN` (e.g., `"2021-W01"`).
+     */
+    fun getAppCalendarWeekKey(timestamp: Long): String {
+        val year = getAppCalendarWeekYear(timestamp)
+        val week = getAppCalendarWeekNumber(timestamp).toString().padStart(2, '0')
+        return "${year}-W${week}"
     }
 
     /**

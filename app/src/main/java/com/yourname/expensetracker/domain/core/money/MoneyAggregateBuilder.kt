@@ -35,7 +35,7 @@ object MoneyAggregateBuilder {
             "Legacy fromBuckets uses latest-rate conversion only. Use typed overload for $rateBasis."
         }
         if (buckets.isEmpty()) {
-            return MoneyAggregate.empty(CurrencyCode(homeCurrency), rateBasis)
+            return MoneyAggregate.empty(CurrencyCode.parse(homeCurrency) ?: CurrencyCode.EUR, rateBasis)
         }
 
         // Group by currency
@@ -57,14 +57,14 @@ object MoneyAggregateBuilder {
         }
 
         val sourceBuckets = byCurrency.map { (ccy, pair) ->
-            MoneyBucket(CurrencyCode(ccy), pair.first, pair.second)
+            MoneyBucket(CurrencyCode.parse(ccy) ?: CurrencyCode.EUR, pair.first, pair.second)
         }
 
         // If all same currency and it's home currency, return directly
         if (byCurrency.size == 1) {
             val entry = byCurrency.entries.first()
             if (entry.key == homeCurrency.uppercase()) {
-                return MoneyAggregate.singleCurrency(entry.value.first, CurrencyCode(entry.key), entry.value.second, rateBasis)
+                return MoneyAggregate.singleCurrency(entry.value.first, CurrencyCode.parse(entry.key) ?: CurrencyCode.EUR, entry.value.second, rateBasis)
             }
         }
 
@@ -80,7 +80,7 @@ object MoneyAggregateBuilder {
 
         return MoneyAggregate(
             displayAmount = conversionResult.total,
-            displayCurrency = CurrencyCode(homeCurrency),
+            displayCurrency = CurrencyCode.parse(homeCurrency) ?: CurrencyCode.EUR,
             sourceBuckets = sourceBuckets,
             conversionFailures = conversionFailures,
             isPartial = conversionFailures.isNotEmpty(),
@@ -163,6 +163,7 @@ object MoneyAggregateBuilder {
                         reason = when (outcome.failureType) {
                             ConversionFailureType.STALE_RATE -> FailureReason.RATE_STALE
                             ConversionFailureType.MISSING_RATE, ConversionFailureType.MISSING_HISTORICAL_RATE -> FailureReason.MISSING_RATE
+                            ConversionFailureType.INVALID_SOURCE_CURRENCY, ConversionFailureType.INVALID_TARGET_CURRENCY -> FailureReason.INVALID_CURRENCY
                             else -> FailureReason.UNKNOWN
                         },
                         transactionCount = bucket.transactionCount

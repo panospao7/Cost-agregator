@@ -4,7 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -132,5 +136,65 @@ class PeriodRangeTest {
         assertEquals(2024, endCal.get(Calendar.YEAR))
         assertEquals(Calendar.MARCH, endCal.get(Calendar.MONTH))
         assertEquals(1, endCal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun `customPeriod_usesExplicitBounds`() {
+        val now = 1234567890L
+        val customStart = 1000L
+        val customEnd = 2000L
+        val range = PeriodKind.CUSTOM.toPeriodRange(
+            now = now,
+            customStart = customStart,
+            customEnd = customEnd
+        )
+        assertEquals(customStart, range.startInclusiveMillis)
+        assertEquals(customEnd, range.endExclusiveMillis)
+        assertEquals(PeriodKind.CUSTOM, range.kind)
+        assertEquals("Custom", range.label)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `customPeriod_withoutBoundsThrows`() {
+        PeriodKind.CUSTOM.toPeriodRange(now = 1234567890L)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `customPeriod_endBeforeStartThrows`() {
+        PeriodKind.CUSTOM.toPeriodRange(
+            now = 1234567890L,
+            customStart = 2000L,
+            customEnd = 1000L
+        )
+    }
+
+    @Test
+    fun `last7Days_containsExactly7LocalDatesIncludingToday`() {
+        val ld = LocalDate.of(2026, 6, 15)
+        val now = ld.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() + 3600_000L // 1 hour into day
+
+        val range = PeriodKind.LAST_7_DAYS.toPeriodRange(now, zoneId = utc)
+
+        val startDate = Instant.ofEpochMilli(range.startInclusiveMillis).atZone(utc).toLocalDate()
+        val endDate = Instant.ofEpochMilli(range.endExclusiveMillis).atZone(utc).toLocalDate()
+
+        assertEquals("start should be today - 6 days", ld.minusDays(6), startDate)
+        assertEquals("end should be tomorrow", ld.plusDays(1), endDate)
+        assertEquals("should span exactly 7 calendar days", 7L, ChronoUnit.DAYS.between(startDate, endDate))
+    }
+
+    @Test
+    fun `last30Days_containsExactly30LocalDatesIncludingToday`() {
+        val ld = LocalDate.of(2026, 6, 15)
+        val now = ld.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() + 3600_000L // 1 hour into day
+
+        val range = PeriodKind.LAST_30_DAYS.toPeriodRange(now, zoneId = utc)
+
+        val startDate = Instant.ofEpochMilli(range.startInclusiveMillis).atZone(utc).toLocalDate()
+        val endDate = Instant.ofEpochMilli(range.endExclusiveMillis).atZone(utc).toLocalDate()
+
+        assertEquals("start should be today - 29 days", ld.minusDays(29), startDate)
+        assertEquals("end should be tomorrow", ld.plusDays(1), endDate)
+        assertEquals("should span exactly 30 calendar days", 30L, ChronoUnit.DAYS.between(startDate, endDate))
     }
 }

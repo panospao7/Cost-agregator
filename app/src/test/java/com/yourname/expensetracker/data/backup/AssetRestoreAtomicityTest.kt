@@ -41,7 +41,7 @@ class AssetRestoreAtomicityTest {
             RestoreJournal.FAILURE_JOURNAL_FILENAME,
             RestoreJournal.SUCCESS_JOURNAL_FILENAME
         ).forEach { File(context.filesDir, it).delete() }
-        journal = RestoreJournal(context)
+        journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
     }
 
     // ── A) extractTempDirPath round-trip ─────────────────────────────

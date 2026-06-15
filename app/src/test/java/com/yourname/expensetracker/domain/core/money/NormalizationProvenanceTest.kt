@@ -85,12 +85,12 @@ class NormalizationProvenanceTest {
     fun `aggregate metadata counts missing and invalid correctly`() = runTest {
         store.asOf["USD_EUR_$NOW"] = DomainExchangeRate("USD", "EUR", 0.90, NOW, "ecb", NOW)
         // GBP has no rate → MISSING_RATE
-        // XYZ is invalid currency → INVALID_AMOUNT
+        // 123 is invalid currency (contains digits) → INVALID_CURRENCY
 
         val expenses = listOf(
             expense(1, 100.0, "USD", NOW),
             expense(2, 50.0, "GBP", NOW),
-            expense(3, 25.0, "XYZ", NOW)
+            expense(3, 25.0, "123", NOW)
         )
         val agg = engine.aggregateExpenses(expenses, CurrencyCode.EUR, RateBasis.TRANSACTION_DATE)
 

@@ -37,8 +37,8 @@ class TemporalConsistencyTest : AnalyticsEngineTestBase() {
             val previousMonthStart = TimePeriodUtils.getStartOfMonth(FakeTimeProvider.forDate(2026, 2, 1).now())
             val previousMonthEnd = TimePeriodUtils.getEndOfMonth(previousMonthStart)
 
-            assertEquals(currentMonthStart, budgetWindow.start)
-            assertEquals(currentMonthEnd, budgetWindow.end)
+            assertEquals(currentMonthStart, budgetWindow.startInclusiveMillis)
+            assertEquals(currentMonthEnd, budgetWindow.endExclusiveMillis)
 
             val pace = spendingPaceCalculator.calculate(
                 currentMonthStart = currentMonthStart,
@@ -76,9 +76,9 @@ class TemporalConsistencyTest : AnalyticsEngineTestBase() {
             val currentMonthEnd = TimePeriodUtils.getEndOfMonth(currentMonthStart)
             val previousMonthStart = TimePeriodUtils.getStartOfMonth(FakeTimeProvider.forDate(2026, 2, 1).now())
 
-            assertEquals(currentMonthStart, budgetWindow.start)
-            assertEquals(currentMonthEnd, budgetWindow.end)
-            assertEquals(31, TimePeriodUtils.daysBetween(budgetWindow.start, budgetWindow.end))
+            assertEquals(currentMonthStart, budgetWindow.startInclusiveMillis)
+            assertEquals(currentMonthEnd, budgetWindow.endExclusiveMillis)
+            assertEquals(31, TimePeriodUtils.daysBetween(budgetWindow.startInclusiveMillis, budgetWindow.endExclusiveMillis))
 
             val pace = spendingPaceCalculator.calculate(
                 currentMonthStart = currentMonthStart,
@@ -117,9 +117,9 @@ class TemporalConsistencyTest : AnalyticsEngineTestBase() {
             val currentMonthEnd = TimePeriodUtils.getEndOfMonth(currentMonthStart)
             val previousMonthStart = TimePeriodUtils.getStartOfMonth(FakeTimeProvider.forDate(2024, 1, 1).now())
 
-            assertEquals(currentMonthStart, budgetWindow.start)
-            assertEquals(currentMonthEnd, budgetWindow.end)
-            assertEquals(29, TimePeriodUtils.daysBetween(budgetWindow.start, budgetWindow.end))
+            assertEquals(currentMonthStart, budgetWindow.startInclusiveMillis)
+            assertEquals(currentMonthEnd, budgetWindow.endExclusiveMillis)
+            assertEquals(29, TimePeriodUtils.daysBetween(budgetWindow.startInclusiveMillis, budgetWindow.endExclusiveMillis))
 
             val pace = spendingPaceCalculator.calculate(
                 currentMonthStart = currentMonthStart,

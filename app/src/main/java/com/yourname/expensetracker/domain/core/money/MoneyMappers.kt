@@ -36,7 +36,7 @@ fun Expense.toGrossMoneyAmount(): MoneyAmount =
 fun ConversionResult.toConvertedMoney(originalCurrency: CurrencyCode): ConvertedMoney =
     ConvertedMoney.success(
         amount = convertedAmount,
-        currency = CurrencyCode(targetCurrency),
+        currency = CurrencyCode.parse(targetCurrency) ?: CurrencyCode.EUR,
         originalAmount = originalAmount,
         originalCurrency = originalCurrency
     )
@@ -62,8 +62,8 @@ fun MultiConversionAggregate.toMoneyAggregate(
             else -> FailureReason.MISSING_RATE
         }
         ConversionFailure(
-            originalAmount = MoneyAmount(oldFailure.originalAmount, CurrencyCode(oldFailure.originalCurrency)),
-            targetCurrency = CurrencyCode(targetCurrency),
+            originalAmount = MoneyAmount(oldFailure.originalAmount, CurrencyCode.parse(oldFailure.originalCurrency) ?: CurrencyCode.EUR),
+            targetCurrency = CurrencyCode.parse(targetCurrency) ?: CurrencyCode.EUR,
             reason = reason,
             transactionCount = transactionCounts[oldFailure.originalCurrency.uppercase()] ?: 0
         )
@@ -71,7 +71,7 @@ fun MultiConversionAggregate.toMoneyAggregate(
 
     return MoneyAggregate(
         displayAmount = total,
-        displayCurrency = CurrencyCode(targetCurrency),
+        displayCurrency = CurrencyCode.parse(targetCurrency) ?: CurrencyCode.EUR,
         sourceBuckets = sourceBuckets,
         conversionFailures = failures,
         isPartial = hasFailures,
@@ -95,8 +95,8 @@ fun FailedConversion.toConversionFailure(): ConversionFailure {
         else -> FailureReason.MISSING_RATE
     }
     return ConversionFailure(
-        originalAmount = MoneyAmount(originalAmount, CurrencyCode(originalCurrency)),
-        targetCurrency = CurrencyCode(targetCurrency),
+        originalAmount = MoneyAmount(originalAmount, CurrencyCode.parse(originalCurrency) ?: CurrencyCode.EUR),
+        targetCurrency = CurrencyCode.parse(targetCurrency) ?: CurrencyCode.EUR,
         reason = reason
     )
 }

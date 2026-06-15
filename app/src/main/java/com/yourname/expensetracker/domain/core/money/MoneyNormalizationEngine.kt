@@ -33,6 +33,21 @@ class MoneyNormalizationEngine @Inject constructor(
         val from = expense.currency.uppercase()
         val to = homeCurrency.code
 
+        // CURR-PR2-01: Invalid currency is partial failure, not crash
+        val fromCode = CurrencyCode.parse(from)
+        if (fromCode == null) {
+            return NormalizationResult.Excluded(
+                sourceEntityId = expense.id,
+                failure = ConversionFailure(
+                    originalAmount = MoneyAmount(expense.effectiveAmount, CurrencyCode("XXX")),
+                    targetCurrency = homeCurrency,
+                    reason = FailureReason.INVALID_CURRENCY,
+                    transactionCount = 1,
+                    rawOriginalCurrency = expense.currency
+                )
+            )
+        }
+
         if (from == to) {
             return NormalizationResult.Included(expense.toNormalizedExpense(
                 homeCurrency = homeCurrency,
@@ -69,7 +84,7 @@ class MoneyNormalizationEngine @Inject constructor(
             is ConversionOutcome.Failed -> NormalizationResult.Excluded(
                 sourceEntityId = expense.id,
                 failure = ConversionFailure(
-                    originalAmount = MoneyAmount(expense.effectiveAmount, CurrencyCode(from)),
+                    originalAmount = MoneyAmount(expense.effectiveAmount, fromCode),
                     targetCurrency = homeCurrency,
                     reason = outcome.failureType.toFailureReason(),
                     transactionCount = 1
@@ -102,7 +117,7 @@ class MoneyNormalizationEngine @Inject constructor(
             when (result) {
                 is NormalizationResult.Included -> {
                     total += result.value.normalizedAmount
-                    val ccy = CurrencyCode(expense.currency.uppercase())
+                    val ccy = CurrencyCode.parse(expense.currency.uppercase()) ?: CurrencyCode.EUR
                     val (amt, cnt) = bucketMap.getOrDefault(ccy, 0.0 to 0)
                     bucketMap[ccy] = (amt + expense.effectiveAmount) to (cnt + 1)
                     includedCount++
@@ -140,7 +155,9 @@ class MoneyNormalizationEngine @Inject constructor(
                 excludedTransactionCount = excludedCount,
                 missingRateCount = failures.count { it.reason == FailureReason.MISSING_RATE },
                 staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE },
-                invalidCurrencyCount = failures.count { it.reason == FailureReason.INVALID_AMOUNT }
+                invalidCurrencyCount = failures.count {
+                    it.reason == FailureReason.INVALID_AMOUNT || it.reason == FailureReason.INVALID_CURRENCY
+                }
             )
         )
     }
@@ -244,7 +261,9 @@ class MoneyNormalizationEngine @Inject constructor(
                 excludedTransactionCount = excludedCount,
                 missingRateCount = failures.count { it.reason == FailureReason.MISSING_RATE },
                 staleRateCount = failures.count { it.reason == FailureReason.RATE_STALE },
-                invalidCurrencyCount = failures.count { it.reason == FailureReason.INVALID_AMOUNT }
+                invalidCurrencyCount = failures.count {
+                    it.reason == FailureReason.INVALID_AMOUNT || it.reason == FailureReason.INVALID_CURRENCY
+                }
             )
         )
     }
@@ -301,6 +320,6 @@ private fun Expense.toNormalizedExpense(
 private fun ConversionFailureType.toFailureReason(): FailureReason = when (this) {
     ConversionFailureType.MISSING_RATE, ConversionFailureType.MISSING_HISTORICAL_RATE -> FailureReason.MISSING_RATE
     ConversionFailureType.STALE_RATE -> FailureReason.RATE_STALE
-    ConversionFailureType.INVALID_SOURCE_CURRENCY, ConversionFailureType.INVALID_TARGET_CURRENCY -> FailureReason.INVALID_AMOUNT
+    ConversionFailureType.INVALID_SOURCE_CURRENCY, ConversionFailureType.INVALID_TARGET_CURRENCY -> FailureReason.INVALID_CURRENCY
     else -> FailureReason.UNKNOWN
 }

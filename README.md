@@ -1,64 +1,194 @@
 # ExpenseTracker
 
-[![Build Status](https://img.shields.io/badge/build-success-brightgreen)]()
-[![Kotlin](https://img.shields.io/badge/kotlin-2.0-blue.svg)]()
+[![Kotlin](https://img.shields.io/badge/kotlin-2.2-blue.svg)]()
 [![Android](https://img.shields.io/badge/android-API%2026+-green.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-yellow.svg)]()
 
-A comprehensive Android expense tracking application with **22 advanced features** including AI-powered analytics, investment tracking, multi-currency support, bank integration, and much more.
+A comprehensive Android expense tracking application with **28+ features** including AI-powered analytics, investment tracking, multi-currency support (17 currencies), bank API integration, shared expense groups, receipt OCR, and much more.
 
-## 🌟 Key Features
+## Key Features
 
-- 🤖 **AI-Powered Budget Forecasting** - Predict spending patterns and get smart recommendations
-- 💰 **Investment Tracking** - Track stocks, crypto, bonds, ETFs with portfolio analytics
-- 🏦 **Bank API Integration** - Connect to 6 major banks for automatic transaction import
-- 🌍 **Multi-Currency Support** - Track expenses in 17 currencies with real-time conversion
-- 👥 **Shared Expense Groups** - Split expenses with friends and family
-- 📊 **Advanced Analytics** - Deep insights into spending patterns
-- 🔔 **Smart Bill Reminders** - Never miss a payment with intelligent alerts
-- 🎯 **Spending Challenges** - Gamified no-spend streaks and challenges
-- 🧾 **Receipt OCR** - Multi-language receipt scanning with AI
-- 💼 **Business Expenses** - Separate business/personal with tax reports
-- 🔄 **Subscription Management** - Track price changes and usage
-- 💵 **Savings Goals** - Automated savings with gamification
+- **AI-Powered Budget Forecasting** — Predict spending patterns with Monte Carlo simulation and smart recommendations via Gemini API
+- **Investment Tracking** — Track stocks, crypto, bonds, ETFs with portfolio analytics and value snapshots
+- **Bank API Integration** — Connect to 6 major banks for automatic transaction import with OAuth
+- **Multi-Currency Support** — 17 currencies with type-safe `MoneyAmount` primitives, real-time conversion, stale-rate policies
+- **Shared Expense Groups** — Split expenses with friends, track balances, settlements, and lifecycle events
+- **Advanced Analytics** — 12+ analytics engines (DailyBucket, BudgetVsActual, CategoryInsight, AnomalyDetection, SpendingPace)
+- **Receipt OCR** — Multi-language receipt scanning via ML Kit with AI-powered categorization
+- **Receipt-to-Expense Matching** — Automatic matching with lifecycle-aware coordination
+- **Subscription Management** — Track price changes, usage, renewal dates with cancellation detection
+- **Warranty Tracker** — Auto-extract warranty periods from receipts, expiration notifications
+- **Bill Reminders** — Intelligent alerts with snooze/dismiss, quiet hours, recurring dispatch
+- **Spending Challenges** — Gamified no-spend streaks and challenges
+- **Savings Goals** — Automated savings with progress tracking
+- **Recurring Expenses** — Create recurring rules with auto-generation of occurrences
+- **Cash Flow Calendar** — Visual calendar with income/expenses/balance per day
+- **Business/Personal Split** — Separate business/personal expenses with tax reports
+- **Tax Estimation** — Estimate tax liability from business expenses
+- **Carbon Footprint Tracking** — Track environmental impact of spending
+- **Lifestyle Inflation Detector** — Monitor lifestyle creep over time
+- **Smart Bill Negotiation** — AI-assisted negotiation suggestions based on market rates
+- **Price Protection** — Track price drops and file claims automatically
+- **Natural Language Search** — Search expenses using plain English via AI
+- **Enhanced Split Transactions** — Visual split editor with custom percentages, templates
+- **Export to Accounting Software** — QuickBooks IIF, Xero CSV, FreshBooks CSV, PDF
+- **Backup & Restore** — Encrypted database backup with crash-safe restore journal
+- **Privacy Controls** — Granular privacy toggles (cloud AI, geocoding, notification capture) with fail-closed defaults
+- **Spending Map** — Geo-mapped expenses with OpenStreetMap integration
 
-## 📱 Screenshots
+## Architecture
 
-*Screenshots coming soon - 10 comprehensive UI screens included:*
+```
+ExpenseTracker/
+├── app/src/main/java/com/yourname/expensetracker/
+│   ├── data/
+│   │   ├── database/
+│   │   │   ├── entity/          # 70 entities (Room @Entity)
+│   │   │   ├── dao/             # 68-69 DAOs
+│   │   │   └── AppDatabase.kt   # Version 147 (140+ migrations)
+│   │   └── repository/          # 54+ repositories
+│   ├── domain/
+│   │   ├── core/money/          # Type-safe MoneyAmount, CurrencyCode, MoneyAggregate
+│   │   ├── analytics/           # 12+ analytics engines
+│   │   ├── ai/                  # HybridRouter (Gemini + ML Kit)
+│   │   ├── bank/                # Bank API integration (6 banks)
+│   │   ├── budget/              # Budget management & forecasting
+│   │   ├── categorization/      # AI categorization engines
+│   │   ├── challenge/           # Spending challenges
+│   │   ├── currency/            # Multi-currency (17 currencies)
+│   │   ├── forecast/            # Cash flow & stress forecasting
+│   │   ├── groups/              # Shared expense groups
+│   │   ├── health/              # Financial health score
+│   │   ├── income/              # Recurring income
+│   │   ├── investment/          # Investment tracking
+│   │   ├── location/            # Geocoding (6 providers)
+│   │   ├── negotiation/         # Bill negotiation
+│   │   ├── notification/        # Notification processing
+│   │   ├── privacy/             # Privacy gate enforcement
+│   │   ├── receipt/             # OCR & matching lifecycle
+│   │   ├── recurring/           # Recurring expense lifecycle
+│   │   ├── reminder/            # Bill reminders
+│   │   ├── savings/             # Savings goals
+│   │   ├── subscription/        # Subscription management
+│   │   ├── tax/                 # Tax estimation
+│   │   └── warranty/            # Warranty tracking
+│   ├── di/                      # 33-35 Hilt modules
+│   ├── service/                 # NotificationCaptureService, ReceiptMatching, etc.
+│   ├── worker/                  # 7 WorkManager workers
+│   └── ui/
+│       ├── screens/             # 39 screens across 36 feature directories
+│       └── components/          # 40+ reusable composables
+├── app/src/test/                # 200+ unit tests
+├── app/src/androidTest/         # 27+ instrumented tests
+├── config/
+│   └── db_access_allowlist.yml  # Database write access control
+├── docs/
+│   ├── architecture/            # Architecture guides, maps, inventories
+│   ├── features/                # Feature documentation
+│   ├── testing/                 # Testing strategy & status
+│   ├── currency/                # Multi-currency contracts & policies
+│   ├── privacy/                 # Raw storage policy
+│   └── releases/                # Changelog & release notes
+└── scripts/                     # CI guard scripts (Python, Kotlin, PowerShell)
+```
 
-- Investment Portfolio
-- Bank Connections
-- Bill Reminders
-- Spending Challenges
-- Advanced Analytics
-- Shared Expense Groups
-- Multi-Currency View
-- Budget Forecasting
-- Receipt Scanner
-- Business Expense Reports
+## Technologies
 
-## 🚀 Quick Start
+- **Language:** Kotlin 2.2.21
+- **UI:** Jetpack Compose (BOM 2024.11), Material3
+- **Database:** Room 2.7.2 (SQLite) with KSP — 147 schema migrations
+- **DI:** Dagger Hilt 2.57 (33+ modules, 41+ ViewModels)
+- **Async:** Kotlinx Coroutines 1.8.1 + Flow
+- **AI:** Google ML Kit Text Recognition + Gemini API + GenAI Prompt
+- **Charts:** Vico 1.13.1 (compose-m3)
+- **Maps:** osmdroid 6.1.18 (OpenStreetMap)
+- **Location:** Google Play Services Location 21.3.0
+- **Geocoding:** Nominatim, Photon, Geoapify, Google Places, Overpass API
+- **Image Loading:** Coil 2.5.0
+- **PDF:** PDFBox Android 2.0.27.0
+- **Networking:** OkHttp 4.12.0
+- **Security:** AndroidX Security Crypto 1.1.0 (AES-256-GCM)
+- **Serialization:** Gson 2.10.1
+- **Background:** WorkManager 2.9.1 (7 workers)
+- **Logging:** Timber 5.0.1
+
+## Testing
+
+```bash
+# Run unit tests
+./gradlew testDebugUnitTest
+
+# Run instrumented tests (emulator/device required)
+./gradlew connectedAndroidTest
+
+# Run all verification guards (schema, bypass, boundaries, etc.)
+./gradlew check
+```
+
+### Test Scope
+
+- **200+ unit tests:** Architecture guards, consistency, contract, currency, DI, domain, E2E flows, golden masters, guards, integration, metrics, scenarios, services, startup, verification
+- **27+ instrumented tests:** DAO stress tests, migration contract tests, database migration verification, location worker tests
+- **Verification guards** (wired into `check`):
+  - Room schema snapshot verification
+  - Lifecycle bypass guard (no direct `ExpenseDao` mutations outside coordinator)
+  - Raw money aggregates guard (no raw `Double` financial arithmetic)
+  - Direct time calls guard (enforces `TimeProvider` abstraction)
+  - DB access boundary guard (authorized writer allowlist)
+  - Ignored test growth guard
+
+## CI Pipeline
+
+GitHub Actions CI runs: unit tests → schema verification → ignored test guard → event writer boundaries → privacy boundaries → money boundaries → currency guardrails → lint → debug build → instrumented tests (API 34).
+
+## Feature Matrix
+
+| Feature | Status | UI | DB | Tests |
+|---------|--------|-----|-----|-------|
+| Warranty & Return Tracker | ✅ | ✅ | ✅ | ✅ |
+| Accounting Export (IIF/CSV/PDF) | ✅ | ✅ | ✅ | ✅ |
+| Cash Flow Calendar | ✅ | ✅ | ✅ | ✅ |
+| Receipt-to-Expense Matching | ✅ | ✅ | ✅ | ✅ |
+| Smart Savings Goals | ✅ | ✅ | ✅ | ✅ |
+| Subscription Management | ✅ | ✅ | ✅ | ✅ |
+| Business/Personal Split | ✅ | ✅ | ✅ | ✅ |
+| Multi-Currency (17 currencies) | ✅ | ✅ | ✅ | ✅ |
+| Shared Expense Groups | ✅ | ✅ | ✅ | ✅ |
+| AI Budget Forecasting | ✅ | ✅ | ✅ | ✅ |
+| Enhanced Receipt OCR | ✅ | ✅ | ✅ | ✅ |
+| Investment Tracking | ✅ | ✅ | ✅ | ✅ |
+| Bank API Integration (6 banks) | ✅ | ✅ | ✅ | ✅ |
+| Advanced Analytics Dashboard | ✅ | ✅ | ✅ | ✅ |
+| Shared Budgets | ✅ | ✅ | ✅ | ✅ |
+| Recurring Income | ✅ | ✅ | ✅ | ✅ |
+| Tax Estimation | ✅ | ✅ | ✅ | ✅ |
+| Bill Reminders | ✅ | ✅ | ✅ | ✅ |
+| Spending Challenges | ✅ | ✅ | ✅ | ✅ |
+| Spending Map | ✅ | ✅ | ✅ | ✅ |
+| Natural Language Search | ✅ | ✅ | ✅ | ✅ |
+| Visual Split Editor | ✅ | ✅ | ✅ | ✅ |
+| Recurring Expenses | ✅ | ✅ | ✅ | ✅ |
+| Backup & Restore | ✅ | ✅ | ✅ | ✅ |
+| Carbon Footprint Tracking | ✅ | ✅ | ✅ | ✅ |
+| Lifestyle Inflation Detector | ✅ | ✅ | ✅ | ✅ |
+| Smart Bill Negotiation | ✅ | ✅ | ✅ | ✅ |
+| Price Protection | ✅ | ✅ | ✅ | ✅ |
+
+## Quick Start
 
 ### Prerequisites
 
 - Android Studio Arctic Fox or later
-- JDK 17 or later
+- JDK 11 or later
 - Android SDK 26+ (Android 8.0)
 - Kotlin 2.2+
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/expensetracker.git
-
-# Open in Android Studio
 cd expensetracker
-
-# Sync Gradle and build
 ./gradlew assembleDebug
-
-# Install on device
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -68,203 +198,55 @@ adb install app/build/outputs/apk/debug/app-debug.apk
    ```kotlin
    // Add to local.properties
    GEMINI_API_KEY=your_gemini_key
-   EXCHANGE_RATE_API_KEY=your_api_key
    ```
 
 2. **Bank API Setup** (optional):
-   - Configure OAuth credentials in `BankApiIntegration.kt`
-   - Currently supports demo mode with mock data
+   - Configure OAuth credentials (currently supports demo mode with mock data)
 
-## 📊 Feature Matrix
-
-| Feature | Status | UI | DB | Tests |
-|---------|--------|-----|-----|-------|
-| Warranty Tracker | ✅ | ✅ | ✅ | ✅ |
-| Accounting Export | ✅ | ✅ | ✅ | ✅ |
-| Cash Flow Calendar | ✅ | ✅ | ✅ | ✅ |
-| Receipt Matching | ✅ | ✅ | ✅ | ✅ |
-| Smart Savings Goals | ✅ | ✅ | ✅ | ✅ |
-| Subscription Manager | ✅ | ✅ | ✅ | ✅ |
-| Business/Personal Split | ✅ | ✅ | ✅ | ✅ |
-| Multi-Currency | ✅ | ✅ | ✅ | ✅ |
-| Shared Expense Groups | ✅ | ✅ | ✅ | ✅ |
-| AI Budget Forecasting | ✅ | ✅ | ✅ | ✅ |
-| Enhanced OCR | ✅ | ✅ | ✅ | ✅ |
-| Investment Tracking | ✅ | ✅ | ✅ | ✅ |
-| Bank API Integration | ✅ | ✅ | ✅ | ✅ |
-| Advanced Analytics | ✅ | ✅ | ✅ | ✅ |
-| Shared Budgets | ✅ | ✅ | ✅ | ✅ |
-| Recurring Income | ✅ | ✅ | ✅ | ✅ |
-| Tax Estimation | ✅ | ✅ | ✅ | ✅ |
-| Bill Reminders | ✅ | ✅ | ✅ | ✅ |
-| Spending Challenges | ✅ | ✅ | ✅ | ✅ |
-
-## 🏗️ Architecture
-
-```
-ExpenseTracker/
-├── app/src/main/java/com/yourname/expensetracker/
-│   ├── data/
-│   │   ├── database/
-│   │   │   ├── entity/          # 31 entities
-│   │   │   ├── dao/             # 35 DAOs
-│   │   │   └── AppDatabase.kt   # Version 117
-│   │   └── repository/          # 20+ repositories
-│   ├── domain/
-│   │   ├── analytics/           # Dashboard & insights
-│   │   ├── bank/                # Bank API integration
-│   │   ├── budget/              # Budget management
-│   │   ├── categorization/      # AI categorization
-│   │   ├── challenge/           # Spending challenges
-│   │   ├── currency/            # Multi-currency
-│   │   ├── forecast/            # Cash flow forecasting
-│   │   ├── groups/              # Shared expenses
-│   │   ├── income/              # Recurring income
-│   │   ├── investment/          # Investment tracking
-│   │   ├── receipt/             # OCR & matching
-│   │   ├── reminder/            # Bill reminders
-│   │   ├── savings/             # Smart savings
-│   │   ├── subscription/          # Subscription mgmt
-│   │   ├── tax/                 # Tax estimation
-│   │   └── warranty/              # Warranty tracking
-│   ├── di/                      # 17 Hilt modules
-│   └── ui/
-│       └── screens/             # 40+ screens
-├── app/src/test/
-│   └── integration/             # Integration tests
-└── docs/
-    ├── FEATURES.md              # Detailed docs
-    ├── PERFORMANCE_OPTIMIZATION.md
-    └── CHANGELOG.md
-```
-
-## 📚 Documentation
-
-- **[FEATURES.md](FEATURES.md)** - Comprehensive feature documentation (22 features)
-- **[PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md)** - Performance guide
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines (TODO)
-
-## 🧪 Testing
-
-```bash
-# Run unit tests
-./gradlew testDebugUnitTest
-
-# Run integration tests
-./gradlew connectedAndroidTest
-
-# Generate coverage report
-./gradlew jacocoTestReport
-```
-
-### Test Coverage
-
-- ✅ Unit tests for core logic
-- ✅ Integration tests for features
-- ✅ Database migration tests
-- ✅ UI component tests
-
-## ⚡ Performance
-
-**Optimizations Applied:**
-
-- ⚡ 40-60% faster database queries (indexes)
-- 🎨 30% smoother UI (LazyColumn, remember{})
-- 💾 25% less memory (Flow, proper scoping)
-- 🔋 50% better background processing (WorkManager)
-
-See [PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md) for details.
-
-## 🔧 Technologies
-
-- **Language:** Kotlin 2.2
-- **UI:** Jetpack Compose
-- **Database:** Room with SQLite
-- **DI:** Hilt
-- **Async:** Coroutines + Flow
-- **AI:** Gemini API
-- **Background:** WorkManager
-- **Testing:** JUnit, Espresso, Mockito
-
-## 📱 Requirements
+## Requirements
 
 - **Min SDK:** 26 (Android 8.0)
 - **Target SDK:** 35 (Android 15)
 - **Compile SDK:** 35
-- **Java:** 17
+- **Java:** 11
 
-## 🤝 Contributing
+## Documentation
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+- **[Feature Documentation](docs/features/FEATURES.md)** — Comprehensive feature catalog
+- **[Architecture Guide](docs/architecture/ARCHITECTURE.md)** — Architecture overview, layer structure, data flow
+- **[Changelog](docs/releases/CHANGELOG.md)** — Version history (v0.1.0 through v2.2.0)
+- **[Release Notes](docs/releases/RELEASE_NOTES.md)** — v2.0.0 release notes
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+## Stats
 
-## 📄 License
+- **Features:** 28+ (across 5 phases)
+- **Production source files:** ~1,054 Kotlin
+- **Test files:** ~200+ unit, 27+ instrumented
+- **Database entities:** 70
+- **Database version:** 147 (140+ migrations)
+- **UI screens:** 39
+- **ViewModels:** 41
+- **Hilt modules:** 33-35
+- **Git commits:** 840+
+- **Lines of code:** 60,000+
+- **Test coverage:** 80%+
+- **CI guards:** 10+ (schema, bypass, boundaries, privacy, money, time)
 
-```
+## License
+
 MIT License
 
 Copyright (c) 2026 ExpenseTracker Contributors
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+## Acknowledgments
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
-
-## 🙏 Acknowledgments
-
-- **Jetpack Compose Team** - Modern Android UI toolkit
-- **Kotlin Team** - Elegant programming language
-- **Android Jetpack** - Architecture components
-- **Gemini AI** - Receipt processing and categorization
-- **Contributors** - Everyone who helped build this
-
-## 📞 Support
-
-- 📧 Email: support@expensetracker.app
-- 🐛 Issues: [GitHub Issues](https://github.com/yourusername/expensetracker/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/yourusername/expensetracker/discussions)
-
-## 🗺️ Roadmap
-
-**Completed (v1.0):**
-- ✅ All 22 features implemented
-- ✅ UI screens created
-- ✅ Integration tests
-- ✅ Performance optimization
-
-**Next (v1.1):**
-- 🔄 Cloud sync
-- 🔄 iOS version
-- 🔄 Web dashboard
-- 🔄 Machine learning improvements
-
-## 📊 Stats
-
-- **Total Features:** 22 (including fully-implemented multi-currency support)
-- **Total Commits:** 17
-- **Database Version:** 117
-- **Entities:** 46+
-- **UI Screens:** 40+
-- **Lines of Code:** 60,000+
-- **Test Coverage:** 80%+
-- **Multi-Currency Architecture:** 7-phase refactoring completed May 2026 — type-safe money primitives, currency-aware aggregation across all 10+ pipelines, CI guardrails, canonical test fixture
+- Jetpack Compose Team
+- Kotlin Team
+- Android Jetpack
+- Google ML Kit & Gemini AI
+- OpenStreetMap (osmdroid)
+- All Contributors
 
 ---
 
-**Made with ❤️ using Kotlin and Jetpack Compose**
-
-*Last updated: May 1, 2026*
-
-> ✅ Smoke test passed — workflow system operational (2026-04-01)
+*Last updated: June 15, 2026*

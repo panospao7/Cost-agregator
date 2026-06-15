@@ -18,7 +18,8 @@ import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.ConversionQuality
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
-import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.core.time.PeriodRange
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -192,7 +193,7 @@ class BudgetRepository @Inject constructor(
         evaluationTime: Long
     ): BudgetStatus {
         val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, evaluationTime)
-        val window = PeriodRange(periodStart, periodEnd)
+        val window = PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = periodStart, endExclusiveMillis = periodEnd, label = "Budget")
 
         // Use aggregate SQL queries instead of fetching raw rows.
         // getCategorySpentInPeriod / getTotalForPeriod already filter by
@@ -213,7 +214,7 @@ class BudgetRepository @Inject constructor(
             sourceCurrency = budget.currency,
             asOfMillis = periodEnd
         )
-        val spentAggregate = getAggregateSpent(budget.categoryId, window.start, window.end)
+        val spentAggregate = getAggregateSpent(budget.categoryId, window.startInclusiveMillis, window.endExclusiveMillis)
         val spent = spentAggregate.displayAmount
         val baseLimit = initialLimitAggregate.displayAmount
         var budgetWarningMessage = initialLimitAggregate.warningMessage
@@ -274,18 +275,18 @@ class BudgetRepository @Inject constructor(
             // the current period: when it would exceed the cap we drop the OLDEST period,
             // because the most recent periods are the ones that determine the current
             // effective limit. Only the oldest surplus beyond the cap is dropped.
-            while (currentWindow.end <= window.start) {
+            while (currentWindow.endExclusiveMillis <= window.startInclusiveMillis) {
                 periods.addLast(currentWindow)
                 if (periods.size > MAX_ROLLOVER_PERIODS) {
                     periods.removeFirst()
                 }
                 currentWindow = budgetCalculator.calculatePeriodWindowForTime(
-                    budget.period, budgetFirstStart, currentWindow.end
+                    budget.period, budgetFirstStart, currentWindow.endExclusiveMillis
                 )
             }
             var runningEffectiveLimit = baseLimit
             for (period in periods) {
-                val periodAggregate = getAggregateSpent(budget.categoryId, period.start, period.end)
+                val periodAggregate = getAggregateSpent(budget.categoryId, period.startInclusiveMillis, period.endExclusiveMillis)
                 val spentInPeriod = periodAggregate.displayAmount
                 budgetIsPartial = budgetIsPartial || periodAggregate.isPartial
                 if (periodAggregate.warningMessage != null) {

@@ -404,7 +404,11 @@ class ExportOptionsViewModel @Inject constructor(
             val line = buildString {
                 val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
                 val merchant = escapeCsv(expense.merchant)
-                val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.effectiveAmount))
+                val amount = try {
+                    escapeCsv(CurrencyFormatter.formatForExport(expense.effectiveAmount))
+                } catch (e: IllegalArgumentException) {
+                    escapeCsv("INVALID")
+                }
                 val currency = escapeCsv(expense.currency)
                 val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
                 val notes = escapeCsv(expense.notes ?: "")

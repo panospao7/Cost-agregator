@@ -3,11 +3,6 @@ package com.yourname.expensetracker.domain.core.time
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.time.ZoneId
 
-// M04 OPEN: PeriodKind.toPeriodRange() records caller zoneId but delegates
-// to TimePeriodUtils which uses system-default Calendar internally.
-// TODO: migrate TimePeriodUtils to java.time + ZoneId.
-// TODO (M12): Rename LAST_7_DAYS semantics explicitly.
-// LAST_7_CALENDAR_DAYS_INCLUDING_TODAY vs TRAILING_7_DAYS_TO_NOW.
 
 /**
  * Semantic classification of time periods used throughout the app.
@@ -91,9 +86,6 @@ enum class PeriodKind {
      * (7 calendar days including today). For trailing 7 complete days ending at
      * midnight, use CUSTOM.
      *
-     * // M12 OPEN: LAST_7_DAYS includes the full current calendar day,
-     * // meaning the range includes the future remainder until midnight.
-     * // For "last 7 complete days" semantics, use endExclusive = start of today.
      */
     LAST_7_DAYS,
 
@@ -144,7 +136,21 @@ fun PeriodKind.toPeriodRange(
     customStart: Long? = null,
     customEnd: Long? = null
 ): PeriodRange {
-    // M04-FIXED: Delegates to zone-aware java.time implementation.
+    if (this == PeriodKind.CUSTOM) {
+        require(customStart != null && customEnd != null) {
+            "CUSTOM period requires customStart and customEnd"
+        }
+        require(customEnd > customStart) {
+            "CUSTOM period end must be after start"
+        }
+        return PeriodRange(
+            kind = this,
+            startInclusiveMillis = customStart,
+            endExclusiveMillis = customEnd,
+            zoneId = zoneId,
+            label = "Custom"
+        )
+    }
     return toPeriodRangeZoned(now, zoneId)
 }
 
@@ -169,10 +175,10 @@ fun PeriodKind.toPeriodRangeZoned(nowMillis: Long, zoneId: java.time.ZoneId = ja
             PeriodRange(this, start, end, zoneId, "Last week")
         }
         // M12-FIXED: LAST_7_DAYS includes today (end = tomorrow 00:00).
-        // This gives 7 full calendar days: [today-7d, today+1d).
+        // This gives 7 full calendar days: [today-6d, today+1d).
         PeriodKind.LAST_7_DAYS -> {
             val end = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli() // tomorrow start = today inclusive
-            val start = today.minusDays(7).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val start = today.minusDays(6).atStartOfDay(zoneId).toInstant().toEpochMilli()
             PeriodRange(this, start, end, zoneId, "Last 7 days")
         }
         PeriodKind.THIS_MONTH -> {
@@ -188,7 +194,7 @@ fun PeriodKind.toPeriodRangeZoned(nowMillis: Long, zoneId: java.time.ZoneId = ja
         }
         PeriodKind.LAST_30_DAYS -> {
             val end = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
-            val start = today.minusDays(30).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val start = today.minusDays(29).atStartOfDay(zoneId).toInstant().toEpochMilli()
             PeriodRange(this, start, end, zoneId, "Last 30 days")
         }
         PeriodKind.THIS_QUARTER -> {
@@ -215,11 +221,8 @@ fun PeriodKind.toPeriodRangeZoned(nowMillis: Long, zoneId: java.time.ZoneId = ja
             val end = today.withDayOfYear(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
             PeriodRange(this, start, end, zoneId, "Last year")
         }
-        PeriodKind.CUSTOM -> {
-            // CUSTOM without explicit bounds defaults to last 30 days from now
-            val start = today.minusDays(30).atStartOfDay(zoneId).toInstant().toEpochMilli()
-            val end = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
-            PeriodRange(this, start, end, zoneId, this.name)
-        }
+        PeriodKind.CUSTOM -> error(
+            "CUSTOM period requires explicit bounds; use toPeriodRange(..., customStart, customEnd)"
+        )
     }
 }
