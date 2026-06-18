@@ -1,10 +1,20 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
+import com.yourname.expensetracker.data.location.internal.executeCancellable
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGooglePlacesKey
+import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.location.GeocodingBatchResult
+import com.yourname.expensetracker.domain.location.GeocodingError
+import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,30 +22,32 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.delay
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Google Places (New) Text Search geocoding service.
  * Free tier: $200/month credit → ~6,250 requests/month at $32/1000.
- * Requires [BuildConfig.GOOGLE_PLACES_API_KEY]. Returns empty list gracefully
+ * Requires SecureKeyStorage.getGooglePlacesKey(). Returns empty list gracefully
  * if the key is missing/blank.
  *
  * Note: Cached results respect the existing 30-day [AppConfig.Location.CACHE_TTL_MS],
  * which coincidentally aligns with Google ToS refresh requirements.
  *
  * Used as the third tier in the [CompositeGeocodingService] cascade.
+ *
+ * **Internal use only.** Do not inject directly — use [GeocodingService] interface.
  */
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 @Singleton
-class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
+class GooglePlacesGeocodingService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage,
+    @LocationHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
+) : GeocodingService {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
-
-    private val apiKey get() = BuildConfig.GOOGLE_PLACES_API_KEY
+    private val apiKey get() = secureKeyStorage.getGooglePlacesKey() ?: ""
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -45,7 +57,17 @@ class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingResult? = searchMultiple(merchantName, biasLat, biasLon, limit = 1).firstOrNull()
+    ): GeocodingLookupResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Google Places geocoding blocked by privacy gate: ${gateCheck.reason()}")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return when (val result = searchMultiple(merchantName, biasLat, biasLon, limit = 1)) {
+            is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
+            is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+        }
+    }
 
     override suspend fun searchMultiple(
         query: String,
@@ -53,15 +75,21 @@ class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
         biasLon: Double?,
         limit: Int,
         useGoogle: Boolean
-    ): List<GeocodingResult> {
+    ): GeocodingBatchResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Google Places geocoding blocked by privacy gate: ${gateCheck.reason()}")
+            return GeocodingBatchResult.Failure(GeocodingError.Disabled)
+        }
         if (apiKey.isBlank()) {
             Log.d(TAG, "Google Places: API key missing, skipping")
-            return emptyList()
+            return GeocodingBatchResult.Failure(GeocodingError.ServiceDown)
         }
 
         val requestBody = buildRequestBody(query, biasLat, biasLon, limit)
         val url = "${AppConfig.Location.GOOGLE_PLACES_BASE_URL}/v1/places:searchText"
-        Log.d(TAG, "==> Google Places request for: $query")
+        val queryHash = query.anonymizeForLog()
+        Log.d(TAG, "==> Google Places request route=${buildSafeLogRoute(query, biasLat, biasLon, limit)}")
 
         val request = Request.Builder()
             .url(url)
@@ -73,22 +101,63 @@ class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
             .build()
 
         return try {
-            client.newCall(request).execute().use { response ->
+            executeWithRetry(request).use { response ->
                 Log.d(TAG, "    HTTP ${response.code}")
                 if (!response.isSuccessful) {
-                    Log.w(TAG, "    Google Places HTTP ${response.code}: ${response.body?.string()?.take(200)}")
-                    return@use emptyList()
+                    val errorPreview = response.body?.string().orEmpty().take(ERROR_PREVIEW_CHAR_COUNT)
+                    Log.w(
+                        TAG,
+                        "    Google Places HTTP ${response.code} queryHash=$queryHash errorPreviewHash=${errorPreview.anonymizeForLog()} (previewChars=${errorPreview.length})"
+                    )
+                    return@use GeocodingBatchResult.Failure(
+                        if (response.code == 429) GeocodingError.RateLimited else GeocodingError.HttpError(response.code)
+                    )
                 }
-                val body = response.body?.string() ?: return@use emptyList()
-                parseResults(body).also { Log.d(TAG, "    <== ${it.size} results") }
+                val body = response.body?.string()
+                    ?: return@use GeocodingBatchResult.Failure(GeocodingError.ParseError)
+                val parsed = parseResults(body)
+                Log.d(TAG, "    <== ${parsed.size} results")
+                if (parsed.isEmpty()) GeocodingBatchResult.Failure(GeocodingError.NoResults)
+                else GeocodingBatchResult.Success(parsed)
             }
         } catch (e: IOException) {
             Log.e(TAG, "    Google Places network error: ${e.message}")
-            emptyList()
+            GeocodingBatchResult.Failure(GeocodingError.NetworkError)
         } catch (e: JSONException) {
             Log.e(TAG, "    Google Places parse error: ${e.message}")
-            emptyList()
+            GeocodingBatchResult.Failure(GeocodingError.ParseError)
         }
+    }
+
+    private suspend fun executeWithRetry(
+        request: Request,
+        maxAttempts: Int = 3,
+        initialDelayMs: Long = 300
+    ): okhttp3.Response {
+        var currentDelay = initialDelayMs
+        var lastError: IOException? = null
+        repeat(maxAttempts) { attempt ->
+            try {
+                val response = client.executeCancellable(request)
+                if (response.code >= 500 || response.code == 429) {
+                    if (attempt < maxAttempts - 1) {
+                        response.close()
+                        delay(currentDelay)
+                        currentDelay = (currentDelay * 2).coerceAtMost(2000)
+                        return@repeat
+                    }
+                    return response
+                }
+                return response
+            } catch (e: IOException) {
+                lastError = e
+                if (attempt < maxAttempts - 1) {
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(2000)
+                }
+            }
+        }
+        throw lastError ?: IOException("Google Places request failed after retries")
     }
 
     private fun buildRequestBody(
@@ -129,6 +198,15 @@ class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
         }
 
         return obj.toString()
+    }
+
+    private fun buildSafeLogRoute(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
+        val bias = if (biasLat != null && biasLon != null) {
+            "locationBias=circle(<redacted>)"
+        } else {
+            "locationBias=rectangle(greece-default)"
+        }
+        return "/v1/places:searchText?textQuery=<redacted:${query.length}>&maxResultCount=${limit.coerceIn(1, 20)}&$bias"
     }
 
     private fun parseResults(body: String): List<GeocodingResult> {
@@ -175,5 +253,6 @@ class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
 
     private companion object {
         const val TAG = "LocationSearch"
+        const val ERROR_PREVIEW_CHAR_COUNT = 200
     }
 }

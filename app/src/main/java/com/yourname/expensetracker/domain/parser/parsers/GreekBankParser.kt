@@ -1,14 +1,13 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
-import javax.inject.Inject
 
 /**
  * Parser for Greek banking apps (NBG, Alpha, Eurobank, Piraeus).
@@ -16,9 +15,10 @@ import javax.inject.Inject
  * - Χ (Χρέωση) = Debit/Outgoing
  * - Π (Πίστωση) = Credit/Incoming
  */
-class GreekBankParser @Inject constructor(
+class GreekBankParser(
     private val currencyNormalizer: CurrencyNormalizer,
-    private val merchantCleaner: MerchantCleaner
+    private val merchantCleaner: MerchantCleaner,
+    private val homeCurrency: String
 ) : AppNotificationParser {
 
     override val supportedPackages = setOf(
@@ -87,13 +87,19 @@ class GreekBankParser @Inject constructor(
         )
     )
 
-    // Patterns to REJECT
-    private val REJECT_PATTERNS = listOf(
-        "υπόλοιπο", "balance", "otp", "κωδικός", "code",
-        "ενεργοποί", "activate", "εγκρίθηκε η αίτηση",
-        "προσφορά", "offer", "έκπτωση", "discount",
-        "ενημέρωση", "update", "reminder"
-    )
+ private val REJECT_PATTERNS = listOf(
+ "otp", "κωδικός", "code",
+ "ενεργοποί", "activate", "εγκρίθηκε η αίτηση",
+ "προσφορά", "offer", "έκπτωση", "discount",
+ "ενημέρωση", "update", "reminder"
+ )
+
+ private val BALANCE_STRIP_PATTERNS = listOf(
+ Regex("""(?m)^\s*υπόλοιπ[οό]\s*:?\s*.*$""", RegexOption.IGNORE_CASE),
+ Regex("""(?m)^\s*balance\s*:?\s*.*$""", RegexOption.IGNORE_CASE),
+ Regex("""υπόλοιπ[οό]\s*:?\s*[€$£]?\s*\d+([.,]\d{1,2})?""", RegexOption.IGNORE_CASE),
+ Regex("""balance\s*:?\s*[€$£]?\s*\d+([.,]\d{1,2})?""", RegexOption.IGNORE_CASE)
+ )
 
     override fun parse(
         title: String?,
@@ -102,12 +108,14 @@ class GreekBankParser @Inject constructor(
         @Suppress("UNUSED_PARAMETER") subText: String?,
         @Suppress("UNUSED_PARAMETER") packageName: String
     ): ParsedTransaction? {
-        val fields = listOfNotNull(title, text, bigText)
-        
-        for (field in fields) {
+ val fields = listOfNotNull(title, text, bigText)
+
+        for (rawField in fields) {
+            val field = BALANCE_STRIP_PATTERNS.fold(rawField) { acc, regex -> regex.replace(acc, "") }.trim()
+            if (field.isBlank()) continue
+
             val lowerField = field.lowercase()
-            
-            // Quick reject for this specific field
+
             if (REJECT_PATTERNS.any { lowerField.contains(it) }) continue
 
             // Try deposit patterns first (they're usually incoming transfers/salary)
@@ -144,7 +152,7 @@ class GreekBankParser @Inject constructor(
     private fun tryExtract(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
         // Try to find the amount (could be in group 1 or 2)
         var amountStr: String? = null
-        var currency = "EUR"
+        var currency = homeCurrency
         var merchant = "Unknown"
 
         for (i in 1..matcher.groupCount()) {
@@ -168,14 +176,14 @@ class GreekBankParser @Inject constructor(
             amount = amount,
             currency = currency,
             merchant = merchant,
-            type = TransactionType.PURCHASE,
+            type = ParsedTransactionType.PURCHASE,
             confidence = 0.92f
         )
     }
 
     private fun tryExtractDeposit(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
         var amountStr: String? = null
-        var currency = "EUR"
+        var currency = homeCurrency
 
         for (i in 1..matcher.groupCount()) {
             val group = matcher.group(i) ?: continue
@@ -193,13 +201,27 @@ class GreekBankParser @Inject constructor(
         // For deposits, merchant is usually the sender (bank/employer)
         val merchant = extractDepositSource(fullText)
         
-        // Detect direction based on keywords
+        // Detect direction based on intent keywords.
+        // IMPORTANT: prioritize incoming credit semantics over generic prepositions like "to/σε".
         val normalizedText = fullText.lowercase()
         val direction = when {
-            normalizedText.contains(" σε ") || normalizedText.contains(" προς ") || normalizedText.contains(" to ") ->
-                TransferDirection.OUTGOING
+            normalizedText.contains(
+                Regex(
+                    """(?:credited|credit(?:ed)?|πίστωση|πιστώθηκε|received|incoming|deposit|κατάθεση|transfer\s*received)""",
+                    RegexOption.IGNORE_CASE
+                )
+            ) -> ParsedTransferDirection.INCOMING
+
+            normalizedText.contains(
+                Regex(
+                    """(?:sent\s+to|transfer\s+to|μεταφορ[άα]\s+σε|εστ[άα]λη\s+σε|στάλθηκε\s+σε)""",
+                    RegexOption.IGNORE_CASE
+                )
+            ) -> ParsedTransferDirection.OUTGOING
+
             normalizedText.contains(" από ") || normalizedText.contains(" απο ") || normalizedText.contains(" from ") ->
-                TransferDirection.INCOMING
+                ParsedTransferDirection.INCOMING
+
             else -> detectGreekDirection(fullText)
         }
         
@@ -210,13 +232,13 @@ class GreekBankParser @Inject constructor(
             amount = amount,
             currency = currency,
             merchant = merchant,
-            type = if (isTransfer) TransactionType.TRANSFER else TransactionType.DEPOSIT,
+            type = if (isTransfer) ParsedTransactionType.TRANSFER else ParsedTransactionType.DEPOSIT,
             confidence = 0.90f,
-            transferDirection = direction ?: TransferDirection.INCOMING,  // Default to incoming for deposits
+            transferDirection = direction ?: ParsedTransferDirection.INCOMING,  // Default to incoming for deposits
             transferAccountName = direction?.let { 
                 when (it) {
-                    TransferDirection.INCOMING -> "From: $merchant"
-                    TransferDirection.OUTGOING -> "To: $merchant"
+                    ParsedTransferDirection.INCOMING -> "From: $merchant"
+                    ParsedTransferDirection.OUTGOING -> "To: $merchant"
                 }
             }
         )
@@ -224,7 +246,7 @@ class GreekBankParser @Inject constructor(
 
     private fun tryExtractTransfer(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
         var amountStr: String? = null
-        var currency = "EUR"
+        var currency = homeCurrency
         var merchant = "Transfer"
 
         for (i in 1..matcher.groupCount()) {
@@ -254,18 +276,25 @@ class GreekBankParser @Inject constructor(
         val amount = amountStr?.let { AmountUtils.parseAmount(it) } ?: return null
         if (amount < 0.01 || amount > 50000) return null
 
+        // Matches from the last TRANSFER_PATTERN (index 3, bare "€amount στο MERCHANT")
+        // lack an explicit transfer keyword (μεταφορά/transfer) and can overlap with
+        // purchase patterns. Reduce confidence so downstream consumers can weigh this
+        // result against a purchase match if one is available.
+        val hasExplicitTransferKeyword = fullText.contains(Regex("""(?:μεταφορ[άα]|transfer)""", RegexOption.IGNORE_CASE))
+        val confidence = if (hasExplicitTransferKeyword) 0.9f else 0.75f
+
         val direction = detectGreekDirection(fullText)
         return ParsedTransaction(
             amount = amount,
             currency = currency,
             merchant = merchant,
-            type = TransactionType.TRANSFER,
-            confidence = 0.9f,
+            type = ParsedTransactionType.TRANSFER,
+            confidence = confidence,
             transferDirection = direction,
             transferAccountName = direction?.let {
                 when (it) {
-                    TransferDirection.INCOMING -> "From: $merchant"
-                    TransferDirection.OUTGOING -> "To: $merchant"
+                    ParsedTransferDirection.INCOMING -> "From: $merchant"
+                    ParsedTransferDirection.OUTGOING -> "To: $merchant"
                 }
             }
         )
@@ -281,7 +310,7 @@ class GreekBankParser @Inject constructor(
      * Detects transfer direction from Greek bank notification text.
      * Uses transaction codes and keywords.
      */
-    private fun detectGreekDirection(text: String): TransferDirection? {
+    private fun detectGreekDirection(text: String): ParsedTransferDirection? {
         val upperText = text.uppercase()
         
         // Check for debit codes (outgoing)
@@ -290,7 +319,7 @@ class GreekBankParser @Inject constructor(
             upperText.startsWith("$code ") ||
             upperText.contains(Regex("""\b$code[\s:.-]"""))
         }) {
-            return TransferDirection.OUTGOING
+            return ParsedTransferDirection.OUTGOING
         }
         
         // Check for credit codes (incoming)
@@ -299,18 +328,18 @@ class GreekBankParser @Inject constructor(
             upperText.startsWith("$code ") ||
             upperText.contains(Regex("""\b$code[\s:.-]"""))
         }) {
-            return TransferDirection.INCOMING
+            return ParsedTransferDirection.INCOMING
         }
         
         // Check keywords
         return when {
             // Outgoing keywords
             text.contains(Regex("""(?:χρ[έε]ωση|χρεώθηκε|χρεωστικό|μεταφορά\s+σε|sent\s+to|transfer\s+to)""", RegexOption.IGNORE_CASE)) ->
-                TransferDirection.OUTGOING
+                ParsedTransferDirection.OUTGOING
             
             // Incoming keywords
             text.contains(Regex("""(?:πίστωση|πιστώθηκε|πιστωτικό|μεταφορά\s+από|received\s+from|transfer\s+from)""", RegexOption.IGNORE_CASE)) ->
-                TransferDirection.INCOMING
+                ParsedTransferDirection.INCOMING
             
             else -> null
         }

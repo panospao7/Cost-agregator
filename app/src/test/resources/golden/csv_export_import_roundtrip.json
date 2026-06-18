@@ -1,0 +1,72 @@
+{
+  "dangerousCells": [
+    {
+      "original": "=SUM(A1:A10)",
+      "sanitized": "'=SUM(A1:A10)",
+      "neutralized": true
+    },
+    {
+      "original": "+cmd|'\/C calc'!A0",
+      "sanitized": "'+cmd|'\/C calc'!A0",
+      "neutralized": true
+    },
+    {
+      "original": "-1+1",
+      "sanitized": "'-1+1",
+      "neutralized": true
+    },
+    {
+      "original": "@SUM(A1)",
+      "sanitized": "'@SUM(A1)",
+      "neutralized": true
+    },
+    {
+      "original": "=HYPERLINK(\"http:\/\/evil.com\")",
+      "sanitized": "\"'=HYPERLINK(\"\"http:\/\/evil.com\"\")\"",
+      "neutralized": true
+    }
+  ],
+  "safeCellsUnchanged": true,
+  "quotedCells": [
+    {
+      "original": "Merchant, Inc.",
+      "sanitized": "\"Merchant, Inc.\"",
+      "quoted": true
+    },
+    {
+      "original": "He said \"hello\"",
+      "sanitized": "\"He said \"\"hello\"\"\"",
+      "quoted": true
+    },
+    {
+      "original": "Line1\nLine2",
+      "sanitized": "\"Line1\nLine2\"",
+      "quoted": true
+    }
+  ],
+  "amountRoundtrip": [
+    {
+      "original": 100,
+      "parsedBack": 100,
+      "preserved": true
+    },
+    {
+      "original": 45.5,
+      "parsedBack": 45.5,
+      "preserved": true
+    },
+    {
+      "original": 0.01,
+      "parsedBack": 0.01,
+      "preserved": true
+    },
+    {
+      "original": 9999.99,
+      "parsedBack": 9999.99,
+      "preserved": true
+    }
+  ],
+  "allDangerousNeutralized": true,
+  "allSafeUnchanged": true,
+  "allAmountsPreserved": true
+}

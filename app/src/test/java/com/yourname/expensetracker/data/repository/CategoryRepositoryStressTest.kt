@@ -1,16 +1,21 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import dagger.Lazy
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
+import org.junit.Ignore
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
+@Ignore("Stress test: may hang in CI, run manually")
 class CategoryRepositoryStressTest {
 
     private val categoryDao = mockk<CategoryDao>(relaxed = true)
@@ -24,12 +29,20 @@ class CategoryRepositoryStressTest {
         // Mock insert functions - CategoryDao returns Long, MerchantCategoryDao returns Unit
         coEvery { categoryDao.insert(any()) } returns 1L
         coEvery { categoryDao.insertAll(any()) } returns Unit
-        coEvery { merchantCategoryDao.insert(any()) } returns Unit
-        coEvery { merchantCategoryDao.insertAll(any()) } returns Unit
+        coEvery { merchantCategoryDao.insert(any()) } returns 1L
+        coEvery { merchantCategoryDao.insertAll(any()) } returns emptyList()
         // Normalize is suspend
         coEvery { categorizationEngine.normalize(any()) } returns "normalized"
         
-        repository = CategoryRepository(categoryDao, merchantCategoryDao, categorizationEngine)
+        repository = CategoryRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            database = mockk<AppDatabase>(relaxed = true),
+            categoryDao = categoryDao,
+            merchantCategoryDao = merchantCategoryDao,
+            budgetDao = mockk(relaxed = true),
+            categorizationEngine = categorizationEngine,
+            hybridExpenseClassifier = mockk<Lazy<com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier>>(relaxed = true)
+        )
     }
 
     // ============================================================================

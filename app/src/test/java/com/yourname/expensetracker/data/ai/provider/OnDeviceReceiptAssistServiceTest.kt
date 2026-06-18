@@ -2,10 +2,12 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Base64
 
 class OnDeviceReceiptAssistServiceTest {
 
@@ -44,6 +46,45 @@ class OnDeviceReceiptAssistServiceTest {
         assertTrue(prompt.contains("date"))
         assertTrue(prompt.contains("taxAmount"))
         assertTrue(prompt.contains("notes"))
+    }
+
+    @Test
+    fun `buildRequestForTest attaches image when valid image input exists`() {
+        val imageFile = kotlin.io.path.createTempFile(suffix = ".png").toFile().apply {
+            writeBytes(Base64.getDecoder().decode(ONE_BY_ONE_PNG_BASE64))
+        }
+
+        try {
+            val request = service.buildRequestForTest(
+                sampleInput.copy(
+                    imagePath = imageFile.absolutePath,
+                    imageMimeType = "image/png",
+                    isImageAnalysisMode = true
+                )
+            )
+
+            assertNotNull(request.image)
+        } finally {
+            imageFile.delete()
+        }
+    }
+
+    @Test
+    fun `buildRequestForTest stays text only when image is missing`() {
+        val request = service.buildRequestForTest(
+            sampleInput.copy(
+                imagePath = "missing.png",
+                imageMimeType = "image/png",
+                isImageAnalysisMode = true
+            )
+        )
+
+        assertFalse(service.usedImageInput(sampleInput.copy(
+            imagePath = "missing.png",
+            imageMimeType = "image/png",
+            isImageAnalysisMode = true
+        )))
+        assertNull(request.image)
     }
 
     @Test
@@ -91,5 +132,10 @@ class OnDeviceReceiptAssistServiceTest {
         assertNull(result.total)
         assertNull(result.date)
         assertNull(result.taxAmount)
+    }
+
+    private companion object {
+        private const val ONE_BY_ONE_PNG_BASE64 =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nX4QAAAAASUVORK5CYII="
     }
 }

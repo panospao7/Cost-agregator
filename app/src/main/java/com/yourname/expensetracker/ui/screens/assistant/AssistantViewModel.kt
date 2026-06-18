@@ -1,11 +1,10 @@
 package com.yourname.expensetracker.ui.screens.assistant
 
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
-import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
-import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
@@ -18,8 +17,14 @@ import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCas
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.ui.mappers.toUi
+import com.yourname.expensetracker.R
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -31,6 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
 
 data class AssistantUiState(
@@ -39,11 +45,15 @@ data class AssistantUiState(
     val isLoading: Boolean = false,
     val isDisabled: Boolean = false,
     val disabledReason: String? = null,
+    /** S3-011: typed privacy blocked state — shown as PrivacyBlockedCard when cloud AI is denied */
+    val privacyBlocked: com.yourname.expensetracker.domain.privacy.PrivacyBlocked? = null,
     val runtimeStatusMessage: String? = null,
     val runtimeDiagnostics: String? = null,
     val errorMessage: String? = null,
     val canPersistHistory: Boolean = false,
-    val currentSessionId: Long? = null
+    val currentSessionId: Long? = null,
+    /** S11-020: true when clear-all-history confirmation dialog should be shown */
+    val showClearHistoryConfirm: Boolean = false
 )
 
 private data class AssistantRuntimePresentation(
@@ -78,12 +88,14 @@ sealed interface AssistantNavigationEvent {
 
 @HiltViewModel
 class AssistantViewModel @Inject constructor(
+    private val application: Application,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiChatRepository: AiChatRepository,
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase,
     private val executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase,
-    private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
+    private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase,
+    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AssistantUiState())
@@ -91,6 +103,9 @@ class AssistantViewModel @Inject constructor(
 
     private val _navigationEvents = Channel<AssistantNavigationEvent>(Channel.BUFFERED)
     val navigationEvents = _navigationEvents.receiveAsFlow()
+
+    private val _isSubmitting = MutableStateFlow(false)
+    private var _currentQueryJob: Job? = null
 
     val settings = aiSettingsRepository.settings().stateIn(
         scope = viewModelScope,
@@ -108,6 +123,14 @@ class AssistantViewModel @Inject constructor(
                     !settings.queryInterpretationEnabled -> "Query interpretation is disabled"
                     else -> null
                 }
+                // S3-011: Expose typed privacy blocked state when cloud AI is the reason
+                val privacyBlocked: com.yourname.expensetracker.domain.privacy.PrivacyBlocked? =
+                    if (!settings.aiEnabled) com.yourname.expensetracker.domain.privacy.PrivacyBlocked.CloudAiDisabled()
+                    else null
+                // S11-013: Cancel in-flight query when settings disable AI
+                if (isDisabled && _currentQueryJob?.isActive == true) {
+                    cancelCurrentQuery()
+                }
                 val runtimePresentation = if (isDisabled) {
                     AssistantRuntimePresentation(message = null, diagnostics = null)
                 } else {
@@ -117,6 +140,7 @@ class AssistantViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isDisabled = isDisabled,
                     disabledReason = disabledReason,
+                    privacyBlocked = privacyBlocked,
                     canPersistHistory = settings.storeConversationHistory,
                     runtimeStatusMessage = runtimePresentation.message,
                     runtimeDiagnostics = runtimePresentation.diagnostics
@@ -129,91 +153,192 @@ class AssistantViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(input = value, errorMessage = null)
     }
 
+    /**
+     * AID-10: Per-request diagnostics tracking.
+     * Captures phase-level timing, routing info, and error details for each query.
+     */
+    private data class QueryDiagnostics(
+        val query: String,
+        val totalDurationMs: Long,
+        val interpretationDurationMs: Long? = null,
+        val executionDurationMs: Long? = null,
+        val resultType: String? = null,
+        val route: String? = null,
+        val error: String? = null
+    ) {
+        fun toDisplayString(): String = buildString {
+            // S11-009: Never expose raw query text in release builds
+            if (com.yourname.expensetracker.BuildConfig.DEBUG) {
+                appendLine("Query: ${query.take(50)}")
+            }
+            appendLine("Total: ${totalDurationMs}ms")
+            interpretationDurationMs?.let { appendLine("Interpret: ${it}ms") }
+            executionDurationMs?.let { appendLine("Execute: ${it}ms") }
+            resultType?.let { appendLine("Result: $it") }
+            route?.let { appendLine("Route: $it") }
+            error?.let { appendLine("Error: $it") }
+        }
+    }
+
     fun submitQuery(rawQuery: String = _uiState.value.input) {
         val query = rawQuery.trim()
-        if (query.isBlank() || _uiState.value.isLoading) return
+        if (query.isBlank()) return
+        if (!_isSubmitting.compareAndSet(false, true)) return
 
-        viewModelScope.launch {
-            val settings = aiSettingsRepository.settings().first()
-            if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
-                _uiState.value = _uiState.value.copy(
-                    isDisabled = true,
-                    disabledReason = "Enable AI assistant to use this feature"
+        _currentQueryJob?.cancel()
+        val queryStartedAt = System.currentTimeMillis()
+
+        _currentQueryJob = viewModelScope.launch {
+            var lastDiagnostics: QueryDiagnostics? = null
+            try {
+                val settings = aiSettingsRepository.settings().first()
+                if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
+                    _uiState.value = _uiState.value.copy(
+                        isDisabled = true,
+                        disabledReason = "Enable AI assistant to use this feature",
+                        isLoading = false
+                    )
+                    return@launch
+                }
+
+                val userItem = AssistantConversationItem.User(
+                    id = "user-${System.nanoTime()}",
+                    text = query
                 )
-                return@launch
-            }
 
-            val userItem = AssistantConversationItem.User(
-                id = "user-${System.nanoTime()}",
-                text = query
-            )
+                val sessionId = ensureSessionIfNeeded()
 
-            _uiState.value = _uiState.value.copy(
-                input = "",
-                isLoading = true,
-                errorMessage = null,
-                messages = _uiState.value.messages + userItem
-            )
+                _uiState.value = _uiState.value.copy(
+                    input = "",
+                    isLoading = true,
+                    errorMessage = null,
+                    messages = _uiState.value.messages + userItem,
+                    currentSessionId = sessionId ?: _uiState.value.currentSessionId
+                )
 
-            val sessionId = ensureSessionIfNeeded()
-            persistUserTurn(sessionId, query)
+                persistUserTurn(sessionId, query)
 
-            val historyMessages = if (settings.storeConversationHistory && sessionId != null) {
-                aiChatRepository.observeMessages(sessionId).first()
-            } else {
-                emptyList()
-            }
-
-            when (val interpretation = interpretFinancialQueryUseCase(query, historyMessages)) {
-                is FinancialQueryInterpretationResult.Structured -> {
-                    val result = executeFinancialQueryUseCase(interpretation.intent)
-                    val navigationFilter = mapFinancialQueryToNavigationUseCase(interpretation.intent)
-                    val resultItem = AssistantConversationItem.Result(
-                        id = "result-${System.nanoTime()}",
-                        queryText = query,
-                        result = result,
-                        drilldownFilter = navigationFilter
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        messages = _uiState.value.messages + resultItem,
-                        currentSessionId = sessionId ?: _uiState.value.currentSessionId
-                    )
-                    persistAssistantTurn(sessionId, result)
+                val historyMessages = if (settings.storeConversationHistory && sessionId != null) {
+                    val raw = aiChatRepository.observeMessages(sessionId).first()
+                    // S11-019: Sanitize history for cloud — strip payloadJson under redaction,
+                    // limit to last 10 turns to avoid stale/excessive context
+                    val limited = raw.takeLast(10)
+                    if (settings.redactBeforeCloud || privacySettingsRepository.getSettings().redactBeforeCloud) {
+                        limited.map { msg -> msg.copy(payloadJson = null) }
+                    } else {
+                        limited
+                    }
+                } else {
+                    emptyList()
                 }
 
-                is FinancialQueryInterpretationResult.Clarification -> {
-                    val result = FinancialQueryResult.Clarification(
-                        prompt = interpretation.prompt,
-                        options = interpretation.options
-                    )
-                    val resultItem = AssistantConversationItem.Result(
-                        id = "clarification-${System.nanoTime()}",
-                        queryText = query,
-                        result = result
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        messages = _uiState.value.messages + resultItem,
-                        currentSessionId = sessionId ?: _uiState.value.currentSessionId
-                    )
-                    persistAssistantTurn(sessionId, result)
-                }
+                // AID-10: Capture interpretation timing
+                val interpretationStart = System.currentTimeMillis()
+                val interpretation = interpretFinancialQueryUseCase(query, historyMessages)
+                val interpretationDuration = System.currentTimeMillis() - interpretationStart
 
-                is FinancialQueryInterpretationResult.Unsupported -> {
-                    val result = FinancialQueryResult.Unsupported(interpretation.reason)
-                    val resultItem = AssistantConversationItem.Result(
-                        id = "unsupported-${System.nanoTime()}",
-                        queryText = query,
-                        result = result
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        messages = _uiState.value.messages + resultItem,
-                        currentSessionId = sessionId ?: _uiState.value.currentSessionId
-                    )
-                    persistAssistantTurn(sessionId, result)
+                val diagnosticsBuilder = QueryDiagnostics(
+                    query = query,
+                    totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                    interpretationDurationMs = interpretationDuration,
+                    route = _uiState.value.runtimeDiagnostics
+                )
+
+                when (interpretation) {
+                    is FinancialQueryInterpretationResult.Structured -> {
+                        // AID-10: Capture execution timing
+                        val execStart = System.currentTimeMillis()
+                        val result = executeFinancialQueryUseCase(interpretation.intent)
+                        val executionDuration = System.currentTimeMillis() - execStart
+                        val navigationFilter = mapFinancialQueryToNavigationUseCase(interpretation.intent)?.toUi()
+                        val resultItem = AssistantConversationItem.Result(
+                            id = "result-${System.nanoTime()}",
+                            queryText = query,
+                            result = result,
+                            drilldownFilter = navigationFilter
+                        )
+                        lastDiagnostics = diagnosticsBuilder.copy(
+                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            executionDurationMs = executionDuration,
+                            resultType = result::class.simpleName
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            messages = _uiState.value.messages + resultItem
+                        )
+                        persistAssistantTurn(sessionId, result)
+                    }
+
+                    is FinancialQueryInterpretationResult.Clarification -> {
+                        val result = FinancialQueryResult.Clarification(
+                            prompt = interpretation.prompt,
+                            options = interpretation.options
+                        )
+                        val resultItem = AssistantConversationItem.Result(
+                            id = "clarification-${System.nanoTime()}",
+                            queryText = query,
+                            result = result
+                        )
+                        lastDiagnostics = diagnosticsBuilder.copy(
+                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            resultType = "Clarification"
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            messages = _uiState.value.messages + resultItem
+                        )
+                        persistAssistantTurn(sessionId, result)
+                    }
+
+                    is FinancialQueryInterpretationResult.Unsupported -> {
+                        val result = FinancialQueryResult.Unsupported(interpretation.reason)
+                        val resultItem = AssistantConversationItem.Result(
+                            id = "unsupported-${System.nanoTime()}",
+                            queryText = query,
+                            result = result
+                        )
+                        lastDiagnostics = diagnosticsBuilder.copy(
+                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            resultType = "Unsupported"
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            messages = _uiState.value.messages + resultItem
+                        )
+                        persistAssistantTurn(sessionId, result)
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "Assistant query pipeline failed")
+                val friendlyMessage = mapAssistantExceptionToUserMessage(e)
+                lastDiagnostics = QueryDiagnostics(
+                    query = query,
+                    totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                    error = "${e::class.simpleName}: ${e.message}"
+                )
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = friendlyMessage,
+                    messages = _uiState.value.messages + AssistantConversationItem.Error(
+                        id = "error-${System.nanoTime()}",
+                        text = friendlyMessage
+                    ),
+                    input = if (_uiState.value.input.isBlank()) query else _uiState.value.input
+                )
+            } finally {
+                // AID-10: Update runtime diagnostics with per-request details
+                if (lastDiagnostics != null) {
+                    _uiState.value = _uiState.value.copy(
+                        runtimeDiagnostics = lastDiagnostics.toDisplayString()
+                    )
+                }
+                if (_uiState.value.isLoading) {
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+                _isSubmitting.value = false
+                _currentQueryJob = null
             }
         }
     }
@@ -224,7 +349,22 @@ class AssistantViewModel @Inject constructor(
         submitQuery(lastUser.text)
     }
 
+    fun cancelCurrentQuery() {
+        _currentQueryJob?.cancel()
+        _currentQueryJob = null
+        _isSubmitting.value = false
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            errorMessage = "Query cancelled"
+        )
+    }
+
     fun onSuggestionSelected(text: String) {
+        updateInput(text)
+        submitQuery(text)
+    }
+
+    fun onClarificationSelected(text: String) {
         updateInput(text)
         submitQuery(text)
     }
@@ -237,6 +377,7 @@ class AssistantViewModel @Inject constructor(
     }
 
     fun clearSession() {
+        cancelCurrentQuery()
         viewModelScope.launch {
             _uiState.value.currentSessionId?.let { sessionId ->
                 aiChatRepository.clearSession(sessionId)
@@ -251,7 +392,18 @@ class AssistantViewModel @Inject constructor(
         }
     }
 
+    /** S11-020: Request confirmation before clearing all history */
+    fun requestClearAllHistory() {
+        _uiState.value = _uiState.value.copy(showClearHistoryConfirm = true)
+    }
+
+    fun dismissClearAllHistory() {
+        _uiState.value = _uiState.value.copy(showClearHistoryConfirm = false)
+    }
+
     fun clearAllHistory() {
+        _uiState.value = _uiState.value.copy(showClearHistoryConfirm = false)
+        cancelCurrentQuery()
         viewModelScope.launch {
             aiChatRepository.clearAllHistory()
             clearSession()
@@ -262,7 +414,7 @@ class AssistantViewModel @Inject constructor(
         val current = _uiState.value.currentSessionId
         if (current != null) return current
 
-        val created = aiChatRepository.createSession(title = "Assistant")
+        val created = aiChatRepository.createSession(title = UiText.from(R.string.assistant_title).asString(application))
         if (created != null) {
             _uiState.value = _uiState.value.copy(currentSessionId = created)
         }
@@ -295,9 +447,9 @@ class AssistantViewModel @Inject constructor(
     }
 
     private fun FinancialQueryResult.toDisplayText(): String = when (this) {
-        is FinancialQueryResult.Summary -> listOfNotNull(title, primaryText, supportingText).joinToString("\n")
-        is FinancialQueryResult.Breakdown -> title
-        is FinancialQueryResult.TransactionList -> "$title ($previewCount)"
+        is FinancialQueryResult.Summary -> listOfNotNull(title.asString(application), primaryText, supportingText).joinToString("\n")
+        is FinancialQueryResult.Breakdown -> title.asString(application)
+        is FinancialQueryResult.TransactionList -> "${title.asString(application)} ($previewCount)"
         is FinancialQueryResult.Clarification -> prompt
         is FinancialQueryResult.Unsupported -> reason
     }
@@ -305,14 +457,14 @@ class AssistantViewModel @Inject constructor(
     private fun FinancialQueryResult.toPayloadJson(): String? = when (this) {
         is FinancialQueryResult.Summary -> JSONObject()
             .put("type", "summary")
-            .put("title", title)
+            .put("title", title.asString(application))
             .put("primaryText", primaryText)
             .put("supportingText", supportingText)
             .toString()
 
         is FinancialQueryResult.Breakdown -> JSONObject()
             .put("type", "breakdown")
-            .put("title", title)
+            .put("title", title.asString(application))
             .put(
                 "rows",
                 JSONArray().apply {
@@ -331,13 +483,13 @@ class AssistantViewModel @Inject constructor(
 
         is FinancialQueryResult.TransactionList -> JSONObject()
             .put("type", "transaction_list")
-            .put("title", title)
+            .put("title", title.asString(application))
             .put("previewCount", previewCount)
             .toString()
 
         is FinancialQueryResult.Clarification -> JSONObject()
             .put("type", "clarification")
-            .put("prompt", prompt)
+            .put("clarificationPrompt", prompt)
             .put("options", JSONArray(options))
             .toString()
 
@@ -363,6 +515,18 @@ class AssistantViewModel @Inject constructor(
             message = message,
             diagnostics = runtime.routeDisplayText()
         )
+    }
+
+    private fun mapAssistantExceptionToUserMessage(error: Throwable): String {
+        val details = error.message?.lowercase().orEmpty()
+        return when {
+            details.contains("timeout") -> "The assistant took too long to respond. Please try again."
+            details.contains("network") || details.contains("offline") || details.contains("connection") ->
+                "Couldn’t reach AI right now. Check your connection and retry."
+            details.contains("ssl") || details.contains("certificate") || details.contains("secure") ->
+                "Secure connection failed. Please try again in a moment."
+            else -> "Something went wrong while handling your request. Please retry."
+        }
     }
 }
 

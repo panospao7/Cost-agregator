@@ -17,6 +17,22 @@ sealed class UpcomingItem {
         override val categoryId: Long? = pattern.categoryId
     }
 
+    /**
+     * Upcoming item created from a materialised occurrence.
+     * Prefer this over [Recurring] when [ConfirmedOccurrence] data is available,
+     * because it captures each individual occurrence (e.g. multiple WEEKLY payments)
+     * rather than relying on a single [RecurringPattern.nextExpectedDate].
+     */
+    data class Occurrence(
+        val occurrence: ConfirmedOccurrence
+    ) : UpcomingItem() {
+        override val id: String = "occurrence_${occurrence.merchant ?: "unknown"}_${occurrence.dueDate}"
+        override val description: String = occurrence.merchant ?: "Unknown"
+        override val amount: Double = occurrence.expectedAmount
+        override val date: Long = occurrence.dueDate
+        override val categoryId: Long? = occurrence.categoryId
+    }
+
     data class Planned(
         val expense: PlannedExpense
     ) : UpcomingItem() {

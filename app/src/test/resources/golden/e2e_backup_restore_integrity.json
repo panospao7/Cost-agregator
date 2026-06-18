@@ -1,0 +1,18 @@
+{
+  "totalBefore": 220,
+  "totalAfter": 220,
+  "totalsMatch": true,
+  "expenseCountBefore": 3,
+  "expenseCountAfter": 3,
+  "expenseCountPreserved": true,
+  "receiptLinksBefore": 1,
+  "receiptLinksAfter": 1,
+  "receiptLinksPreserved": true,
+  "occurrencesBefore": 1,
+  "occurrencesAfter": 1,
+  "occurrencesPreserved": true,
+  "exchangeRatePreserved": true,
+  "writeBlockedDuringRestore": true,
+  "writeAllowedAfterRestore": true,
+  "allDataIntact": true
+}

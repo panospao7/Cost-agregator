@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.map
+﻿package com.yourname.expensetracker.ui.screens.map
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,27 +31,33 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.ui.components.LocationCorrectionSheet
 import com.yourname.expensetracker.ui.components.LocationPermissionDialog
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.NearbyShopSuggestionCard
 import com.yourname.expensetracker.ui.components.PlaceInsightCard
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
-import java.text.NumberFormat
-import java.util.Locale
 import kotlin.math.max
 
 /**
@@ -64,16 +71,24 @@ import kotlin.math.max
  *  - Overpass candidate list when automatic resolution is ambiguous
  *  - Place-insights card list below the map
  */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Route entry point — owns Hilt, permission launcher, snackbar, and event collection.
+ * S10-021: Separated from SpendingMapScreenContent for testability.
+ */
 @Composable
 fun SpendingMapScreen(
+    initialLocationQuery: String? = null,
     viewModel: SpendingMapViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    val locationPickerState by viewModel.locationPickerState.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // ── Permission launcher ───────────────────────────────────────────────────
+    LaunchedEffect(initialLocationQuery) {
+        viewModel.focusOnMerchant(initialLocationQuery)
+    }
+
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -82,36 +97,65 @@ fun SpendingMapScreen(
         viewModel.onPermissionResult(granted)
     }
 
-    // Check current permission status once
     LaunchedEffect(Unit) {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
-        val alreadyGranted = fine == PackageManager.PERMISSION_GRANTED ||
-                             coarse == PackageManager.PERMISSION_GRANTED
+        val alreadyGranted = fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
         viewModel.onPermissionResult(alreadyGranted)
-        if (!alreadyGranted) {
-            viewModel.onShowPermissionRationale(true)
-        }
+        if (!alreadyGranted) viewModel.onShowPermissionRationale(true)
     }
 
-    // ── Snackbar ──────────────────────────────────────────────────────────────
     LaunchedEffect(state.snackbarMessage) {
         val msg = state.snackbarMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
         viewModel.onSnackbarDismissed()
     }
+    LaunchedEffect(state.gpsPrivacyBlocked) {
+        val blocked = state.gpsPrivacyBlocked ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(blocked.reason, actionLabel = "Dismiss", duration = SnackbarDuration.Long)
+        viewModel.dismissGpsPrivacyBlocked()
+    }
+    LaunchedEffect(state.correctionSaveError) {
+        val err = state.correctionSaveError ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(err, duration = SnackbarDuration.Long)
+        viewModel.dismissCorrectionError()
+    }
+
+    SpendingMapScreenContent(
+        state = state,
+        locationPickerState = locationPickerState,
+        snackbarHostState = snackbarHostState,
+        onRequestPermission = {
+            locationPermissionLauncher.launch(arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
+        },
+        viewModel = viewModel
+    )
+}
+
+/**
+ * Pure content composable — testable with fake state.
+ * S10-021: Separated from route for focused component tests.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SpendingMapScreenContent(
+    state: SpendingMapState,
+    locationPickerState: LocationPickerState,
+    snackbarHostState: SnackbarHostState,
+    onRequestPermission: () -> Unit,
+    viewModel: SpendingMapViewModel
+) {
 
     // ── Permission dialog ─────────────────────────────────────────────────────
     LocationPermissionDialog(
         showDialog = state.showPermissionRationale,
         onDismiss = { viewModel.onShowPermissionRationale(false) },
         onGrant = {
-            locationPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+            onRequestPermission()
+            viewModel.onShowPermissionRationale(false)
         }
     )
 
@@ -119,11 +163,21 @@ fun SpendingMapScreen(
     if (state.showCorrectionSheet) {
         val marker = state.selectedMarker
         if (marker != null) {
+            // Reset picker when sheet opens
+            LaunchedEffect(marker.expenseId) {
+                viewModel.resetLocationPicker(marker.latitude, marker.longitude)
+            }
             LocationCorrectionSheet(
                 merchantName = state.pendingCorrectionMerchant ?: marker.merchant,
                 initialLat = state.pendingCorrectionLat ?: marker.latitude,
                 initialLon = state.pendingCorrectionLon ?: marker.longitude,
-                geocodingService = viewModel.geocodingService,
+                pickerState = locationPickerState,
+                onQueryChanged = viewModel::onLocationQueryChanged,
+                onResultSelected = viewModel::onLocationResultSelected,
+                onMapLongPressed = viewModel::onLocationMapLongPressed,
+                onPinConfirmed = viewModel::onLocationPinConfirmed,
+                onPinCancelled = viewModel::onLocationPinCancelled,
+                onLocationCleared = viewModel::onLocationCleared,
                 onDismiss = { viewModel.onCloseCorrectionSheet() },
                 onConfirm = { lat, lon, address, osmId ->
                     viewModel.onSaveCorrection(
@@ -142,27 +196,52 @@ fun SpendingMapScreen(
     // ── Pin expense sheet (Feature E) ─────────────────────────────────────────
     val pinExpense = state.expenseToPin
     if (pinExpense != null) {
+        LaunchedEffect(pinExpense.id) {
+            viewModel.resetLocationPicker(pinExpense.latitude, pinExpense.longitude)
+        }
         PinExpenseSheet(
             expense = pinExpense,
+            pickerState = locationPickerState,
+            onQueryChanged = viewModel::onLocationQueryChanged,
+            onResultSelected = viewModel::onLocationResultSelected,
+            onMapLongPressed = viewModel::onLocationMapLongPressed,
+            onPinConfirmed = viewModel::onLocationPinConfirmed,
+            onPinCancelled = viewModel::onLocationPinCancelled,
+            onLocationCleared = viewModel::onLocationCleared,
             onDismiss = { viewModel.onDismissPinSheet() },
             onSave = { lat, lon, address, osmId ->
                 viewModel.assignLocationToExpense(pinExpense, lat, lon, address, osmId)
             },
-            geocodingService = viewModel.geocodingService,
             deviceLat = state.deviceLatitude,
             deviceLon = state.deviceLongitude
         )
     }
 
-    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
-        if (state.isLoading) {
-            Box(
+    Scaffold(
+        containerColor = SemanticColors.BaseNavy,
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+        // Universal contract: use loadableState for typed loading check
+        if (state.loadableState is com.yourname.expensetracker.ui.model.LoadableUiState.Loading) {
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
+                    .padding(padding)
+                    .padding(16.dp)
             ) {
-                CircularProgressIndicator()
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(0.55f),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                ListSkeleton(itemCount = 3)
             }
             return@Scaffold
         }
@@ -172,6 +251,132 @@ fun SpendingMapScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            // ── Filters ───────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                state.highlightedMerchantQuery?.let { highlightedMerchant ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.map_focused_location),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = highlightedMerchant,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            TextButton(onClick = { viewModel.focusOnMerchant(null) }) {
+                                Text(stringResource(R.string.action_close))
+                            }
+                        }
+                    }
+                }
+
+                val now = state.referenceNowMillis
+                val sevenDaysStart = now - 7L * TimePeriodUtils.DAY_IN_MILLIS
+                val thirtyDaysStart = now - 30L * TimePeriodUtils.DAY_IN_MILLIS
+                val ninetyDaysStart = now - 90L * TimePeriodUtils.DAY_IN_MILLIS
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.map_filter_date_range),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (state.selectedCategories.isNotEmpty() || state.selectedDateRangePreset != null || state.dateRangeStartMs != null || state.dateRangeEndMs != null) {
+                        TextButton(onClick = viewModel::clearFilters) {
+                            Text(stringResource(R.string.map_filter_clear))
+                        }
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = state.selectedDateRangePreset == null && state.dateRangeStartMs == null && state.dateRangeEndMs == null,
+                        onClick = { viewModel.setDateRange(null, null, null) },
+                        label = { Text(stringResource(R.string.map_filter_all_dates)) }
+                    )
+                    FilterChip(
+                        selected = state.selectedDateRangePreset == DateRangePreset.LAST_7_DAYS,
+                        onClick = { viewModel.setDateRange(sevenDaysStart, now, DateRangePreset.LAST_7_DAYS) },
+                        label = { Text(stringResource(R.string.map_filter_7_days)) }
+                    )
+                    FilterChip(
+                        selected = state.selectedDateRangePreset == DateRangePreset.LAST_30_DAYS,
+                        onClick = { viewModel.setDateRange(thirtyDaysStart, now, DateRangePreset.LAST_30_DAYS) },
+                        label = { Text(stringResource(R.string.map_filter_30_days)) }
+                    )
+                    FilterChip(
+                        selected = state.selectedDateRangePreset == DateRangePreset.LAST_90_DAYS,
+                        onClick = { viewModel.setDateRange(ninetyDaysStart, now, DateRangePreset.LAST_90_DAYS) },
+                        label = { Text(stringResource(R.string.map_filter_90_days)) }
+                    )
+                }
+
+                if (state.availableCategories.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.map_filter_categories),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.availableCategories) { category ->
+                            FilterChip(
+                                selected = state.selectedCategories.contains(category.key),
+                                onClick = { viewModel.toggleCategoryFilter(category.key) },
+                                label = {
+                                    Text(category.label)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ── Conversion warning banner ─────────────────────────────────────
+            // VERIFIED (PR-E22): Banner correctly displays mapConversionWarnings count
+            // when conversion fails for some expenses. Tracks via SpendingMapViewModel
+            // (failedConversions from moneyExpenses) and shows warning text.
+            if (state.mapConversionWarnings > 0) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "${state.mapConversionWarnings} expense(s) shown in original currency due to missing exchange rates.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
             // ── Map ───────────────────────────────────────────────────────────
             Box(
                 modifier = Modifier
@@ -191,27 +396,34 @@ fun SpendingMapScreen(
                     onMarkerClick = { viewModel.onMarkerSelected(it) }
                 )
 
-                // Re-centre on device location button
-                if (state.locationPermissionGranted &&
-                    state.deviceLatitude != null && state.deviceLongitude != null) {
+                // S10-003: Show My Location button whenever permission is granted
+                // (first tap fetches GPS; subsequent taps re-center)
+                if (state.locationPermissionGranted) {
+                    val centerLocationCd = stringResource(R.string.map_center_my_location_cd)
                     FloatingActionButton(
-                        onClick = { centreOnDeviceRequest = true },  // F3: trigger centre
+                        onClick = {
+                            viewModel.onCenterOnMeRequested()
+                            if (state.deviceLatitude != null) centreOnDeviceRequest = true
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(12.dp),
+                            .padding(12.dp)
+                            .semantics { contentDescription = centerLocationCd },
                         containerColor = MaterialTheme.colorScheme.surface
                     ) {
-                        Icon(Icons.Default.MyLocation, contentDescription = "My location")
+                        Icon(Icons.Default.MyLocation, contentDescription = null)
                     }
                 } else if (!state.locationPermissionGranted) {
+                    val enableLocationCd = stringResource(R.string.map_enable_location_cd)
                     FloatingActionButton(
                         onClick = { viewModel.onShowPermissionRationale(true) },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(12.dp),
+                            .padding(12.dp)
+                            .semantics { contentDescription = enableLocationCd },
                         containerColor = MaterialTheme.colorScheme.surface
                     ) {
-                        Icon(Icons.Default.LocationSearching, contentDescription = "Enable location")
+                        Icon(Icons.Default.LocationSearching, contentDescription = null)
                     }
                 }
             }
@@ -223,13 +435,14 @@ fun SpendingMapScreen(
                 exit = fadeOut()
             ) {
                 state.selectedMarker?.let { marker ->
-                    MarkerDetailCard(
-                        marker = marker,
-                        isResolvingLocation = state.isResolvingLocation,
-                        onReResolve = { viewModel.onResolveLocationForMarker(marker) },
-                        onCorrectPin = { viewModel.onOpenCorrectionSheet(marker) },
-                        onDismiss = { viewModel.onMarkerSelected(null) }
-                    )
+            MarkerDetailCard(
+                marker = marker,
+                isResolvingLocation = state.isResolvingLocation,
+                onReResolve = { viewModel.onResolveLocationForMarker(marker) },
+                onCorrectPin = { viewModel.onOpenCorrectionSheet(marker) },
+                onDismiss = { viewModel.onMarkerSelected(null) },
+                homeCurrency = state.homeCurrency ?: ""
+            )
                 }
             }
 
@@ -238,7 +451,7 @@ fun SpendingMapScreen(
                 val marker = state.selectedMarker
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text(
-                        text = "Multiple shops found — pick the right one:",
+                        text = stringResource(R.string.map_multiple_shops),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
@@ -286,12 +499,12 @@ fun SpendingMapScreen(
                 ) {
                     item {
                         Text(
-                            text = "Top spending places",
+                            text = stringResource(R.string.map_top_spending_places),
                             style = MaterialTheme.typography.titleSmall
                         )
                     }
                     items(state.placeInsights.take(10)) { insight ->
-                        PlaceInsightCard(insight)
+                        PlaceInsightCard(insight, homeCurrency = state.homeCurrency ?: "")
                     }
                 }
             }
@@ -379,10 +592,17 @@ private fun OsmMapView(
                 }
             }
 
-            // F6: Build a render key; skip overlay rebuild if data hasn't changed.
-            //     This prevents interrupting in-progress touch events on markers.
-            val newKey = markers.joinToString("|") { "${it.latitude},${it.longitude}" } +
-                    "|" + heatmapPoints.joinToString("|") { "${it.latitude},${it.longitude},${it.weight}" }
+            // F6/L5: Build a compact, stable hash-based render key; skip overlay
+            // rebuild if data hasn't changed. Marker signature includes identity
+            // + metadata (expenseId, merchant, amount, date, source, placeId,
+            // and coordinates) so metadata-only changes still trigger refresh.
+            val markerSignature = markers.fold(1) { acc, marker ->
+                31 * acc + markerRenderSignature(marker)
+            }
+            val heatmapSignature = heatmapPoints.fold(1) { acc, point ->
+                31 * acc + heatmapRenderSignature(point)
+            }
+            val newKey = "m:${markers.size}:$markerSignature|h:${heatmapPoints.size}:$heatmapSignature"
             if (newKey == lastRenderKey.value) return@AndroidView
             lastRenderKey.value = newKey
 
@@ -447,10 +667,9 @@ private fun MarkerDetailCard(
     isResolvingLocation: Boolean,
     onReResolve: () -> Unit,
     onCorrectPin: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    homeCurrency: String
 ) {
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -465,19 +684,26 @@ private fun MarkerDetailCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = marker.merchant, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        text = fmt.format(marker.amount),
+                        text = CurrencyFormatter.formatMoney(marker.amount, marker.displayCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
+                    marker.conversionWarning?.let { warning ->
+                        Text(
+                            text = warning,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     marker.locationSource?.let { src ->
                         Text(
-                            text = "Source: $src",
+                            text = stringResource(R.string.map_source_format, src),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                TextButton(onClick = onDismiss) { Text("Close") }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.map_close_button)) }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -498,7 +724,7 @@ private fun MarkerDetailCard(
                         )
                     }
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Re-resolve")
+                    Text(stringResource(R.string.map_reresolve_button))
                 }
                 OutlinedButton(onClick = onCorrectPin) {
                     Icon(
@@ -507,7 +733,7 @@ private fun MarkerDetailCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Correct pin")
+                    Text(stringResource(R.string.map_correct_pin_button))
                 }
             }
         }
@@ -534,7 +760,7 @@ private fun LocationStatsBar(located: Int, unlocated: Int) {
                 modifier = Modifier.size(16.dp)
             )
             Text(
-                text = "$located located · $unlocated without location",
+                text = stringResource(R.string.map_stats_format, located, unlocated),
                 style = MaterialTheme.typography.labelMedium
             )
         }
@@ -549,7 +775,6 @@ private fun UnlocatedExpensesPanel(
     onPinClick: (Expense) -> Unit
 ) {
     var expanded by remember { mutableStateOf(true) }
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -572,15 +797,16 @@ private fun UnlocatedExpensesPanel(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    val suffix = if (expenses.size == 1) stringResource(R.string.map_unlocated_suffix_single) else stringResource(R.string.map_unlocated_suffix_plural)
                     Text(
-                        text = "${expenses.size} unlocated expense${if (expenses.size != 1) "s" else ""}",
+                        text = stringResource(R.string.map_unlocated_expenses_format, expenses.size, suffix),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium
                     )
                 }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand"
+                    contentDescription = if (expanded) stringResource(R.string.a11y_collapse) else stringResource(R.string.a11y_expand)
                 )
             }
 
@@ -604,20 +830,20 @@ private fun UnlocatedExpensesPanel(
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    text = expense.resolvedAddress ?: "No address",
+                                    text = expense.resolvedAddress ?: stringResource(R.string.map_no_address),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Text(
-                                text = fmt.format(expense.amount),
+                                text = CurrencyFormatter.formatMoney(expense.amount, expense.currency),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             IconButton(onClick = { onPinClick(expense) }) {
                                 Icon(
                                     Icons.Default.AddLocation,
-                                    contentDescription = "Pin this expense",
+                                    contentDescription = stringResource(R.string.map_pin_expense_cd),
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
@@ -629,20 +855,45 @@ private fun UnlocatedExpensesPanel(
     }
 }
 
+private fun markerRenderSignature(marker: MapExpenseMarker): Int {
+    var result = marker.expenseId.hashCode()
+    result = 31 * result + marker.latitude.hashCode()
+    result = 31 * result + marker.longitude.hashCode()
+    result = 31 * result + marker.merchant.hashCode()
+    result = 31 * result + marker.amount.hashCode()
+    result = 31 * result + marker.date.hashCode()
+    result = 31 * result + (marker.locationSource?.hashCode() ?: 0)
+    result = 31 * result + (marker.placeId?.hashCode() ?: 0)
+    return result
+}
+
+private fun heatmapRenderSignature(point: com.yourname.expensetracker.domain.location.HeatmapPoint): Int {
+    var result = point.latitude.hashCode()
+    result = 31 * result + point.longitude.hashCode()
+    result = 31 * result + point.weight.hashCode()
+    result = 31 * result + point.totalSpend.hashCode()
+    result = 31 * result + point.count
+    return result
+}
+
 // ── Pin expense sheet (Feature E) ────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PinExpenseSheet(
     expense: Expense,
+    pickerState: com.yourname.expensetracker.ui.screens.map.LocationPickerState,
+    onQueryChanged: (String, Boolean) -> Unit,
+    onResultSelected: (com.yourname.expensetracker.domain.location.GeocodingResult) -> Unit,
+    onMapLongPressed: (Double, Double) -> Unit,
+    onPinConfirmed: () -> Unit,
+    onPinCancelled: () -> Unit,
+    onLocationCleared: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (Double, Double, String?, String?) -> Unit,
-    geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
     deviceLat: Double? = null,
     deviceLon: Double? = null
 ) {
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
-
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -653,34 +904,28 @@ private fun PinExpenseSheet(
                 .padding(16.dp)
         ) {
             Text(
-                text = "Pin expense",
+                text = stringResource(R.string.map_pin_expense_title),
                 style = MaterialTheme.typography.titleLarge
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "${expense.merchant} · ${fmt.format(expense.amount)}",
+                text = "${expense.merchant} · ${CurrencyFormatter.formatMoney(expense.amount, expense.currency)}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(16.dp))
 
-            var selectedLat by remember { mutableStateOf<Double?>(null) }
-            var selectedLon by remember { mutableStateOf<Double?>(null) }
-            var selectedAddress by remember { mutableStateOf<String?>(null) }
-            var selectedOsmId by remember { mutableStateOf<String?>(null) }
-
             LocationSearchPicker(
+                state = pickerState,
+                onQueryChanged = onQueryChanged,
+                onResultSelected = onResultSelected,
+                onMapLongPressed = onMapLongPressed,
+                onPinConfirmed = onPinConfirmed,
+                onPinCancelled = onPinCancelled,
+                onCleared = onLocationCleared,
                 currentLat = expense.latitude,
                 currentLon = expense.longitude,
                 currentAddress = expense.resolvedAddress,
-                onResult = { lat, lon, address, osmId ->
-                    selectedLat = lat
-                    selectedLon = lon
-                    selectedAddress = address
-                    selectedOsmId = osmId
-                },
-                geocodingService = geocodingService,
-                // Bias toward device location when available, else expense's own location
                 biasLat = deviceLat ?: expense.latitude,
                 biasLon = deviceLon ?: expense.longitude
             )
@@ -691,22 +936,19 @@ private fun PinExpenseSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Cancel")
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.action_cancel))
                 }
                 Button(
                     onClick = {
-                        if (selectedLat != null && selectedLon != null) {
-                            onSave(selectedLat!!, selectedLon!!, selectedAddress, selectedOsmId)
-                        }
+                        val lat = pickerState.pendingLat ?: return@Button
+                        val lon = pickerState.pendingLon ?: return@Button
+                        onSave(lat, lon, pickerState.pendingAddress, pickerState.pendingOsmId)
                     },
-                    enabled = selectedLat != null && selectedLon != null,
+                    enabled = pickerState.hasSelection,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.action_save))
                 }
             }
 

@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
@@ -17,5 +19,6 @@ import javax.inject.Inject
  */
 class NoOpDashboardBriefingService @Inject constructor() : DashboardBriefingService {
 
-    override suspend fun generate(input: DashboardBriefingInput): DashboardBriefing? = null
+    override suspend fun generate(input: DashboardBriefingInput): AiServiceResult<DashboardBriefing> =
+        AiServiceResult.Failure(AiServiceError.Disabled("Dashboard briefing unavailable"))
 }

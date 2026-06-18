@@ -1,20 +1,24 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Generates (or returns a cached) AI explanation artifact for a pending review.
@@ -59,21 +63,17 @@ class ExplainPendingReviewUseCase @Inject constructor(
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "pending_review:${review.id}"
         val now       = timeProvider.now()
+        val sourceHash = AiArtifactSourceHash.forReviewExplanation(input)
 
         // ── 4. Cache freshness check ─────────────────────────────────────────
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.REVIEW_EXPLANATION)
-        if (existing != null &&
-            existing.status == AiArtifactStatus.READY &&
-            existing.promptVersion == AppConfig.Ai.PROMPT_VERSION_REVIEW &&
-            existing.expiresAt != null && existing.expiresAt > now
-        ) {
+        if (existing.isFreshArtifact(AppConfig.Ai.PROMPT_VERSION_REVIEW, sourceHash, now)) {
             Timber.d("ExplainPendingReviewUseCase: fresh artifact found for review ${review.id}, skipping generation.")
             return
         }
 
         // ── 5a. Persist RUNNING tombstone ────────────────────────────────────
-        val sourceHash = input.hashCode().toString()
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType    = AiTargetType.PENDING_REVIEW,
             targetKey     = targetKey,
             capability    = AiCapability.REVIEW_EXPLANATION,
@@ -96,28 +96,32 @@ class ExplainPendingReviewUseCase @Inject constructor(
 
         // ── 5b. Generate ─────────────────────────────────────────────────────
         try {
-            val explanation = reviewExplanationService.generate(input)
+            val serviceResult = reviewExplanationService.generate(input)
 
-            val finalEntity = if (explanation != null) {
-                baseEntity.copy(
-                    status          = AiArtifactStatus.READY,
-                    summaryText     = explanation.headline,
-                    explanationText = explanation.body.withRouteDiagnostics(routeDecision),
-                    updatedAt       = timeProvider.now()
-                )
-            } else {
-                // No-op provider or provider declined — mark failed so we don't retry
-                // until the user explicitly requests again.
-                baseEntity.copy(
-                    status       = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(routeDecision.reason, routeDecision),
-                    updatedAt    = timeProvider.now()
-                )
+            val finalEntity = when (serviceResult) {
+                is AiServiceResult.Success -> {
+                    val explanation = serviceResult.value
+                    baseEntity.copy(
+                        status          = AiArtifactStatus.READY,
+                        summaryText     = explanation.headline,
+                        explanationText = explanation.body.withRouteDiagnostics(routeDecision),
+                        updatedAt       = timeProvider.now()
+                    )
+                }
+                is AiServiceResult.Failure -> {
+                    baseEntity.copy(
+                        status       = AiArtifactStatus.FAILED,
+                        errorMessage = failureMessage(serviceResult.error.toReadableMessage(), routeDecision),
+                        updatedAt    = timeProvider.now()
+                    )
+                }
             }
 
             aiArtifactRepository.upsert(finalEntity)
             Timber.d("ExplainPendingReviewUseCase: artifact stored with status ${finalEntity.status} for review ${review.id}.")
 
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "ExplainPendingReviewUseCase: generation failed for review ${review.id}")
             aiArtifactRepository.upsert(
@@ -129,6 +133,17 @@ class ExplainPendingReviewUseCase @Inject constructor(
             )
         }
     }
+}
+
+private fun AiServiceError.toReadableMessage(): String = when (this) {
+    AiServiceError.Timeout -> "Review explanation timed out"
+    AiServiceError.Offline -> "No network connection"
+    AiServiceError.SslError -> "Secure connection failed"
+    is AiServiceError.HttpError -> "HTTP $code"
+    is AiServiceError.ParseError -> message ?: "Response parse error"
+    is AiServiceError.Disabled -> reason
+    is AiServiceError.PrivacyDenied -> blocked.reason
+    is AiServiceError.Unknown -> message ?: "Unknown service error"
 }
 
 private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String {

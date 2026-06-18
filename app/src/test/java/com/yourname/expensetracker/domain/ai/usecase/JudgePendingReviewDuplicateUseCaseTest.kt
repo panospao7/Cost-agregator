@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
@@ -21,8 +22,10 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -72,7 +75,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
     @Test
     fun `invoke returns NotNeeded when builder says not needed`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
-        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.NotNeeded("not needed")
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.NotNeeded("not needed")
 
         val result = useCase(makeItem())
 
@@ -82,13 +85,15 @@ class JudgePendingReviewDuplicateUseCaseTest {
     @Test
     fun `invoke stores READY artifact on success`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
-        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dedupeJudgeService.judge(any()) } returns DedupeJudgeSuggestion(
-            verdict = DuplicateVerdict.UNCERTAIN,
-            rationale = "Two nearby matches look similar"
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.UNCERTAIN,
+                rationale = "Two nearby matches look similar"
+            )
         )
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(makeItem())
@@ -105,7 +110,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
     @Test
     fun `invoke stores ON_DEVICE metadata when local dedupe provider succeeds`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
-        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
         coEvery {
             aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any(), any())
         } returns AiRouteDecision(
@@ -115,11 +120,13 @@ class JudgePendingReviewDuplicateUseCaseTest {
             modelName = AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
         )
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dedupeJudgeService.judge(any()) } returns DedupeJudgeSuggestion(
-            verdict = DuplicateVerdict.UNCERTAIN,
-            rationale = "Two nearby matches look similar"
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.UNCERTAIN,
+                rationale = "Two nearby matches look similar"
+            )
         )
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(makeItem())
@@ -129,6 +136,116 @@ class JudgePendingReviewDuplicateUseCaseTest {
         assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, captured.first().provider)
         assertEquals(AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL, captured.first().modelName)
         assertTrue(captured.last().explanationText?.contains("Route: ON_DEVICE") == true)
+    }
+
+    @Test
+    fun `invoke clears invalid matched target outside candidate set`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.LIKELY_DUPLICATE,
+                matchedTargetType = AiTargetType.EXPENSE,
+                matchedTargetId = 99L,
+                rationale = "looks similar"
+            )
+        )
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        val suggestion = (result as DedupeJudgeGenerationResult.Success).suggestion
+        assertEquals(DuplicateVerdict.UNCERTAIN, suggestion.verdict)
+        assertEquals(null, suggestion.matchedTargetId)
+        assertEquals(null, suggestion.matchedTargetType)
+        assertTrue(captured.last().payloadJson?.contains("UNCERTAIN") == true)
+    }
+
+    @Test
+    fun `invoke preserves matched target inside candidate set`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.LIKELY_DUPLICATE,
+                matchedTargetType = AiTargetType.EXPENSE,
+                matchedTargetId = 3L,
+                rationale = "exact match"
+            )
+        )
+        coEvery { aiArtifactRepository.upsert(any()) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        val suggestion = (result as DedupeJudgeGenerationResult.Success).suggestion
+        assertEquals(DuplicateVerdict.LIKELY_DUPLICATE, suggestion.verdict)
+        assertEquals(3L, suggestion.matchedTargetId)
+        assertEquals(AiTargetType.EXPENSE, suggestion.matchedTargetType)
+    }
+
+    @Test
+    fun `invoke reuses cache when source hash matches canonical input`() = runTest {
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(input)
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns AiArtifactRecord(
+            id = 11L,
+            targetType = AiTargetType.PENDING_REVIEW,
+            targetId = 2L,
+            targetKey = "pending_review:2",
+            capability = AiCapability.DEDUPE_JUDGE,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            promptVersion = AppConfig.Ai.PROMPT_VERSION_DEDUPE,
+            sourceHash = AiArtifactSourceHash.forDedupeJudge(input),
+            payloadJson = """{"verdict":"UNCERTAIN"}""",
+            createdAt = 1_000L,
+            updatedAt = 1_000L,
+            expiresAt = 2_000L
+        )
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        assertTrue((result as DedupeJudgeGenerationResult.Success).fromCache)
+        coVerify(exactly = 0) { dedupeJudgeService.judge(any()) }
+    }
+
+    @Test
+    fun `invoke bypasses malformed cache payload and requests fresh suggestion`() = runTest {
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(input)
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns AiArtifactRecord(
+            id = 12L,
+            targetType = AiTargetType.PENDING_REVIEW,
+            targetId = 2L,
+            targetKey = "pending_review:2",
+            capability = AiCapability.DEDUPE_JUDGE,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            promptVersion = AppConfig.Ai.PROMPT_VERSION_DEDUPE,
+            sourceHash = AiArtifactSourceHash.forDedupeJudge(input),
+            payloadJson = """{"verdict":"NOPE"}""",
+            createdAt = 1_000L,
+            updatedAt = 1_000L,
+            expiresAt = 2_000L
+        )
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(verdict = DuplicateVerdict.UNCERTAIN)
+        )
+        coEvery { aiArtifactRepository.upsert(any()) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        assertTrue((result as DedupeJudgeGenerationResult.Success).fromCache.not())
+        coVerify(exactly = 1) { dedupeJudgeService.judge(any()) }
     }
 
     private fun makeItem() = PendingReviewWithReceipt(

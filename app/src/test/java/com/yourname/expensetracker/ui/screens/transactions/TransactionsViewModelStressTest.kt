@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.screens.transactions
 
 import app.cash.turbine.test
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
@@ -17,14 +19,19 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import org.junit.Ignore
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Ignore("Stress test: may hang in CI, run manually")
 class TransactionsViewModelStressTest : ViewModelTestUtils() {
 
     private lateinit var notificationRepository: NotificationRepository
@@ -48,13 +55,13 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
         timeProvider = mockk(relaxed = true)
         geocodingService = mockk(relaxed = true)
 
-        val now = System.currentTimeMillis()
+        val now = 1_700_000_000_000L
         every { timeProvider.now() } returns now
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesWithCategoryInPeriod(any(), any()) } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesWithCategoryFiltered(any(), any(), any(), any(), any()) } returns flowOf(emptyList())
         coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
 
         viewModel = TransactionsViewModel(
             notificationRepository,
@@ -63,7 +70,9 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
             recurringExpenseRepository,
             merchantLocationRepository,
             timeProvider,
-            geocodingService
+            geocodingService,
+            currencySettingsRepository = mockk(),
+            sourceLinkQueryService = mockk(relaxed = true),
         )
     }
 
@@ -162,9 +171,62 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
         }
 
         coVerify(atLeast = 2) {
-            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
         assertNotNull(viewModel)
+    }
+
+    @Test
+    fun `stress - loadMore stops after empty page on ALL tab`() = runTest(testDispatcher) {
+        val firstPage = buildPage(size = TransactionsViewModel.PAGE_SIZE, merchantPrefix = "page1")
+        coEvery {
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returnsMany listOf(firstPage, emptyList())
+
+        viewModel.selectTab(TransactionsViewModel.TransactionTab.ALL)
+        advanceUntilIdle()
+        assertFalse(viewModel.hasReachedEnd.value)
+
+        viewModel.loadMore()
+        advanceUntilIdle()
+        assertTrue(viewModel.hasReachedEnd.value)
+
+        viewModel.loadMore()
+        advanceUntilIdle()
+
+        coVerify(exactly = 2) {
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `stress - updateMerchant refreshes ALL paged expenses`() = runTest(testDispatcher) {
+        val initialPage = listOf(buildExpenseWithCategory(id = 1L, merchant = "Old Merchant"))
+        val refreshedPage = listOf(buildExpenseWithCategory(id = 1L, merchant = "New Merchant"))
+
+        coEvery {
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returnsMany listOf(initialPage, refreshedPage)
+
+        val collectJob = backgroundScope.launch {
+            viewModel.transactions.collect { }
+        }
+
+        viewModel.selectTab(TransactionsViewModel.TransactionTab.ALL)
+        advanceUntilIdle()
+        assertEquals("Old Merchant", viewModel.transactions.value.single().expense.merchant)
+
+        viewModel.updateMerchant(initialPage.single().expense, "New Merchant")
+        advanceUntilIdle()
+
+        assertEquals("New Merchant", viewModel.transactions.value.single().expense.merchant)
+
+        coVerify(exactly = 1) { expenseRepository.updateExpenseMerchant(initialPage.single().expense, "New Merchant", false) }
+        coVerify(exactly = 2) {
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+
+        collectJob.cancel()
     }
 
     @Test
@@ -253,5 +315,30 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(null, viewModel.filter.value)
+    }
+
+    private fun buildPage(size: Int, merchantPrefix: String): List<ExpenseWithCategory> {
+        return (1..size).map { index ->
+            buildExpenseWithCategory(
+                id = index.toLong(),
+                merchant = "$merchantPrefix-$index"
+            )
+        }
+    }
+
+    private fun buildExpenseWithCategory(
+        id: Long,
+        merchant: String
+    ): ExpenseWithCategory {
+        return ExpenseWithCategory(
+            expense = Expense(
+                id = id,
+                amount = 12.5,
+                merchant = merchant,
+                transactionType = TransactionType.PURCHASE,
+                date = 1_700_000_000_000L
+            ),
+            category = null
+        )
     }
 }

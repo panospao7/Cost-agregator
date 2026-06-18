@@ -33,8 +33,24 @@ data class MonteCarloResult(
     val confidence: SimulationConfidence,
 
     /** Metadata about the simulation run. */
-    val metadata: SimulationMetadata
-)
+    val metadata: SimulationMetadata,
+
+    /** Currency in which all monetary values in this result are denominated. */
+    val displayCurrency: String?
+) {
+    companion object {
+        /** CURR-587-05 / CURR-172-06: Unavailable placeholder — no blank currency. */
+        fun unavailable(reason: String): MonteCarloResult = MonteCarloResult(
+            percentile10 = 0.0, percentile25 = 0.0, percentile50 = 0.0,
+            percentile75 = 0.0, percentile90 = 0.0,
+            probabilityUnderBudget = null, budgetAmount = null,
+            spentToDate = 0.0, knownUpcoming = 0.0,
+            confidence = SimulationConfidence(0.0, ConfidenceLevel.LOW, reason),
+            metadata = SimulationMetadata(0, 0, 0, 0.0, 0.0, 0, 0L),
+            displayCurrency = null // unavailable — must not be formatted as money
+        )
+    }
+}
 
 /**
  * Confidence assessment of the Monte Carlo simulation.

@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Before
@@ -31,11 +32,12 @@ class CrossParserConsistencyTest {
         currencyNormalizer = CurrencyNormalizer()
         merchantCleaner = MerchantCleaner()
         revolutParser = RevolutParser(currencyNormalizer, merchantCleaner)
-        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner)
+        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR")
         genericParser = GenericTransactionParser(
             currencyNormalizer,
             merchantCleaner,
-            TransferDirectionDetector()
+            TransferDirectionDetector(),
+            timeProvider = mockk()
         )
     }
 
@@ -56,7 +58,7 @@ class CrossParserConsistencyTest {
         val amount = 25.50
         val merchant = "Starbucks"
         val date = System.currentTimeMillis()
-        val dedupeKey = Expense.generateDedupeKey(amount, merchant, date)
+        val dedupeKey = Expense.generateDedupeKey(amount, merchant, date, "EUR")
         val expectedMerchantKey = MerchantKeyGenerator.generate(merchant)
         assert(dedupeKey.contains(expectedMerchantKey)) {
             "DedupeKey must contain merchant key: $dedupeKey"

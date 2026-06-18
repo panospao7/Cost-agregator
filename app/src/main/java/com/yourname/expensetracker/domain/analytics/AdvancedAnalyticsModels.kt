@@ -1,36 +1,50 @@
 package com.yourname.expensetracker.domain.analytics
 
-import androidx.compose.runtime.Immutable
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.core.time.PeriodRange
 
 /**
  * Period definition for analytics queries.
+ *
+ * @deprecated Use [PeriodKind] instead. Migrate callers to PeriodKind.THIS_WEEK,
+ *   PeriodKind.THIS_MONTH, PeriodKind.THIS_QUARTER, PeriodKind.THIS_YEAR,
+ *   or PeriodKind.CUSTOM.
  */
+@Deprecated(
+    message = "Use PeriodKind from domain.core.time instead",
+    replaceWith = ReplaceWith("PeriodKind", "com.yourname.expensetracker.domain.core.time.PeriodKind")
+)
 enum class AnalyticsPeriod {
     WEEK, MONTH, QUARTER, YEAR, CUSTOM
 }
 
 /**
  * Represents a time range for analytics calculations.
+ *
+ * @deprecated Use [PeriodRange] from domain.core.time instead.
  */
-@Immutable
-data class PeriodRange(
+@Deprecated(
+    message = "Use PeriodRange from domain.core.time instead",
+    replaceWith = ReplaceWith("PeriodRange", "com.yourname.expensetracker.domain.core.time.PeriodRange")
+)
+data class AnalyticsPeriodRange(
     val period: AnalyticsPeriod,
     val startMs: Long,
     val endMs: Long,
     val label: String,
-    val comparisonRange: PeriodRange?
+    val comparisonRange: AnalyticsPeriodRange?
 )
 
 /**
  * Enhanced category analytics with budget context and trends.
  */
-@Immutable
 data class EnhancedCategoryAnalytics(
-    val category: Category,
-    val period: PeriodRange,
+    val category: AnalyticsCategoryRef,
+    val period: AnalyticsPeriodRange,
+    val displayCurrency: String,
     
     // Core metrics
     val totalSpent: Double,
@@ -60,7 +74,9 @@ data class EnhancedCategoryAnalytics(
     
     // Spending velocity (positive = accelerating)
     val velocity: Double
-)
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 enum class CategoryTrendDirection {
     UP_FAST,    // >20% increase
@@ -73,10 +89,10 @@ enum class CategoryTrendDirection {
 /**
  * Enhanced merchant analytics with loyalty and price trends.
  */
-@Immutable
 data class EnhancedMerchantAnalytics(
     val merchant: String,
-    val period: PeriodRange,
+    val period: AnalyticsPeriodRange,
+    val displayCurrency: String,
     
     // Core metrics
     val totalSpent: Double,
@@ -104,8 +120,10 @@ data class EnhancedMerchantAnalytics(
     val spendingByDayOfWeek: Map<Int, Double>,
     
     // Recent transactions preview
-    val recentTransactions: List<Expense>
-)
+    val recentTransactions: List<AnalyticsTransactionSummary>
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 enum class MerchantVisitFrequency {
     DAILY, WEEKLY, BIWEEKLY, MONTHLY, QUARTERLY, RARE
@@ -122,9 +140,8 @@ enum class MerchantConsistencyRating {
 /**
  * Spending pattern analysis results.
  */
-@Immutable
 data class SpendingPatternAnalysis(
-    val period: PeriodRange,
+    val period: AnalyticsPeriodRange,
     
     // Day of week breakdown
     val dayOfWeekStats: Map<Int, DayOfWeekStats>,
@@ -141,17 +158,18 @@ data class SpendingPatternAnalysis(
     val detectedPatterns: List<DetectedPattern>
 )
 
-@Immutable
 data class DayOfWeekStats(
     val dayName: String,
     val dayIndex: Int,
     val totalSpent: Double,
     val transactionCount: Int,
     val averagePerDay: Double,
-    val percentageOfWeek: Float
-)
+    val percentageOfWeek: Float,
+    val displayCurrency: String
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
-@Immutable
 data class WeekendWeekdayComparison(
     val weekdayTotal: Double,
     val weekdayCount: Int,
@@ -159,8 +177,12 @@ data class WeekendWeekdayComparison(
     val weekendCount: Int,
     val weekdayAveragePerTransaction: Double,
     val weekendAveragePerTransaction: Double,
-    val weekendToWeekdayRatio: Float
-)
+    val weekendToWeekdayRatio: Float,
+    val displayCurrency: String
+) {
+    val moneyWeekdayTotal: MoneyAmount get() = MoneyAmount(weekdayTotal, CurrencyCode(displayCurrency))
+    val moneyWeekendTotal: MoneyAmount get() = MoneyAmount(weekendTotal, CurrencyCode(displayCurrency))
+}
 
 enum class TimeSlot {
     EARLY_MORNING,   // 6-9
@@ -171,7 +193,6 @@ enum class TimeSlot {
     LATE_NIGHT       // 0-6
 }
 
-@Immutable
 data class DetectedPattern(
     val type: SpendingPatternType,
     val description: String,
@@ -192,9 +213,9 @@ enum class SpendingPatternType {
 /**
  * Statistical insights for a period.
  */
-@Immutable
 data class StatisticalInsights(
-    val period: PeriodRange,
+    val period: AnalyticsPeriodRange,
+    val displayCurrency: String,
     
     // Transaction size distribution
     val histogramBins: List<HistogramBin>,
@@ -211,26 +232,31 @@ data class StatisticalInsights(
     val modeTransaction: Double?,
     
     // Extremes
-    val largestTransaction: Expense?,
-    val smallestTransaction: Expense?,
+    val largestTransaction: AnalyticsTransactionSummary?,
+    val smallestTransaction: AnalyticsTransactionSummary?,
     
     // Daily spending stats
     val averageDailySpend: Double,
     val maxDailySpend: Double,
     val daysWithSpending: Int,
     val daysWithoutSpending: Int
-)
+) {
+    val moneyMeanTransaction: MoneyAmount get() = MoneyAmount(meanTransaction, CurrencyCode(displayCurrency))
+    val moneyMedianTransaction: MoneyAmount get() = MoneyAmount(medianTransaction, CurrencyCode(displayCurrency))
+    val moneyAverageDailySpend: MoneyAmount get() = MoneyAmount(averageDailySpend, CurrencyCode(displayCurrency))
+}
 
-@Immutable
 data class HistogramBin(
     val rangeStart: Double,
     val rangeEnd: Double,
     val count: Int,
     val total: Double,
-    val percentage: Float
-)
+    val percentage: Float,
+    val displayCurrency: String
+) {
+    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
+}
 
-@Immutable
 data class TransactionPercentiles(
     val p10: Double,
     val p25: Double,
@@ -238,5 +264,28 @@ data class TransactionPercentiles(
     val p75: Double,
     val p90: Double,
     val p95: Double,
-    val p99: Double
+    val p99: Double,
+    val displayCurrency: String
+) {
+    val moneyP50: MoneyAmount get() = MoneyAmount(p50, CurrencyCode(displayCurrency))
+}
+
+data class AnalyticsCategoryRef(
+    val id: Long,
+    val name: String,
+    val icon: String,
+    val color: String
 )
+
+data class AnalyticsTransactionSummary(
+    val id: Long,
+    val amount: Double,
+    val effectiveAmount: Double,
+    val currency: String,
+    val merchant: String,
+    val date: Long,
+    val categoryId: Long?
+) {
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+    val moneyEffectiveAmount: MoneyAmount get() = MoneyAmount(effectiveAmount, CurrencyCode(currency))
+}

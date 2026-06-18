@@ -1,7 +1,16 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.model.UiText
+
+/**
+ * Analytics result models.
+ *
+ * CURRENCY NOTE: All displayCurrency fields are required — callers must supply
+ * the actual display currency derived from user settings.
+ */
 
 // === New Insights Models ===
 
@@ -26,7 +35,7 @@ data class MonthPeriod(
 }
 
 data class CategoryInsight(
-    val category: Category,
+    val category: AnalyticsCategoryRef,
     val currentTotal: Double,
     val currentCount: Int,
     val previousTotal: Double?,
@@ -35,8 +44,11 @@ data class CategoryInsight(
     val monthsOfData: Int,
     val percentageOfTotal: Float,
     val changeFromPrevious: Float?, // percentage change
-    val changeFromAverage: Float? // percentage deviation from average
-)
+    val changeFromAverage: Float?, // percentage deviation from average
+    val displayCurrency: String
+) {
+    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(displayCurrency))
+}
 
 data class MerchantInsight(
     val merchant: String,
@@ -46,8 +58,11 @@ data class MerchantInsight(
     val totalSpent: Double,
     val transactionCount: Int,
     val isLikelyRecurring: Boolean,
-    val stdDeviation: Double? // null if < 3 transactions
-)
+    val stdDeviation: Double?, // null if < 3 transactions
+    val displayCurrency: String
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 data class SpendingPace(
     val currentMonthSpent: Double,
@@ -57,8 +72,12 @@ data class SpendingPace(
     val previousMonthTotal: Double?,
     val averageMonthlyTotal: Double?,
     val pacePercentage: Float, // how far through the month's typical spend
-    val paceStatus: PaceStatus
-)
+    val paceStatus: PaceStatus,
+    val displayCurrency: String
+) {
+    val moneyCurrentMonthSpent: MoneyAmount get() = MoneyAmount(currentMonthSpent, CurrencyCode(displayCurrency))
+    val moneyProjectedTotal: MoneyAmount get() = MoneyAmount(projectedTotal, CurrencyCode(displayCurrency))
+}
 
 enum class PaceStatus {
     UNDER_PACE,    // spending less than typical
@@ -68,15 +87,18 @@ enum class PaceStatus {
 }
 
 data class AnomalyTransaction(
-    val expense: Expense,
+    val expense: AnalyticsTransactionSummary,
     val merchantAvg: Double,
     val deviationMultiple: Float, // how many times the average
-    val category: Category?,
+    val category: AnalyticsCategoryRef?,
     // Detection metadata — all optional; defaults preserve backward compat
     val detectionMethod: AnomalyMethod = AnomalyMethod.MULTIPLIER,
     val contextualNote: String? = null,  // e.g. "Unusual for a Tuesday evening"
-    val categoryAvg: Double? = null      // category-level avg, distinct from merchantAvg
-)
+    val categoryAvg: Double? = null,     // category-level avg, distinct from merchantAvg
+    val displayCurrency: String
+) {
+    val moneyMerchantAvg: MoneyAmount get() = MoneyAmount(merchantAvg, CurrencyCode(displayCurrency))
+}
 
 /**
  * Which statistical method flagged this transaction as anomalous.
@@ -99,16 +121,22 @@ data class RecurringExpense(
     val frequency: Int, // transactions total
     val intervalDays: Int, // approximate days between transactions
     val amountVariation: Double, // max - min
-    val isStable: Boolean // low variation
-)
+    val isStable: Boolean, // low variation
+    val displayCurrency: String
+) {
+    val moneyAvgAmount: MoneyAmount get() = MoneyAmount(avgAmount, CurrencyCode(displayCurrency))
+}
 
 data class DayOfWeekInsight(
     val dayName: String,
     val dayIndex: Int, // 0=Mon, 6=Sun
     val totalSpent: Double,
     val transactionCount: Int,
-    val avgPerTransaction: Double
-)
+    val avgPerTransaction: Double,
+    val displayCurrency: String
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 data class MonthlyComparison(
     val currentMonth: MonthPeriod,
@@ -118,11 +146,29 @@ data class MonthlyComparison(
     val changeAmount: Double?,
     val changePercentage: Float?,
     val currentCount: Int,
-    val previousCount: Int?
+    val previousCount: Int?,
+    val displayCurrency: String
+) {
+    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(displayCurrency))
+}
+
+enum class AnalyticsConversionWarningType {
+    INVALID_HOME_CURRENCY,
+    INVALID_TRANSACTION_CURRENCY,
+    MISSING_EXCHANGE_RATE,
+    STALE_EXCHANGE_RATE
+}
+
+data class AnalyticsConversionWarning(
+    val type: AnalyticsConversionWarningType,
+    val message: String,
+    val affectedTransactionCount: Int,
+    val sourceCurrencies: List<String> = emptyList()
 )
 
 data class InsightsSnapshot(
-    val generatedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val generatedAt: Long = 0L,
     val currentMonth: MonthPeriod,
     val monthlyComparison: MonthlyComparison,
     val categoryInsights: List<CategoryInsight>,
@@ -131,11 +177,16 @@ data class InsightsSnapshot(
     val anomalies: List<AnomalyTransaction>,
     val recurringExpenses: List<RecurringExpense>,
     val dayOfWeekPattern: List<DayOfWeekInsight>,
-    val largestTransaction: Expense?,
+    val largestTransaction: AnalyticsTransactionSummary?,
     val averageTransactionSize: Double,
     val medianTransactionSize: Double,
-    val totalMonthsOfData: Int
-)
+    val totalMonthsOfData: Int,
+    val displayCurrency: String,
+    val conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+) {
+    val moneyAverageTransactionSize: MoneyAmount get() = MoneyAmount(averageTransactionSize, CurrencyCode(displayCurrency))
+    val moneyMedianTransactionSize: MoneyAmount get() = MoneyAmount(medianTransactionSize, CurrencyCode(displayCurrency))
+}
 
 // === Legacy / Existing Models ===
 
@@ -145,7 +196,7 @@ data class SpendingPeriod(
     val endDate: Long,
     val total: Double,
     val previousTotal: Double?,         // For comparison
-    val byCategory: List<CategoryBreakdown>,
+    val byCategory: List<AnalyticsCategoryBreakdown>,
     val byMerchant: List<MerchantBreakdown>,
     val dailyTotals: Map<String, Double>,   // "2024-01-15" → 45.60
     val transactionCount: Int
@@ -156,26 +207,40 @@ data class SpendingPeriod(
         else null
 }
 
-data class CategoryBreakdown(
-    val category: Category,
+@Deprecated(
+    message = "Use AnalyticsCategoryBreakdown",
+    replaceWith = ReplaceWith("AnalyticsCategoryBreakdown")
+)
+typealias LegacyAnalyticsCategoryBreakdown = AnalyticsCategoryBreakdown
+
+data class AnalyticsCategoryBreakdown(
+    val category: AnalyticsCategoryRef,
     val total: Double,
     val count: Int,
-    val percentage: Float           // 0-100
-)
+    val percentage: Float,          // 0-100
+    val displayCurrency: String,
+    val isPartial: Boolean = false,
+    val warningMessage: String? = null
+) {
+    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
+}
 
 data class MerchantBreakdown(
     val name: String,
     val totalSpent: Double,
     val transactionCount: Int,
     val averageTransaction: Double,
-    val categoryId: Long?
-)
+    val categoryId: Long?,
+    val displayCurrency: String
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 data class SpendingInsight(
     val type: InsightType,
     val icon: String,
-    val title: String,
-    val description: String,
+    val title: UiText,
+    val description: UiText,
     val severity: Float             // 0-1, how important/urgent
 )
 
@@ -189,7 +254,11 @@ enum class InsightType {
     MERCHANT_FREQUENCY,
     DAILY_AVERAGE,
     TOP_MERCHANT,
-    STREAK
+    STREAK,
+    NEW_MERCHANT,
+    RECURRING_PATTERN,
+    SAVINGS_OPPORTUNITY,
+    SPENDING_PATTERN
 }
 
 data class RecurringCandidate(
@@ -198,11 +267,36 @@ data class RecurringCandidate(
     val intervalDays: Int,
     val occurrences: Int,
     val nextExpectedDate: Long?,
-    val confidence: Float = 0.0f
-)
+    val confidence: Float = 0.0f,
+    val displayCurrency: String
+) {
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(displayCurrency))
+}
 
+/**
+ * Time period selection for analytics views.
+ *
+ * @deprecated Use [PeriodKind] from domain.core.time instead.
+ *   Mapping: TODAY→PeriodKind.TODAY, WEEK→PeriodKind.THIS_WEEK,
+ *   MONTH→PeriodKind.THIS_MONTH, QUARTER→PeriodKind.THIS_QUARTER,
+ *   YEAR→PeriodKind.THIS_YEAR, ALL→PeriodKind.CUSTOM (with explicit range).
+ */
+@Deprecated(
+    message = "Use PeriodKind from domain.core.time instead",
+    replaceWith = ReplaceWith("PeriodKind", "com.yourname.expensetracker.domain.core.time.PeriodKind")
+)
 enum class TimePeriod {
-    TODAY, WEEK, MONTH, YEAR, ALL
+    TODAY, WEEK, MONTH, QUARTER, YEAR, ALL
+}
+
+/** Maps this legacy [TimePeriod] to [PeriodKind] for the migration. */
+fun TimePeriod.toPeriodKind(): PeriodKind = when (this) {
+    TimePeriod.TODAY -> PeriodKind.TODAY
+    TimePeriod.WEEK -> PeriodKind.THIS_WEEK
+    TimePeriod.MONTH -> PeriodKind.THIS_MONTH
+    TimePeriod.QUARTER -> PeriodKind.THIS_QUARTER
+    TimePeriod.YEAR -> PeriodKind.THIS_YEAR
+    TimePeriod.ALL -> PeriodKind.CUSTOM
 }
 
 // === Feature 3: Year-over-Year Comparison Models ===
@@ -214,8 +308,11 @@ data class MonthlyYearTotal(
     val month: Int,        // 0-indexed (Calendar.JANUARY = 0)
     val monthLabel: String, // "Jan", "Feb", ...
     val total: Double,
-    val transactionCount: Int
-)
+    val transactionCount: Int,
+    val displayCurrency: String
+) {
+    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
+}
 
 /**
  * Side-by-side year comparison: current year vs prior year, broken down by month.
@@ -229,8 +326,12 @@ data class YearOverYearComparison(
     val currentYearTotal: Double,
     val priorYearTotal: Double,
     val changePercent: Float?,   // null if no prior year data
-    val deltaByMonth: List<Triple<String, Double, Double>> // (monthLabel, currentTotal, priorTotal) for months with data in both years
-)
+    val deltaByMonth: List<Triple<String, Double, Double>>, // (monthLabel, currentTotal, priorTotal) for months with data in both years
+    val displayCurrency: String
+) {
+    val moneyCurrentYearTotal: MoneyAmount get() = MoneyAmount(currentYearTotal, CurrencyCode(displayCurrency))
+    val moneyPriorYearTotal: MoneyAmount get() = MoneyAmount(priorYearTotal, CurrencyCode(displayCurrency))
+}
 
 // === Feature 4: Spending Velocity Anomaly Models ===
 
@@ -245,8 +346,11 @@ data class VelocityAnomaly(
     val dayTotal: Double,        // total spent that day
     val monthDailyAvg: Double,   // average daily spend for the month
     val deviationMultiple: Float, // dayTotal / monthDailyAvg
-    val topMerchants: List<String> // top contributors that day (up to 3)
-)
+    val topMerchants: List<String>, // top contributors that day (up to 3)
+    val displayCurrency: String
+) {
+    val moneyDayTotal: MoneyAmount get() = MoneyAmount(dayTotal, CurrencyCode(displayCurrency))
+}
 
 // === Feature 5: Post-Salary Sequential Pattern Models ===
 
@@ -257,8 +361,11 @@ data class PostSalaryCategory(
     val categoryName: String,
     val categoryIcon: String,
     val avgSpendAfterSalary: Double,  // average total spent in 7 days after salary
-    val occurrences: Int               // how many salary cycles showed this pattern
-)
+    val occurrences: Int,              // how many salary cycles showed this pattern
+    val displayCurrency: String
+) {
+    val moneyAvgSpendAfterSalary: MoneyAmount get() = MoneyAmount(avgSpendAfterSalary, CurrencyCode(displayCurrency))
+}
 
 /**
  * Summarises the detected salary events and the post-salary spending behaviour.
@@ -268,8 +375,12 @@ data class PostSalaryPattern(
     val avgSalaryAmount: Double,       // average deposit amount
     val avgDaysToFirstPurchase: Float, // avg days from deposit to first expense
     val topCategories: List<PostSalaryCategory>, // top spiking categories
-    val avgTotalSpentIn7Days: Double   // avg total spend within 7 days of salary
-)
+    val avgTotalSpentIn7Days: Double,  // avg total spend within 7 days of salary
+    val displayCurrency: String
+) {
+    val moneyAvgSalaryAmount: MoneyAmount get() = MoneyAmount(avgSalaryAmount, CurrencyCode(displayCurrency))
+    val moneyAvgTotalSpentIn7Days: MoneyAmount get() = MoneyAmount(avgTotalSpentIn7Days, CurrencyCode(displayCurrency))
+}
 
 // === Feature 6: Duplicate/Error Detection Models ===
 
@@ -286,8 +397,11 @@ data class SuspectTransaction(
     val expenseId: Long,
     val dateMs: Long,
     val amount: Double,
+    val currency: String,
     val merchant: String,
     val reason: SuspectReason,
     val reasonLabel: String,       // Human-readable reason
     val duplicateOfId: Long? = null // Set when NEAR_DUPLICATE; ID of the original transaction
-)
+) {
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+}

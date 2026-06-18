@@ -10,6 +10,8 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,7 +19,9 @@ import javax.inject.Singleton
 class DefaultAiCapabilityRouter @Inject constructor(
     private val aiPolicy: AiPolicy,
     private val environmentMonitor: AiEnvironmentMonitor,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
+    private val secureKeyStorage: com.yourname.expensetracker.data.security.SecureKeyStorage,
+    private val privacyGate: PrivacyGate
 ) : AiCapabilityRouter {
 
     override suspend fun decide(
@@ -26,11 +30,15 @@ class DefaultAiCapabilityRouter @Inject constructor(
         onDeviceStatus: OnDeviceModelStatus?
     ): AiRouteDecision {
         if (!settings.aiEnabled) {
-            return AiRouteDecision(AiRoute.DISABLED, "AI is disabled in settings.")
+            val decision = AiRouteDecision(AiRoute.DISABLED, "AI is disabled in settings.")
+            aiRuntimeDiagnostics.recordRouteDecision(capability, decision)
+            return decision
         }
 
         if (!isCapabilityEnabled(capability, settings)) {
-            return AiRouteDecision(AiRoute.DISABLED, "$capability is disabled in settings.")
+            val decision = AiRouteDecision(AiRoute.DISABLED, "$capability is disabled in settings.")
+            aiRuntimeDiagnostics.recordRouteDecision(capability, decision)
+            return decision
         }
 
         val resolvedOnDeviceStatus = onDeviceStatus ?: resolveOnDeviceStatus(capability, settings)
@@ -59,9 +67,13 @@ class DefaultAiCapabilityRouter @Inject constructor(
             )
         }
 
+        // PRIVACY FIX: When user explicitly selects ON_DEVICE mode, do NOT fall back to
+        // cloud. The user chose on-device for privacy — falling back to cloud violates
+        // their expectation. Instead, go to deterministic fallback and explain why.
         return AiRouteDecision(
             route = AiRoute.DETERMINISTIC_FALLBACK,
-            reason = onDeviceUnavailableReason(capability, settings, onDeviceStatus)
+            reason = "On-device was preferred but unavailable. Cloud fallback is blocked by ON_DEVICE mode for privacy. " +
+                onDeviceUnavailableReason(capability, settings, onDeviceStatus)
         )
     }
 
@@ -79,7 +91,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             )
         }
 
-        if (isLowRiskOnDeviceFallback(capability) && canUseOnDevice(capability, settings, onDeviceStatus)) {
+        if (canUseOnDevice(capability, settings, onDeviceStatus)) {
             return AiRouteDecision(
                 route = AiRoute.ON_DEVICE,
                 reason = "Cloud was preferred but unavailable, so using on-device fallback.",
@@ -146,10 +158,14 @@ class DefaultAiCapabilityRouter @Inject constructor(
         }
     }
 
-    private fun canUseCloud(capability: AiCapability, settings: AiSettings): Boolean {
+    private suspend fun canUseCloud(capability: AiCapability, settings: AiSettings): Boolean {
         if (!aiPolicy.canUseCloudFor(settings, capability)) return false
         if (!environmentMonitor.isNetworkAvailable()) return false
         if (settings.wifiOnlyForCloud && !environmentMonitor.isWifiConnected()) return false
+        if (!secureKeyStorage.hasKey(com.yourname.expensetracker.data.security.SecureKeyStorage.KEY_GEMINI)) return false
+        // S11-001: Check PrivacyGate — privacy policy can block cloud AI independently of AI settings
+        val privacyDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (privacyDecision.blocksExecution()) return false
         return true
     }
 
@@ -219,6 +235,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             !isCapabilityEnabled(capability, settings) -> "${capability.displayName()} is disabled in settings."
             !settings.allowCloudAi -> "Cloud AI is disabled in settings."
             !aiPolicy.canUseCloudFor(settings, capability) -> "Cloud AI is disabled by policy for this capability."
+            !secureKeyStorage.hasKey(com.yourname.expensetracker.data.security.SecureKeyStorage.KEY_GEMINI) -> "Gemini API key is not configured."
             !environmentMonitor.isNetworkAvailable() -> "Cloud AI needs an internet connection."
             settings.wifiOnlyForCloud && !environmentMonitor.isWifiConnected() -> "Cloud AI is limited to Wi-Fi by settings."
             else -> "Cloud AI is unavailable right now."
@@ -240,18 +257,15 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.REVIEW_EXPLANATION -> settings.reviewExplanationEnabled
             AiCapability.QUERY_INTERPRETATION -> settings.queryInterpretationEnabled
             AiCapability.RECEIPT_EXTRACTION -> settings.receiptAssistEnabled
+            AiCapability.WARRANTY_EXTRACTION -> settings.warrantyExtractionEnabled
             AiCapability.CATEGORIZATION_FALLBACK -> settings.categorizationFallbackEnabled
             AiCapability.DEDUPE_JUDGE -> settings.dedupeJudgeEnabled
             AiCapability.LOCATION_SUMMARY -> settings.aiEnabled
+            AiCapability.NOTIFICATION_PARSE -> settings.aiEnabled // Uses general AI toggle
+            AiCapability.REVIEW_PRIORITIZATION -> settings.aiEnabled // Uses general AI toggle
+            AiCapability.SEMANTIC_DEDUPE -> settings.aiEnabled // Uses general AI toggle
+            AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
         }
-    }
-
-    private fun isLowRiskOnDeviceFallback(capability: AiCapability): Boolean {
-        return capability in setOf(
-            AiCapability.REVIEW_EXPLANATION,
-            AiCapability.RECEIPT_EXTRACTION,
-            AiCapability.CATEGORIZATION_FALLBACK
-        )
     }
 
     private fun isOnDeviceImplemented(capability: AiCapability): Boolean {
@@ -263,9 +277,14 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> "Review explanation"
         AiCapability.QUERY_INTERPRETATION -> "Query interpretation"
         AiCapability.RECEIPT_EXTRACTION -> "Receipt assist"
+        AiCapability.WARRANTY_EXTRACTION -> "Warranty extraction"
         AiCapability.CATEGORIZATION_FALLBACK -> "Categorization fallback"
         AiCapability.DEDUPE_JUDGE -> "Duplicate detection"
         AiCapability.LOCATION_SUMMARY -> "Location summary"
+        AiCapability.NOTIFICATION_PARSE -> "Notification parsing"
+        AiCapability.REVIEW_PRIORITIZATION -> "Review prioritization"
+        AiCapability.SEMANTIC_DEDUPE -> "Semantic duplicate detection"
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "Receipt item categorization"
     }
 
     private fun AiCapability.defaultCloudProviderName(): String = when (this) {
@@ -273,9 +292,14 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_PROVIDER
         AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_PROVIDER
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER
+        AiCapability.WARRANTY_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_PROVIDER
         AiCapability.LOCATION_SUMMARY -> "google-ai-studio"
+        AiCapability.NOTIFICATION_PARSE -> "unsupported" // On-device only for privacy
+        AiCapability.REVIEW_PRIORITIZATION -> "unsupported" // On-device only for privacy
+        AiCapability.SEMANTIC_DEDUPE -> "unsupported" // On-device only for privacy
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_PROVIDER
     }
 
     private fun AiCapability.defaultCloudModelName(): String = when (this) {
@@ -283,9 +307,14 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_MODEL
         AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
+        AiCapability.WARRANTY_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-cloud-location"
+        AiCapability.NOTIFICATION_PARSE -> "unsupported" // On-device only for privacy
+        AiCapability.REVIEW_PRIORITIZATION -> "unsupported" // On-device only for privacy
+        AiCapability.SEMANTIC_DEDUPE -> "unsupported" // On-device only for privacy
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL
     }
 
     private fun AiCapability.defaultOnDeviceModelName(): String = when (this) {
@@ -293,16 +322,22 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.ON_DEVICE_REVIEW_MODEL
         AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.ON_DEVICE_QUERY_MODEL
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
+        AiCapability.WARRANTY_EXTRACTION -> AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-nano-location"
+        AiCapability.NOTIFICATION_PARSE -> AppConfig.Ai.ON_DEVICE_NOTIFICATION_MODEL
+        AiCapability.REVIEW_PRIORITIZATION -> "gemini-nano-priority" // On-device only
+        AiCapability.SEMANTIC_DEDUPE -> "gemini-nano-semantic" // On-device only
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.ON_DEVICE_RECEIPT_ITEM_MODEL
     }
 
     private companion object {
         val CLOUD_FIRST_CAPABILITIES = setOf(
             AiCapability.DASHBOARD_BRIEFING,
             AiCapability.REVIEW_EXPLANATION,
-            AiCapability.DEDUPE_JUDGE
+            AiCapability.DEDUPE_JUDGE,
+            AiCapability.WARRANTY_EXTRACTION
         )
 
         val ON_DEVICE_IMPLEMENTED_CAPABILITIES = setOf(
@@ -311,7 +346,11 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.QUERY_INTERPRETATION,
             AiCapability.RECEIPT_EXTRACTION,
             AiCapability.CATEGORIZATION_FALLBACK,
-            AiCapability.DEDUPE_JUDGE
+            AiCapability.DEDUPE_JUDGE,
+            AiCapability.NOTIFICATION_PARSE, // NEW: On-device only, no cloud for privacy
+            AiCapability.REVIEW_PRIORITIZATION, // NEW: On-device only for privacy and latency
+            AiCapability.SEMANTIC_DEDUPE, // NEW: On-device only for privacy
+            AiCapability.RECEIPT_ITEM_CATEGORIZATION // NEW: Receipt item categorization
         )
     }
 }

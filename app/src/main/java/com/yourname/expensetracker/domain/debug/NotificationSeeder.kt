@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.debug
 
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.domain.notification.RawNotificationFingerprint
 import javax.inject.Inject
 import kotlin.random.Random
 
@@ -28,7 +29,15 @@ class NotificationSeeder @Inject constructor() {
         "Unknown Sender", "+306900000000", "InfoSMS", "Alert", "Notice"
     )
 
-    fun generate(count: Int): List<RawNotification> {
+    /**
+     * Generate seed notifications for debugging.
+     *
+     * @param count Number of notifications to generate.
+     * @param currencySymbol Currency symbol to use in generated text (default "€").
+     *                       TODO: Replace with real home currency from settings when
+     *                       this seeder is integrated with production flows.
+     */
+    fun generate(count: Int, currencySymbol: String = "€"): List<RawNotification> {
         val notifications = mutableListOf<RawNotification>()
         val now = System.currentTimeMillis()
         val twoMonthsMs = 60L * 24 * 60 * 60 * 1000
@@ -37,10 +46,10 @@ class NotificationSeeder @Inject constructor() {
             val type = Random.nextInt(100)
             val notification = when {
                 type < 5 -> generateSpam(now, twoMonthsMs) // 5% Spam
-                type < 10 -> generateUnknown(now, twoMonthsMs) // 5% Unknown
-                type < 15 -> generateRecurring(i, now) // 5% Recurring candidates
-                type < 20 -> generateDeposit(now, twoMonthsMs) // 5% Deposits (salary, transfers)
-                else -> generateTransaction(now, twoMonthsMs) // 80% Normal Transactions (PURCHASE)
+                type < 10 -> generateUnknown(now, twoMonthsMs, currencySymbol) // 5% Unknown
+                type < 15 -> generateRecurring(i, now, currencySymbol) // 5% Recurring candidates
+                type < 20 -> generateDeposit(now, twoMonthsMs, currencySymbol) // 5% Deposits (salary, transfers)
+                else -> generateTransaction(now, twoMonthsMs, currencySymbol) // 80% Normal Transactions (PURCHASE)
             }
             notifications.add(notification)
         }
@@ -63,12 +72,12 @@ class NotificationSeeder @Inject constructor() {
         Pair("Refund €{amount} from STORE", "com.revolut")
     )
 
-    private fun generateDeposit(now: Long, rangeMs: Long): RawNotification {
+    private fun generateDeposit(now: Long, rangeMs: Long, currencySymbol: String = "€"): RawNotification {
         val template = depositTemplates.random()
         val amount = Random.nextDouble(200.0, 3000.0) // Deposits are larger
         val date = now - Random.nextLong(rangeMs)
         
-        val text = template.first.replace("{amount}", "%.2f".format(amount))
+        val text = template.first.replace("{amount}", "%.2f".format(amount)).replace("€", currencySymbol)
         val packageName = template.second
 
         val source = when (packageName) {
@@ -85,11 +94,18 @@ class NotificationSeeder @Inject constructor() {
             title = "Deposit Received",
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = packageName,
+                title = "Deposit Received",
+                text = text,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
-    private fun generateTransaction(now: Long, rangeMs: Long): RawNotification {
+    private fun generateTransaction(now: Long, rangeMs: Long, currencySymbol: String = "€"): RawNotification {
         val categoryEntry = categories.entries.random()
         val merchant = categoryEntry.value.random()
         val amount = Random.nextDouble(5.0, 150.0)
@@ -99,11 +115,7 @@ class NotificationSeeder @Inject constructor() {
         val sources = listOf("Revolut", "Piraeus", "Eurobank", "Alpha Bank")
         val source = sources.random()
 
-        val text = when (source) {
-            "Revolut" -> "Spent €${"%.2f".format(amount)} at $merchant."
-            "Piraeus" -> "Agora €${"%.2f".format(amount)} me karta ... sto $merchant"
-            else -> "Purchase of €${"%.2f".format(amount)} at $merchant completed."
-        }
+        val text = "Spent $currencySymbol%.2f at %s".format(amount, merchant)
 
         return RawNotification(
             packageName = "com.simulation.$source".lowercase(),
@@ -111,7 +123,14 @@ class NotificationSeeder @Inject constructor() {
             title = "Transaction Alert",
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.simulation.$source".lowercase(),
+                title = "Transaction Alert",
+                text = text,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
@@ -124,7 +143,7 @@ class NotificationSeeder @Inject constructor() {
         Pair("YouTube Premium", 11.99)
     )
 
-    private fun generateRecurring(index: Int, now: Long): RawNotification {
+    private fun generateRecurring(index: Int, now: Long, currencySymbol: String = "€"): RawNotification {
         val (merchant, amount) = recurringTemplates.random()
         // Random date within last 60 days
         val date = now - Random.nextLong(60L * 24 * 60 * 60 * 1000)
@@ -133,36 +152,58 @@ class NotificationSeeder @Inject constructor() {
             packageName = "com.simulation.revolut",
             appName = "Revolut",
             title = "Recurring Payment",
-            text = "Spent €$amount at $merchant.",
+            text = "Spent €%.2f at %s".format(amount, merchant),
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.simulation.revolut",
+                title = "Recurring Payment",
+            text = "Spent $currencySymbol%.2f at %s".format(amount, merchant),
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
     private fun generateSpam(now: Long, rangeMs: Long): RawNotification {
         val text = spamTemplates.random()
         val date = now - Random.nextLong(rangeMs)
+        val spamTitle = unknownSources.random()
         return RawNotification(
             packageName = "com.android.mms",
             appName = "Messages",
-            title = unknownSources.random(),
+            title = spamTitle,
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.android.mms",
+                title = spamTitle,
+                text = text,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
-    private fun generateUnknown(now: Long, rangeMs: Long): RawNotification {
+    private fun generateUnknown(now: Long, rangeMs: Long, currencySymbol: String = "€"): RawNotification {
         val amount = Random.nextDouble(10.0, 50.0)
         val date = now - Random.nextLong(rangeMs)
-        val text = "Payment of €${"%.2f".format(amount)} to Unknown Merchant."
+        val unknownText = "Payment of $currencySymbol%.2f from unknown merchant".format(amount)
         return RawNotification(
             packageName = "com.unknown.app",
             appName = "Unknown App",
-            title = "Payment Notification",
-            text = text,
+            title = "Payment",
+            text = unknownText,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.unknown.app",
+                title = "Payment",
+                text = unknownText,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 }

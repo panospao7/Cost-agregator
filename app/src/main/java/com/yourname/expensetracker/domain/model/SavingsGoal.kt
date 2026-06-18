@@ -6,8 +6,19 @@ data class SavingsGoal(
     val targetAmount: Double,
     val currentAmount: Double,
     val targetDate: Long?,
-    val protectionLevel: GoalProtectionLevel
-)
+    val protectionLevel: GoalProtectionLevel,
+    val currency: String = "EUR",
+    val currencyAssumption: String = "LEGACY_DEFAULT",
+    val createdAt: Long
+) {
+    init {
+        require(name.isNotBlank()) { "name cannot be blank" }
+        require(targetAmount.isFinite() && targetAmount > 0.0) { "targetAmount must be a positive finite number" }
+        require(currentAmount.isFinite() && currentAmount >= 0.0) { "currentAmount must be a non-negative finite number" }
+        require(targetDate == null || targetDate >= 0L) { "targetDate cannot be negative" }
+        require(createdAt >= 0L) { "createdAt cannot be negative" }
+    }
+}
 
 enum class GoalProtectionLevel {
     STRICT,

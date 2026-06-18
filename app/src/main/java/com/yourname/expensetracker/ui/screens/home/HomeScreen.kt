@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.home
+﻿package com.yourname.expensetracker.ui.screens.home
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -8,56 +8,144 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.rounded.*
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
+import com.yourname.expensetracker.ui.components.analytics.NoSpendStreakWidget
+import com.yourname.expensetracker.ui.components.common.ErrorState
+import com.yourname.expensetracker.ui.components.common.ErrorType
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
+import com.yourname.expensetracker.ui.components.health.HealthScoreWidget
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
+import com.yourname.expensetracker.ui.components.PeriodLevel
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.SimpleDateFormat
 import java.util.*
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
-import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
+import com.yourname.expensetracker.domain.model.CategoryBreakdown
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry
+import com.yourname.expensetracker.ui.screens.home.HomeCurrencyUiState
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending as DomainCategorySpending
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.widget.model.WidgetStyle
+import com.yourname.expensetracker.domain.widget.model.StyledWidgets
+import com.yourname.expensetracker.service.NavigationAction
+import com.yourname.expensetracker.ui.mappers.toUi
+import com.yourname.expensetracker.ui.navigation.NavigationDestination
+import com.yourname.expensetracker.ui.navigation.FeatureConfig
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * S4-016R: Route entry point — owns Hilt injection, state collection, and navigation effects.
+ * HomeScreen is now stateless and testable with fake state.
+ */
 @Composable
-fun HomeScreen(
+fun HomeRoute(
     onNavigateToReview: () -> Unit,
     onNavigateToRecurring: () -> Unit,
     onNavigateToTransactions: (TransactionFilter) -> Unit,
+    onNavigateToAnalytics: (String?) -> Unit = {},
+    onNavigateToMap: (String?) -> Unit = {},
+    onNavigateToBudgetDetail: (String) -> Unit = {},
+    onNavigateToFeature: (NavigationDestination) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
     val categories by viewModel.categories.collectAsState()
+    val recommendations by viewModel.recommendations.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState()
+    val homeCurrencyState by viewModel.homeCurrencyState.collectAsState()
+
+    LaunchedEffect(viewModel) {
+        viewModel.navigationActions.collect { action ->
+            when (action) {
+                is NavigationAction.ToTransactionList -> onNavigateToTransactions(action.filter)
+                is NavigationAction.ToAnalytics -> onNavigateToAnalytics(action.period)
+                is NavigationAction.ToBudgetDetail -> onNavigateToBudgetDetail(action.category)
+                is NavigationAction.ToMap -> onNavigateToMap(action.location)
+                NavigationAction.NoOp -> Unit
+            }
+        }
+    }
+
+    HomeScreen(
+        state = state,
+        categories = categories,
+        recommendations = recommendations,
+        homeCurrency = homeCurrency,
+        homeCurrencyState = homeCurrencyState,
+        viewModel = viewModel,
+        onNavigateToReview = onNavigateToReview,
+        onNavigateToRecurring = onNavigateToRecurring,
+        onNavigateToTransactions = onNavigateToTransactions,
+        onNavigateToAnalytics = onNavigateToAnalytics,
+        onNavigateToMap = onNavigateToMap,
+        onNavigateToBudgetDetail = onNavigateToBudgetDetail,
+        onNavigateToFeature = onNavigateToFeature,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen(
+    state: DashboardState,
+    categories: List<com.yourname.expensetracker.data.database.entity.Category>,
+    recommendations: List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>,
+    homeCurrency: String?,
+    homeCurrencyState: HomeCurrencyUiState,
+    viewModel: HomeViewModel,
+    onNavigateToReview: () -> Unit,
+    onNavigateToRecurring: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit = {},
+    onNavigateToAnalytics: (String?) -> Unit = {},
+    onNavigateToMap: (String?) -> Unit = {},
+    onNavigateToBudgetDetail: (String) -> Unit = {},
+    onNavigateToFeature: (NavigationDestination) -> Unit = {},
+) {
 
     var showQuickSettings by remember { mutableStateOf(false) }
     var showAiSettings by remember { mutableStateOf(false) }
     var showCategories by remember { mutableStateOf(false) }
     var showDebug by remember { mutableStateOf(false) }
     var showAddPlannedExpenseDialog by remember { mutableStateOf(false) }
+    var showCategoryBreakdown by remember { mutableStateOf(false) }
+    var showFeaturesMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -68,26 +156,54 @@ fun HomeScreen(
                         PulseDot(isActive = state.isServiceRunning)
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            "DASHBOARD", 
+                            stringResource(R.string.home_dashboard_title), 
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 2.sp,
-                            color = SemanticColors.TextPrimary
+                            color = SemanticColors.TextPrimary,
+                            modifier = Modifier.semantics { heading() }
                         )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleEditMode() }) {
+                    val editModeExitDesc = stringResource(R.string.home_edit_mode_exit)
+                    val editModeEnterDesc = stringResource(R.string.home_edit_mode_enter)
+                    val featuresMenuDesc = stringResource(R.string.a11y_open_features_menu)
+                    val settingsMenuDesc = stringResource(R.string.a11y_open_settings_menu)
+                    
+                    IconButton(
+                        onClick = { viewModel.toggleEditMode() },
+                        modifier = Modifier.semantics { 
+                            contentDescription = if (state.isEditMode) editModeExitDesc else editModeEnterDesc
+                        }
+                    ) {
                         Icon(
                             if (state.isEditMode) Icons.Rounded.Check else Icons.Rounded.EditAttributes, 
-                            contentDescription = "Edit Layout",
+                            contentDescription = null,
                             tint = if (state.isEditMode) SemanticColors.SuccessGreen else SemanticColors.TextSecondary
                         )
                     }
-                    IconButton(onClick = { showQuickSettings = true }) {
+                    IconButton(
+                        onClick = { showFeaturesMenu = true },
+                        modifier = Modifier.semantics { 
+                            contentDescription = featuresMenuDesc
+                        }
+                    ) {
+                        Icon(
+                            Icons.Rounded.Apps, 
+                            contentDescription = null,
+                            tint = SemanticColors.TextSecondary
+                        )
+                    }
+                    IconButton(
+                        onClick = { showQuickSettings = true },
+                        modifier = Modifier.semantics { 
+                            contentDescription = settingsMenuDesc
+                        }
+                    ) {
                         Icon(
                             Icons.Rounded.Settings, 
-                            contentDescription = "Settings",
+                            contentDescription = null,
                             tint = SemanticColors.TextSecondary
                         )
                     }
@@ -99,12 +215,84 @@ fun HomeScreen(
             )
         }
     ) { padding ->
-        if (state.isLoading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
+        when {
+            state.error != null -> {
+                val errorText = state.error?.asString() ?: ""
+                ErrorState(
+                    type = ErrorType.UNKNOWN,
+                    title = stringResource(R.string.home_error_loading_dashboard),
+                    message = errorText,
+                    onRetry = { viewModel.reloadDashboard() },
+                    modifier = Modifier.padding(padding)
+                )
             }
-        } else {
-            LazyVerticalGrid(
+            state.isLoading -> {
+            // Show skeleton loading state
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+            ) {
+                // Hero card skeleton
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                // Grid of skeleton cards
+                ListSkeleton(itemCount = 6)
+            }
+            }
+            else -> {
+                // S4-004R: Show currency loading/error state
+                when (val cs = homeCurrencyState) {
+                    is HomeCurrencyUiState.Loading -> androidx.compose.material3.LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    is HomeCurrencyUiState.Error -> androidx.compose.material3.Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                        )
+                    ) {
+                        Text(
+                            text = cs.message.asString(LocalContext.current),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                    is HomeCurrencyUiState.Ready -> Unit
+                }
+                // S4-022: Show data-quality warning when some currencies could not be converted
+                if (state.isPartial) {
+                    androidx.compose.material3.Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                        )
+                    ) {
+                        Text(
+                            text = stringResource(R.string.dashboard_partial_currency_warning),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+                LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
                     .fillMaxSize()
@@ -113,40 +301,111 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                items(
+                if (state.widgets.isEmpty()) {
+                    item(span = { GridItemSpan(2) }) {
+                        BentoCard {
+                            Text(
+                                text = stringResource(R.string.empty_title_generic),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = SemanticColors.TextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.empty_message_generic),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = SemanticColors.TextSecondary
+                            )
+                        }
+                    }
+                }
+
+                itemsIndexed(
                     items = state.widgets,
-                    key = { HomeViewModel.getWidgetId(it) },
-                    span = { widget ->
+                    key = { _, widget -> HomeViewModel.getWidgetId(widget) },
+                    span = { _, widget ->
                         GridItemSpan(if (isFullSpan(widget)) 2 else 1)
                     },
-                    contentType = { it.javaClass.simpleName }
-                ) { widget ->
+                ) { index, widget ->
+                    val widgetId = HomeViewModel.getWidgetId(widget)
+                    val widgetStyle = if (widgetId in StyledWidgets.all) {
+                        state.widgetStyles.getStyle(widgetId)
+                    } else null
+                    
                     WidgetWrapper(
                         widget = widget,
                         isEditMode = state.isEditMode,
-                        onMoveUp = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), true) },
-                        onMoveDown = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), false) },
-                        onToggleVisibility = { viewModel.toggleWidgetVisibility(HomeViewModel.getWidgetId(widget)) }
+                        widgetStyle = widgetStyle,
+                        onMoveUp = if (index > 0) { { viewModel.moveWidget(widgetId, true) } } else null,
+                        onMoveDown = if (index < state.widgets.lastIndex) { { viewModel.moveWidget(widgetId, false) } } else null,
+                        onToggleVisibility = { viewModel.toggleWidgetVisibility(widgetId) },
+                        onToggleStyle = if (widgetId in StyledWidgets.all) {
+                            { viewModel.toggleWidgetStyle(widgetId) }
+                        } else null
                     ) {
                         when (widget) {
                             is DashboardWidget.SafeToSpend -> {
                                 HeroBentoCard {
-                                    Text(
-                                        text = "SAFE TO SPEND",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SemanticColors.PrimaryLight,
-                                        letterSpacing = 1.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    AmountText(
-                                        amount = widget.amount,
-                                        style = MaterialTheme.typography.displayMedium,
-                                        color = SemanticColors.TextPrimary
-                                    )
-                                    if (widget.totalBudget != null) {
+                                    if (widget.isUnavailable) {
+                                        // Unavailable state — do NOT render as valid money
+                                        Text(
+                                            text = stringResource(R.string.widget_safe_to_spend),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 1.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = widget.currencyQuality?.warningMessage ?: "Budget data unavailable",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = SemanticColors.TextSecondary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = stringResource(R.string.widget_set_budget_cta),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 0.5.sp
+                                        )
+                                    } else if (widget.totalBudget == null || widget.totalBudget <= 0.0) {
+                                        Text(
+                                            text = stringResource(R.string.widget_month_spent),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.PrimaryLight,
+                                            letterSpacing = 1.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        AmountText(
+                                            amount = widget.amount ?: 0.0,
+                                            style = MaterialTheme.typography.displayMedium,
+                                            color = SemanticColors.TextPrimary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = stringResource(R.string.widget_set_budget_cta),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 0.5.sp
+                                        )
+                                    } else {
+                                        // Has budget: show safe-to-spend with progress
+                                        Text(
+                                            text = stringResource(R.string.widget_safe_to_spend),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.PrimaryLight,
+                                            letterSpacing = 1.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        AmountText(
+                                            amount = widget.amount ?: 0.0,
+                                            style = MaterialTheme.typography.displayMedium,
+                                            color = SemanticColors.TextPrimary
+                                        )
                                         LinearProgressIndicator(
-                                            progress = { ((widget.totalBudget - widget.amount) / widget.totalBudget).toFloat().coerceIn(0f, 1f) },
+                                            progress = { ((widget.totalBudget - (widget.amount ?: 0.0)) / widget.totalBudget).toFloat().coerceIn(0f, 1f) },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(vertical = 12.dp)
@@ -156,40 +415,51 @@ fun HomeScreen(
                                             trackColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
                                         )
                                         Text(
-                                            "${widget.daysRemaining} DAYS REMAINING",
+                                            stringResource(R.string.widget_days_remaining_format, widget.daysRemaining),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SemanticColors.TextSecondary,
                                             letterSpacing = 0.5.sp
                                         )
                                     }
+                                    // S4-D914-007: Show partial-conversion warning
+                                    if (widget.isPartial || widget.currencyQuality?.isPartial == true) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        DataQualityWarningChip()
+                                    }
                                 }
                             }
                             is DashboardWidget.BudgetBlockParty -> {
-                                BudgetBlockPartyCard(
-                                    days = widget.days,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    onNavigateToDay = { dateMs ->
-                                        // Create a date range covering the full day
-                                        val cal = Calendar.getInstance().apply {
-                                            timeInMillis = dateMs
-                                            set(Calendar.HOUR_OF_DAY, 0)
-                                            set(Calendar.MINUTE, 0)
-                                            set(Calendar.SECOND, 0)
-                                            set(Calendar.MILLISECOND, 0)
+                                val widgetId = HomeViewModel.getWidgetId(widget)
+                                val widgetStyle = state.widgetStyles.getStyle(widgetId)
+                                
+                                if (widgetStyle == WidgetStyle.RETRO) {
+                                    RetroBudgetBlockPartyCard(
+                                        days = widget.days.toUi(),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onNavigateToDay = { dateMs ->
+                                            val (startOfDay, nextDayStart) = com.yourname.expensetracker.ui.util.UiTimeUtils.dayRange(dateMs)
+                                            onNavigateToTransactions(
+                                                TransactionFilter(dateRange = startOfDay to nextDayStart)
+                                            )
                                         }
-                                        val startOfDay = cal.timeInMillis
-                                        cal.add(Calendar.DAY_OF_MONTH, 1)
-                                        val endOfDay = cal.timeInMillis - 1
-                                        onNavigateToTransactions(
-                                            TransactionFilter(dateRange = startOfDay to endOfDay)
-                                        )
-                                    }
-                                )
+                                    )
+                                } else {
+                                    BudgetBlockPartyCard(
+                                        days = widget.days.toUi(),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onNavigateToDay = { dateMs ->
+                                            val (startOfDay, nextDayStart) = com.yourname.expensetracker.ui.util.UiTimeUtils.dayRange(dateMs)
+                                            onNavigateToTransactions(
+                                                TransactionFilter(dateRange = startOfDay to nextDayStart)
+                                            )
+                                        }
+                                    )
+                                }
                             }
                             is DashboardWidget.SpendingPaceWidget -> {
                                 BentoCard {
                                     Text(
-                                        "PACE", 
+                                        stringResource(R.string.widget_pace), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
@@ -212,7 +482,7 @@ fun HomeScreen(
                                     onClick = onNavigateToReview
                                 ) {
                                     Text(
-                                        "REVIEW", 
+                                        stringResource(R.string.widget_review), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
@@ -230,7 +500,7 @@ fun HomeScreen(
                                             color = badgeColor
                                         )
                                         Text(
-                                            "PENDING", 
+                                            stringResource(R.string.widget_pending), 
                                             style = MaterialTheme.typography.labelSmall, 
                                             color = badgeColor,
                                             letterSpacing = 1.sp
@@ -243,14 +513,15 @@ fun HomeScreen(
                                     modifier = Modifier.clickable {
                                         onNavigateToTransactions(
                                             TransactionFilter(
-                                                dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
+                                                dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis)
                                             )
                                         )
                                     }
                                 ) {
-                                    SpendingTrendChart(
-                                        series = widget.series
-                                    )
+            SpendingTrendChart(
+                series = widget.series,
+                currency = homeCurrency ?: ""
+            )
                                 }
                             }
                             is DashboardWidget.NaturalLanguageInsight -> {
@@ -258,9 +529,9 @@ fun HomeScreen(
                                 // Otherwise fall back to the deterministic insight text/icon.
                                 val aiBriefing = state.aiBriefing
                                 val displayText = if (aiBriefing is AiLoadState.Ready) {
-                                    aiBriefing.value.text
+                                    aiBriefing.value.text.asString()
                                 } else {
-                                    widget.text
+                                    widget.text.asString()
                                 }
                                 val displayIcon = if (aiBriefing is AiLoadState.Ready) {
                                     aiBriefing.value.icon
@@ -312,7 +583,7 @@ fun HomeScreen(
                             is DashboardWidget.PeriodSummary -> {
                                 BentoCard {
                                     Text(
-                                        "PERIOD SUMMARY", 
+                                        stringResource(R.string.widget_period_summary), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
@@ -322,39 +593,79 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        StatLabel("TODAY", "€${String.format("%.2f", widget.todaySpent)}", modifier = Modifier.weight(1f))
-                                        StatLabel("WEEK", "€${String.format("%.2f", widget.weekSpent)}", modifier = Modifier.weight(1f))
-                                        StatLabel("MONTH", "€${String.format("%.2f", widget.monthSpent)}", modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.todaySpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.weekSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_month), com.yourname.expensetracker.ui.model.MoneyDisplayUi.from(widget.monthSpent, homeCurrency ?: "").formatted, modifier = Modifier.weight(1f))
+                                    }
+                                    // S4-D914-007: Show partial-conversion warning
+                                    if (widget.isPartial) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        DataQualityWarningChip()
                                     }
                                 }
                             }
                             is DashboardWidget.BudgetHealthWidget -> {
                                 BentoCard {
                                     Text(
-                                        "BUDGET HEALTH", 
+                                        stringResource(R.string.widget_budget_health), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
+                                    val summaryText = widget.summary?.asString() ?: stringResource(R.string.widget_all_budgets_on_track)
+                                    val hasExceededBudgets = widget.summary != null
                                     Text(
-                                        widget.summary ?: "ALL BUDGETS ON TRACK", 
+                                        summaryText, 
                                         style = MaterialTheme.typography.titleMedium, 
                                         fontWeight = FontWeight.Bold,
-                                        color = if (widget.summary?.contains("exceeded", ignoreCase = true) == true) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                                        color = if (hasExceededBudgets) SemanticColors.DangerRed else SemanticColors.SuccessGreen
                                     )
                                 }
                             }
                             is DashboardWidget.TopCategories -> {
-                                BentoCard {
-                                    Text(
-                                        "TOP CATEGORIES", 
-                                        style = MaterialTheme.typography.labelSmall, 
-                                        fontWeight = FontWeight.Bold,
-                                        color = SemanticColors.TextSecondary
+                                val widgetId = HomeViewModel.getWidgetId(widget)
+                                val widgetStyle = state.widgetStyles.getStyle(widgetId)
+                                
+                                if (widgetStyle == WidgetStyle.RETRO) {
+                                    // Get recent transactions for this month to show in category dialog
+                                    val monthRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis)
+                                    val recentExpenses = remember(state.widgets) {
+                                        state.widgets
+                                            .filterIsInstance<DashboardWidget.RecentTransactions>()
+                                            .firstOrNull()
+                                            ?.expenses
+                                            ?: emptyList()
+                                    }
+                                    
+                                    RetroTopCategoriesCard(
+                                        categories = widget.categories,
+                                        categoryTrends = state.categoryTrends,
+                                        transactions = recentExpenses,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onViewAllTransactions = { 
+                                            // Navigate to transactions filtered by top category
+                                            if (widget.categories.isNotEmpty()) {
+                                                onNavigateToTransactions(
+                                                    TransactionFilter(
+                                                        dateRange = monthRange,
+                                                        categoryId = widget.categories.first().category.id
+                                                    )
+                                                )
+                                            }
+                                        }
                                     )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    widget.categories.forEach { CategorySpendingRow(it) }
+                                } else {
+                                    BentoCard {
+                                        Text(
+                                            stringResource(R.string.widget_top_categories), 
+                                            style = MaterialTheme.typography.labelSmall, 
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.TextSecondary
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        widget.categories.forEach { CategorySpendingRow(it) }
+                                    }
                                 }
                             }
                             is DashboardWidget.RecentTransactions -> {
@@ -365,13 +676,13 @@ fun HomeScreen(
                                 }
                                 BentoCard {
                                     Text(
-                                        "RECENT ACTIVITY", 
+                                        stringResource(R.string.widget_recent_activity), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    widget.expenses.forEach { expense ->
+                                    widget.expenses.take(5).forEach { expense ->
                                         RecentExpenseRow(
                                             expense = expense,
                                             categoryColor = expense.categoryId?.let { categoryMap[it] }
@@ -380,37 +691,192 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.FinancialWeatherWidget -> {
-                                FinancialWeatherCard(
-                                    state = widget.weather.state,
-                                    headline = widget.weather.headline,
-                                    summary = widget.weather.summary,
-                                    icon = widget.weather.icon,
-                                    totalCommitted = widget.weather.totalCommitted,
-                                    totalLikely = widget.weather.totalLikely,
-                                    discretionaryBudget = widget.weather.discretionaryBudget,
-                                    pastSpendingPoints = widget.weather.pastSpendingPoints,
-                                    projectedSpendingPoints = widget.weather.projectedSpendingPoints,
-                                    upcomingItems = widget.weather.upcomingItems,
-                                    totalRecurringCount = widget.weather.totalRecurringCount,
-                                    details = widget.weather.details,
-                                    onManageClick = onNavigateToRecurring,
-                                    onPlanClick = { showAddPlannedExpenseDialog = true }
-                                )
+        FinancialWeatherCard(
+            state = widget.weather.state,
+            headline = widget.weather.headline,
+            summary = widget.weather.summary,
+            icon = widget.weather.icon,
+            totalCommitted = widget.weather.totalCommitted,
+            totalLikely = widget.weather.totalLikely,
+            discretionaryBudget = widget.weather.discretionaryBudget,
+            pastSpendingPoints = widget.weather.pastSpendingPoints,
+            projectedSpendingPoints = widget.weather.projectedSpendingPoints,
+            upcomingItems = widget.weather.upcomingItems,
+            referenceNowMillis = state.referenceNowMillis,
+            totalRecurringCount = widget.weather.totalRecurringCount,
+            details = widget.weather.details,
+            currency = homeCurrency ?: "",
+            onManageClick = onNavigateToRecurring,
+            onPlanClick = { showAddPlannedExpenseDialog = true }
+        )
+                            }
+                            is DashboardWidget.TotalsDashboard -> {
+                                val widgetId = HomeViewModel.getWidgetId(widget)
+                                val widgetStyle = state.widgetStyles.getStyle(widgetId)
+                                val totalsState by viewModel.totalsDrillDownState.collectAsState()
+                                
+                                if (widgetStyle == WidgetStyle.RETRO) {
+                RetroTotalsDashboardCard(
+                    periods = totalsState.periodTotals,
+                    currentLevel = totalsState.currentLevel.toPeriodLevel(),
+                    selectedPeriod = totalsState.selectedPeriod,
+                    isLoading = totalsState.isLoading,
+                    averageAmount = if (totalsState.periodTotals.isNotEmpty()) {
+                        totalsState.periodTotals.map { it.totalAmount }.average()
+                    } else 0.0,
+                    onPeriodSelected = { viewModel.drillDownToPeriod(it) },
+                    onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
+                    onEnterStage = { period ->
+                        // Drill down into the selected period
+                        viewModel.drillDownToPeriod(period)
+                    },
+                    onViewAnalysis = { period ->
+                        // Load breakdown for this specific period
+                        viewModel.loadCategoryBreakdownForPeriod(period)
+                        showCategoryBreakdown = true
+                    },
+                    currency = homeCurrency ?: "",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                                } else {
+                TotalsDashboardCard(
+                    periods = totalsState.periodTotals,
+                    currentLevel = totalsState.currentLevel.toPeriodLevel(),
+                    selectedPeriod = totalsState.selectedPeriod,
+                    isLoading = totalsState.isLoading,
+                    onPeriodSelected = { viewModel.drillDownToPeriod(it) },
+                    onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
+                    onShowCategoryBreakdown = {
+                        viewModel.loadCategoryBreakdownForCurrentPeriod()
+                        showCategoryBreakdown = true
+                    },
+                    currency = homeCurrency ?: "",
+                    // S4-021: Resolve UiText properly — not just DynamicString
+                    error = totalsState.error?.asString(LocalContext.current),
+                    onRetry = { viewModel.reloadCurrentTotalsLevel() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                                }
                             }
                             is DashboardWidget.FinancialRunway -> {
-                                FinancialRunwayCard(
-                                    daysRemaining = widget.daysRemaining,
-                                    discretionaryRemaining = widget.discretionaryRemaining,
-                                    averageDailyDiscretionarySpend = widget.averageDailyDiscretionarySpend,
-                                    monthlyIncome = widget.monthlyIncome,
-                                    committedExpenses = widget.committedExpenses,
-                                    likelyExpenses = widget.likelyExpenses,
-                                    status = widget.status
-                                )
+            FinancialRunwayCard(
+                daysRemaining = widget.daysRemaining,
+                discretionaryRemaining = widget.discretionaryRemaining,
+                averageDailyDiscretionarySpend = widget.averageDailyDiscretionarySpend,
+                monthlyIncome = widget.monthlyIncome,
+                committedExpenses = widget.committedExpenses,
+                likelyExpenses = widget.likelyExpenses,
+                status = widget.status,
+                isUnavailable = widget.isUnavailable,
+                currencyQuality = widget.currencyQuality,
+                currency = homeCurrency ?: ""
+            )
                             }
                             is DashboardWidget.MonteCarloForecast -> {
-                                MonteCarloForecastCard(
-                                    result = widget.result
+            MonteCarloForecastCard(
+                result = widget.result,
+                currency = homeCurrency ?: ""
+            )
+                            }
+                            
+                            is DashboardWidget.NoSpendStreak -> {
+                                NoSpendStreakWidget(
+                                    currentStreak = widget.currentStreak,
+                                    personalBest = widget.personalBest,
+                                    daysWithoutSpendingThisMonth = widget.daysWithoutSpendingThisMonth
+                                )
+                            }
+                            is DashboardWidget.FinancialHealthScoreWidget -> {
+                                var isExpanded by remember { mutableStateOf(false) }
+                                com.yourname.expensetracker.ui.components.health.HealthScoreWidget(
+                                    healthScore = widget.healthScore,
+                                    isExpanded = isExpanded,
+                                    onToggleExpand = { isExpanded = !isExpanded }
+                                )
+                            }
+                            is DashboardWidget.FinancialHealthScoreV2Widget -> {
+                                var isExpanded by remember { mutableStateOf(false) }
+                                com.yourname.expensetracker.ui.components.health.FinancialHealthScoreV2Widget(
+                                    healthScore = widget.healthScore,
+                                    isExpanded = isExpanded,
+                                    onToggleExpand = { isExpanded = !isExpanded }
+                                )
+                            }
+                            is DashboardWidget.LifestyleSavingsPrompt -> {
+                                LifestyleSavingsPromptCard(
+                                    inflationRate = widget.inflationRate,
+                                    suggestedUplift = widget.suggestedUplift,
+                                    reason = widget.reason,
+                                    hasExistingGoals = widget.hasExistingGoals,
+                                    onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
+                                )
+                            }
+                is DashboardWidget.MoneyRadar -> {
+                    com.yourname.expensetracker.ui.components.dashboard.MoneyRadarWidget(
+                        data = widget.data,
+                        onActionClick = { action ->
+                            when (action) {
+                                is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ViewBills -> {
+                                    onNavigateToRecurring()
+                                }
+                                is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ReviewAnomalies -> {
+                                    onNavigateToTransactions(
+                                        TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis))
+                                    )
+                                }
+                                is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.AdjustBudget -> {
+                                    if (action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.CRITICAL ||
+                                        action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.HIGH) {
+                                        onNavigateToAnalytics("month")
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
+                            is DashboardWidget.FinancialStressForecast -> {
+            FinancialStressForecastCard(
+                result = widget.result,
+                currency = homeCurrency ?: "",
+                onActionClick = { recommendation ->
+                    // Navigate based on recommendation type
+                    when {
+                        recommendation.contains("subscriptions", ignoreCase = true) -> {
+                            onNavigateToRecurring()
+                        }
+                        recommendation.contains("spending", ignoreCase = true) -> {
+                            onNavigateToTransactions(
+                                TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis))
+                            )
+                        }
+                        recommendation.contains("emergency", ignoreCase = true) -> {
+                            onNavigateToFeature(NavigationDestination.SavingsGoals)
+                        }
+                    }
+                }
+            )
+                            }
+                is DashboardWidget.SavingsSweepPrompt -> {
+                    SavingsSweepPromptCard(
+                        widget = widget,
+                        homeCurrency = homeCurrency ?: "",
+                        onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
+                    )
+                }
+                            // S4-D914-013: else logs in debug so new widget types are not silently invisible
+                            else -> { if (com.yourname.expensetracker.BuildConfig.DEBUG) error("Unhandled DashboardWidget type: ${widget::class.simpleName}") }
+                        }
+                    }
+                }
+                
+                if (recommendations.isNotEmpty()) {
+                    item(span = { GridItemSpan(2) }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            recommendations.forEach { recommendation ->
+                                RecommendationCard(
+                                    recommendation = recommendation,
+                                    onClick = { viewModel.navigateToRecommendation(recommendation) },
+                                    onDismiss = { viewModel.dismissRecommendation(recommendation) }
                                 )
                             }
                         }
@@ -418,10 +884,22 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+        if (showFeaturesMenu) {
+            FeaturesMenu(
+                onDismiss = { showFeaturesMenu = false },
+                onNavigateToFeature = { destination ->
+                    showFeaturesMenu = false
+                    onNavigateToFeature(destination)
+                }
+            )
+        }
 
         if (showQuickSettings) {
             QuickSettingsDialog(
                 onDismiss = { showQuickSettings = false },
+                showDebugOption = BuildConfig.DEBUG,
                 onNavigateToAiSettings = {
                     showQuickSettings = false
                     showAiSettings = true
@@ -437,33 +915,66 @@ fun HomeScreen(
             )
         }
 
-        if (showAiSettings) {
-            com.yourname.expensetracker.ui.screens.aisettings.AiSettingsScreen(
-                onDismiss = { showAiSettings = false }
-            )
-        }
+                if (showAiSettings) {
+                    // Navigate via NavigationDestination instead of direct overlay
+                    LaunchedEffect(Unit) {
+                        showAiSettings = false
+                        onNavigateToFeature(NavigationDestination.AiSettings)
+                    }
+                }
 
-        if (showCategories) {
-            com.yourname.expensetracker.ui.screens.categories.CategoryScreen(
-                onDismiss = { showCategories = false }
-            )
-        }
+                if (showCategories) {
+                    // Navigate via NavigationDestination instead of direct overlay
+                    LaunchedEffect(Unit) {
+                        showCategories = false
+                        onNavigateToFeature(NavigationDestination.CategoryManagement)
+                    }
+                }
 
-        if (showDebug) {
-            com.yourname.expensetracker.ui.screens.debug.DebugScreen(
-                onDismiss = { showDebug = false }
-            )
-        }
+                if (showDebug && BuildConfig.DEBUG) {
+                    // Debug screen remains as dev-only overlay (expected behavior)
+                    com.yourname.expensetracker.ui.screens.debug.DebugScreen(
+                        onDismiss = { showDebug = false }
+                    )
+                } else if (showDebug) {
+                    showDebug = false
+                }
 
         if (showAddPlannedExpenseDialog) {
             AddPlannedExpenseDialog(
                 categories = categories,
+                referenceNowMillis = state.referenceNowMillis,
                 onDismiss = { showAddPlannedExpenseDialog = false },
                 onConfirm = { desc, amount, date, catId, priority ->
                     viewModel.addPlannedExpense(desc, amount, date, catId, priority)
                     showAddPlannedExpenseDialog = false
                 }
             )
+        }
+
+        if (showCategoryBreakdown) {
+            val totalsState by viewModel.totalsDrillDownState.collectAsState()
+            // Check if any retro widget is active to determine breakdown style
+            val totalsDashboardWidget = state.widgets.filterIsInstance<DashboardWidget.TotalsDashboard>().firstOrNull()
+            val isRetroStyle = totalsDashboardWidget?.let { 
+                state.widgetStyles.getStyle(HomeViewModel.getWidgetId(it)) == WidgetStyle.RETRO 
+            } ?: false
+            
+            if (isRetroStyle) {
+            RetroCategoryBreakdownSheet(
+                periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
+                categories = totalsState.categoryBreakdown,
+                currency = homeCurrency ?: "",
+                onDismiss = { showCategoryBreakdown = false }
+            )
+            } else {
+            CategoryBreakdownSheet(
+                periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
+                categories = totalsState.categoryBreakdown,
+                currency = homeCurrency ?: "",
+                onDismiss = { showCategoryBreakdown = false }
+            )
+            }
         }
     }
 }
@@ -472,9 +983,11 @@ fun HomeScreen(
 fun WidgetWrapper(
     widget: DashboardWidget,
     isEditMode: Boolean,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
+    widgetStyle: WidgetStyle?,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?,
     onToggleVisibility: () -> Unit,
+    onToggleStyle: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -492,14 +1005,53 @@ fun WidgetWrapper(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onMoveUp) {
-                        Icon(Icons.Rounded.ArrowUpward, "Move Up", tint = Color.White)
+                    val moveUpDesc = stringResource(R.string.a11y_move_widget_up)
+                    val hideWidgetDesc = stringResource(R.string.a11y_hide_widget)
+                    val moveDownDesc = stringResource(R.string.a11y_move_widget_down)
+                    
+                    IconButton(
+                        onClick = { onMoveUp?.invoke() },
+                        enabled = onMoveUp != null,
+                        modifier = Modifier.semantics { contentDescription = moveUpDesc }
+                    ) {
+                        Icon(Icons.Rounded.ArrowUpward, contentDescription = null, tint = if (onMoveUp != null) Color.White else Color.White.copy(alpha = 0.3f))
                     }
-                    IconButton(onClick = onToggleVisibility) {
-                        Icon(Icons.Rounded.VisibilityOff, "Hide", tint = Color.White)
+                    IconButton(
+                        onClick = onToggleVisibility,
+                        modifier = Modifier.semantics { contentDescription = hideWidgetDesc }
+                    ) {
+                        Icon(Icons.Rounded.VisibilityOff, contentDescription = null, tint = Color.White)
                     }
-                    IconButton(onClick = onMoveDown) {
-                        Icon(Icons.Rounded.ArrowDownward, "Move Down", tint = Color.White)
+                    
+                    // Style toggle button for styled widgets
+                    if (onToggleStyle != null) {
+                        val toggleStyleDesc = stringResource(
+                            R.string.a11y_toggle_widget_style_format,
+                            if (widgetStyle == WidgetStyle.MODERN) "retro" else "modern"
+                        )
+                        IconButton(
+                            onClick = onToggleStyle,
+                            modifier = Modifier.semantics { 
+                                contentDescription = toggleStyleDesc
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (widgetStyle == WidgetStyle.MODERN) 
+                                    Icons.Rounded.VideogameAsset 
+                                else 
+                                    Icons.Rounded.CropSquare,
+                                contentDescription = null, 
+                                tint = if (widgetStyle == WidgetStyle.RETRO) Color(0xFF39FF14) else Color.White
+                            )
+                        }
+                    }
+                    
+                    IconButton(
+                        onClick = { onMoveDown?.invoke() },
+                        enabled = onMoveDown != null,
+                        modifier = Modifier.semantics { contentDescription = moveDownDesc }
+                    ) {
+                        Icon(Icons.Rounded.ArrowDownward, contentDescription = null, tint = Color.White)
                     }
                 }
             }
@@ -509,53 +1061,94 @@ fun WidgetWrapper(
 
 // getWidgetId removed - using HomeViewModel.getWidgetId instead
 
-private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
-    is DashboardWidget.SpendingPaceWidget,
-    is DashboardWidget.PendingReviewAlert -> false
-    else -> true
-}
+// S4-001R: isFullSpan now derived from DashboardWidgetRegistry metadata
+private fun isFullSpan(widget: DashboardWidget): Boolean =
+    DashboardWidgetRegistry.isFullSpan(widget)
 
 @Composable
 fun QuickSettingsDialog(
     onDismiss: () -> Unit,
+    showDebugOption: Boolean = true,
     onNavigateToAiSettings: () -> Unit,
     onNavigateToCategories: () -> Unit,
     onNavigateToDebug: () -> Unit
 ) {
+    val aiSettingsDesc = stringResource(R.string.a11y_navigate_to_ai_settings)
+    val categoriesDesc = stringResource(R.string.a11y_navigate_to_categories)
+    val debugDesc = stringResource(R.string.a11y_navigate_to_debug)
+    
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Quick Settings") },
+        title = { Text(stringResource(R.string.home_quick_settings_title)) },
         text = {
             Column {
                 ListItem(
-                    headlineContent = { Text("AI Settings") },
-                    leadingContent = { Text("✨") },
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToAiSettings() }
+                    headlineContent = { Text(stringResource(R.string.home_ai_settings)) },
+                    leadingContent = { 
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = SemanticColors.PrimaryIndigo
+                        )
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onNavigateToAiSettings() }
+                        .semantics { contentDescription = aiSettingsDesc }
                 )
                 ListItem(
-                    headlineContent = { Text("Categories") },
-                    leadingContent = { Text("🏷️") },
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToCategories() }
+                    headlineContent = { Text(stringResource(R.string.home_categories)) },
+                    leadingContent = { 
+                        Icon(
+                            Icons.Rounded.Label,
+                            contentDescription = null,
+                            tint = SemanticColors.PrimaryIndigo
+                        )
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onNavigateToCategories() }
+                        .semantics { contentDescription = categoriesDesc }
                 )
-                ListItem(
-                    headlineContent = { Text("Debug Menu") },
-                    leadingContent = { Text("🛠️") },
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToDebug() }
-                )
+                if (showDebugOption) {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.home_debug_menu)) },
+                        leadingContent = {
+                            Icon(
+                                Icons.Rounded.Build,
+                                contentDescription = null,
+                                tint = SemanticColors.PrimaryIndigo
+                            )
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onNavigateToDebug() }
+                            .semantics { contentDescription = debugDesc }
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.a11y_close)) }
         }
     )
 }
 
 @Composable
-fun CategorySpendingRow(item: CategorySpending) {
+fun CategorySpendingRow(item: DomainCategorySpending) {
+    val spendingDesc = stringResource(
+        R.string.a11y_category_spending_format,
+        item.category.name,
+        item.total,
+        item.percentage
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .semantics {
+                contentDescription = spendingDesc
+            },
         verticalAlignment = Alignment.CenterVertically
     ) {
         val categoryColor = remember(item.category.color) {
@@ -568,7 +1161,12 @@ fun CategorySpendingRow(item: CategorySpending) {
                 .background(categoryColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(item.category.icon, fontSize = 18.sp)
+            val iconDesc = stringResource(R.string.a11y_category_icon_format, item.category.name)
+            Text(
+                item.category.icon, 
+                fontSize = 18.sp,
+                modifier = Modifier.semantics { contentDescription = iconDesc }
+            )
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -585,7 +1183,7 @@ fun CategorySpendingRow(item: CategorySpending) {
         Spacer(modifier = Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                "€${String.format("%.2f", item.total)}",
+                CurrencyFormatter.formatMoney(item.total, item.currency),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -599,11 +1197,22 @@ fun CategorySpendingRow(item: CategorySpending) {
 }
 
 @Composable
-fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
+fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
+    val manualEntryLabel = stringResource(R.string.a11y_expense_manual)
+    val expenseDesc = stringResource(
+        R.string.a11y_expense_item_format,
+        expense.merchant,
+        if (expense.isManualEntry) manualEntryLabel else "",
+        expense.amount,
+        DateFormatterUtils.formatTimestampJavaTime(expense.date, "MMM dd")
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .semantics {
+                contentDescription = expenseDesc
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -623,20 +1232,25 @@ fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
                     Text(expense.merchant, style = MaterialTheme.typography.bodyMedium)
                     if (expense.isManualEntry) {
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("✏️", fontSize = 12.sp)
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = stringResource(R.string.a11y_expense_manual),
+                            modifier = Modifier.size(12.dp),
+                            tint = SemanticColors.TextSecondary
+                        )
                     }
                 }
                 Text(
-                    DateFormatterUtils.monthDay().format(Date(expense.date)),
+                    DateFormatterUtils.formatTimestampJavaTime(expense.date, "MMM dd"),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
-        Text(
-            "€${String.format("%.2f", expense.amount)}",
-            fontWeight = FontWeight.Bold
-        )
+    Text(
+        CurrencyFormatter.formatMoney(expense.amount, expense.currency),
+        fontWeight = FontWeight.Bold
+    )
     }
 }
 
@@ -644,20 +1258,21 @@ fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
 @Composable
 fun AddPlannedExpenseDialog(
     categories: List<Category> = emptyList(),
+    referenceNowMillis: Long = System.currentTimeMillis(),
     onDismiss: () -> Unit,
     onConfirm: (String, Double, Long, Long?, PlannedExpensePriority) -> Unit
 ) {
     var description by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var priority by remember { mutableStateOf(PlannedExpensePriority.LIKELY) }
-    var date by remember { mutableStateOf(System.currentTimeMillis()) }
+    var date by remember { mutableStateOf(referenceNowMillis) }
     var selectedCategoryId by remember { mutableStateOf<Long?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { 
             Text(
-                "PLAN AN EXPENSE", 
+                stringResource(R.string.dialog_plan_expense_title), 
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Black,
                 color = SemanticColors.PrimaryIndigo
@@ -668,7 +1283,7 @@ fun AddPlannedExpenseDialog(
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("What are you planning?") },
+                    label = { Text(stringResource(R.string.dialog_plan_expense_description_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = SemanticColors.PrimaryIndigo,
@@ -679,7 +1294,7 @@ fun AddPlannedExpenseDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount (€)") },
+                    label = { Text(stringResource(R.string.dialog_plan_expense_amount_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = SemanticColors.PrimaryIndigo,
@@ -688,8 +1303,11 @@ fun AddPlannedExpenseDialog(
                 )
 
                 Column {
+                    val priorityLabel = stringResource(R.string.dialog_plan_expense_priority)
+                    val selectedLabel = stringResource(R.string.a11y_selected)
+                    val notSelectedLabel = stringResource(R.string.a11y_not_selected)
                     Text(
-                        "PRIORITY", 
+                        priorityLabel, 
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary,
                         fontWeight = FontWeight.Bold
@@ -699,10 +1317,15 @@ fun AddPlannedExpenseDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         PlannedExpensePriority.values().forEach { p ->
+                            val isSelected = priority == p
+                            val priorityDesc = stringResource(R.string.a11y_priority_format, p.name, if (isSelected) selectedLabel else notSelectedLabel)
                             FilterChip(
-                                selected = priority == p,
+                                selected = isSelected,
                                 onClick = { priority = p },
-                                label = { Text(p.name) }
+                                label = { Text(p.name) },
+                                modifier = Modifier.semantics { 
+                                    contentDescription = priorityDesc
+                                }
                             )
                         }
                     }
@@ -716,9 +1339,15 @@ fun AddPlannedExpenseDialog(
 
                 // Category selector
                 if (categories.isNotEmpty()) {
+                    val categoryLabel = stringResource(R.string.dialog_plan_expense_category)
+                    val noneLabel = stringResource(R.string.dialog_plan_expense_none)
+                    val noCategoryDesc = stringResource(R.string.a11y_no_category_selected)
+                    val selectedLabel = stringResource(R.string.a11y_selected)
+                    val notSelectedLabel = stringResource(R.string.a11y_not_selected)
+                    
                     Column {
                         Text(
-                            "CATEGORY",
+                            categoryLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextSecondary,
                             fontWeight = FontWeight.Bold
@@ -731,15 +1360,29 @@ fun AddPlannedExpenseDialog(
                                 FilterChip(
                                     selected = selectedCategoryId == null,
                                     onClick = { selectedCategoryId = null },
-                                    label = { Text("None") }
+                                    label = { Text(noneLabel) },
+                                    modifier = Modifier.semantics { contentDescription = noCategoryDesc }
                                 )
                             }
                             items(categories.size) { idx ->
                                 val cat = categories[idx]
+                                val catSelected = selectedCategoryId == cat.id
+                                val catIconDesc = stringResource(R.string.a11y_category_icon_format, cat.name)
+                                val catDesc = stringResource(R.string.a11y_category_format, cat.name, if (catSelected) selectedLabel else notSelectedLabel)
                                 FilterChip(
-                                    selected = selectedCategoryId == cat.id,
+                                    selected = catSelected,
                                     onClick = { selectedCategoryId = cat.id },
-                                    label = { Text("${cat.icon} ${cat.name}") }
+                                    label = { Text(cat.name) },
+                                    leadingIcon = {
+                                        Text(
+                                            text = cat.icon,
+                                            fontSize = 16.sp,
+                                            modifier = Modifier.semantics { contentDescription = catIconDesc }
+                                        )
+                                    },
+                                    modifier = Modifier.semantics { 
+                                        contentDescription = catDesc
+                                    }
                                 )
                             }
                         }
@@ -757,12 +1400,12 @@ fun AddPlannedExpenseDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
             ) {
-                Text("ADD TO FORECAST")
+                Text(stringResource(R.string.action_add_to_forecast))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("CANCEL", color = SemanticColors.TextSecondary)
+                Text(stringResource(R.string.home_cancel), color = SemanticColors.TextSecondary)
             }
         },
         containerColor = SemanticColors.BaseNavy,
@@ -790,19 +1433,19 @@ fun DateSelector(
     ) {
         Icon(
             Icons.Default.DateRange,
-            contentDescription = "Date",
+            contentDescription = stringResource(R.string.a11y_select_date),
             tint = SemanticColors.PrimaryIndigo
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(
-                "Date",
+                stringResource(R.string.label_date),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Medium,
                 color = SemanticColors.TextSecondary
             )
             Text(
-                DateFormatterUtils.fullDate().format(java.util.Date(dateMs)),
+                DateFormatterUtils.formatTimestampJavaTime(dateMs, "EEE, dd MMM yyyy"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextPrimary
             )
@@ -816,26 +1459,290 @@ fun DateSelector(
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { selectedDate ->
-                            // Preserve time of day (roughly, or just set to noon to avoid timezone issues/start of day)
-                            // Here we just use the selected date (which is usually UTC midnight) + current time offset if needed?
-                            // Material3 DatePicker returns UTC start of day. 
-                            // Let's just use it as is, or add current time component if we cared about exact time.
-                            // For forecast, date is most important.
                             onDateSelected(selectedDate)
                         }
                         showDatePicker = false
                     }
                 ) {
-                    Text("OK", color = SemanticColors.PrimaryIndigo)
+                    Text(stringResource(R.string.action_ok), color = SemanticColors.PrimaryIndigo)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) {
-                    Text("Cancel", color = SemanticColors.TextSecondary)
+                    Text(stringResource(R.string.action_cancel), color = SemanticColors.TextSecondary)
                 }
             }
         ) {
             DatePicker(state = datePickerState)
         }
     }
+}
+
+@Composable
+private fun FeaturesMenu(
+    onDismiss: () -> Unit,
+    onNavigateToFeature: (NavigationDestination) -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(24.dp),
+            color = SemanticColors.BaseNavy
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.home_features),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextPrimary,
+                    modifier = Modifier
+                        .padding(bottom = 20.dp)
+                        .semantics { heading() }
+                )
+                
+                // Config-driven Feature Items - All 22 features from FeatureConfig
+                // Wrapped in a scrollable column with max height to prevent overflow
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    FeatureConfig.allFeatures.forEach { feature ->
+                        FeatureItem(
+                            icon = feature.icon,
+                            title = stringResource(feature.titleRes),
+                            description = feature.descriptionRes?.let { stringResource(it) } ?: "",
+                            color = feature.color,
+                            isNew = feature.isNew,
+                            isBeta = feature.isBeta,
+                            onClick = { onNavigateToFeature(feature.destination) }
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(stringResource(R.string.a11y_close), color = SemanticColors.TextSecondary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavingsSweepPromptCard(
+    widget: DashboardWidget.SavingsSweepPrompt,
+    homeCurrency: String,
+    onAction: () -> Unit
+) {
+    androidx.compose.material3.Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.widget_savings_sweep_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.widget_savings_sweep_safe_to_sweep, com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.sweepAmount, homeCurrency ?: "")),
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = stringResource(R.string.widget_savings_sweep_detail, com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.underspend, homeCurrency ?: ""), com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(widget.riskBuffer, homeCurrency ?: "")),
+                style = MaterialTheme.typography.bodySmall
+            )
+            widget.goalAllocations.firstOrNull()?.let { topGoal ->
+                Text(
+                    text = stringResource(R.string.widget_savings_sweep_top_allocation, topGoal.goalName, com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney(topGoal.suggestedAmount, homeCurrency ?: "")),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Button(onClick = onAction) {
+                Text(stringResource(R.string.widget_savings_sweep_cta))
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeatureItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    color: Color,
+    isNew: Boolean = false,
+    isBeta: Boolean = false,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = SemanticColors.SurfaceLight.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(color.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            
+            Spacer(modifier = Modifier.width(16.dp))
+            
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = SemanticColors.TextPrimary
+                    )
+                    if (isNew) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Badge(containerColor = Color(0xFF4CAF50)) {
+                            Text(
+                                stringResource(R.string.label_new),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.TextPrimary
+                            )
+                        }
+                    }
+                    if (isBeta) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Badge(containerColor = Color(0xFFFF9800)) {
+                            Text(
+                                stringResource(R.string.label_beta),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.TextPrimary
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+            
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = SemanticColors.TextSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun LifestyleSavingsPromptCard(
+    inflationRate: Double,
+    suggestedUplift: Double,
+    reason: String,
+    hasExistingGoals: Boolean,
+    onAction: () -> Unit
+) {
+    val numberFormat = java.text.NumberFormat.getPercentInstance(java.util.Locale.getDefault()).apply {
+        maximumFractionDigits = 1
+    }
+    
+    BentoCard(
+        containerColor = SemanticColors.WarningOrange.copy(alpha = 0.1f),
+        border = BorderStroke(1.dp, SemanticColors.WarningOrange.copy(alpha = 0.3f))
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    color = SemanticColors.WarningOrange.copy(alpha = 0.2f)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("📈", fontSize = 20.sp)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = stringResource(R.string.widget_lifestyle_inflation_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextPrimary
+                    )
+                    Text(
+                        text = stringResource(R.string.widget_lifestyle_inflation_rate, numberFormat.format(inflationRate)),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.WarningOrange
+                    )
+                }
+            }
+            
+            Text(
+                text = reason,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextPrimary
+            )
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.widget_lifestyle_suggested_boost, String.format("%.1f", suggestedUplift)),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SemanticColors.TextSecondary
+                )
+                
+                Button(
+                    onClick = onAction,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SemanticColors.WarningOrange
+                    )
+                ) {
+                    Text(stringResource(if (hasExistingGoals) R.string.widget_lifestyle_adjust_goals else R.string.widget_lifestyle_set_goals))
+                }
+            }
+        }
+    }
+}
+
+private fun com.yourname.expensetracker.domain.model.PeriodType.toPeriodLevel(): PeriodLevel = when (this) {
+    com.yourname.expensetracker.domain.model.PeriodType.YEAR -> PeriodLevel.YEAR
+    com.yourname.expensetracker.domain.model.PeriodType.MONTH -> PeriodLevel.MONTH
+    com.yourname.expensetracker.domain.model.PeriodType.WEEK -> PeriodLevel.WEEK
+    com.yourname.expensetracker.domain.model.PeriodType.DAY -> PeriodLevel.DAY
 }

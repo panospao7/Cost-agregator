@@ -2,7 +2,6 @@ package com.yourname.expensetracker.ui.components
 
 import android.annotation.SuppressLint
 import android.preference.PreferenceManager
-import android.util.Log
 import android.view.MotionEvent
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,14 +26,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.location.GeocodingBatchResult
+import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
-import com.yourname.expensetracker.domain.location.GeocodingService
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import com.yourname.expensetracker.ui.screens.map.LocationPickerState
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -43,6 +41,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
+import com.yourname.expensetracker.ui.theme.Dimens
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -50,20 +49,9 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Reusable location search composable used by Features C (Transactions), D (Review),
- * and E (Map unlocated panel).
- *
- * Provides:
- *  - Search field with 1100 ms debounce that cascades through geocoding providers
- *  - Result list to pick from
- *  - "Advanced" toggle for manual lat/lon entry
- *  - "Clear location" button
- *
- * Callback [onResult] delivers (lat, lon, address, osmId) — all nullable (null lat/lon
- * means the user cleared the location).
- *
- * @param biasLat Optional latitude to bias search results toward (e.g. device location or map centre).
- * @param biasLon Optional longitude to bias search results toward.
+ * Legacy overload for callers that still pass [geocodingService] directly.
+ * New callers should use the state+callbacks overload.
+ * TODO: Migrate TransactionsScreen to use ViewModel-owned LocationPickerState.
  */
 @Composable
 fun LocationSearchPicker(
@@ -72,70 +60,124 @@ fun LocationSearchPicker(
     currentAddress: String?,
     onResult: (lat: Double?, lon: Double?, address: String?, osmId: String?) -> Unit,
     modifier: Modifier = Modifier,
-    geocodingService: GeocodingService,
+    geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
     biasLat: Double? = null,
     biasLon: Double? = null
 ) {
     val scope = rememberCoroutineScope()
-    var searchQuery by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<GeocodingResult>>(emptyList()) }
-    var isSearching by remember { mutableStateOf(false) }
-    var searchError by remember { mutableStateOf<String?>(null) }
+    var pickerState by remember { mutableStateOf(LocationPickerState()) }
+    var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var searchRequestId by remember { mutableStateOf(0L) }
+    var pinRequestId by remember { mutableStateOf(0L) }
+
+    // Propagate selection to caller
+    LaunchedEffect(pickerState.pendingLat, pickerState.pendingLon) {
+        if (pickerState.pendingLat != null) {
+            onResult(pickerState.pendingLat, pickerState.pendingLon, pickerState.pendingAddress, pickerState.pendingOsmId)
+        }
+    }
+
+    LocationSearchPicker(
+        state = pickerState,
+        onQueryChanged = { query, useGoogle ->
+            pickerState = pickerState.copy(query = query, searchError = null)
+            searchJob?.cancel()
+            if (query.length < 2) { pickerState = pickerState.copy(results = emptyList(), isSearching = false); return@LocationSearchPicker }
+            val id = ++searchRequestId
+            searchJob = scope.launch {
+                kotlinx.coroutines.delay(1100)
+                if (id != searchRequestId) return@launch
+                pickerState = pickerState.copy(isSearching = true)
+                try {
+                    val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        geocodingService.searchMultiple(query, biasLat, biasLon, useGoogle = useGoogle)
+                    }
+                    if (id != searchRequestId) return@launch
+                    when (result) {
+                        is GeocodingBatchResult.Success -> pickerState = pickerState.copy(results = result.results, isSearching = false, searchError = if (result.results.isEmpty()) "No results found" else null)
+                        is GeocodingBatchResult.Failure -> pickerState = pickerState.copy(results = emptyList(), isSearching = false, searchError = "Search unavailable (${result.error})")
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (e: Exception) { if (id != searchRequestId) return@launch; pickerState = pickerState.copy(isSearching = false, searchError = "Search failed") }
+            }
+        },
+        onResultSelected = { result ->
+            pickerState = pickerState.copy(pendingLat = result.latitude, pendingLon = result.longitude, pendingAddress = result.displayAddress, pendingOsmId = result.osmId, results = emptyList())
+        },
+        onMapLongPressed = { lat, lon ->
+            val id = ++pinRequestId
+            pickerState = pickerState.copy(pinnedLat = lat, pinnedLon = lon, isPinResolving = true, pinResult = null)
+            scope.launch {
+                try {
+                    val resolved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { geocodingService.reverseGeocode(lat, lon) }
+                    if (id != pinRequestId) return@launch
+                    val r = when (resolved) {
+                        is com.yourname.expensetracker.domain.location.GeocodingLookupResult.Success -> resolved.result
+                        is com.yourname.expensetracker.domain.location.GeocodingLookupResult.Failure -> null
+                    } ?: GeocodingResult(latitude = lat, longitude = lon, osmId = null, name = null, displayAddress = "%.5f, %.5f".format(lat, lon), confidence = 1.0f, source = "pin")
+                    pickerState = pickerState.copy(isPinResolving = false, pinResult = r)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (_: Exception) { if (id != pinRequestId) return@launch; pickerState = pickerState.copy(isPinResolving = false) }
+            }
+        },
+        onPinConfirmed = {
+            val pin = pickerState.pinResult ?: return@LocationSearchPicker
+            pickerState = pickerState.copy(pendingLat = pin.latitude, pendingLon = pin.longitude, pendingAddress = pin.displayAddress, pendingOsmId = pin.osmId, pinnedLat = null, pinnedLon = null, pinResult = null)
+        },
+        onPinCancelled = { pickerState = pickerState.copy(pinnedLat = null, pinnedLon = null, pinResult = null) },
+        onCleared = { pickerState = LocationPickerState(); onResult(null, null, null, null) },
+        modifier = modifier,
+        currentLat = currentLat,
+        currentLon = currentLon,
+        currentAddress = currentAddress,
+        biasLat = biasLat,
+        biasLon = biasLon
+    )
+}
+
+/**
+ * Pure UI location search composable. All search/reverse-geocode logic is owned
+ * by the caller's ViewModel via [LocationPickerState] and callbacks.
+ *
+ * S10-001/S10-020: No GeocodingService, no coroutines, no network calls here.
+ *
+ * @param state Current picker state from ViewModel.
+ * @param onQueryChanged Called when search text or Google toggle changes.
+ * @param onResultSelected Called when user picks a result from the list.
+ * @param onMapLongPressed Called when user long-presses the map to drop a pin.
+ * @param onPinConfirmed Called when user confirms the dropped pin.
+ * @param onPinCancelled Called when user cancels the dropped pin.
+ * @param onCleared Called when user taps the clear-location button.
+ * @param biasLat Optional latitude to bias map default centre.
+ * @param biasLon Optional longitude to bias map default centre.
+ */
+@Composable
+fun LocationSearchPicker(
+    state: com.yourname.expensetracker.ui.screens.map.LocationPickerState,
+    onQueryChanged: (query: String, useGoogle: Boolean) -> Unit,
+    onResultSelected: (com.yourname.expensetracker.domain.location.GeocodingResult) -> Unit,
+    onMapLongPressed: (lat: Double, lon: Double) -> Unit,
+    onPinConfirmed: () -> Unit,
+    onPinCancelled: () -> Unit,
+    onCleared: () -> Unit,
+    modifier: Modifier = Modifier,
+    currentLat: Double? = null,
+    currentLon: Double? = null,
+    currentAddress: String? = null,
+    biasLat: Double? = null,
+    biasLon: Double? = null
+) {
+    var useGoogle by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
+    var showMap by remember { mutableStateOf(false) }
     var manualLat by remember { mutableStateOf(currentLat?.toString() ?: "") }
     var manualLon by remember { mutableStateOf(currentLon?.toString() ?: "") }
     var latError by remember { mutableStateOf(false) }
     var lonError by remember { mutableStateOf(false) }
-    var searchJob by remember { mutableStateOf<Job?>(null) }
-    // Google Places toggle — off by default to conserve API quota.
-    // User opts in when free-tier results don't show the specific branch they need.
-    var useGoogle by remember { mutableStateOf(false) }
-    // Map visibility — collapsed by default so it doesn't crowd dialogs/sheets.
-    // Auto-expands when search results arrive; user can also toggle manually.
-    var showMap by remember { mutableStateOf(false) }
-    // Tap-to-pin state: set when user long-presses the results map.
-    var pinnedLat by remember { mutableStateOf<Double?>(null) }
-    var pinnedLon by remember { mutableStateOf<Double?>(null) }
-    var isPinResolving by remember { mutableStateOf(false) }
-    var pinResult by remember { mutableStateOf<GeocodingResult?>(null) }
 
-    // Helper to launch a debounced search with the current useGoogle flag
-    fun launchSearch(query: String, withGoogle: Boolean) {
-        searchJob?.cancel()
-        if (query.length >= 2) {
-            searchJob = scope.launch {
-                delay(1100)
-                isSearching = true
-                searchError = null
-                Log.d("LocationSearch", "==> Starting search for: $query (google=$withGoogle)")
-                try {
-                    val searchResults = withContext(Dispatchers.IO) {
-                        geocodingService.searchMultiple(query, biasLat, biasLon, useGoogle = withGoogle)
-                    }
-                    Log.d("LocationSearch", "<== Got ${searchResults.size} results")
-                    results = searchResults
-                    // Auto-expand the map when results arrive so the user can see them
-                    if (searchResults.isNotEmpty()) showMap = true
-                    if (searchResults.isEmpty()) {
-                        searchError = "No results found"
-                        Log.d("LocationSearch", "    No results found for: $query")
-                    } else {
-                        Log.d("LocationSearch", "    First result: ${searchResults.first().displayAddress}")
-                    }
-                } catch (e: CancellationException) {
-                    Log.d("LocationSearch", "    Search cancelled (debounce)")
-                    throw e
-                } catch (e: Exception) {
-                    Log.e("LocationSearch", "<== Search FAILED: ${e.message}", e)
-                    results = emptyList()
-                    searchError = "Search failed — check network"
-                }
-                isSearching = false
-            }
-        } else {
-            results = emptyList()
-            searchError = null
-        }
+    // Auto-expand map when results arrive
+    LaunchedEffect(state.results) {
+        if (state.results.isNotEmpty()) showMap = true
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -159,12 +201,12 @@ fun LocationSearchPicker(
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(
-                    onClick = { onResult(null, null, null, null) },
-                    modifier = Modifier.size(24.dp)
+                    onClick = onCleared,
+                    modifier = Modifier.size(Dimens.TouchTargetMin)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Clear,
-                        contentDescription = "Clear location",
+                        contentDescription = stringResource(R.string.a11y_clear_location),
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -173,22 +215,16 @@ fun LocationSearchPicker(
 
         // ── Search field ────────────────────────────────────────────────────
         OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { query ->
-                searchQuery = query
-                launchSearch(query, useGoogle)
-            },
-            label = { Text("Search location") },
+            value = state.query,
+            onValueChange = { query -> onQueryChanged(query, useGoogle) },
+            label = { Text(stringResource(R.string.location_search_label)) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            trailingIcon = if (isSearching) {
+            trailingIcon = if (state.isSearching) {
                 { CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp) }
-            } else if (searchQuery.isNotEmpty()) {
+            } else if (state.query.isNotEmpty()) {
                 {
-                    IconButton(onClick = {
-                        searchQuery = ""
-                        results = emptyList()
-                    }) {
-                        Icon(Icons.Filled.Clear, contentDescription = "Clear search")
+                    IconButton(onClick = { onQueryChanged("", useGoogle) }) {
+                        Icon(Icons.Filled.Clear, contentDescription = stringResource(R.string.a11y_clear_search))
                     }
                 }
             } else null,
@@ -197,9 +233,6 @@ fun LocationSearchPicker(
         )
 
         // ── Google Places toggle chip ───────────────────────────────────────
-        // Off by default to conserve quota. Tap to include Google Places in
-        // the next search — useful when the free-tier services don't show
-        // the specific branch you need.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 6.dp)
@@ -209,25 +242,17 @@ fun LocationSearchPicker(
                 onClick = {
                     val newValue = !useGoogle
                     useGoogle = newValue
-                    // Re-fire search immediately with the new Google setting
-                    // so the user doesn't have to retype.
-                    if (searchQuery.length >= 2) {
-                        launchSearch(searchQuery, newValue)
-                    }
+                    if (state.query.length >= 2) onQueryChanged(state.query, newValue)
                 },
-                label = { Text("Google") },
+                label = { Text(stringResource(R.string.location_google_label)) },
                 leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Filled.Search,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(imageVector = Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
             )
             if (useGoogle) {
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "uses API quota",
+                    text = stringResource(R.string.location_google_quota_hint),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -235,71 +260,34 @@ fun LocationSearchPicker(
         }
 
         // ── Results list ────────────────────────────────────────────────────
-        if (results.isNotEmpty()) {
+        if (state.results.isNotEmpty()) {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
             ) {
                 LazyColumn(modifier = Modifier.heightIn(max = 260.dp)) {
-                    items(results) { result ->
-                        // Compute distance from bias point (if available)
+                    items(state.results) { result ->
                         val distanceLabel = if (biasLat != null && biasLon != null) {
                             formatDistance(biasLat, biasLon, result.latitude, result.longitude)
                         } else null
-
-                        // Headline: business name (bold). Fallback: first part of address.
                         val headline = result.name
                             ?: result.displayAddress?.substringBefore(",")?.trim()
                             ?: "%.5f, %.5f".format(result.latitude, result.longitude)
-
-                        // Supporting text: full address (skip if it's the same as headline)
-                        val supporting = result.displayAddress
-                            ?.takeIf { it != headline }
-
+                        val supporting = result.displayAddress?.takeIf { it != headline }
                         ListItem(
                             headlineContent = {
-                                Text(
-                                    text = headline,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Text(text = headline, style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             },
                             supportingContent = supporting?.let { addr ->
-                                {
-                                    Text(
-                                        text = addr,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                { Text(text = addr, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             },
-                            leadingContent = {
-                                Icon(
-                                    imageVector = Icons.Filled.LocationOn,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
+                            leadingContent = { Icon(imageVector = Icons.Filled.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                             trailingContent = distanceLabel?.let { dist ->
-                                {
-                                    Text(
-                                        text = dist,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                { Text(text = dist, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             },
-                            modifier = Modifier.clickable {
-                                onResult(result.latitude, result.longitude, result.displayAddress, result.osmId)
-                                searchQuery = ""
-                                results = emptyList()
-                            }
+                            modifier = Modifier.clickable { onResultSelected(result) }
                         )
                         HorizontalDivider()
                     }
@@ -307,196 +295,95 @@ fun LocationSearchPicker(
             }
         }
 
-        // ── Map toggle + collapsible map ────────────────────────────────────
-        // Map is hidden by default to avoid crowding dialogs/sheets (F1 fix).
-        // Auto-expands when search results arrive; user can also toggle manually.
-        TextButton(
-            onClick = { showMap = !showMap },
-            modifier = Modifier.padding(top = 2.dp)
-        ) {
-            Text(if (showMap) "Hide map" else "Show map")
+        // ── Map toggle ──────────────────────────────────────────────────────
+        TextButton(onClick = { showMap = !showMap }, modifier = Modifier.padding(top = 2.dp)) {
+            Text(if (showMap) stringResource(R.string.location_hide_map) else stringResource(R.string.location_show_map))
         }
 
         if (showMap) {
             ResultsMapView(
-                results = results,
-                defaultCentre = GeoPoint(
-                    biasLat ?: 37.9838,
-                    biasLon ?: 23.7275
-                ),
-                onSelect = { result ->
-                    onResult(result.latitude, result.longitude, result.displayAddress, result.osmId)
-                    searchQuery = ""
-                    results = emptyList()
-                    pinResult = null
-                },
-                onLongPress = { lat, lon ->
-                    // Drop a pin and reverse-geocode the tapped coordinate
-                    pinnedLat = lat
-                    pinnedLon = lon
-                    pinResult = null
-                    isPinResolving = true
-                    scope.launch {
-                        val resolved = withContext(Dispatchers.IO) {
-                            geocodingService.reverseGeocode(lat, lon)
-                        }
-                        pinResult = resolved ?: GeocodingResult(
-                            latitude = lat,
-                            longitude = lon,
-                            osmId = null,
-                            name = null,
-                            displayAddress = "%.5f, %.5f".format(lat, lon),
-                            confidence = 1.0f,
-                            source = "pin"
-                        )
-                        isPinResolving = false
-                    }
-                },
-                pinnedLat = pinnedLat,
-                pinnedLon = pinnedLon,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(260.dp)
-                    .padding(top = 4.dp)
+                results = state.results,
+                defaultCentre = GeoPoint(biasLat ?: 37.9838, biasLon ?: 23.7275),
+                onSelect = { result -> onResultSelected(result) },
+                onLongPress = onMapLongPressed,
+                pinnedLat = state.pinnedLat,
+                pinnedLon = state.pinnedLon,
+                modifier = Modifier.fillMaxWidth().height(260.dp).padding(top = 4.dp)
             )
-            // B5: interaction hint below map
             Text(
-                text = "Tap a marker to select · Long-press to drop a pin",
+                text = stringResource(R.string.location_map_interaction_hint),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
             )
+        }
+
+        // ── Pin resolving indicator ─────────────────────────────────────────
+        if (state.isPinResolving) {
+            Card(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text(text = stringResource(R.string.location_resolving_address),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
 
         // ── Pin confirm card ────────────────────────────────────────────────
-        if (isPinResolving) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text(
-                        text = "Resolving address…",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-        pinResult?.let { pin ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-            ) {
+        state.pinResult?.let { pin ->
+            Card(modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.PinDrop,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(imageVector = Icons.Filled.PinDrop, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Pinned location",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Text(text = stringResource(R.string.location_pinned_location),
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = pin.name ?: pin.displayAddress ?: "%.5f, %.5f".format(pin.latitude, pin.longitude),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Text(text = pin.name ?: pin.displayAddress ?: "%.5f, %.5f".format(pin.latitude, pin.longitude),
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (pin.name != null && pin.displayAddress != null) {
-                        Text(
-                            text = pin.displayAddress,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Text(text = pin.displayAddress, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                pinResult = null
-                                pinnedLat = null
-                                pinnedLon = null
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Cancel") }
-                        Button(
-                            onClick = {
-                                onResult(pin.latitude, pin.longitude, pin.displayAddress, pin.osmId)
-                                searchQuery = ""
-                                results = emptyList()
-                                pinResult = null
-                                pinnedLat = null
-                                pinnedLon = null
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Use this location") }
+                        OutlinedButton(onClick = onPinCancelled, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.action_cancel))
+                        }
+                        Button(onClick = onPinConfirmed, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.location_use_this_location))
+                        }
                     }
                 }
             }
         }
 
-        // ── Error / empty state ────────────────────────────────────────────
-        if (searchError != null && results.isEmpty() && !isSearching) {
-            Text(
-                text = searchError!!,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 4.dp, start = 4.dp)
-            )
+        // ── Error state ─────────────────────────────────────────────────────
+        if (state.searchError != null && state.results.isEmpty() && !state.isSearching) {
+            Text(text = state.searchError, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp, start = 4.dp))
         }
 
         // ── Advanced toggle ─────────────────────────────────────────────────
-        TextButton(
-            onClick = { showAdvanced = !showAdvanced },
-            modifier = Modifier.padding(top = 4.dp)
-        ) {
-            Text(if (showAdvanced) "Hide manual coordinates" else "Enter coordinates manually")
+        TextButton(onClick = { showAdvanced = !showAdvanced }, modifier = Modifier.padding(top = 4.dp)) {
+            Text(if (showAdvanced) stringResource(R.string.location_advanced_hide) else stringResource(R.string.location_advanced_show))
         }
 
         if (showAdvanced) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = manualLat,
-                    onValueChange = { manualLat = it; latError = false },
-                    label = { Text("Latitude") },
-                    isError = latError,
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = manualLat, onValueChange = { manualLat = it; latError = false },
+                    label = { Text(stringResource(R.string.location_latitude_label)) }, isError = latError,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = manualLon,
-                    onValueChange = { manualLon = it; lonError = false },
-                    label = { Text("Longitude") },
-                    isError = lonError,
+                    modifier = Modifier.weight(1f), singleLine = true)
+                OutlinedTextField(value = manualLon, onValueChange = { manualLon = it; lonError = false },
+                    label = { Text(stringResource(R.string.location_longitude_label)) }, isError = lonError,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
+                    modifier = Modifier.weight(1f), singleLine = true)
             }
             Button(
                 onClick = {
@@ -505,15 +392,14 @@ fun LocationSearchPicker(
                     latError = lat == null || lat !in -90.0..90.0
                     lonError = lon == null || lon !in -180.0..180.0
                     if (!latError && !lonError) {
-                        onResult(lat, lon, null, null)
+                        onResultSelected(com.yourname.expensetracker.domain.location.GeocodingResult(
+                            latitude = lat!!, longitude = lon!!, osmId = null, name = null,
+                            displayAddress = null, confidence = 1.0f, source = "manual"
+                        ))
                     }
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            ) {
-                Text("Set coordinates")
-            }
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            ) { Text(stringResource(R.string.location_set_coordinates)) }
         }
     }
 }

@@ -5,7 +5,7 @@ import android.content.Context
 import com.yourname.expensetracker.domain.util.AmountUtils
 
 object ClipboardAmountParser {
-    private val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
+    private val regex = Regex("""(?<![\d.,])(?:€|\$|EUR)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d{1,3}(?:\.\d{3})*(?:,\d{2})?|\d+[\.,]\d{2})(?![\d.,])\s*(?:€|\$|EUR)?""")
 
     fun parseAmountFromClipboard(clipboardManager: ClipboardManager): String? {
         return try {

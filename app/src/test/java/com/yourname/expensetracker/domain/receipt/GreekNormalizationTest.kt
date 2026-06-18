@@ -6,10 +6,11 @@ import org.junit.Test
 import java.lang.reflect.Method
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import io.mockk.mockk
 
 class GreekNormalizationTest {
 
-    private val parser = ReceiptParser(MerchantRulesRepository())
+    private val parser = ReceiptParser(MerchantRulesRepository(), timeProvider = mockk())
     private val normalizeMethod: Method = ReceiptParser::class.java.getDeclaredMethod("normalizeGreekOcr", String::class.java)
 
     init {

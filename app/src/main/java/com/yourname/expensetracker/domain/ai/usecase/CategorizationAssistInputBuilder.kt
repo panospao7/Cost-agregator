@@ -2,20 +2,33 @@ package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
+import com.yourname.expensetracker.domain.ai.model.MerchantTransactionHint
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.dto.CategoryRef
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RedactionSanitizer
+import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 class CategorizationAssistInputBuilder @Inject constructor(
     private val categoryRepository: CategoryRepository,
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val expenseRepository: ExpenseRepository,
+    private val merchantNormalizer: MerchantNormalizer,
+    private val redactionSanitizer: RedactionSanitizer,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
     suspend fun build(
@@ -23,24 +36,39 @@ class CategorizationAssistInputBuilder @Inject constructor(
         settings: AiSettings
     ): CategorizationAssistInput {
         val review = item.review
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
-        val categories = categoryRepository.getAll()
+        val privacyRedact = privacySettingsRepository.getSettings().redactBeforeCloud
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK) || privacyRedact
+        val categoryRefs = categoryRepository.getAll().map { CategoryRef(id = it.id, name = it.name) }
+        val rawMerchant = review.suggestedMerchant.trim().take(120)
+        val merchant = if (shouldRedact) {
+            redactionSanitizer.sanitizeMerchant(rawMerchant)
+        } else {
+            rawMerchant
+        }
+        val merchantKey = merchantNormalizer.normalize(rawMerchant).canonical.searchKey
+        val recentHints = fetchRecentTransactionHints(merchantKey, rawMerchant, shouldRedact)
+        val amount = sanitizeAmount(review.suggestedAmount)
 
         return CategorizationAssistInput(
             targetType = AiTargetType.PENDING_REVIEW,
             targetId = review.id,
-            merchant = review.suggestedMerchant.trim().take(120),
-            amount = review.suggestedAmount,
+            merchant = merchant,
+            amount = amount,
             currency = review.suggestedCurrency.take(8),
             transactionType = runCatching {
-                TransactionType.valueOf(review.suggestedType)
-            }.getOrDefault(TransactionType.PURCHASE),
+                DomainTransactionType.valueOf(review.suggestedType)
+            }.getOrDefault(DomainTransactionType.PURCHASE),
             date = review.suggestedDate,
             currentCategoryId = review.suggestedCategoryId,
             deterministicMatchType = review.matchType?.take(40),
-            deterministicExplanation = review.explanation?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS),
-            candidateCategories = buildCategoryOptions(categories),
-            supportingText = buildReviewSupportingText(item, shouldRedact)
+            deterministicExplanation = if (shouldRedact) {
+                null
+            } else {
+                review.explanation?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
+            },
+            candidateCategories = buildCategoryOptions(categoryRefs, shouldRedact),
+            supportingText = buildReviewSupportingText(item, shouldRedact),
+            recentTransactionsWithSameMerchant = recentHints
         )
     }
 
@@ -52,26 +80,64 @@ class CategorizationAssistInputBuilder @Inject constructor(
         currentCategoryId: Long?,
         settings: AiSettings
     ): CategorizationAssistInput {
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
-        val categories = categoryRepository.getAll()
-        val merchant = draftMerchant?.trim()?.takeIf { it.isNotBlank() }
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK) ||
+            privacySettingsRepository.getSettings().redactBeforeCloud
+        val categoryRefs = categoryRepository.getAll().map { CategoryRef(id = it.id, name = it.name) }
+        val rawMerchant = draftMerchant?.trim()?.takeIf { it.isNotBlank() }
             ?: receipt.parsedMerchant?.trim()?.takeIf { it.isNotBlank() }
             ?: ""
+        val trimmedMerchant = rawMerchant.take(120)
+        val merchant = if (shouldRedact) {
+            redactionSanitizer.sanitizeMerchant(trimmedMerchant)
+        } else {
+            trimmedMerchant
+        }
+        val amount = sanitizeAmount(draftAmount ?: receipt.parsedTotal)
+        val normalizedResult = merchantNormalizer.normalize(rawMerchant)
+        val recentHints = fetchRecentTransactionHints(normalizedResult.canonical.searchKey, rawMerchant, shouldRedact)
 
         return CategorizationAssistInput(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = receipt.id,
-            merchant = merchant.take(120),
-            amount = draftAmount ?: receipt.parsedTotal ?: 0.0,
+            merchant = merchant,
+            amount = amount,
             currency = receipt.currency.take(8),
-            transactionType = TransactionType.PURCHASE,
+            transactionType = DomainTransactionType.PURCHASE,
             date = draftDate ?: receipt.parsedDate,
             currentCategoryId = currentCategoryId,
             deterministicMatchType = null,
             deterministicExplanation = null,
-            candidateCategories = buildCategoryOptions(categories),
-            supportingText = buildReceiptSupportingText(receipt, shouldRedact)
+            candidateCategories = buildCategoryOptions(categoryRefs, shouldRedact),
+            supportingText = buildReceiptSupportingText(receipt, shouldRedact),
+            recentTransactionsWithSameMerchant = recentHints
         )
+    }
+
+    private suspend fun fetchRecentTransactionHints(
+        merchantKey: String,
+        merchant: String,
+        shouldRedact: Boolean
+    ): List<MerchantTransactionHint> {
+        if (merchantKey.isBlank()) return emptyList()
+        
+        return try {
+            val recentExpenses = expenseRepository.getRecentTransactionsForMerchant(merchantKey, 5)
+            recentExpenses.map { expenseWithCategory ->
+                val rawMerchant = expenseWithCategory.expense.merchant ?: merchant
+                val rawCategory = expenseWithCategory.categoryName ?: "Uncategorized"
+                MerchantTransactionHint(
+                    merchant = rawMerchant,
+                    categoryName = rawCategory,
+                    cloudMerchant = if (shouldRedact) sanitizeHistoryMerchant(rawMerchant) else rawMerchant,
+                    cloudCategoryName = if (shouldRedact) sanitizeHistoryCategory(rawCategory) else rawCategory
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "CategorizationAssistInputBuilder: failed to fetch recent transaction hints for merchant=%s", merchantKey)
+            emptyList()
+        }
     }
 
     private fun buildReviewSupportingText(
@@ -116,11 +182,38 @@ class CategorizationAssistInputBuilder @Inject constructor(
     }
 
     private fun buildCategoryOptions(
-        categories: List<com.yourname.expensetracker.data.database.entity.Category>
+        categories: List<CategoryRef>,
+        shouldRedact: Boolean
     ): List<CategoryOption> {
         return categories
             .sortedBy { it.name }
             .take(AppConfig.Ai.MAX_CATEGORY_OPTIONS_FOR_AI)
-            .map { CategoryOption(id = it.id, name = it.name) }
+            .map {
+                CategoryOption(
+                    id = it.id,
+                    name = it.name,
+                    cloudLabel = if (shouldRedact) sanitizeCategoryAlias(it.name) else it.name
+                )
+            }
+    }
+
+    private fun sanitizeHistoryMerchant(value: String): String {
+        val trimmed = value.trim().take(80)
+        if (trimmed.isBlank()) return "merchant_unknown"
+        return redactionSanitizer.sanitizeMerchant(trimmed)
+    }
+
+    private fun sanitizeHistoryCategory(value: String): String {
+        return sanitizeCategoryAlias(value)
+    }
+
+    private fun sanitizeCategoryAlias(value: String): String {
+        val trimmed = value.trim().take(80)
+        if (trimmed.isBlank()) return "category_unknown"
+        return "category_${trimmed.sha256Prefix()}"
+    }
+
+    private fun sanitizeAmount(amount: Double?): Double? {
+        return amount?.takeIf { it.isFinite() && it > 0.0 }
     }
 }

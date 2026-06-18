@@ -3,14 +3,18 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.UserCorrection
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class UserCorrectionRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: UserCorrectionDao
 ) {
-    suspend fun insert(correction: UserCorrection): Long =
-        dao.insert(correction)
+    suspend fun insert(correction: UserCorrection): Long {
+        writeBarrier.checkWritesAllowed("UserCorrectionRepository.insert")
+        return dao.insert(correction)
+    }
 
     suspend fun getAll(): List<UserCorrection> =
         dao.getAll()
@@ -48,6 +52,8 @@ class UserCorrectionRepository @Inject constructor(
     suspend fun hasPreviousApprovals(merchant: String, packageName: String): Boolean =
         dao.hasPreviousApprovals(merchant, packageName)
 
-    suspend fun deleteAll() =
+    suspend fun deleteAll() {
+        writeBarrier.checkWritesAllowed("UserCorrectionRepository.deleteAll")
         dao.deleteAll()
+    }
 }

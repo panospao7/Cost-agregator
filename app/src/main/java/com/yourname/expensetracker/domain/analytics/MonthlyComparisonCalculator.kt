@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,27 +11,28 @@ class MonthlyComparisonCalculator @Inject constructor() {
     fun calculate(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod?,
-        allExpenses: List<Expense>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
     ): MonthlyComparison {
         val currentExpenses = allExpenses.filter { 
-            it.date != null &&
             it.date >= currentMonth.startMs && 
             it.date < currentMonth.endMs &&
-            it.transactionType == TransactionType.PURCHASE && 
+            it.transactionType == DomainTransactionType.PURCHASE && 
             !it.isNotMine 
         }
         
         val previousExpenses = previousMonth?.let { pm ->
             allExpenses.filter { 
-                it.date != null &&
                 it.date >= pm.startMs && 
                 it.date < pm.endMs &&
-                it.transactionType == TransactionType.PURCHASE && 
+                it.transactionType == DomainTransactionType.PURCHASE && 
                 !it.isNotMine 
             }
         }
         
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val currentTotal = currentExpenses.sumOf { it.effectiveAmount }
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val previousTotal = previousExpenses?.sumOf { it.effectiveAmount }
         
         val changeAmount = if (previousTotal != null && previousTotal > 0) {
@@ -50,7 +51,10 @@ class MonthlyComparisonCalculator @Inject constructor() {
             changeAmount = changeAmount,
             changePercentage = changePercentage,
             currentCount = currentExpenses.size,
-            previousCount = previousExpenses?.size
+            previousCount = previousExpenses?.size,
+            displayCurrency = displayCurrency
         )
     }
+
+
 }

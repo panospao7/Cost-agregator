@@ -28,10 +28,21 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.categorization.CategorizationDebugTrace
 import com.yourname.expensetracker.domain.categorization.LayerDebugResult
 import com.yourname.expensetracker.domain.categorization.MatchType
-import java.text.SimpleDateFormat
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 import kotlinx.coroutines.launch
 
+/**
+ * Debug screen for testing the categorization pipeline.
+ *
+ * Note: The "Amount" label uses a generic label without currency symbol.
+ * TODO: If currency-specific display is needed, inject homeCurrency from
+ *       CurrencySettingsRepository and use it in the label.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategorizationDebugScreen(
@@ -51,9 +62,9 @@ fun CategorizationDebugScreen(
     
     val initialTimeString = remember(initialTimestamp) {
         if (initialTimestamp != null) {
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(initialTimestamp))
+            DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()).format(Instant.ofEpochMilli(initialTimestamp).atZone(ZoneId.systemDefault()))
         } else {
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()).format(java.time.LocalTime.now())
         }
     }
     var timeString by remember { mutableStateOf(initialTimeString) }
@@ -74,10 +85,10 @@ fun CategorizationDebugScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Categorization Debug") },
+                title = { Text(stringResource(R.string.debug_categorization_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 actions = {
@@ -89,7 +100,7 @@ fun CategorizationDebugScreen(
                                 snackbarHostState.showSnackbar("Trace copied to clipboard")
                             }
                         }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy JSON", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.action_copy), tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
@@ -126,7 +137,7 @@ fun CategorizationDebugScreen(
                         OutlinedTextField(
                             value = rawAmount,
                             onValueChange = { rawAmount = it },
-                            label = { Text("Amount (€)") },
+                            label = { Text("Amount") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f)
                         )
@@ -182,7 +193,11 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Pre-Processing (Phases 2 & 3)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "${stringResource(R.string.debug_preprocessing)} (Phases 2 & 3)",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Text("Input: ${trace.inputMerchant}", fontFamily = FontFamily.Monospace)
                     Text("Normalized: ${trace.normalizedMerchant}", fontFamily = FontFamily.Monospace)
@@ -223,7 +238,7 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                     modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("Final Decision", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.debug_postprocessing), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
                     Spacer(modifier = Modifier.height(8.dp))
                     
                     if (trace.finalResult.matchType != MatchType.UNKNOWN) {
@@ -232,19 +247,19 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
-                        Text("Matched by: ${trace.finalResult.matchType}")
+                        Text("${stringResource(R.string.debug_match)}: ${trace.finalResult.matchType}")
                         Text(
-                            "Confidence: ${(trace.finalResult.confidence * 100).toInt()}%",
+                            "${stringResource(R.string.debug_confidence)}: ${(trace.finalResult.confidence * 100).toInt()}%",
                             fontWeight = FontWeight.Bold
                         )
                         Text("Explanation: ${trace.finalResult.explanation}", style = MaterialTheme.typography.bodySmall)
                     } else {
                         Text(
-                            text = "UNCATEGORIZED",
+                            text = stringResource(R.string.debug_categorization_uncategorized),
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
-                        Text("All layers failed to find a match.")
+                        Text("${stringResource(R.string.debug_mismatch)}: All layers failed to find a match.")
                     }
                 }
             }
@@ -282,13 +297,17 @@ private fun LayerResultCard(result: LayerDebugResult) {
                     color = contentCol
                 )
                 if (result.matchFound) {
-                    Text("Result: ${result.categoryName}", color = contentCol)
-                    Text("Confidence: ${(result.confidence * 100).toInt()}%", color = contentCol)
+                    Text("${stringResource(R.string.debug_category_predicted)}: ${result.categoryName}", color = contentCol)
+                    Text("${stringResource(R.string.debug_confidence)}: ${(result.confidence * 100).toInt()}%", color = contentCol)
                     if (result.details.isNotBlank()) {
                         Text(result.details, style = MaterialTheme.typography.bodySmall, color = contentCol.copy(alpha = 0.8f))
                     }
                 } else {
-                    Text(result.details, style = MaterialTheme.typography.bodySmall, color = contentCol.copy(alpha = 0.7f))
+                    Text(
+                        "${stringResource(R.string.debug_category_actual)}: ${stringResource(R.string.debug_mismatch)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = contentCol.copy(alpha = 0.7f)
+                    )
                 }
             }
         }

@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.domain.service.NotificationService
-import com.yourname.expensetracker.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,6 +24,9 @@ class AndroidNotificationService @Inject constructor(
         private const val AI_CHANNEL_ID = "ai_briefings"
         private const val AI_CHANNEL_NAME = "AI Briefings"
         private const val AI_CHANNEL_DESC = "Read-only notifications for proactive AI finance briefings"
+        private const val ANOMALY_CHANNEL_ID = "anomaly_alerts"
+        private const val ANOMALY_CHANNEL_NAME = "Unusual Activity Alerts"
+        private const val ANOMALY_CHANNEL_DESC = "Real-time alerts for anomalous or suspicious charges"
     }
 
     private val notificationManager: NotificationManager by lazy {
@@ -50,16 +52,23 @@ class AndroidNotificationService @Inject constructor(
         ).apply {
             description = AI_CHANNEL_DESC
         }
-        notificationManager.createNotificationChannels(listOf(budgetChannel, aiChannel))
+        val anomalyChannel = NotificationChannel(
+            ANOMALY_CHANNEL_ID,
+            ANOMALY_CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = ANOMALY_CHANNEL_DESC
+        }
+        notificationManager.createNotificationChannels(listOf(budgetChannel, aiChannel, anomalyChannel))
     }
 
     override fun sendBudgetAlert(
         notificationId: Int,
         title: String,
         message: String
-    ) {
+    ): NotificationService.DeliveryResult {
         if (!notificationManager.areNotificationsEnabled()) {
-            return
+            return NotificationService.DeliveryResult.NOT_DELIVERED
         }
 
         val notification = NotificationCompat.Builder(context, BUDGET_CHANNEL_ID)
@@ -73,6 +82,7 @@ class AndroidNotificationService @Inject constructor(
             .build()
 
         notificationManager.notify(notificationId, notification)
+        return NotificationService.DeliveryResult.DELIVERED
     }
 
     override fun sendAiBriefingReady(
@@ -81,13 +91,25 @@ class AndroidNotificationService @Inject constructor(
         message: String,
         targetKey: String
     ) {
+        sendAiBriefingReadyWithResult(
+            notificationId = notificationId,
+            title = title,
+            message = message,
+            targetKey = targetKey
+        )
+    }
+
+    override fun sendAiBriefingReadyWithResult(
+        notificationId: Int,
+        title: String,
+        message: String,
+        targetKey: String
+    ): NotificationService.DeliveryResult {
         if (!notificationManager.areNotificationsEnabled()) {
-            return
+            return NotificationService.DeliveryResult.NOT_DELIVERED
         }
 
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setClass(context, MainActivity::class.java)
-            data = android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
@@ -109,10 +131,45 @@ class AndroidNotificationService @Inject constructor(
             .build()
 
         notificationManager.notify(notificationId, notification)
+        return NotificationService.DeliveryResult.DELIVERED
+    }
+
+    override fun sendAnomalyAlert(
+        notificationId: Int,
+        title: String,
+        message: String,
+        expenseId: Long
+    ) {
+        if (!notificationManager.areNotificationsEnabled()) {
+            return
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://activity?expenseId=$expenseId")).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, ANOMALY_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .build()
+
+        notificationManager.notify(notificationId, notification)
     }
 
     private fun mainActivityIntent(): PendingIntent {
-        val intent = Intent(context, MainActivity::class.java).apply {
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://home")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
         return PendingIntent.getActivity(

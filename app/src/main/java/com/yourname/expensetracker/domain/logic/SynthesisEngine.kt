@@ -1,19 +1,41 @@
 package com.yourname.expensetracker.domain.logic
 
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.data.database.entity.toRecurringPattern
 import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimeProvider
+
 import timber.log.Timber
 import java.time.Instant
 import java.util.*
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * SynthesisEngine - Core financial forecasting and budgeting logic.
+ *
+ * ## Source of truth for recurrence expansion
+ *
+ * This engine consumes [RecurringPattern] and [PlannedExpense] lists from
+ * [ForecastInputAssembler]. The **recurring lifecycle coordinator**
+ * ([com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator])
+ * is the canonical source of truth for expanding recurrence rules into
+ * concrete occurrences. Any future migration that generates [PlannedExpense]
+ * rows from occurrences (e.g. [com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService])
+ * MUST ensure that the assembler deduplicates these against the recurring
+ * patterns it already produces, preventing double-counting.
  * 
  * ## Block Party Algorithm
  * 
@@ -42,28 +64,90 @@ import javax.inject.Singleton
  */
 @Singleton
 class SynthesisEngine @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    /** @suppress Optional — when present, occurrences replace ad-hoc recurrence expansion in block-party calendar. */
+    private val recurringOccurrenceDao: RecurringOccurrenceDao? = null,
+    private val currencyConverter: CurrencyConverter
 ) {
     companion object {
         private const val TAG = "SynthesisEngine"
         private const val LIKELY_EXPENSE_WEIGHT = 0.7 // 70% weight for LIKELY planned expenses - middle ground
+        private const val BIWEEKLY_CYCLE_DAYS = 14
+        private const val BIWEEKLY_TOLERANCE_DAYS = 2
     }
 
+    /**
+     * Converts an amount from [fromCurrency] to [toCurrency].
+     * Returns null if conversion fails (caller should exclude and track).
+     */
+    private fun convertAmount(amount: Double, fromCurrency: String, toCurrency: String): Double? {
+        if (fromCurrency.equals(toCurrency, ignoreCase = true)) return amount
+        return kotlinx.coroutines.runBlocking {
+            currencyConverter.convert(amount, fromCurrency, toCurrency)?.convertedAmount
+        }
+    }
+
+    /**
+     * FCST-N4-FIXED: PlannedExpense status filter enforced in-engine.
+     *
+     * The domain [PlannedExpense] now carries a `status` field. Before any
+     * planned expense data is used for forecasting, expenses with status
+     * other than "PLANNED" are filtered out — they have already been
+     * converted to actual expenses and would cause double-counting if
+     * included.
+     *
+     * Callers no longer need to pre-filter; this engine handles it internally.
+     * The [ForecastInputAssembler.mapPlannedExpenses] also filters at the
+     * mapping boundary as an additional safety net.
+     */
     fun synthesize(
+        input: ForecastInputAssembler.ForecastInput
+    ): FinancialForecast {
+        val forecast = synthesize(
+            pastSumDaily = input.pastSumDaily,
+            recurringPatterns = input.recurringPatterns,
+            plannedExpenses = input.plannedExpenses,
+            savingsGoals = input.savingsGoals,
+            budgetStatuses = input.budgetStatuses,
+            spendingPace = input.spendingPace,
+            confirmedOccurrences = input.confirmedOccurrences,
+            displayCurrency = input.displayCurrency
+        )
+        val finalConfidence = (forecast.confidence - input.dataQuality.confidencePenalty).coerceIn(0.0, 1.0)
+        // P6-CURRENT-015: Surface input data-quality on the domain model so the UI/agents can
+        // show when a forecast was computed from partial data. The excluded count is the sum of
+        // the per-source exclusions tracked by ForecastInputAssembler (actual + planned +
+        // recurring); the warnings are copied verbatim from ForecastDataQuality.conversionWarnings.
+        val quality = input.dataQuality
+        val excluded = quality.excludedActualCount +
+            quality.excludedPlannedCount +
+            quality.excludedRecurringCount
+        return forecast.copy(
+            confidence = finalConfidence,
+            isPartial = quality.isPartial || forecast.isPartial,
+            qualityWarnings = quality.conversionWarnings,
+            excludedCount = excluded + forecast.excludedCount
+        )
+    }
+
+    internal fun synthesize(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
         savingsGoals: List<SavingsGoal>,
-        budgetStatuses: List<BudgetStatus>,
-        spendingPace: SpendingPace
+        budgetStatuses: List<BudgetStatusSnapshot>,
+        spendingPace: SpendingPace,
+        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList(),
+        displayCurrency: String = ""
     ): FinancialForecast {
         return try {
-            synthesizeInternal(pastSumDaily, recurringPatterns, plannedExpenses, savingsGoals, budgetStatuses, spendingPace)
+            synthesizeInternal(pastSumDaily, recurringPatterns, plannedExpenses, savingsGoals, budgetStatuses, spendingPace, confirmedOccurrences, displayCurrency)
         } catch (e: Exception) {
+            val fallbackNow = timeProvider.now()
             Timber.e(e, "Error in synthesize")
             FinancialForecast(
                 horizon = ForecastHorizon.REST_OF_MONTH,
-                generatedAt = Instant.now(),
+                generatedAt = Instant.ofEpochMilli(fallbackNow),
                 confidence = 0.0,
                 components = ForecastComponents(
                     recurringExpenses = emptyList(),
@@ -75,7 +159,8 @@ class SynthesisEngine @Inject constructor(
                     totalLikely = 0.0,
                     predictedDiscretionary = 0.0,
                     discretionaryBudget = 0.0,
-                    riskLevel = RiskLevel.MEDIUM
+                    riskLevel = RiskLevel.MEDIUM,
+                    confirmedOccurrences = confirmedOccurrences
                 ),
                 actionableInsights = emptyList()
             )
@@ -87,66 +172,118 @@ class SynthesisEngine @Inject constructor(
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
         savingsGoals: List<SavingsGoal>,
-        budgetStatuses: List<BudgetStatus>,
-        spendingPace: SpendingPace
+        budgetStatuses: List<BudgetStatusSnapshot>,
+        spendingPace: SpendingPace,
+        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList(),
+        displayCurrency: String = ""
     ): FinancialForecast {
         val now = timeProvider.now()
+        val sanitizedPastSumDaily = sanitizePastSumDaily(pastSumDaily)
+
+        // FCST-N4-FIXED: Only include PLANNED status expenses in-engine
+        // to prevent double-counting regardless of caller pre-filtering.
+        val filteredPlannedExpenses = plannedExpenses.filter { it.status == "PLANNED" }
+        if (filteredPlannedExpenses.size != plannedExpenses.size) {
+            Timber.d("$TAG: Filtered out ${plannedExpenses.size - filteredPlannedExpenses.size} non-PLANNED planned expenses")
+        }
         
         // Fix: Use single Calendar instance to avoid inconsistent dates if crossing midnight
-        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val calendar = Calendar.getInstance().apply { timeInMillis = now }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-        val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(1)
+        val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(0)
 
-        val endOfMonthCal = (calendar.clone() as Calendar).apply {
-            set(Calendar.DAY_OF_MONTH, daysInMonth)
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
-        }
-        val endOfMonth = endOfMonthCal.timeInMillis
-
-        val startOfTodayCal = (calendar.clone() as Calendar).apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val startOfToday = startOfTodayCal.timeInMillis
+        val (_, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(now)
+        val startOfToday = TimePeriodUtils.getStartOfDay(now)
 
         // 1. Calculate Committed (Highly likely/Automated/Must happen)
-        val committedUpcomingBills = recurringPatterns.filter { 
-            it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth 
-        }.sumOf { it.averageAmount }
+        //
+        // I1: Use materialised occurrences for all committed calculations,
+        // eliminating the need to manually estimate WEEKLY/BIWEEKLY occurrence
+        // counts from a single nextExpectedDate. Each confirmed occurrence
+        // carries the exact per-occurrence amount and due date.
+        // When confirmedOccurrences is empty (e.g. DAO unavailable or no
+        // manual rules), fall back to simple single-date filtering.
+        var recurringConversionFailures = 0
+
+        val committedUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
+            confirmedOccurrences
+                .filter { it.dueDate >= startOfToday && it.dueDate < endOfMonthExclusive }
+                .mapNotNull { occ ->
+                    if (displayCurrency.isBlank()) occ.expectedAmount
+                    else convertAmount(occ.expectedAmount, occ.expectedCurrency, displayCurrency)
+                        ?: run { recurringConversionFailures++; null }
+                }
+                .sum()
+        } else {
+            recurringPatterns.filter {
+                it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive
+            }.mapNotNull { p ->
+                if (displayCurrency.isBlank()) p.averageAmount
+                else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                    ?: run { recurringConversionFailures++; null }
+            }.sum()
+        }
         
-        val committedPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date <= endOfMonth
-        }.sumOf { it.amount }
+        // Convert planned expenses to displayCurrency (same pattern as recurring)
+        val committedPlanned = filteredPlannedExpenses.filter {
+            it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date < endOfMonthExclusive
+        }.mapNotNull { expense ->
+            if (displayCurrency.isBlank()) expense.amount
+            else convertAmount(expense.amount, expense.currency, displayCurrency)
+                ?: run { recurringConversionFailures++; null }
+        }.sum()
 
         val totalCommitted = committedUpcomingBills + committedPlanned
 
         // 2. Calculate Likely (Probable behavior)
         // Fix: Confidence Interval Gap (0.89-0.90 was missing)
-        val likelyUpcomingBills = recurringPatterns.filter { 
-            it.confidence >= 0.70f && it.confidence < 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth
-        }.sumOf { it.averageAmount }
-        
-        val likelyPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date <= endOfMonth
-        }.sumOf { it.amount } * LIKELY_EXPENSE_WEIGHT
-        
-        val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
-            when (pattern.frequency) {
-                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 7.0)
-                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 14.0)
-                RecurrenceFrequency.MONTHLY -> pattern.averageAmount
-                RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
-                RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
-                RecurrenceFrequency.ANNUALLY -> pattern.averageAmount / 12.0
-                else -> 0.0
-            }
+        // I1: Detected-only patterns (id == null) do not have confirmed
+        // occurrences. Fall back to simple single-date estimation without
+        // WEEKLY/BIWEEKLY multiplication (occurrences are the new source of
+        // truth for multiple-in-month repetitions).
+        val detectedPatterns = recurringPatterns.filter { it.id == null }
+        val likelyUpcomingBills = if (confirmedOccurrences.isNotEmpty()) {
+            detectedPatterns.filter {
+                it.confidence >= 0.70f && it.confidence < 0.90f &&
+                    it.nextExpectedDate >= startOfToday &&
+                    it.nextExpectedDate < endOfMonthExclusive
+            }.mapNotNull { p ->
+                if (displayCurrency.isBlank()) p.averageAmount
+                else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                    ?: run { recurringConversionFailures++; null }
+            }.sum()
+        } else {
+            recurringPatterns.filter {
+                it.confidence >= 0.70f && it.confidence < 0.90f &&
+                    it.nextExpectedDate >= startOfToday &&
+                    it.nextExpectedDate < endOfMonthExclusive
+            }.mapNotNull { p ->
+                if (displayCurrency.isBlank()) p.averageAmount
+                else convertAmount(p.averageAmount, p.currency, displayCurrency)
+                    ?: run { recurringConversionFailures++; null }
+            }.sum()
         }
+        
+        // Convert likely planned expenses to displayCurrency
+        val likelyPlanned = filteredPlannedExpenses.filter {
+            it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date < endOfMonthExclusive
+        }.mapNotNull { expense ->
+            if (displayCurrency.isBlank()) expense.amount
+            else convertAmount(expense.amount, expense.currency, displayCurrency)
+                ?: run { recurringConversionFailures++; null }
+        }.sum() * LIKELY_EXPENSE_WEIGHT
+        
+        val monthlyRecurringTotal = recurringPatterns.mapNotNull { pattern ->
+            when (pattern.frequency) {
+                RecurrenceFrequency.IRREGULAR -> null
+                else -> {
+                    val monthly = RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
+                    if (displayCurrency.isBlank()) monthly
+                    else convertAmount(monthly, pattern.currency, displayCurrency)
+                }
+            }
+        }.sum()
 
         val typicalDailyDiscretionary = spendingPace.averageMonthlyTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth } 
             ?: (spendingPace.previousMonthTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth })
@@ -165,23 +302,23 @@ class SynthesisEngine @Inject constructor(
                  if (remaining <= 0) 0.0
                  else {
                      val targetDate = goal.targetDate
-                     if (targetDate == null || targetDate <= now) remaining // Due now or past due
-                     else {
-                         val msRemaining = targetDate - now
-                         val daysRemainingInGoal = (msRemaining / (24 * 60 * 60 * 1000.0)).coerceAtLeast(1.0)
-                         val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
-                         val remainingMonthly = remaining / targetMonthsRemaining
-                         // For this month specifically
+                      if (targetDate == null || targetDate <= now) remaining // Due now or past due
+                      else {
+                          val msRemaining = targetDate - now
+                          val daysRemainingInGoal = (msRemaining.toDouble() / TimeUnit.DAYS.toMillis(1).toDouble()).coerceAtLeast(1.0)
+                          val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
+                          val remainingMonthly = remaining / targetMonthsRemaining
+                          // For this month specifically
                          remainingMonthly
                      }
                  }
             }
 
         // 4. Calculate Projected Timeline Points with date-based spikes
-        val lastKnownTotal = pastSumDaily.lastOrNull() ?: 0.0
+        val lastKnownTotal = sanitizedPastSumDaily.lastOrNull() ?: 0.0
 
         // Collect planned expenses with their dates (MUST=100%, LIKELY=70%)
-        val plannedExpensesInRange = plannedExpenses.filter { it.date >= startOfToday && it.date <= endOfMonth }
+        val plannedExpensesInRange = filteredPlannedExpenses.filter { it.date >= startOfToday && it.date < endOfMonthExclusive }
         
         // Reuse single Calendar instance for grouping
         val dayCalendar = Calendar.getInstance()
@@ -190,14 +327,25 @@ class SynthesisEngine @Inject constructor(
             .groupBy { expense ->
                 dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
-            .mapValues { it.value.sumOf { exp -> exp.amount } }
+            .mapValues { (_, exps) ->
+                exps.sumOf { expense ->
+                    if (displayCurrency.isBlank()) expense.amount
+                    else convertAmount(expense.amount, expense.currency, displayCurrency) ?: expense.amount
+                }
+            }
         
         val likelyExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.LIKELY }
             .groupBy { expense ->
                 dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
-            .mapValues { it.value.sumOf { exp -> exp.amount } * LIKELY_EXPENSE_WEIGHT }
+            .mapValues { (_, exps) ->
+                exps.sumOf { expense ->
+                    val converted = if (displayCurrency.isBlank()) expense.amount
+                        else convertAmount(expense.amount, expense.currency, displayCurrency) ?: expense.amount
+                    converted * LIKELY_EXPENSE_WEIGHT
+                }
+            }
 
         // Pre-compute running totals for O(n) projection instead of O(n²)
         val mustDays = mustExpensesByDay.keys.sorted()
@@ -225,8 +373,8 @@ class SynthesisEngine @Inject constructor(
         }
         
         // 5. Calculate Discretionary (Available)
-        val overallBudget = budgetStatuses.find { it.budget.categoryId == null }?.budget?.amount ?: 0.0
-        val categoryBudgetsSum = budgetStatuses.filter { it.budget.categoryId != null }.sumOf { it.budget.amount }
+        val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }?.budgetAmount ?: 0.0
+        val categoryBudgetsSum = budgetStatuses.filter { it.budgetCategoryId != null }.sumOf { it.budgetAmount }
         val budgetLimit = if (overallBudget > 0) overallBudget else categoryBudgetsSum
         
         val spentSoFar = spendingPace.currentMonthSpent
@@ -259,74 +407,78 @@ class SynthesisEngine @Inject constructor(
         if (spendingPace.averageMonthlyTotal == null) forecastConfidence -= 0.10
         if (recurringPatterns.isEmpty()) forecastConfidence -= 0.05
         
+        if (recurringConversionFailures > 0) {
+            Timber.w("$TAG: %d recurring pattern(s) excluded due to currency conversion failure", recurringConversionFailures)
+        }
+
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
-            generatedAt = Instant.now(),
+            generatedAt = Instant.ofEpochMilli(now),
             confidence = forecastConfidence.coerceIn(0.1, 0.95), 
+            displayCurrency = displayCurrency,
             components = ForecastComponents(
                 recurringExpenses = recurringPatterns,
-                plannedExpenses = plannedExpenses,
+                plannedExpenses = filteredPlannedExpenses,
                 goalReserves = goalReserves,
-                pastSpendingPoints = pastSumDaily,
+                pastSpendingPoints = sanitizedPastSumDaily,
                 projectedSpendingPoints = projectedPoints,
                 totalCommitted = totalCommitted,
                 totalLikely = totalLikely,
                 predictedDiscretionary = predictedDiscretionary,
                 discretionaryBudget = discretionaryBudget,
-                riskLevel = riskLevel
+                riskLevel = riskLevel,
+                confirmedOccurrences = confirmedOccurrences
             ),
-            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, plannedExpenses, savingsGoals)
+            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals),
+            excludedCount = recurringConversionFailures,
+            isPartial = recurringConversionFailures > 0
         )
     }
 
-    fun calculateBlockPartyData(
+    suspend fun calculateBlockPartyData(
         forecast: FinancialForecast,
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        expenses: List<TransactionSummary>,
         dailySpending: List<Float>,
         budgetLimit: Double
     ): List<BlockPartyDay> {
-        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val now = timeProvider.now()
+        val calendar = Calendar.getInstance().apply { timeInMillis = now }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-        
-        calendar.set(Calendar.DAY_OF_MONTH, 1)
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        val startOfMonth = calendar.timeInMillis
-        calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH))
-        val endOfMonth = calendar.timeInMillis
+        val (startOfMonth, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(now)
         
         val components = forecast.components
         
         // 1. Calculate Monthly Totals for pro-rating (frequency-adjusted)
+        val bpCurrency = forecast.displayCurrency
         val totalMonthlyRecurring = components.recurringExpenses.sumOf { pattern ->
             when (pattern.frequency) {
-                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 7.0)
-                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 14.0)
-                RecurrenceFrequency.MONTHLY -> pattern.averageAmount
-                RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
-                RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
-                RecurrenceFrequency.ANNUALLY -> pattern.averageAmount / 12.0
-                else -> 0.0
+                RecurrenceFrequency.IRREGULAR -> 0.0
+                else -> {
+                    val monthly = RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
+                    if (bpCurrency.isBlank()) monthly
+                    else convertAmount(monthly, pattern.currency, bpCurrency) ?: monthly
+                }
             }
         }
         
         // Filter planned expenses for this month only using timestamp range
         // MUST at 100%, LIKELY at 70%, OPTIONAL ignored
-        val thisMonthPlanned = components.plannedExpenses.filter { it.date in startOfMonth..endOfMonth }
+        val thisMonthPlanned = components.plannedExpenses.filter { it.date >= startOfMonth && it.date < endOfMonthExclusive }
+        // Convert planned expenses to forecast display currency
         val totalMonthlyPlanned = thisMonthPlanned
             .filter { it.priority != PlannedExpensePriority.OPTIONAL }
             .sumOf { expense ->
-                when (expense.priority) {
+                val raw = when (expense.priority) {
                     PlannedExpensePriority.MUST -> expense.amount
                     PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
                     PlannedExpensePriority.OPTIONAL -> 0.0
                 }
+                if (bpCurrency.isBlank()) raw
+                else convertAmount(raw, expense.currency, bpCurrency) ?: raw
             }
         
-        // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
+            // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
         val goalReserves = components.goalReserves
         
         // LOG-021: Fix - Use Discretionary Pool Formula correctly
@@ -335,9 +487,13 @@ class SynthesisEngine @Inject constructor(
 
         // Optimization: Group raw expenses by day once O(N) - use timestamp range filter
         // Pre-sort expenses by amount within each day for top 3 transactions
-        val expensesByDay = expenses.filter { it.date in startOfMonth..endOfMonth }
+        val dayBucketCalendar = Calendar.getInstance()
+        val expensesByDay = expenses.filter {
+            it.date >= startOfMonth &&
+                it.date < endOfMonthExclusive
+        }
             .groupBy { expense ->
-                ((expense.date - startOfMonth) / (24 * 60 * 60 * 1000)).toInt() + 1
+                dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
             .mapValues { (_, dayExpenses) -> 
                 dayExpenses.sortedByDescending { it.amount }
@@ -345,23 +501,29 @@ class SynthesisEngine @Inject constructor(
 
         // Optimization: Group planned expenses by day - use timestamp range filter
         val plannedByDay = thisMonthPlanned.groupBy { expense ->
-            ((expense.date - startOfMonth) / (24 * 60 * 60 * 1000)).toInt() + 1
+            dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
         }
 
-        val dateCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        val anchorCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val dateCal = Calendar.getInstance().apply { timeInMillis = now }
 
-        // Pre-calculate which days have recurring expenses (optimization)
-        val recurringByDay = mutableMapOf<Int, List<RecurringPattern>>()
-        for (day in 1..daysInMonth) {
-            dateCal.set(Calendar.DAY_OF_MONTH, day)
-            dateCal.set(Calendar.HOUR_OF_DAY, 12)
-            val recurringOnDay = components.recurringExpenses.filter { 
-                isRecurringExpected(it, dateCal, anchorCal) 
-            }
-            if (recurringOnDay.isNotEmpty()) {
-                recurringByDay[day] = recurringOnDay
-            }
+        // Pre-calculate which days have recurring expenses.
+        // When the occurrence DAO is available, use the canonical occurrence source
+        // (PAID + PLANNED) instead of ad-hoc date matching.
+        val recurringByDay = if (recurringOccurrenceDao != null) {
+            buildRecurringByDayFromOccurrences(
+                components.recurringExpenses,
+                startOfMonth,
+                endOfMonthExclusive,
+                daysInMonth,
+                recurringOccurrenceDao
+            )
+        } else {
+            buildRecurringByDayLegacy(
+                components.recurringExpenses,
+                now,
+                daysInMonth,
+                dateCal
+            )
         }
 
         return (1..daysInMonth).map { day ->
@@ -371,7 +533,10 @@ class SynthesisEngine @Inject constructor(
 
             // 1. Use pre-calculated recurring expenses for this day
             val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
-            val recurringOnDay = recurringItemsOnDay.sumOf { it.averageAmount }
+            val recurringOnDay = recurringItemsOnDay.sumOf { pattern ->
+                if (bpCurrency.isBlank()) pattern.averageAmount
+                else convertAmount(pattern.averageAmount, pattern.currency, bpCurrency) ?: pattern.averageAmount
+            }
             val recurringNames = recurringItemsOnDay.map { it.merchantName }
 
             // 2. Identify Planned on this day
@@ -380,19 +545,27 @@ class SynthesisEngine @Inject constructor(
             val plannedOnDay = plannedItemsOnDay
                 .filter { it.priority != PlannedExpensePriority.OPTIONAL }
                 .sumOf { expense ->
-                    when (expense.priority) {
+                    val raw = when (expense.priority) {
                         PlannedExpensePriority.MUST -> expense.amount
                         PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
                         PlannedExpensePriority.OPTIONAL -> 0.0
                     }
+                    if (bpCurrency.isBlank()) raw
+                    else convertAmount(raw, expense.currency, bpCurrency) ?: raw
                 }
             val plannedNames = plannedItemsOnDay.map { it.description }
 
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
             val actualFromHistory = dailySpending.getOrNull(day - 1)?.toDouble()
+            // SAFE: Callers (ComputeDashboardWidgetsUseCase) must normalize expenses via
+            // AnalyticsCurrencyNormalizer before invoking SynthesisEngine.
+            // If adding a new caller, normalize first.
             val actualFromExpenses = expensesByDay[day]?.sumOf { it.effectiveAmount }
-            // Fallback to per-day expense aggregation when daily history is unavailable.
-            val actual = actualFromHistory ?: actualFromExpenses
+            // FCST-3: Sum actual occurrences correctly — prefer expenses from the expense
+            // table over daily history since the history may not account for all entries
+            // (e.g., recently added expenses). Using expenses as the primary source ensures
+            // the actual column always reflects all persisted data.
+            val actual = actualFromExpenses ?: actualFromHistory
             val actualOrZero = actual ?: 0.0
 
             val dayTransactions = (expensesByDay[day] ?: emptyList())
@@ -441,11 +614,10 @@ class SynthesisEngine @Inject constructor(
                 dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
             }
             RecurrenceFrequency.BIWEEKLY -> {
-                // Check day-of-week matches (like weekly) and allow ±2 day tolerance
-                val dayOfWeekMatch = dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
-                val diff = dateCal.timeInMillis - anchor
-                val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
-                dayOfWeekMatch && (daysDiff in -2L..16L)
+                val daysDiff = TimePeriodUtils.daysBetween(anchor, dateCal.timeInMillis)
+                val mod = Math.floorMod(daysDiff, BIWEEKLY_CYCLE_DAYS)
+                val distanceToCycle = minOf(mod, BIWEEKLY_CYCLE_DAYS - mod)
+                distanceToCycle <= BIWEEKLY_TOLERANCE_DAYS
             }
             RecurrenceFrequency.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
@@ -487,9 +659,128 @@ class SynthesisEngine @Inject constructor(
         }
     }
 
+    /**
+     * Builds the [recurringByDay] map from materialised [RecurringOccurrence] rows.
+     * This is the canonical source for manual recurring rules.
+     *
+     * Detected-only patterns (id == null) are handled via the legacy ad-hoc
+     * matcher so they still appear in the block-party calendar.
+     */
+    private suspend fun buildRecurringByDayFromOccurrences(
+        recurringPatterns: List<RecurringPattern>,
+        monthStart: Long,
+        monthEnd: Long,
+        daysInMonth: Int,
+        occurrenceDao: RecurringOccurrenceDao
+    ): Map<Int, List<RecurringPattern>> {
+        val result = mutableMapOf<Int, MutableList<RecurringPattern>>()
+
+        // ── Occurrence path for manual rules ────────────────────────────────
+        val manualPatterns = recurringPatterns.filter { it.id != null }
+        val manualIds = manualPatterns.mapNotNull { it.id }.toSet()
+
+        // Track which rule IDs had at least one occurrence row
+        val ruleIdsWithOccurrences = mutableSetOf<Long>()
+
+        if (manualIds.isNotEmpty()) {
+            // DBG-04: do NOT exclude by status here. Any rule with ANY materialised
+            // occurrence row in range (PLANNED, PAID, SKIPPED, CANCELLED, …) must be
+            // marked as "has occurrences" so it does NOT fall back to legacy
+            // isRecurringExpected date-matching below. Previously the query filtered to
+            // PLANNED|PAID only, so a rule whose only in-range occurrence was SKIPPED or
+            // CANCELLED returned no rows → it landed in missingRuleIds → legacy matching
+            // RE-ADDED it as a bill day, resurfacing a bill the user explicitly
+            // skipped/cancelled. Single DB round trip; status filtering happens in-loop.
+            val occurrences = occurrenceDao.getByDateRange(monthStart, monthEnd)
+            .filter {
+                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                        it.sourceId in manualIds
+                }
+            val dayCal = Calendar.getInstance()
+            for (occ in occurrences) {
+                // P6-CURRENT-014: every materialised occurrence marks its rule as
+                // "has occurrences" so it does NOT fall back to legacy date matching
+                // below. Only PLANNED occurrences are future obligations on the
+                // bill-day calendar — PAID rows are already-fulfilled actuals (would
+                // double-count against the matching actual expense), and SKIPPED/
+                // CANCELLED rows are explicit user removals (DBG-04) — neither must
+                // contribute to the bill-day map.
+                ruleIdsWithOccurrences.add(occ.sourceId)
+                if (occ.status != "PLANNED") continue
+                val day = dayCal.apply { timeInMillis = occ.dueDate }.get(Calendar.DAY_OF_MONTH)
+                if (day in 1..daysInMonth) {
+                    result.getOrPut(day) { mutableListOf() }.add(occ.toRecurringPattern())
+                }
+            }
+        }
+
+        // P0-6: Manual rules with ZERO occurrence rows → fall back to legacy matching
+        val missingRuleIds = manualIds - ruleIdsWithOccurrences
+        if (missingRuleIds.isNotEmpty()) {
+            val missingPatterns = manualPatterns.filter { it.id in missingRuleIds }
+            if (missingPatterns.isNotEmpty()) {
+                Timber.w("$TAG: %d manual rule(s) have zero occurrence rows, falling back to legacy matching",
+                    missingRuleIds.size)
+                val dateCal = Calendar.getInstance()
+                val anchorCal = Calendar.getInstance()
+                for (day in 1..daysInMonth) {
+                    dateCal.set(Calendar.DAY_OF_MONTH, day)
+                    dateCal.set(Calendar.HOUR_OF_DAY, 12)
+                    val onDay = missingPatterns.filter { isRecurringExpected(it, dateCal, anchorCal) }
+                    if (onDay.isNotEmpty()) {
+                        result.getOrPut(day) { mutableListOf() }.addAll(onDay)
+                    }
+                }
+            }
+        }
+
+        // ── Legacy path for detected-only patterns ──────────────────────────
+        val detectedPatterns = recurringPatterns.filter { it.id == null }
+        if (detectedPatterns.isNotEmpty()) {
+            val dateCal = Calendar.getInstance()
+            val anchorCal = Calendar.getInstance()
+            for (day in 1..daysInMonth) {
+                dateCal.set(Calendar.DAY_OF_MONTH, day)
+                dateCal.set(Calendar.HOUR_OF_DAY, 12)
+                val onDay = detectedPatterns.filter { isRecurringExpected(it, dateCal, anchorCal) }
+                if (onDay.isNotEmpty()) {
+                    result.getOrPut(day) { mutableListOf() }.addAll(onDay)
+                }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Legacy fallback: builds [recurringByDay] using ad-hoc
+     * [isRecurringExpected] matching for ALL patterns. Used when the occurrence
+     * DAO is not available (e.g. in unit tests).
+     */
+    private fun buildRecurringByDayLegacy(
+        recurringPatterns: List<RecurringPattern>,
+        now: Long,
+        daysInMonth: Int,
+        dateCal: Calendar
+    ): Map<Int, List<RecurringPattern>> {
+        val result = mutableMapOf<Int, List<RecurringPattern>>()
+        val anchorCal = Calendar.getInstance().apply { timeInMillis = now }
+        for (day in 1..daysInMonth) {
+            dateCal.set(Calendar.DAY_OF_MONTH, day)
+            dateCal.set(Calendar.HOUR_OF_DAY, 12)
+            val recurringOnDay = recurringPatterns.filter {
+                isRecurringExpected(it, dateCal, anchorCal)
+            }
+            if (recurringOnDay.isNotEmpty()) {
+                result[day] = recurringOnDay
+            }
+        }
+        return result
+    }
+
     private fun determineRiskLevel(
         pace: SpendingPace,
-        budgets: List<BudgetStatus>,
+        budgets: List<BudgetStatusSnapshot>,
         discretionary: Double,
         limit: Double
     ): RiskLevel {
@@ -524,22 +815,42 @@ class SynthesisEngine @Inject constructor(
 
     private fun buildInsights(
         risk: RiskLevel,
-        budgets: List<BudgetStatus>,
+        budgets: List<BudgetStatusSnapshot>,
         pace: SpendingPace,
         planned: List<PlannedExpense>,
         goals: List<SavingsGoal>
-    ): List<String> {
-        val insights = mutableListOf<String>()
-        if (pace.paceStatus == PaceStatus.OVER_PACE) insights.add("Spending pace is higher than usual.")
+    ): List<UiText> {
+        val insights = mutableListOf<UiText>()
+        if (pace.paceStatus == PaceStatus.OVER_PACE) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_SPENDING_PACE_HIGHER))
+        }
         val exceeded = budgets.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
-        if (exceeded > 0) insights.add("$exceeded budgets exceeded.")
+        if (exceeded > 0) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_BUDGETS_EXCEEDED_FORMAT, exceeded))
+        }
         
         val strictGoalCount = goals.count { it.protectionLevel == GoalProtectionLevel.STRICT }
-        if (strictGoalCount > 0) insights.add("$strictGoalCount strict savings goals active.")
+        if (strictGoalCount > 0) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_STRICT_SAVINGS_GOALS_ACTIVE_FORMAT, strictGoalCount))
+        }
         
         val mustPlannedCount = planned.count { it.priority == PlannedExpensePriority.MUST }
-        if (mustPlannedCount > 0) insights.add("$mustPlannedCount must-pay planned expenses this month.")
+        if (mustPlannedCount > 0) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_MUST_PAY_PLANNED_EXPENSES_FORMAT, mustPlannedCount))
+        }
         
         return insights
+    }
+
+    private fun sanitizePastSumDaily(pastSumDaily: List<Double>): List<Double> {
+        var lastFiniteValue = 0.0
+        return pastSumDaily.map { point ->
+            if (point.isFinite()) {
+                lastFiniteValue = point
+                point
+            } else {
+                lastFiniteValue
+            }
+        }
     }
 }

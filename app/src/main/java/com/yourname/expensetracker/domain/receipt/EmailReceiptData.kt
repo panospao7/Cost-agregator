@@ -1,0 +1,35 @@
+package com.yourname.expensetracker.domain.receipt
+
+/**
+ * Structured data extracted from an email receipt.
+ *
+ * This is the single canonical model consumed by [ReceiptLifecycleCoordinator]
+ * and used by the email ingestion batch path; it carries parsed financial
+ * fields so the coordinator can work with fully-extracted receipt information
+ * without re-parsing.
+ *
+ * @property messageId   Unique email message ID (for deduplication).
+ * @property from        Sender email address.
+ * @property subject     Email subject line.
+ * @property body        Raw email body (HTML or plain text).
+ * @property receivedAt  Timestamp when the email was received (epoch millis).
+ * @property amount      Extracted total amount, if available.
+ * @property merchant    Extracted merchant name, if available.
+ * @property currency    Extracted currency code (e.g. "EUR", "USD"), if available.
+ * @property date        Extracted transaction date (epoch millis), if available.
+ * @property items       JSON string of extracted line items, if available.
+ * @property confidence Parser confidence in [0,1]; defaults to 1.0 when unknown.
+ */
+data class EmailReceiptData(
+    val messageId: String,
+    val from: String,
+    val subject: String,
+    val body: String,
+    val receivedAt: Long,
+    val amount: Double?,
+    val merchant: String?,
+    val currency: String?,
+    val date: Long?,
+    val items: String?, // JSON
+    val confidence: Double = 1.0
+)

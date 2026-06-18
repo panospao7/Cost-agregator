@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
@@ -31,8 +32,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestCategoryFallbackUseCaseTest {
 
@@ -97,7 +100,7 @@ class SuggestCategoryFallbackUseCaseTest {
             rationale = "Merchant looks like a supermarket"
         )
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(item)
@@ -140,7 +143,7 @@ class SuggestCategoryFallbackUseCaseTest {
             rationale = "Merchant looks like a supermarket"
         )
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(item)
@@ -162,7 +165,7 @@ class SuggestCategoryFallbackUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { categorizationAssistService.suggest(input) } returns null
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(item)
@@ -174,6 +177,41 @@ class SuggestCategoryFallbackUseCaseTest {
     }
 
     @Test
+    fun `invoke bypasses malformed cached category payload and requests provider`() = runTest {
+        val item = makeItem()
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery { inputBuilder.build(item, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns AiArtifactRecord(
+            id = 99L,
+            targetType = AiTargetType.PENDING_REVIEW,
+            targetId = 1L,
+            targetKey = "pending_review:1",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            promptVersion = AppConfig.Ai.PROMPT_VERSION_CATEGORIZATION,
+            sourceHash = com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash.forReviewCategorizationFallback(input),
+            payloadJson = """{"categoryId":0,"categoryName":"Groceries","confidence":0.9}""",
+            createdAt = 1_000L,
+            updatedAt = 1_000L,
+            expiresAt = 2_000L
+        )
+        coEvery { categoryRepository.getAll() } returns listOf(Category(id = 2L, name = "Groceries", icon = "G", color = "#00FF00"))
+        coEvery { categorizationAssistService.suggest(input) } returns CategoryAssistSuggestion(
+            categoryId = 2L,
+            categoryName = "Groceries"
+        )
+        coEvery { aiArtifactRepository.upsert(any()) } returns 1L
+
+        val result = useCase(item)
+
+        assertTrue(result is CategoryAssistGenerationResult.Success)
+        assertTrue((result as CategoryAssistGenerationResult.Success).fromCache.not())
+        coVerify(exactly = 1) { categorizationAssistService.suggest(input) }
+    }
+
+    @Test
     fun `invoke for receipt stores scanned receipt artifact when provider returns supported category`() = runTest {
         val receipt = makeReceipt()
         val input = CategorizationAssistInput(
@@ -182,7 +220,7 @@ class SuggestCategoryFallbackUseCaseTest {
             merchant = "Lidl",
             amount = 10.0,
             currency = "EUR",
-            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
             date = receipt.parsedDate,
             currentCategoryId = null,
             deterministicMatchType = null,
@@ -201,7 +239,7 @@ class SuggestCategoryFallbackUseCaseTest {
             rationale = "Receipt text looks like supermarket shopping"
         )
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(
@@ -275,7 +313,7 @@ class SuggestCategoryFallbackUseCaseTest {
             merchant = "Lidl",
             amount = 10.0,
             currency = "EUR",
-            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
             date = receipt.parsedDate,
             currentCategoryId = 99L,
             deterministicMatchType = null,
@@ -310,6 +348,30 @@ class SuggestCategoryFallbackUseCaseTest {
         assertTrue(result is CategoryAssistGenerationResult.Success)
     }
 
+    @Test
+    fun `invoke propagates CancellationException without writing FAILED artifact`() = runTest {
+        val item = makeItem()
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery { inputBuilder.build(item, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { categorizationAssistService.suggest(input) } throws CancellationException("cancelled")
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        try {
+            useCase(item)
+            fail("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        // Only the RUNNING tombstone should have been written, no FAILED artifact
+        assertTrue(captured.size == 1)
+        assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
+    }
+
     private fun makeItem() = PendingReviewWithReceipt(
         PendingReview(
             id = 1L,
@@ -335,7 +397,7 @@ class SuggestCategoryFallbackUseCaseTest {
         merchant = "Lidl",
         amount = 10.0,
         currency = "EUR",
-        transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+        transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
         date = null,
         currentCategoryId = null,
         deterministicMatchType = "FALLBACK",

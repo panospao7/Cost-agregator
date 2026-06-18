@@ -6,6 +6,18 @@ import android.content.Intent
 import com.yourname.expensetracker.service.NotificationCaptureService
 import timber.log.Timber
 
+/**
+ * Broadcast receiver that starts [NotificationCaptureService] after device
+ * boot or package replacement.
+ *
+ * ## Privacy gate
+ * This receiver does **not** perform a privacy gate check itself. The
+ * [NotificationCaptureService] checks the [com.yourname.expensetracker.domain.privacy.PrivacyGate]
+ * at runtime before processing any notification data. If the gate denies
+ * capture, the service silently drops the notification without persisting
+ * anything. This design avoids a blocking gate check during the broadcast
+ * receiver's short execution window.
+ */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {

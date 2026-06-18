@@ -5,9 +5,16 @@ package com.yourname.expensetracker.domain.config
  * Replaces magic numbers and hardcoded thresholds throughout the codebase.
  */
 object AppConfig {
+    // Default currency
+    const val DEFAULT_CURRENCY = "EUR"
+
     // Amount limits
     const val MAX_TRANSACTION_AMOUNT = 1_000_000.0
     const val MAX_RECEIPT_AMOUNT = 50_000.0
+
+    object Transaction {
+        const val DEFAULT_FUTURE_DATE_TOLERANCE_DAYS = 1
+    }
 
     // Recurring detection thresholds
     const val RECURRING_AMOUNT_VARIANCE_THRESHOLD = 0.35
@@ -52,7 +59,7 @@ object AppConfig {
         const val NOMINATIM_MIN_INTERVAL_MS = 1_100L  // 1.1 sec → safe under 1 req/sec policy
 
         /** User-Agent header required by Nominatim usage policy. */
-        const val NOMINATIM_USER_AGENT = "ExpenseTrackerApp/1.0 (Android; panospao777@gmail.com)"
+        const val NOMINATIM_USER_AGENT = "ExpenseTracker/Android"
 
         /** Nominatim base URL. */
         const val NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
@@ -64,6 +71,11 @@ object AppConfig {
          *  150 m was too small for typical urban GPS accuracy (~50 m CEP);
          *  250 m covers the 95th-percentile scatter without returning too many POIs. */
         const val OVERPASS_SEARCH_RADIUS_M = 250
+
+        /** Max distance in metres for auto-accepting a single Overpass POI result.
+         *  If the single POI is beyond this distance from device location, the user
+         *  is prompted to confirm instead of auto-accepting. 0 = no distance limit. */
+        const val OVERPASS_AUTO_ACCEPT_MAX_DISTANCE_M = 200
 
         /** Haversine radius (km) within which a user correction is considered area-local. */
         const val CORRECTION_AREA_RADIUS_KM = 5.0f
@@ -85,7 +97,9 @@ object AppConfig {
         const val SOURCE_NOMINATIM_NAME_ONLY = "NOMINATIM_NAME_ONLY"
         const val SOURCE_OVERPASS_POI = "OVERPASS_POI"
         const val SOURCE_USER_MANUAL = "USER_MANUAL"
+        const val SOURCE_USER_CONFIRMED_POI = "USER_CONFIRMED_POI"
         const val SOURCE_DEVICE_GPS = "DEVICE_GPS"
+        const val SOURCE_UNKNOWN = "UNKNOWN"
         const val SOURCE_PHOTON = "PHOTON"
         const val SOURCE_GEOAPIFY = "GEOAPIFY"
         const val SOURCE_GOOGLE_PLACES = "GOOGLE_PLACES"
@@ -112,6 +126,9 @@ object AppConfig {
         /** How long review capture assist artifacts stay fresh before regeneration. */
         const val REVIEW_CAPTURE_ASSIST_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
+        /** How long receipt item categorization artifacts stay fresh before regeneration. */
+        const val RECEIPT_ITEMS_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
+
         // Input size limits (cloud privacy)
         /** Max characters of raw notification text sent to the cloud for a review explanation. */
         const val MAX_REVIEW_TEXT_CHARS_FOR_CLOUD = 500
@@ -124,6 +141,7 @@ object AppConfig {
         const val PROMPT_VERSION_REVIEW    = "v1"
         const val PROMPT_VERSION_QUERY     = "v1"
         const val PROMPT_VERSION_RECEIPT   = "v1"
+        const val PROMPT_VERSION_RECEIPT_ITEMS = "v1" // NEW: Receipt item categorization
         const val PROMPT_VERSION_CATEGORIZATION = "v1"
         const val PROMPT_VERSION_DEDUPE    = "v1"
         const val DASHBOARD_BRIEFING_CLOUD_PROVIDER = "google-ai-studio"
@@ -138,6 +156,8 @@ object AppConfig {
         const val CATEGORIZATION_ASSIST_CLOUD_MODEL = "gemini-2.5-flash"
         const val DEDUPE_JUDGE_CLOUD_PROVIDER = "google-ai-studio"
         const val DEDUPE_JUDGE_CLOUD_MODEL = "gemini-2.5-flash"
+        const val RECEIPT_ITEM_CATEGORIZATION_CLOUD_PROVIDER = "google-ai-studio"
+        const val RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL = "gemini-2.5-flash"
         const val GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
         const val DASHBOARD_BRIEFING_TIMEOUT_SECONDS = 12L
         const val QUERY_INTERPRETATION_TIMEOUT_SECONDS = 12L
@@ -154,6 +174,7 @@ object AppConfig {
         const val RECEIPT_ASSIST_MAX_OUTPUT_TOKENS = 384
         const val CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS = 220
         const val DEDUPE_JUDGE_MAX_OUTPUT_TOKENS = 220
+        const val CLOUD_RECEIPT_ITEM_MAX_TOKENS = 300
 
         // On-device (Gemini Nano) constants
         const val ON_DEVICE_CATEGORIZATION_TEMPERATURE = 0.1f
@@ -169,12 +190,22 @@ object AppConfig {
         const val ON_DEVICE_DEDUPE_TEMPERATURE = 0.1f
         const val ON_DEVICE_DEDUPE_MAX_TOKENS = 180
         const val ON_DEVICE_DEDUPE_MODEL = "gemini-nano-dedupe"
+        const val ON_DEVICE_RECEIPT_ITEM_TEMPERATURE = 0.1f
+        const val ON_DEVICE_RECEIPT_ITEM_MAX_TOKENS = 300
+        const val ON_DEVICE_RECEIPT_ITEM_MODEL = "gemini-nano-receipt-items"
         const val ON_DEVICE_QUERY_TEMPERATURE = 0.1f
         const val ON_DEVICE_QUERY_MAX_TOKENS = 220
         const val ON_DEVICE_QUERY_MODEL = "gemini-nano-query"
+        const val ON_DEVICE_QUERY_TIMEOUT_MS = 30_000L  // 30 seconds
         const val ON_DEVICE_BRIEFING_TEMPERATURE = 0.2f
         const val ON_DEVICE_BRIEFING_MAX_TOKENS = 180
         const val ON_DEVICE_BRIEFING_MODEL = "gemini-nano-briefing"
+        
+        // On-device notification parsing constants
+        const val ON_DEVICE_NOTIFICATION_TEMPERATURE = 0.1f
+        const val ON_DEVICE_NOTIFICATION_MAX_TOKENS = 180
+        const val ON_DEVICE_NOTIFICATION_MODEL = "gemini-nano-notification"
+        const val MAX_NOTIFICATION_TEXT_CHARS_FOR_AI = 300
 
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400

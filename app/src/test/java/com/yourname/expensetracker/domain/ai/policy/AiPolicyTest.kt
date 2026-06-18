@@ -66,6 +66,32 @@ class AiPolicyTest {
     }
 
     @Test
+    fun `canUseCloudFor warranty extraction follows warranty extraction toggle`() {
+        val enabled = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            receiptAssistEnabled = true,
+            warrantyExtractionEnabled = true
+        )
+        val disabled = enabled.copy(warrantyExtractionEnabled = false)
+
+        assertTrue(policy.canUseCloudFor(enabled, AiCapability.WARRANTY_EXTRACTION))
+        assertFalse(policy.canUseCloudFor(disabled, AiCapability.WARRANTY_EXTRACTION))
+    }
+
+    @Test
+    fun `canUseCloudFor warranty extraction stays disabled when receipt assist is enabled`() {
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            receiptAssistEnabled = true,
+            warrantyExtractionEnabled = false
+        )
+
+        assertFalse(policy.canUseCloudFor(settings, AiCapability.WARRANTY_EXTRACTION))
+    }
+
+    @Test
     fun `shouldAllowOnDevice returns false when on-device is disabled`() {
         val settings = AiSettings(aiEnabled = true, allowOnDeviceAi = false, receiptAssistEnabled = true)
         assertFalse(policy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION))
@@ -82,7 +108,7 @@ class AiPolicyTest {
     @Test
     fun `shouldRedact returns true when redactBeforeCloud is true regardless of capability`() {
         val settings = AiSettings(redactBeforeCloud = true)
-        for (capability in AiCapability.values()) {
+        for (capability in AiCapability.entries) {
             assertTrue(
                 "Expected shouldRedact=true for capability $capability",
                 policy.shouldRedact(settings, capability)
@@ -93,7 +119,7 @@ class AiPolicyTest {
     @Test
     fun `shouldRedact returns false when redactBeforeCloud is false regardless of capability`() {
         val settings = AiSettings(redactBeforeCloud = false)
-        for (capability in AiCapability.values()) {
+        for (capability in AiCapability.entries) {
             assertFalse(
                 "Expected shouldRedact=false for capability $capability",
                 policy.shouldRedact(settings, capability)

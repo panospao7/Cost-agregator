@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -23,7 +22,7 @@ class GenericTransactionParserTest {
             io.mockk.every { detectDirection(any(), any(), any(), any()) } returns null
             io.mockk.every { extractAccountName(any(), any(), any()) } returns null
         }
-        parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector)
+        parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = io.mockk.mockk())
     }
 
     // === SUCCESSFUL PARSING ===
@@ -66,6 +65,29 @@ class GenericTransactionParserTest {
     }
 
     @Test
+    fun `parse transfer received as transfer not deposit`() {
+        io.mockk.every {
+            directionDetector.detectDirection(any(), any(), any(), ParsedTransactionType.TRANSFER)
+        } returns ParsedTransferDirection.INCOMING
+        io.mockk.every {
+            directionDetector.extractAccountName(any(), any(), any())
+        } returns "Alex"
+
+        val result = parser.parse(
+            title = "Transfer received",
+            text = "Transfer received €75.00 from Alex",
+            bigText = null,
+            subText = null,
+            packageName = "com.unknown.app"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
+        assertEquals("From: Alex", result.transferAccountName)
+    }
+
+    @Test
     fun `parse Greek payment pattern`() {
         val result = parser.parse(
             title = "Ειδοποίηση",
@@ -99,6 +121,20 @@ class GenericTransactionParserTest {
         )
         assertNotNull(result)
         assertEquals(0.60f, result!!.confidence, 0.01f)
+    }
+
+    @Test
+    fun `ordinary purchase remains purchase`() {
+        val result = parser.parse(
+            title = "Alert",
+            text = "You paid €25.00 at Starbucks",
+            bigText = null,
+            subText = null,
+            packageName = "com.unknown.app"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
     }
 
     // === NEGATIVE SIGNAL REJECTION ===
@@ -240,7 +276,7 @@ class GenericTransactionParserTest {
     fun `enriches transfer metadata when detector returns direction and account`() {
         io.mockk.every {
             directionDetector.detectDirection(any(), any(), any(), any())
-        } returns com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING
+        } returns ParsedTransferDirection.INCOMING
         io.mockk.every {
             directionDetector.extractAccountName(any(), any(), any())
         } returns "Payroll Account"
@@ -253,8 +289,8 @@ class GenericTransactionParserTest {
         )
 
         assertNotNull(result)
-        assertEquals(TransactionType.DEPOSIT, result!!.type)
-        assertEquals(com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING, result.transferDirection)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
         assertEquals("From: Payroll Account", result.transferAccountName)
     }
 }

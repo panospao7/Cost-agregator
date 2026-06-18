@@ -1,30 +1,39 @@
 package com.yourname.expensetracker.domain.budget
 
+import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
-import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.core.time.PeriodRange
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * BudgetCalculator - Handles budget period calculations.
- * 
- * ## Period Calculation Logic
- * 
- * ### Supported Periods:
- * - DAILY: 24-hour window starting from anchor date
- * - WEEKLY: 7-day window aligned to anchor's day of week
- * - MONTHLY: Calendar month containing anchor date
- * - QUARTERLY: 3-month window (Q1, Q2, Q3, Q4)
- * - YEARLY: Full calendar year
- * 
- * ### Key Concepts:
- * - **Anchor Date**: The reference date for calculating the period
- * - **Evaluation Time**: The current time (for determining if period is current/future/past)
- * - **Period Window**: Start and end timestamps in milliseconds
- * 
- * ### Edge Cases Handled:
+ * BudgetCalculator — Canonical authority for budget-period boundaries.
+ *
+ * ## Two modes
+ *
+ * | `periodMode` | Semantics |
+ * |---|---|
+ * | `ROLLING` | Anchor-based cycle containing `now`. Window boundaries depend on the budget's `startDate` anchor. |
+ * | `CALENDAR` (or any non-ROLLING value) | Natural calendar boundaries via [TimePeriodUtils]. DAILY → today, WEEKLY → Mon–Mon, MONTHLY → 1st–1st, YEARLY → Jan 1 – Jan 1. |
+ *
+ * ## Key concepts
+ *
+ * - **Anchor Date** (`Budget.startDate`): reference date for ROLLING period arithmetic.
+ * - **Evaluation Time**: the point-in-time used to determine which cycle is "active" (defaults to `timeProvider.now()`).
+ * - **Period Window**: half-open `[start, end)` timestamps in milliseconds.
+ *
+ * ## Convenience vs. explicit API
+ *
+ * - [calculatePeriodWindow] is a convenience wrapper that reads `timeProvider.now()` implicitly.
+ *   **Do not use it** when the caller needs a historical or next-window derivation; use
+ *   [calculatePeriodWindowForTime] with an explicit evaluation time instead.
+ *
+ * ## Edge cases handled
+ *
  * - Month-end dates (31st, 30th, February)
  * - Leap years
  * - Year boundaries
@@ -35,6 +44,63 @@ class BudgetCalculator @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
 
+    /**
+     * BUD-10: Valid periodMode values. Any unrecognized value will throw
+     * an IllegalArgumentException instead of silently defaulting to CALENDAR.
+     */
+    enum class PeriodMode {
+        ROLLING,
+        CALENDAR;
+
+        companion object {
+            /**
+             * Safe parser: returns the matching enum or throws for invalid values.
+             * BUD-10: Previously, any non-ROLLING string silently became CALENDAR,
+             * masking data-integrity issues.
+             */
+            fun fromString(value: String): PeriodMode {
+                return try {
+                    valueOf(value.uppercase())
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException(
+                        "Invalid periodMode '$value'. Valid values: ${entries.joinToString(", ")}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun calculatePeriodRange(budget: Budget, now: Long = timeProvider.now()): Pair<Long, Long> {
+        // BUD-10: Validate periodMode explicitly instead of silently defaulting.
+        val mode = PeriodMode.fromString(budget.periodMode)
+        return when (mode) {
+            PeriodMode.ROLLING -> {
+                // Resolve the active anchored cycle containing `now` instead of
+                // pinning start = budget.startDate forever.
+                val window = calculatePeriodWindowForTime(budget.period, budget.startDate, now)
+                window.startInclusiveMillis to window.endExclusiveMillis
+            }
+            PeriodMode.CALENDAR -> {
+                // Use natural calendar boundaries via TimePeriodUtils.
+                // The anchor date is irrelevant for calendar windows.
+                when (budget.period) {
+                    BudgetPeriod.DAILY -> TimePeriodUtils.getDayRange(now)
+                    BudgetPeriod.WEEKLY -> TimePeriodUtils.getWeekRange(now)
+                    BudgetPeriod.MONTHLY -> TimePeriodUtils.getMonthRange(now)
+                    BudgetPeriod.YEARLY -> TimePeriodUtils.getYearRange(now)
+                }
+            }
+        }
+    }
+
+    /**
+     * Convenience wrapper: computes an anchor-based period window using `timeProvider.now()`
+     * as the evaluation time.
+     *
+     * **Important:** this method reads `now()` implicitly.
+     * If you need a historical or next-window derivation, call
+     * [calculatePeriodWindowForTime] with an explicit `evaluationTime` instead.
+     */
     fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): PeriodRange {
         return calculatePeriodWindowForTime(period, anchorDate, timeProvider.now())
     }
@@ -51,17 +117,23 @@ class BudgetCalculator @Inject constructor(
             BudgetPeriod.DAILY -> {
                 val start = cal.timeInMillis
                 cal.add(Calendar.DAY_OF_YEAR, 1)
-                PeriodRange(start, cal.timeInMillis)
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = cal.timeInMillis, label = "Budget")
             }
             BudgetPeriod.WEEKLY -> {
-                // Find the most recent occurrence of the anchor weekday
-                val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
-                while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
-                    cal.add(Calendar.DAY_OF_YEAR, -1)
+                // NEW-P6-016: Use ISO week fields instead of Calendar.WEEK_OF_YEAR,
+                // which is locale-dependent.  Converting to java.time.LocalDate for
+                // ISO-aware week arithmetic ensures consistent week boundaries.
+                val zone = java.time.ZoneId.systemDefault()
+                val anchorDayOfWeek = java.time.Instant.ofEpochMilli(anchorDate)
+                    .atZone(zone).toLocalDate().dayOfWeek
+                var evalDate = java.time.Instant.ofEpochMilli(startOfDay)
+                    .atZone(zone).toLocalDate()
+                while (evalDate.dayOfWeek != anchorDayOfWeek) {
+                    evalDate = evalDate.minusDays(1)
                 }
-                val start = cal.timeInMillis
-                cal.add(Calendar.WEEK_OF_YEAR, 1)
-                PeriodRange(start, cal.timeInMillis)
+                val start = evalDate.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = evalDate.plusWeeks(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
             BudgetPeriod.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
@@ -96,7 +168,7 @@ class BudgetCalculator @Inject constructor(
                 cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
                 
                 val end = cal.timeInMillis
-                PeriodRange(start, end)
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
             BudgetPeriod.YEARLY -> {
                 val anchorMonth = anchorCal.get(Calendar.MONTH)
@@ -104,11 +176,12 @@ class BudgetCalculator @Inject constructor(
                 
                 val currentMonth = cal.get(Calendar.MONTH)
                 val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+                val adjustedDay = anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH))
 
                 // Check if we passed the anniversary this year
                 var passed = false
                 if (currentMonth > anchorMonth) passed = true
-                else if (currentMonth == anchorMonth && currentDay >= anchorDay) passed = true
+                else if (currentMonth == anchorMonth && currentDay >= adjustedDay) passed = true
                 
                 if (!passed) {
                     cal.add(Calendar.YEAR, -1)
@@ -120,7 +193,7 @@ class BudgetCalculator @Inject constructor(
                 val start = cal.timeInMillis
                 cal.add(Calendar.YEAR, 1)
                 val end = cal.timeInMillis
-                PeriodRange(start, end)
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
         }
     }

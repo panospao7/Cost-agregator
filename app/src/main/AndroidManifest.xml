@@ -18,16 +18,20 @@
     <!-- Geolocation & Maps (Segment 17) — foreground only, no background location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Internet is required for osmdroid tile download + Nominatim/Overpass geocoding -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- osmdroid needs to write tile cache to external storage on older APIs -->
+    
+    <!-- Database Backup/Restore permissions -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"
         tools:ignore="ScopedStorage" />
+    
+    <!-- Internet is required for osmdroid tile download + Nominatim/Overpass geocoding -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
-        android:name=".ExpenseTrackerApp"
+        android:name=".MainApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -47,6 +51,21 @@
                 tools:node="remove" />
         </provider>
         
+        <!--
+            RescueActivity — manually triggered database recovery.
+            Launch via ADB when needed:
+              adb shell am start -n com.yourname.expensetracker/.data.rescue.RescueActivity
+            Can also be reached via notification/deep-link from the coordinator.
+
+            NOTE: exported="true" is ONLY for the rescue build so ADB can
+            launch the activity directly.  Set back to "false" before
+            releasing a non-rescue build.
+        -->
+        <activity
+            android:name=".data.rescue.RescueActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ExpenseTracker" />
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
@@ -55,13 +74,26 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="expensetracker" android:host="home" />
+                <data android:scheme="expensetracker" android:host="dashboard" />
+                <data android:scheme="expensetracker" android:host="activity" />
+                <data android:scheme="expensetracker" android:host="review" />
+                <data android:scheme="expensetracker" android:host="plan" />
+                <data android:scheme="expensetracker" android:host="add" />
+                <data android:scheme="expensetracker" android:host="analytics" />
+                <data android:scheme="expensetracker" android:host="map" />
+            </intent-filter>
         </activity>
 
         <!-- THE CRITICAL SERVICE -->
         <service
             android:name=".service.NotificationCaptureService"
             android:exported="true"
-            android:foregroundServiceType="dataSync|location"
+            android:foregroundServiceType="dataSync"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -81,6 +113,16 @@
         <!-- Service restart receiver for periodic keep-alive -->
         <receiver
             android:name=".receiver.ServiceRestartReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- Reminder notification action receivers -->
+        <receiver
+            android:name=".service.reminder.SnoozeReminderReceiver"
+            android:enabled="true"
+            android:exported="false" />
+        <receiver
+            android:name=".service.reminder.DismissReminderReceiver"
             android:enabled="true"
             android:exported="false" />
 

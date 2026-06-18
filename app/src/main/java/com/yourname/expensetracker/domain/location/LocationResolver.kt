@@ -1,15 +1,18 @@
 package com.yourname.expensetracker.domain.location
 
 import android.util.Log
-import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.MerchantLocationRepository
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlin.math.pow
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,25 +27,31 @@ import javax.inject.Singleton
  *  5. Overpass nearby POIs  →  [LocationResolutionResult.NeedsUserSelection]
  *  6. Unresolved
  *
- * Rate limiting: enforced via a simple sequential lock + delay before each
- * Nominatim HTTP call.  Overpass does not have a strict per-second policy but
- * shares the same throttle for safety.
+ * Rate limiting is enforced in the geocoding service layer.
+ *
+ * ## LOC-1: Overpass auto-accept
+ * The Overpass API call at Step 7 is gated behind [PrivacyGate] checking
+ * [PrivacyCapability.OVERPASS_API]. If the privacy setting denies Overpass,
+ * [LocationResolutionResult.Unresolved] is returned without making any HTTP
+ * request. The same gate is independently checked inside
+ * [OverpassNearbyService.findNearby] for defense in depth.
+ *
+ * Verified: both [LocationResolver] (Step 7) and [OverpassNearbyService]
+ * (entry point) perform the privacy check before any Overpass API call.
  */
 @Singleton
 class LocationResolver @Inject constructor(
     private val geocodingService: GeocodingService,
     private val nearbyPoiService: NearbyPoiService,
     private val locationProvider: ForegroundLocationProvider,
-    private val locationRepository: MerchantLocationRepository,
-    private val expenseRepository: ExpenseRepository,
+    private val locationCachePort: LocationCachePort,
+    private val merchantClusterPort: MerchantClusterPort,
     private val merchantCleaner: MerchantCleaner,
     private val canonicalizer: MerchantCanonicalizer,
-    private val greeklishNormalizer: GreeklishNormalizer
+    private val greeklishNormalizer: GreeklishNormalizer,
+    private val timeProvider: TimeProvider,
+    private val privacyGate: PrivacyGate
 ) {
-    /** Ensures at most one geocoding request at a time (rate-limiting). */
-    private val rateLimitMutex = Mutex()
-    private var lastRequestAt = 0L
-
     /**
      * Resolve the location for an expense identified by [rawMerchantName].
      *
@@ -66,18 +75,34 @@ class LocationResolver @Inject constructor(
         // to avoid double-normalization; fall back to generating it from the raw name.
         val cacheKey = merchantKey ?: MerchantKeyGenerator.generate(rawMerchantName)
 
-        // ── Step 2: Get device location (if available) ─────────────────────────
-        val deviceLocation: Pair<Double, Double>? = locationProvider.getLastKnownLocation()
-        val isRecent = (System.currentTimeMillis() - transactionDateMs) < AppConfig.Location.RECENT_TRANSACTION_THRESHOLD_MS
+        // ── Step 2: Compute recency, but defer device location lookup ──────────
+        val isRecent = (timeProvider.now() - transactionDateMs) < AppConfig.Location.RECENT_TRANSACTION_THRESHOLD_MS
+        var cachedDeviceLocation: Pair<Double, Double>? = null
+        var hasLoadedDeviceLocation = false
 
-        // ── Step 3: Check user corrections ────────────────────────────────────
-        val correction = locationRepository.getCorrection(
+        suspend fun getDeviceLocation(): Pair<Double, Double>? {
+            if (!hasLoadedDeviceLocation) {
+                val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
+                if (decision.blocksExecution()) {
+                    Timber.d("Device GPS denied by privacy gate: ${decision.reason()}")
+                    hasLoadedDeviceLocation = true
+                    return null
+                }
+                cachedDeviceLocation = locationProvider.getLastKnownLocation()
+                hasLoadedDeviceLocation = true
+            }
+            return cachedDeviceLocation
+        }
+
+        // ── Step 3: Check global user corrections first ───────────────────────
+        val correction = locationCachePort.getCorrection(
             merchantName = cacheKey,
-            deviceLat = deviceLocation?.first,
-            deviceLon = deviceLocation?.second
+            deviceLat = null,
+            deviceLon = null
         )
         if (correction != null) {
-            Log.d(TAG, "Correction hit for '$cacheKey'")
+            // HIGH-14 FIX: Anonymize merchant names in logs using hash
+            Log.d(TAG, "Correction hit for merchant hash: ${cacheKey.anonymizeForLog()}")
             return LocationResolutionResult.Resolved(
                 latitude = correction.correctedLatitude,
                 longitude = correction.correctedLongitude,
@@ -88,24 +113,49 @@ class LocationResolver @Inject constructor(
             )
         }
 
+        // If device coordinates are available, run a second correction lookup
+        // before cache/geocoding so area-scoped manual corrections still take
+        // priority after device-location lookup was deferred.
+        val deviceLocation = getDeviceLocation()
+        if (deviceLocation != null) {
+            val areaScopedCorrection = locationCachePort.getCorrection(
+                merchantName = cacheKey,
+                deviceLat = deviceLocation.first,
+                deviceLon = deviceLocation.second
+            )
+            if (areaScopedCorrection != null) {
+                Log.d(TAG, "Area correction hit for merchant hash: ${cacheKey.anonymizeForLog()}")
+                return LocationResolutionResult.Resolved(
+                    latitude = areaScopedCorrection.correctedLatitude,
+                    longitude = areaScopedCorrection.correctedLongitude,
+                    source = AppConfig.Location.SOURCE_USER_MANUAL,
+                    osmId = areaScopedCorrection.osmId,
+                    displayAddress = areaScopedCorrection.displayAddress,
+                    confidence = 1.0f
+                )
+            }
+        }
+
         // ── Step 4: History-biased lookup (Merchant Location Affinity) ──────────
         // Query past located expenses for this merchant, find the top cluster,
         // and use it to bias cache lookup and Nominatim with bounded=1.
         // This runs BEFORE global cache so area-scoped results take priority.
         // Use MerchantKeyGenerator so the query matches the merchantKey column.
         val clusters = try {
-            expenseRepository.getMerchantLocationClusters(cacheKey)
+            merchantClusterPort.getMerchantLocationClusters(cacheKey)
         } catch (e: Exception) {
-            Log.w(TAG, "Cluster query failed for '$cacheKey'", e)
+            // HIGH-14 FIX: Anonymize merchant names in logs
+            Log.w(TAG, "Cluster query failed for merchant hash: ${cacheKey.anonymizeForLog()}", e)
             emptyList()
         }
         val topCluster = clusters.firstOrNull { it.count >= 2 }
         if (topCluster != null) {
-            val areaKey = locationRepository.getMostLikelyArea(cacheKey, topCluster.centerLat, topCluster.centerLon)
+            val areaKey = locationCachePort.getMostLikelyArea(cacheKey, topCluster.centerLat, topCluster.centerLon)
             if (!forceRefresh) {
-                val cachedForArea = locationRepository.getCachedLocationForArea(cacheKey, areaKey)
+                val cachedForArea = locationCachePort.getCachedLocationForArea(cacheKey, areaKey)
                 if (cachedForArea != null) {
-                    Log.d(TAG, "Area-cache hit for '$cacheKey' in area $areaKey")
+                    // HIGH-14 FIX: Anonymize merchant names in logs
+                    Log.d(TAG, "Area-cache hit for merchant hash: ${cacheKey.anonymizeForLog()} in area $areaKey")
                     return LocationResolutionResult.Resolved(
                         latitude = cachedForArea.latitude,
                         longitude = cachedForArea.longitude,
@@ -117,30 +167,36 @@ class LocationResolver @Inject constructor(
                 }
             }
             // Call Nominatim bounded around cluster centre
-            val clusterResult = geocodeWithRateLimit(
+            val clusterResult = geocode(
                 name = latinName,
                 biasLat = topCluster.centerLat,
                 biasLon = topCluster.centerLon,
                 bounded = true
-            ) ?: geocodeWithRateLimit(
+            ).orElseGeocode(
                 name = cleanedName,
                 biasLat = topCluster.centerLat,
                 biasLon = topCluster.centerLon,
                 bounded = true
             )
-            if (clusterResult != null) {
-                Log.d(TAG, "History-biased Nominatim resolved '$cacheKey' (cluster count=${topCluster.count})")
-                val resolved = clusterResult.toResolved()
-                locationRepository.saveLocation(cacheKey, resolved, areaKey)
-                return resolved
+            when (clusterResult) {
+                is GeocodeAttempt.Found -> {
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                    Log.d(TAG, "History-biased Nominatim resolved merchant hash: ${cacheKey.anonymizeForLog()} (cluster count=${topCluster.count})")
+                    val resolved = clusterResult.result.toResolved()
+                    locationCachePort.saveLocation(cacheKey, resolved, areaKey)
+                    return resolved
+                }
+                is GeocodeAttempt.Retryable -> return LocationResolutionResult.Retryable(clusterResult.error)
+                GeocodeAttempt.NoMatch -> Unit
             }
         }
 
         // ── Step 4b: Global cache fallback ────────────────────────────────────
         if (!forceRefresh) {
-            val cached = locationRepository.getCachedLocation(cacheKey)
+            val cached = locationCachePort.getCachedLocation(cacheKey)
             if (cached != null) {
-                Log.d(TAG, "Cache hit for '$cacheKey'")
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                Log.d(TAG, "Cache hit for merchant hash: ${cacheKey.anonymizeForLog()}")
                 return LocationResolutionResult.Resolved(
                     latitude = cached.latitude,
                     longitude = cached.longitude,
@@ -153,57 +209,107 @@ class LocationResolver @Inject constructor(
         }
 
         // ── Step 5: Nominatim with GPS bias (recent transactions only) ─────────
-        if (isRecent && deviceLocation != null) {
-            val result = geocodeWithRateLimit(
+        val gpsBiasLocation = if (isRecent) deviceLocation else null
+        if (isRecent && gpsBiasLocation != null) {
+            val result = geocode(
                 name = latinName,
-                biasLat = deviceLocation.first,
-                biasLon = deviceLocation.second
-            ) ?: geocodeWithRateLimit(
+                biasLat = gpsBiasLocation.first,
+                biasLon = gpsBiasLocation.second
+            ).orElseGeocode(
                 name = cleanedName,  // retry with original Greek
-                biasLat = deviceLocation.first,
-                biasLon = deviceLocation.second
+                biasLat = gpsBiasLocation.first,
+                biasLon = gpsBiasLocation.second
             )
-            if (result != null) {
-                Log.d(TAG, "Nominatim GPS-bias resolved '$cacheKey'")
-                val resolved = result.toResolved()
-                locationRepository.saveLocation(cacheKey, resolved)
-                return resolved
+            when (result) {
+                is GeocodeAttempt.Found -> {
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                    Log.d(TAG, "Nominatim GPS-bias resolved merchant hash: ${cacheKey.anonymizeForLog()}")
+                    val resolved = result.result.toResolved()
+                    val areaKey = getAreaKeyForResolvedLocation(
+                        merchantName = cacheKey,
+                        resolvedLat = resolved.latitude,
+                        resolvedLon = resolved.longitude,
+                        fallbackLat = gpsBiasLocation.first,
+                        fallbackLon = gpsBiasLocation.second
+                    )
+                    locationCachePort.saveLocation(cacheKey, resolved, areaKey)
+                    return resolved
+                }
+                is GeocodeAttempt.Retryable -> return LocationResolutionResult.Retryable(result.error)
+                GeocodeAttempt.NoMatch -> Unit
             }
         }
 
         // ── Step 6: Nominatim name-only (Greece bias) ─────────────────────────
-        val nameOnlyResult = geocodeWithRateLimit(latinName)
-            ?: geocodeWithRateLimit(cleanedName)
-        if (nameOnlyResult != null) {
-            Log.d(TAG, "Nominatim name-only resolved '$cacheKey'")
-            val resolved = nameOnlyResult.toResolved()
-            locationRepository.saveLocation(cacheKey, resolved)
-            return resolved
+        val nameOnlyResult = geocode(latinName)
+            .orElseGeocode(cleanedName)
+        when (nameOnlyResult) {
+            is GeocodeAttempt.Found -> {
+            // HIGH-14 FIX: Anonymize merchant names in logs
+                Log.d(TAG, "Nominatim name-only resolved merchant hash: ${cacheKey.anonymizeForLog()}")
+                val resolved = nameOnlyResult.result.toResolved()
+                val areaKey = getAreaKeyForResolvedLocation(
+                    merchantName = cacheKey,
+                    resolvedLat = resolved.latitude,
+                    resolvedLon = resolved.longitude
+                )
+                locationCachePort.saveLocation(cacheKey, resolved, areaKey)
+                return resolved
+            }
+            is GeocodeAttempt.Retryable -> return LocationResolutionResult.Retryable(nameOnlyResult.error)
+            GeocodeAttempt.NoMatch -> Unit
         }
 
         // ── Step 7: Overpass nearby POIs (requires device location) ───────────
-        if (deviceLocation != null) {
-            val pois = nearbyPoiService.findNearby(
-                lat = deviceLocation.first,
-                lon = deviceLocation.second,
+        val overpassLocation = deviceLocation
+        val overpassAllowed = privacyGate.check(PrivacyCapability.OVERPASS_API)
+        if (overpassLocation != null && overpassAllowed is PrivacyDecision.Allowed) {
+            val nearbyResult = nearbyPoiService.findNearby(
+                lat = overpassLocation.first,
+                lon = overpassLocation.second,
                 merchantName = cleanedName,
                 radiusMetres = AppConfig.Location.OVERPASS_SEARCH_RADIUS_M
-            ).filter { !isNullIsland(it.latitude, it.longitude) }
+            )
+            val pois = when (nearbyResult) {
+                is NearbyPoiResult.Success -> nearbyResult.pois
+                is NearbyPoiResult.Failure -> {
+                    Timber.w("Overpass lookup failed for merchant hash ${cacheKey.anonymizeForLog()}: ${nearbyResult.error}")
+                    if (isTransient(nearbyResult.error)) {
+                        return LocationResolutionResult.Retryable(nearbyResult.error)
+                    }
+                    emptyList()
+                }
+            }.filter { !isNullIsland(it.latitude, it.longitude) }
             if (pois.isNotEmpty()) {
-                Log.d(TAG, "Overpass found ${pois.size} candidates for '$cacheKey'")
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                Log.d(TAG, "Overpass found ${pois.size} candidates for merchant hash: ${cacheKey.anonymizeForLog()}")
                 return if (pois.size == 1) {
-                    // Single match — auto-resolve
                     val poi = pois.first()
-                    val resolved = LocationResolutionResult.Resolved(
-                        latitude = poi.latitude,
-                        longitude = poi.longitude,
-                        source = AppConfig.Location.SOURCE_OVERPASS_POI,
-                        osmId = poi.osmId,
-                        displayAddress = poi.displayAddress,
-                        confidence = 0.7f
+                    // LOC-3: Apply name-similarity and distance gates before auto-accepting.
+                    // If the single POI's name is too dissimilar from the merchant name
+                    // or it's too far from the device location, reject auto-resolution.
+                    val nameSimilar = isNameSimilar(cleanedName, poi.name)
+                    val withinDistance = isWithinRadius(
+                        poi.latitude, poi.longitude,
+                        overpassLocation.first, overpassLocation.second,
+                        AppConfig.Location.OVERPASS_AUTO_ACCEPT_MAX_DISTANCE_M
                     )
-                    locationRepository.saveLocation(cacheKey, resolved)
-                    resolved
+                    if (nameSimilar && withinDistance) {
+                        Log.d(TAG, "Overpass single POI passed gates (nameSimilar=$nameSimilar, withinDistance=$withinDistance) — auto-resolving")
+                        val resolved = LocationResolutionResult.Resolved(
+                            latitude = poi.latitude,
+                            longitude = poi.longitude,
+                            source = AppConfig.Location.SOURCE_OVERPASS_POI,
+                            osmId = poi.osmId,
+                            displayAddress = poi.displayAddress,
+                            confidence = 0.7f
+                        )
+                        locationCachePort.saveLocation(cacheKey, resolved)
+                        resolved
+                    } else {
+                        Log.d(TAG, "Overpass single POI rejected by gates (nameSimilar=$nameSimilar, withinDistance=$withinDistance)")
+                        LocationResolutionResult.NeedsUserSelection(pois)
+                    }
                 } else {
                     LocationResolutionResult.NeedsUserSelection(pois)
                 }
@@ -211,27 +317,51 @@ class LocationResolver @Inject constructor(
         }
 
         // ── Step 8: Give up ───────────────────────────────────────────────────
-        Log.d(TAG, "Could not resolve location for '$cacheKey'")
+        // HIGH-14 FIX: Anonymize merchant names in logs
+        Log.d(TAG, "Could not resolve location for merchant hash: ${cacheKey.anonymizeForLog()}")
         return LocationResolutionResult.Unresolved
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private suspend fun geocodeWithRateLimit(
+    private suspend fun geocode(
         name: String,
         biasLat: Double? = null,
         biasLon: Double? = null,
         cityHint: String? = null,
         bounded: Boolean = false
-    ): GeocodingResult? = rateLimitMutex.withLock {
-        val now = System.currentTimeMillis()
-        val elapsed = now - lastRequestAt
-        if (elapsed < AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS) {
-            kotlinx.coroutines.delay(AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS - elapsed)
+    ): GeocodeAttempt {
+        // Check privacy gate before making external geocoding API calls
+        when (val geoDecision = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)) {
+            PrivacyDecision.Allowed -> { /* proceed */ }
+            else -> { Log.d(TAG, "EXTERNAL_GEOCODING blocked/skipped by privacy gate: ${geoDecision.reason()} — skipping geocoding"); return GeocodeAttempt.NoMatch }
         }
-        lastRequestAt = System.currentTimeMillis()
-        geocodingService.search(name, biasLat, biasLon, cityHint, bounded)
-            ?.takeUnless { isNullIsland(it.latitude, it.longitude) }
+        return when (val result = geocodingService.search(name, biasLat, biasLon, cityHint, bounded)) {
+            is GeocodingLookupResult.Success -> result.result
+                ?.takeUnless { isNullIsland(it.latitude, it.longitude) }
+                ?.let(GeocodeAttempt::Found)
+                ?: GeocodeAttempt.NoMatch
+            is GeocodingLookupResult.Failure -> {
+                Timber.w("Geocoding failed for merchant hash '${name.anonymizeForLog()}': ${result.error}")
+                if (isTransient(result.error)) {
+                    GeocodeAttempt.Retryable(result.error)
+                } else {
+                    GeocodeAttempt.NoMatch
+                }
+            }
+        }
+    }
+
+    private suspend fun GeocodeAttempt.orElseGeocode(
+        name: String,
+        biasLat: Double? = null,
+        biasLon: Double? = null,
+        cityHint: String? = null,
+        bounded: Boolean = false
+    ): GeocodeAttempt = when (this) {
+        is GeocodeAttempt.Found,
+        is GeocodeAttempt.Retryable -> this
+        GeocodeAttempt.NoMatch -> geocode(name, biasLat, biasLon, cityHint, bounded)
     }
 
     private fun GeocodingResult.toResolved() = LocationResolutionResult.Resolved(
@@ -243,6 +373,65 @@ class LocationResolver @Inject constructor(
         confidence = confidence
     )
 
+    private fun getAreaKeyForResolvedLocation(
+        merchantName: String,
+        resolvedLat: Double?,
+        resolvedLon: Double?,
+        fallbackLat: Double? = null,
+        fallbackLon: Double? = null
+    ): String {
+        val (areaLat, areaLon) = if (resolvedLat != null && resolvedLon != null) {
+            resolvedLat to resolvedLon
+        } else {
+            fallbackLat to fallbackLon
+        }
+        return locationCachePort.getMostLikelyArea(merchantName, areaLat, areaLon)
+    }
+
+    /**
+     * Checks whether the POI name is similar enough to the original merchant name
+     * to justify auto-resolution. Uses a simple overlap heuristic: the longer name
+     * must contain at least one word from the shorter name (case-insensitive).
+     * Returns true if names are similar enough, false otherwise.
+     */
+    private fun isNameSimilar(merchantName: String, poiName: String?): Boolean {
+        if (poiName.isNullOrBlank()) return false
+        val merchantWords = merchantName.lowercase().split(Regex("\\s+")).filter { it.length > 2 }
+        val poiWords = poiName.lowercase().split(Regex("\\s+")).filter { it.length > 2 }
+        if (merchantWords.isEmpty() || poiWords.isEmpty()) return false
+        // At least one significant word from the merchant appears in the POI name (or vice versa)
+        return merchantWords.any { mw -> poiWords.any { pw -> pw.contains(mw) || mw.contains(pw) } }
+    }
+
+    /**
+     * Checks whether the POI is within the maximum allowed distance from the
+     * device location for auto-resolution. Uses the Haversine approximation.
+     */
+    private fun isWithinRadius(
+        poiLat: Double, poiLon: Double,
+        deviceLat: Double, deviceLon: Double,
+        maxMetres: Number
+    ): Boolean {
+        val limit = maxMetres.toDouble()
+        if (limit <= 0) return true // No limit configured
+        val distance = haversineDistance(poiLat, poiLon, deviceLat, deviceLon)
+        return distance <= limit
+    }
+
+    /**
+     * Haversine distance in metres between two lat/lon points.
+     */
+    private fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val R = 6_371_000.0 // Earth radius in metres
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = (Math.sin(dLat / 2).pow(2.0)) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                (Math.sin(dLon / 2).pow(2.0))
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return R * c
+    }
+
     /**
      * Reject coordinates at or very near (0.0, 0.0) — "Null Island".
      * GPS hardware, uninitialised DB fields, and some geocoders can emit
@@ -250,6 +439,21 @@ class LocationResolver @Inject constructor(
      */
     private fun isNullIsland(lat: Double, lon: Double): Boolean =
         Math.abs(lat) < 0.01 && Math.abs(lon) < 0.01
+
+    private fun isTransient(error: GeocodingError): Boolean = when (error) {
+        GeocodingError.RateLimited,
+        GeocodingError.ServiceDown,
+        GeocodingError.NetworkError,
+        GeocodingError.Timeout -> true
+        is GeocodingError.HttpError -> error.code >= 500
+        else -> false
+    }
+
+    private sealed interface GeocodeAttempt {
+        data class Found(val result: GeocodingResult) : GeocodeAttempt
+        data class Retryable(val error: GeocodingError) : GeocodeAttempt
+        data object NoMatch : GeocodeAttempt
+    }
 
     private companion object {
         const val TAG = "LocationResolver"

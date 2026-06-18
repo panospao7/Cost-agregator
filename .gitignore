@@ -31,5 +31,34 @@ google-services.json
 # Windows Thumbs
 Thumbs.db
 
+# Local databases / backups (DO NOT COMMIT REAL USER DATA)
+*.db
+*.sqlite
+*.sqlite3
+*.costbackup
+
+# Repo analysis dumps
+repomix-output.xml
+repomix-output.*
+
+# Session dumps
+session-*.md
+
+# Local JSON data files (may contain user data)
+data.json
+revodata.json
+
+# Hardcoded string audit artifacts
+hardcoded_string_audit.json
+
+# Generated test reports
+build/reports/testing/
+
 # Misc
 .cxx/
+nul
+
+
+# Python
+__pycache__/
+*.pyc

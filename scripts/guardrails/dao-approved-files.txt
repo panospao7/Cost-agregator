@@ -1,0 +1,62 @@
+# Tier 1 — Core Lifecycle Owner
+TransactionLifecycleCoordinator.kt
+TransactionSideEffectDispatcher.kt
+NotificationProcessingPipeline.kt
+
+# Tier 2 — Read-Only / Query Repositories
+ExpenseRepository.kt
+ReceiptRepository.kt
+ManualExpenseRepository.kt
+BudgetRepository.kt
+AnalyticsRepository.kt
+MultiCurrencyRepository.kt
+NotificationRepository.kt
+NaturalLanguageExpenseQueryRepositoryImpl.kt
+BusinessExpenseRepository.kt
+
+# Tier 3 — Domain Engines (Read-Only)
+BudgetForecastingEngine.kt
+BudgetAutopilotEngine.kt
+SharedBudgetManager.kt
+AdvancedAnalyticsDashboard.kt
+AnomalyAlertOrchestrator.kt
+SpendingThresholdCalculator.kt
+LifestyleInflationDetector.kt
+CarbonFootprintCalculator.kt
+RecurringIncomeTracker.kt
+SpendingChallengeManager.kt
+TaxEstimator.kt
+
+# Tier 4 — Infrastructure
+GroupTransactionCoordinator.kt
+DatabaseModule.kt
+
+# Tier 5 — Receipt Lifecycle (ScannedReceiptDao access)
+# These files are part of the receipt lifecycle and are allowed direct
+# ScannedReceiptDao access for persistence and query operations.
+ReceiptLifecycleCoordinator.kt
+ReceiptLinkService.kt
+ReceiptDuplicateDetector.kt
+BankStatementLifecycleProcessor.kt
+ReceiptSideEffectDispatcher.kt
+
+# Tier 6 — Database / Migrations
+AppDatabase.kt
+# Test files (*Test.kt, *Test.kt) are allowed DAO access for verification purposes.
+
+# Formerly-approved files that no longer have direct ScannedReceiptDao access:
+# - ReviewQueueRepository.kt          → now delegates via ReceiptLinkService
+# - EmailReceiptIngestionService.kt   → now uses ReceiptLifecycleCoordinator
+# - WarrantyTrackerRepository.kt      → now uses ReceiptRepository
+# - PriceProtectionTracker.kt         → now uses ReceiptRepository
+#
+# Phase 6 — Privacy & Backup
+#
+# These files are part of Phase 6 privacy capability gates and backup
+# encryption. They read privacy settings from the repository but do NOT
+# access DAOs directly.
+BackupEncryptionService.kt
+BackupPrivacyGate.kt
+ExportAnonymizer.kt
+PrivacySettingsScreen.kt
+PrivacySettingsViewModel.kt

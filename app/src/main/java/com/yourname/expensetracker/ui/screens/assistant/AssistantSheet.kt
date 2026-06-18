@@ -1,21 +1,19 @@
 package com.yourname.expensetracker.ui.screens.assistant
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Send
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,11 +27,22 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
+import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.components.ai.AiChatBubble
+import com.yourname.expensetracker.ui.components.ai.AiInsightsCard
+import com.yourname.expensetracker.ui.components.ai.AiRecommendationCard
+import com.yourname.expensetracker.ui.components.ai.AiTypingIndicator
 import com.yourname.expensetracker.ui.components.ai.AssistantResultCard
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,12 +53,19 @@ fun AssistantSheet(
     viewModel: AssistantViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.navigationEvents.collect { event ->
             when (event) {
                 is AssistantNavigationEvent.OpenTransactions -> onOpenTransactions(event.filter)
             }
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(uiState.messages.size) {
+        if (uiState.messages.isNotEmpty()) {
+            listState.animateScrollToItem(uiState.messages.size - 1)
         }
     }
 
@@ -72,27 +88,36 @@ fun AssistantSheet(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
                     Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                    Text("Assistant", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.assistant_title), style = MaterialTheme.typography.titleLarge)
                 }
 
                 Row {
+                    IconButton(onClick = { viewModel.clearSession() }) {
+                        Icon(Icons.Rounded.History, contentDescription = stringResource(R.string.assistant_clear_session_cd))
+                    }
                     if (uiState.canPersistHistory) {
-                        IconButton(onClick = { viewModel.clearSession() }) {
-                            Icon(Icons.Rounded.History, contentDescription = "Clear session")
-                        }
-                        IconButton(onClick = { viewModel.clearAllHistory() }) {
-                            Icon(Icons.Rounded.DeleteSweep, contentDescription = "Clear history")
+                        IconButton(onClick = { viewModel.requestClearAllHistory() }) {
+                            Icon(Icons.Rounded.DeleteSweep, contentDescription = stringResource(R.string.assistant_clear_history_cd))
                         }
                     }
                 }
             }
 
             if (uiState.isDisabled) {
-                Text(
-                    text = uiState.disabledReason ?: "Assistant is unavailable",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // S3-011: Show typed PrivacyBlockedCard when cloud AI is the reason
+                val blocked = uiState.privacyBlocked
+                if (blocked != null) {
+                    com.yourname.expensetracker.ui.components.PrivacyBlockedCard(
+                        blocked = blocked,
+                        modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Text(
+                        text = uiState.disabledReason ?: stringResource(R.string.assistant_unavailable),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else {
                 uiState.runtimeStatusMessage?.let { runtimeMessage ->
                     Text(
@@ -110,6 +135,7 @@ fun AssistantSheet(
                 }
 
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f, fill = false),
@@ -132,17 +158,54 @@ fun AssistantSheet(
                     }) { item ->
                         when (item) {
                             is AssistantConversationItem.User -> {
-                                UserBubble(text = item.text)
+                                AiChatBubble(
+                                    text = item.text,
+                                    isUser = true
+                                )
                             }
                             is AssistantConversationItem.Result -> {
-                                AssistantResultCard(
-                                    result = item.result,
-                                    canDrilldown = item.drilldownFilter != null,
-                                    onOpenTransactions = {
-                                        item.drilldownFilter?.let(viewModel::openDrilldown)
-                                    },
-                                    onClarificationSelected = viewModel::onSuggestionSelected
-                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    AssistantResultCard(
+                                        result = item.result,
+                                        canDrilldown = item.drilldownFilter != null,
+                                        onOpenTransactions = {
+                                            item.drilldownFilter?.let(viewModel::openDrilldown)
+                                        },
+                                        onClarificationSelected = viewModel::onClarificationSelected
+                                    )
+
+                                    when (val result = item.result) {
+                                        is FinancialQueryResult.Summary -> {
+                                            result.supportingText
+                                                ?.takeIf { it.isNotBlank() }
+                                                ?.let { insightText ->
+                                                    AiInsightsCard(
+                                                        title = result.title.asString(),
+                                                        insight = insightText
+                                                    )
+                                                }
+                                        }
+
+                                        is FinancialQueryResult.Clarification -> {
+                                            var dismissedRecommendations by remember(item.id) {
+                                                mutableStateOf(emptySet<String>())
+                                            }
+                                            result.options
+                                                .filterNot { it in dismissedRecommendations }
+                                                .forEach { option ->
+                                                    AiRecommendationCard(
+                                                        recommendation = option,
+                                                        onApply = { viewModel.onClarificationSelected(option) },
+                                                        onDismiss = {
+                                                            dismissedRecommendations += option
+                                                        }
+                                                    )
+                                                }
+                                        }
+
+                                        else -> Unit
+                                    }
+                                }
                             }
                             is AssistantConversationItem.Error -> {
                                 Text(
@@ -156,11 +219,30 @@ fun AssistantSheet(
                 }
 
                 if (uiState.isLoading) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.height(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.padding(horizontal = 6.dp))
-                        Text("Thinking...", style = MaterialTheme.typography.bodyMedium)
+                    AiTypingIndicator()
+                    // S11-021: Cancel button while query is in flight
+                    TextButton(onClick = viewModel::cancelCurrentQuery) {
+                        Text(stringResource(R.string.assistant_cancel_query))
                     }
+                }
+
+                // S11-020: Clear all history confirmation dialog
+                if (uiState.showClearHistoryConfirm) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = viewModel::dismissClearAllHistory,
+                        title = { Text(stringResource(R.string.assistant_clear_history_title)) },
+                        text = { Text(stringResource(R.string.assistant_clear_history_message)) },
+                        confirmButton = {
+                            TextButton(onClick = viewModel::clearAllHistory) {
+                                Text(stringResource(R.string.action_confirm), color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = viewModel::dismissClearAllHistory) {
+                                Text(stringResource(R.string.action_cancel))
+                            }
+                        }
+                    )
                 }
 
                 uiState.errorMessage?.let {
@@ -170,7 +252,7 @@ fun AssistantSheet(
                         color = MaterialTheme.colorScheme.error
                     )
                     TextButton(onClick = { viewModel.retryLast() }) {
-                        Text("Retry")
+                        Text(stringResource(R.string.assistant_retry))
                     }
                 }
 
@@ -183,7 +265,7 @@ fun AssistantSheet(
                         value = uiState.input,
                         onValueChange = viewModel::updateInput,
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Ask about your expenses") },
+                        placeholder = { Text(stringResource(R.string.assistant_input_placeholder)) },
                         minLines = 1,
                         maxLines = 4
                     )
@@ -191,7 +273,7 @@ fun AssistantSheet(
                         onClick = { viewModel.submitQuery() },
                         enabled = uiState.input.isNotBlank() && !uiState.isLoading
                     ) {
-                        Icon(Icons.Rounded.Send, contentDescription = "Send")
+                        Icon(Icons.Rounded.Send, contentDescription = stringResource(R.string.assistant_send_cd))
                     }
                 }
             }
@@ -203,28 +285,32 @@ fun AssistantSheet(
 private fun StarterPrompts(
     onPromptSelected: (String) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Try asking:", style = MaterialTheme.typography.titleMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SuggestionChip(onClick = { onPromptSelected("How much did I spend this month?") }, label = { Text("This month total") })
-            SuggestionChip(onClick = { onPromptSelected("Top merchants this month") }, label = { Text("Top merchants") })
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SuggestionChip(onClick = { onPromptSelected("Largest purchase this month") }, label = { Text("Largest purchase") })
-            SuggestionChip(onClick = { onPromptSelected("Show groceries this month") }, label = { Text("Show groceries") })
-        }
-    }
-}
+    val queryThisMonth = stringResource(R.string.assistant_query_this_month)
+    val queryTopMerchants = stringResource(R.string.assistant_query_top_merchants)
+    val queryLargestPurchase = stringResource(R.string.assistant_query_largest_purchase)
+    val queryGroceries = stringResource(R.string.assistant_query_groceries)
 
-@Composable
-private fun UserBubble(text: String) {
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Text(
-            text = text,
-            modifier = Modifier
-                .padding(start = 48.dp)
-                .padding(10.dp),
-            style = MaterialTheme.typography.bodyMedium
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.assistant_try_asking), style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SuggestionChip(
+                onClick = { onPromptSelected(queryThisMonth) },
+                label = { Text(stringResource(R.string.assistant_suggestion_this_month)) }
+            )
+            SuggestionChip(
+                onClick = { onPromptSelected(queryTopMerchants) },
+                label = { Text(stringResource(R.string.assistant_suggestion_top_merchants)) }
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SuggestionChip(
+                onClick = { onPromptSelected(queryLargestPurchase) },
+                label = { Text(stringResource(R.string.assistant_suggestion_largest)) }
+            )
+            SuggestionChip(
+                onClick = { onPromptSelected(queryGroceries) },
+                label = { Text(stringResource(R.string.assistant_suggestion_groceries)) }
+            )
+        }
     }
 }

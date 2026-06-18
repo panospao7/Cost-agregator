@@ -2,6 +2,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import android.content.Context
+import com.yourname.expensetracker.data.privacy.AtRestEncryptionService
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
@@ -25,16 +26,64 @@ import timber.log.Timber
 @Singleton
 open class TransactionClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val userCorrectionRepository: UserCorrectionRepository
+    private val userCorrectionRepository: UserCorrectionRepository,
+    private val atRestEncryptionService: AtRestEncryptionService
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Single synchronization owner for all job-handle read/cancel/replace operations.
+    // A plain JVM monitor is used (rather than the coroutine Mutex) because lifecycle
+    // methods are non-suspend functions that must also cancel both jobs safely.
+    private val jobLock = Any()
     private var saveJob: Job? = null
     private var retrainJob: Job? = null
 
-    fun cleanup() {
-        saveJob?.cancel()
-        retrainJob?.cancel()
+    /**
+     * Non-destructive lifecycle callback for routine app backgrounding.
+     *
+     * Cancels any pending save/retrain jobs without killing the parent scope,
+     * so that future [scheduleSave] and [retrainFromCorrections] calls can
+     * still launch new coroutines in the same process.
+     */
+    fun onBackground() {
+        // AIML-15: Call saveToDisk() before cancellation for model persistence durability.
+        // This ensures the in-memory model state is persisted to disk even if a pending
+        // save job is cancelled, preventing data loss when the app goes to background.
+        kotlinx.coroutines.runBlocking { saveToDisk() }
+        synchronized(jobLock) {
+            saveJob?.cancel()
+            saveJob = null
+            retrainJob?.cancel()
+            retrainJob = null
+        }
+    }
+
+    /**
+     * Permanently cancels this classifier's coroutine scope.
+     *
+     * After this call, no further coroutines can be launched.
+     * Use only when the classifier instance is truly being disposed of
+     * (e.g., in tests or when the process is being terminated).
+     */
+    fun destroy() {
+        onBackground()
         scope.cancel()
+    }
+
+    /**
+     * Legacy cleanup method. Preserved for backward compatibility.
+     *
+     * Calling this method permanently cancels the classifier's scope,
+     * which means no future save/retrain work can be scheduled.
+     * Prefer [onBackground] for routine app backgrounding and
+     * [destroy] for true scope disposal.
+     */
+    @Deprecated(
+        message = "Use onBackground() for routine backgrounding or destroy() for permanent disposal",
+        replaceWith = ReplaceWith("onBackground()")
+    )
+    fun cleanup() {
+        destroy()
     }
 
     companion object {
@@ -74,6 +123,9 @@ open class TransactionClassifier @Inject constructor(
     private val isLoaded = AtomicBoolean(false)
     private var lastTrainingCount = 0
 
+    /** Set to true when a legacy plaintext model file was loaded and needs re-saving (encrypted). */
+    private var legacyFileMigrated = false
+
     suspend fun initialize() {
         if (isLoaded.get()) return
         mutex.withLock {
@@ -92,6 +144,11 @@ open class TransactionClassifier @Inject constructor(
 
                 isLoaded.set(true)
             }
+        }
+        // AIML-16: Re-save legacy plaintext model file as encrypted
+        if (legacyFileMigrated) {
+            legacyFileMigrated = false
+            saveToDisk()
         }
     }
 
@@ -121,12 +178,15 @@ open class TransactionClassifier @Inject constructor(
     }
 
     fun retrainFromCorrections() {
-        retrainJob?.cancel()
-        retrainJob = scope.launch {
+        val newJob = scope.launch {
             delay(2000) // Debounce for 2 seconds
             mutex.withLock {
                 retrainFromCorrectionsInternal()
             }
+        }
+        synchronized(jobLock) {
+            retrainJob?.cancel()
+            retrainJob = newJob
         }
     }
 
@@ -174,10 +234,13 @@ open class TransactionClassifier @Inject constructor(
     }
 
     private fun scheduleSave() {
-        saveJob?.cancel()
-        saveJob = scope.launch {
+        val newJob = scope.launch {
             delay(2000)
             saveToDisk()
+        }
+        synchronized(jobLock) {
+            saveJob?.cancel()
+            saveJob = newJob
         }
     }
 
@@ -341,7 +404,9 @@ open class TransactionClassifier @Inject constructor(
                     }
                 }
 
-                File(context.filesDir, MODEL_FILE).writeText(json.toString())
+                // AIML-16: At-rest encryption for ML model
+                val encrypted = atRestEncryptionService.encrypt(json.toString().toByteArray(Charsets.UTF_8))
+                File(context.filesDir, MODEL_FILE).writeBytes(encrypted)
             } catch (e: Exception) {
                 Timber.e("Failed to save ML model")
             }
@@ -353,7 +418,17 @@ open class TransactionClassifier @Inject constructor(
             val file = File(context.filesDir, MODEL_FILE)
             if (!file.exists()) return false
 
-            val json = JSONObject(file.readText())
+            // AIML-16: Try to read as encrypted; fall back to legacy plaintext
+            val fileBytes = file.readBytes()
+            val jsonText = try {
+                String(atRestEncryptionService.decrypt(fileBytes), Charsets.UTF_8)
+            } catch (e: Exception) {
+                Timber.d("Could not decrypt model file, trying legacy plaintext")
+                legacyFileMigrated = true
+                String(fileBytes, Charsets.UTF_8)
+            }
+
+            val json = JSONObject(jsonText)
             val version = json.optInt("version", 0)
             if (version != MODEL_VERSION) {
                 Timber.w("ML model version mismatch")

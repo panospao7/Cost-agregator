@@ -9,7 +9,6 @@ import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
-import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 import javax.inject.Inject
@@ -80,21 +79,32 @@ class OnDeviceCategorizationAssistService @Inject constructor() : Categorization
      */
     internal fun buildPrompt(input: CategorizationAssistInput): String {
         val categories = input.candidateCategories.joinToString(", ") { "${it.id}:${it.name}" }
+        val merchantContext = buildMerchantContext(input)
         return buildString {
-            appendLine("Categorize this transaction. Pick ONLY from the allowed categories.")
-            appendLine("Return ONLY a JSON object, nothing else.")
+            appendLine("Categorize this transaction. Pick ONLY from allowed categories.")
+            appendLine("Use common sense to identify merchants from abbreviations/OCR errors.")
+            appendLine("Examples: amzn/amazon → Shopping, goog/google → Services, netflix → Entertainment")
             appendLine()
             appendLine("Merchant: ${input.merchant}")
-            appendLine("Amount: ${input.amount} ${input.currency}")
+            appendLine("Amount: ${input.amount?.toString() ?: "none"} ${input.currency}")
             appendLine("Type: ${input.transactionType}")
             if (input.supportingText != null) {
                 appendLine("Context: ${input.supportingText}")
             }
+            if (merchantContext.isNotBlank()) {
+                appendLine("Known history: $merchantContext")
+            }
             appendLine()
             appendLine("Allowed categories: $categories")
             appendLine()
-            appendLine("JSON schema: {\"categoryId\":0,\"categoryName\":\"string\",\"confidence\":0.0,\"rationale\":\"string\"}")
+            appendLine("JSON: {\"categoryId\":0,\"categoryName\":\"string\",\"confidence\":0.0,\"rationale\":\"string\"}")
         }
+    }
+    
+    private fun buildMerchantContext(input: CategorizationAssistInput): String {
+        return input.recentTransactionsWithSameMerchant
+            .take(5)
+            .joinToString("; ") { "${it.merchant} → ${it.categoryName}" }
     }
 
     /**
@@ -105,16 +115,22 @@ class OnDeviceCategorizationAssistService @Inject constructor() : Categorization
         val jsonText = extractFirstJsonObject(text.trim()) ?: return null
         return try {
             val obj = JSONObject(jsonText)
-            if (!obj.has("categoryId") || obj.isNull("categoryId")) return null
-            if (!obj.has("categoryName") || obj.optString("categoryName").isBlank()) return null
+            val categoryId = StrictAiJsonParsing.run { obj.positiveIdOrNull("categoryId") } ?: return null
+            val categoryName = obj.optString("categoryName").trim().takeIf { it.isNotBlank() } ?: return null
+            val confidence = if (obj.has("confidence") && !obj.isNull("confidence")) {
+                StrictAiJsonParsing.run { obj.boundedConfidenceOrNull("confidence") } ?: return null
+            } else {
+                null
+            }
 
             CategoryAssistSuggestion(
-                categoryId = obj.optLong("categoryId"),
-                categoryName = obj.optString("categoryName").trim(),
-                confidence = if (obj.has("confidence") && !obj.isNull("confidence"))
-                    obj.optDouble("confidence").toFloat() else null,
+                categoryId = categoryId,
+                categoryName = categoryName,
+                confidence = confidence,
                 rationale = obj.optString("rationale").trim().ifBlank { null },
-                alternativeCategoryIds = obj.optJSONArray("alternativeCategoryIds").toLongList()
+                alternativeCategoryIds = StrictAiJsonParsing.run {
+                    obj.optJSONArray("alternativeCategoryIds").positiveLongs()
+                }
             )
         } catch (e: Exception) {
             Timber.w(e, "OnDeviceCategorizationAssistService: JSON parse failure")
@@ -129,12 +145,4 @@ class OnDeviceCategorizationAssistService @Inject constructor() : Categorization
         return text.substring(start, end + 1)
     }
 
-    private fun JSONArray?.toLongList(): List<Long> {
-        if (this == null) return emptyList()
-        return buildList(length()) {
-            for (index in 0 until length()) {
-                add(optLong(index))
-            }
-        }
-    }
 }

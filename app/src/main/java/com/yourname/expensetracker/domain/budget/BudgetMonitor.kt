@@ -8,11 +8,14 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -25,18 +28,73 @@ class BudgetMonitor @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val timeProvider: TimeProvider,
     private val notificationService: NotificationService,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val diagnosticEventWriter: com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter,
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier,
+    private val diagnosticSink: com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 ) {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + ioDispatcher)
 
+    // Single synchronization owner for all shared monitor state.
+    // lastCheckTime, cachedStatuses, and cacheTimestamp must always be
+    // observed and mutated together so throttle decisions and cache
+    // freshness checks are never inconsistent.
+    private val stateLock = Any()
     private var lastCheckTime = 0L
     private var cachedStatuses: List<BudgetStatus>? = null
     private var cacheTimestamp: Long = 0L
-    private val cacheValidityMs = 30_000L // 30 seconds cache
-    
-    fun cleanup() {
+    /** BUD-16: Reduced from 30s to near-zero to minimize stale-alert risk.
+     *  The monitor now re-fetches on every call, but still holds the cache
+     *  briefly within the same clock-tick to avoid redundant DB queries
+     *  from rapid successive calls in the same frame. */
+    private val cacheValidityMs = 100L // 100ms — effectively forces re-fetch each check
+
+    /**
+     * Non-destructive lifecycle callback for routine app backgrounding.
+     *
+     * Cancels any in-flight monitor work and clears transient throttle/cache state,
+     * but keeps the parent scope alive so future foreground checks can still run.
+     */
+    fun onBackground() {
+        serviceJob.cancelChildren()
+        synchronized(stateLock) {
+            lastCheckTime = 0L
+            cachedStatuses = null
+            cacheTimestamp = 0L
+        }
+    }
+
+    /**
+     * Permanently cancels this monitor's coroutine scope.
+     *
+     * After this call, no further checks can be launched.
+     * Use only for true disposal (for example in tests/process teardown).
+     */
+    fun destroy() {
+        onBackground()
         serviceJob.cancel()
+    }
+
+    @Deprecated(
+        message = "Use onBackground() for routine backgrounding or destroy() for permanent disposal",
+        replaceWith = ReplaceWith("onBackground()")
+    )
+    fun cleanup() {
+        destroy()
+    }
+
+    /**
+     * BUD-16: Change-driven cache invalidation. Call this from the repository
+     * whenever a budget is created, updated, or deleted so the next checkBudgets()
+     * call fetches fresh data instead of serving stale cached statuses.
+     */
+    fun invalidateCache() {
+        synchronized(stateLock) {
+            cachedStatuses = null
+            cacheTimestamp = 0L
+            Timber.d("BudgetMonitor: cache invalidated by external change")
+        }
     }
 
     companion object {
@@ -62,11 +120,13 @@ class BudgetMonitor @Inject constructor(
 
     fun checkBudgets() {
         val now = timeProvider.now()
-        if (now - lastCheckTime < MIN_CHECK_INTERVAL_MS) {
-            Timber.d("Budget check skipped - too soon (last check: ${now - lastCheckTime}ms ago)")
-            return
+        synchronized(stateLock) {
+            if (now - lastCheckTime < MIN_CHECK_INTERVAL_MS) {
+                Timber.d("Budget check skipped - too soon (last check: ${now - lastCheckTime}ms ago)")
+                return
+            }
+            lastCheckTime = now
         }
-        lastCheckTime = now
         
         serviceScope.launch {
             var lastException: Exception? = null
@@ -79,6 +139,8 @@ class BudgetMonitor @Inject constructor(
                         processBudgetStatus(status, now)
                     }
                     return@launch // Success - exit
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     lastException = e
                     if (isTransientError(e)) {
@@ -93,6 +155,22 @@ class BudgetMonitor @Inject constructor(
                 }
             }
             Timber.e(lastException, "checkBudgets failed after $MAX_RETRIES attempts")
+            // P2-20: Durable record of failed budget check
+            serviceScope.launch(ioDispatcher) {
+                try {
+                    writeBarrier.checkWritesAllowed("BudgetMonitor.checkBudgets.diagnostic")
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                        stage = "CHECK_FAILED",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_RETRYABLE,
+                        severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
+                        exception = lastException
+                    ))
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Timber.w(e, "Failed to write CHECK_FAILED diagnostic event")
+                }
+            }
         }
     }
 
@@ -108,14 +186,20 @@ class BudgetMonitor @Inject constructor(
     }
 
     private suspend fun getCachedBudgetStatuses(now: Long): List<BudgetStatus> {
-        if (cachedStatuses != null && now - cacheTimestamp < cacheValidityMs) {
-            Timber.d("Using cached budget statuses (${cachedStatuses!!.size} budgets)")
-            return cachedStatuses!!
+        synchronized(stateLock) {
+            val cached = cachedStatuses
+            if (cached != null && now - cacheTimestamp < cacheValidityMs) {
+                Timber.d("Using cached budget statuses (${cached.size} budgets)")
+                return cached
+            }
         }
-        
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        cachedStatuses = statuses
-        cacheTimestamp = now
+        currentCoroutineContext().ensureActive()
+        synchronized(stateLock) {
+            cachedStatuses = statuses
+            cacheTimestamp = now
+        }
         Timber.d("Fetched fresh budget statuses (${statuses.size} budgets)")
         return statuses
     }
@@ -124,33 +208,179 @@ class BudgetMonitor @Inject constructor(
         status: BudgetStatus, 
         now: Long
     ) {
+        currentCoroutineContext().ensureActive()
         val budget = status.budget
-        val spent = status.spentAmount
+
+        // P2-20: Durable diagnostic — record that a budget check started.
+        withContext(ioDispatcher) {
+            try {
+                writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = "CHECK_STARTED",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.ATTEMPTED,
+                    entityType = "Budget",
+                    entityId = budget.id
+                ))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                } else {
+                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                }
+            }
+        }
+
+        // P6-P1-2: Use adjustedSpendBreakdown.effectiveSpend when available (shared-expense offset),
+        // falling back to raw spentAmount.BudgetStatus.spentAmount is gross spend and does not
+        // account for shared-expense reimbursements, which can trigger false threshold alerts.
+        //
+        // P6-CURRENT-002 (RESOLVED): adjustedSpendBreakdown is now populated by
+        // BudgetRepository.createBudgetStatus(), so the monitor and UI share the same
+        // effective spend. The gross spentAmount fallback only applies if the offset
+        // engine failed (breakdown null), which is logged in the repository.
+        val spent = status.adjustedSpendBreakdown?.effectiveSpend ?: status.spentAmount
+        // P6-CURRENT-027(b): record when the monitor falls back to gross spend because the
+        // shared-expense offset breakdown was unavailable (offset engine failed in the repo).
+        val grossFallback = status.adjustedSpendBreakdown == null
         val categoryName = status.category?.name ?: "Overall"
         val periodStart = status.periodStart
 
-        if (spent <= 0 || budget.amount <= 0) return
+        // P6-CURRENT-027(a): the early no-op return previously emitted nothing, leaving a gap
+        // in the budget-check audit trail. Emit a durable SKIPPED diagnostic so a non-positive
+        // spend/limit no-op is observable. Best-effort, write-barrier-guarded, exception-tolerant.
+        if (spent <= 0 || budget.amount <= 0) {
+            withContext(ioDispatcher) {
+                try {
+                    writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                        stage = "STATUS_SKIPPED",
+                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                        entityType = "BudgetStatus",
+                        entityId = budget.id,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("spent", spent)
+                            .put("limit", budget.amount)
+                            .put("grossFallback", grossFallback)
+                            .put("reason", "NO_SPEND_OR_LIMIT")
+                            .build()
+                    ))
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                        diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                    } else {
+                        Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                    }
+                }
+            }
+            return
+        }
 
-        val percent = status.percentUsed
+        // Recompute percent from adjusted spent to avoid triggering alerts on gross spend
+        val effectiveLimit = status.effectiveLimit
+        val adjustedPercent = if (effectiveLimit > 0) (spent / effectiveLimit).toFloat() else 0f
+
+        // P2-20: Write a diagnostic event recording the budget check attempt.
+        // Writes on ioDispatcher to avoid blocking the monitor coroutine.
+        withContext(ioDispatcher) {
+            try {
+                writeBarrier.checkWritesAllowed("BudgetMonitor.diagnostic")
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = "STATUS_COMPUTED",
+                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED,
+                    entityType = "BudgetStatus",
+                    entityId = budget.id,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("spent", spent)
+                        .put("limit", effectiveLimit)
+                        .put("percent", adjustedPercent)
+                        .put("partial", status.isPartial)
+                        .put("grossFallback", grossFallback)
+                        .build()
+                ))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+                    diagnosticSink.recordBlockedOperation("BudgetMonitor.diagnostic", e.mode, "P6")
+                } else {
+                    Timber.w(e, "BudgetMonitor: skipping diagnostic insert")
+                }
+            }
+        }
+
+        // BUD-3: Only update notification timestamp if the notification was
+        // actually delivered (e.g. user has notifications disabled).
 
         when {
-            percent >= 1.0f -> {
+            adjustedPercent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    sendNotification(budget.id.toInt(), budget, spent, "Budget Exceeded!", categoryName)
-                    budgetRepository.updateExceededNotification(budget.id, now)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent, status.currency)
+                    if (delivered) {
+                        budgetRepository.updateExceededNotification(budget.id, now)
+                    }
+                    writeAlertDiagnostic(budget.id, "EXCEEDED", adjustedPercent, delivered, now)
+                } else {
+                    writeAlertDiagnostic(budget.id, "EXCEEDED_THROTTLED", adjustedPercent, false, now)
                 }
             }
-            percent >= budget.notifyAtCritical && percent < 1.0f -> {
+            adjustedPercent >= budget.notifyAtCritical && adjustedPercent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    sendNotification(budget.id.toInt(), budget, spent, "Critical Budget Warning", categoryName)
-                    budgetRepository.updateCriticalNotification(budget.id, now)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent, status.currency)
+                    if (delivered) {
+                        budgetRepository.updateCriticalNotification(budget.id, now)
+                    }
+                    writeAlertDiagnostic(budget.id, "CRITICAL", adjustedPercent, delivered, now)
+                } else {
+                    writeAlertDiagnostic(budget.id, "CRITICAL_THROTTLED", adjustedPercent, false, now)
                 }
             }
-            percent >= budget.notifyAtWarning && percent < budget.notifyAtCritical -> {
+            adjustedPercent >= budget.notifyAtWarning && adjustedPercent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    sendNotification(budget.id.toInt(), budget, spent, "Budget Warning", categoryName)
-                    budgetRepository.updateWarningNotification(budget.id, now)
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent, status.currency)
+                    if (delivered) {
+                        budgetRepository.updateWarningNotification(budget.id, now)
+                    }
+                    writeAlertDiagnostic(budget.id, "WARNING", adjustedPercent, delivered, now)
+                } else {
+                    writeAlertDiagnostic(budget.id, "WARNING_THROTTLED", adjustedPercent, false, now)
                 }
+            }
+        }
+    }
+
+    /**
+     * P2-20: Writes a durable diagnostic event for every alert decision
+     * (sent, throttled, or failed) so budget-alert behaviour is auditable
+     * without relying on ephemeral Timber logs.
+     */
+    private fun writeAlertDiagnostic(
+        budgetId: Long,
+        stage: String,
+        percentUsed: Float,
+        delivered: Boolean,
+        now: Long
+    ) {
+        serviceScope.launch(ioDispatcher) {
+            try {
+                writeBarrier.checkWritesAllowed("BudgetMonitor.writeAlertDiagnostic")
+                diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.BUDGET,
+                    stage = stage,
+                    outcome = if (delivered) com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED
+                              else com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                    entityType = "Budget",
+                    entityId = budgetId,
+                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                        .put("percentUsed", percentUsed)
+                        .build()
+                ))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Failed to write budget-monitor diagnostic event (stage=%s)", stage)
             }
         }
     }
@@ -164,22 +394,43 @@ class BudgetMonitor @Inject constructor(
         return now - lastNotified > cooldown
     }
 
+    /**
+     * @return true if the notification was delivered, false otherwise.
+     */
     private fun sendNotification(
         notificationId: Int,
         budget: Budget,
         spent: Double,
+        effectiveLimit: Double,
         title: String,
-        categoryName: String
-    ) {
-        val percent = (spent / budget.amount * 100).toInt()
+        categoryName: String,
+        percentUsed: Float,
+        displayCurrency: String = budget.currency
+    ): Boolean {
+        // Always use effectiveLimit (rollover-aware) — never fall back
+        // to budget.amount which omits rollover adjustments.
+        val limit = effectiveLimit.coerceAtLeast(0.0)
+        // Use the pre-computed percentUsed from BudgetStatus, which correctly
+        // accounts for rollover via effectiveLimit, rather than recomputing from
+        // raw spent/limit which could diverge.
+        val percent = (percentUsed * 100).toInt().coerceAtLeast(0)  // allow overspend >100%
+        // NOTE: spent/effectiveLimit are denominated in displayCurrency.
+        // P6-CURRENT-003: callers pass BudgetStatus.currency (home currency after
+        // repository normalization), so the formatted symbol matches the amounts.
+        val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
+            .fromCode(displayCurrency)?.symbol ?: displayCurrency
         val content = String.format(
             Locale.US,
-            "You've spent €%.2f (%d%%) of your %s budget.",
+            "You've spent %s%.2f (%d%%) of your %s budget (%s%.2f).",
+            currencySymbol,
             spent,
             percent,
-            categoryName
+            categoryName,
+            currencySymbol,
+            limit
         )
 
-        notificationService.sendBudgetAlert(notificationId, title, content)
+        return notificationService.sendBudgetAlert(notificationId, title, content) ==
+            com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
     }
 }

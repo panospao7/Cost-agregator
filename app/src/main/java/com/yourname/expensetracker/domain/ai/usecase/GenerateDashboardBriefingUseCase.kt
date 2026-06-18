@@ -1,22 +1,26 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Generates (or returns a cached) AI dashboard briefing artifact.
@@ -42,7 +46,10 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
 
-    suspend operator fun invoke(processedData: ProcessedDashboardData) {
+    suspend operator fun invoke(
+        processedData: ProcessedDashboardData,
+        eventTimeMillis: Long? = null
+    ) {
         // ── 1. Settings gate ─────────────────────────────────────────────────
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.dashboardBriefingEnabled) {
@@ -51,7 +58,7 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
         }
 
         // ── 2. Build input ───────────────────────────────────────────────────
-        val input = inputBuilder.build(processedData)
+        val input = inputBuilder.build(processedData, eventTimeMillis)
         val routeDecision = aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, settings)
         if (routeDecision.route == AiRoute.DISABLED) {
             Timber.d("GenerateDashboardBriefingUseCase: router disabled briefing generation, skipping.")
@@ -60,22 +67,18 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
 
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "dashboard_home:${input.dateKey}"
-        val now       = timeProvider.now()
+        val now       = eventTimeMillis ?: timeProvider.now()
+        val sourceHash = AiArtifactSourceHash.forDashboardBriefing(input)
 
         // ── 4. Cache freshness check ─────────────────────────────────────────
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
-        if (existing != null &&
-            existing.status == AiArtifactStatus.READY &&
-            existing.promptVersion == AppConfig.Ai.PROMPT_VERSION_DASHBOARD &&
-            existing.expiresAt != null && existing.expiresAt > now
-        ) {
+        if (existing.isFreshArtifact(AppConfig.Ai.PROMPT_VERSION_DASHBOARD, sourceHash, now)) {
             Timber.d("GenerateDashboardBriefingUseCase: fresh artifact found, skipping generation.")
             return
         }
 
         // ── 5a. Persist RUNNING tombstone ────────────────────────────────────
-        val sourceHash = input.hashCode().toString()
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType    = AiTargetType.DASHBOARD,
             targetKey     = targetKey,
             capability    = AiCapability.DASHBOARD_BRIEFING,
@@ -93,21 +96,18 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
 
         // ── 5b. Generate ─────────────────────────────────────────────────────
         try {
-            val briefing = dashboardBriefingService.generate(input)
+            val serviceResult = dashboardBriefingService.generate(input)
 
-            val finalEntity = if (briefing != null) {
-                baseEntity.copy(
+            val finalEntity = when (serviceResult) {
+                is AiServiceResult.Success -> baseEntity.copy(
                     status      = AiArtifactStatus.READY,
-                    summaryText = briefing.text
+                    summaryText = serviceResult.value.text
                         .take(AppConfig.Ai.MAX_BRIEFING_LENGTH_CHARS),
                     updatedAt   = timeProvider.now()
                 )
-            } else {
-                // No-op provider or provider declined — mark failed so we don't retry
-                // until the next scheduled run.
-                baseEntity.copy(
+                is AiServiceResult.Failure -> baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(routeDecision.reason, routeDecision),
+                    errorMessage = failureMessage(serviceResult.error.toReadableMessage(), routeDecision),
                     updatedAt    = timeProvider.now()
                 )
             }
@@ -115,6 +115,8 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
             aiArtifactRepository.upsert(finalEntity)
             Timber.d("GenerateDashboardBriefingUseCase: artifact stored with status ${finalEntity.status}.")
 
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "GenerateDashboardBriefingUseCase: generation failed")
             aiArtifactRepository.upsert(
@@ -126,6 +128,17 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
             )
         }
     }
+}
+
+private fun AiServiceError.toReadableMessage(): String = when (this) {
+    AiServiceError.Timeout -> "Dashboard briefing timed out"
+    AiServiceError.Offline -> "No network connection"
+    AiServiceError.SslError -> "Secure connection failed"
+    is AiServiceError.HttpError -> "HTTP $code"
+    is AiServiceError.ParseError -> message ?: "Response parse error"
+    is AiServiceError.Disabled -> reason
+    is AiServiceError.PrivacyDenied -> blocked.reason
+    is AiServiceError.Unknown -> message ?: "Unknown service error"
 }
 
 private fun AiRoute.toArtifactMode(): AiMode = when (this) {

@@ -10,7 +10,10 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface AiChatSessionDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(session: AiChatSessionEntity): Long
 
     @Query("SELECT * FROM ai_chat_sessions WHERE id = :sessionId")

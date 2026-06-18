@@ -6,7 +6,10 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface BlockedPackageDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun block(blockedPackage: BlockedPackage)
 
     @Delete
@@ -20,6 +23,9 @@ interface BlockedPackageDao {
 
     @Query("SELECT packageName FROM blocked_packages")
     fun getAllPackageNamesFlow(): Flow<List<String>>
+
+    @Query("SELECT packageName FROM blocked_packages")
+    suspend fun getAllPackageNamesOnce(): List<String>
     
     @Query("SELECT EXISTS(SELECT 1 FROM blocked_packages WHERE packageName = :packageName)")
     suspend fun isBlocked(packageName: String): Boolean

@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import org.junit.Assert.*
 import org.junit.Before
@@ -20,6 +19,7 @@ class GoogleWalletParserTest {
                     "€", "E", "EUR" -> "EUR"
                     "$", "USD" -> "USD"
                     "£", "GBP" -> "GBP"
+                    "₹", "INR" -> "INR"
                     else -> arg ?: "EUR"
                 }
             }
@@ -41,6 +41,89 @@ class GoogleWalletParserTest {
         assertNotNull(result)
         assertEquals(4.20, result!!.amount, 0.01)
         assertEquals("Coffee Island", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+    }
+
+    @Test
+    fun `parse outgoing p2p send as transfer`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Sent €18.00 to Alex Johnson",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.OUTGOING, result.transferDirection)
+        assertEquals("Alex Johnson", result.merchant)
+        assertEquals("To: Alex Johnson", result.transferAccountName)
+    }
+
+    @Test
+    fun `parse incoming p2p receive as transfer`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Received €12.00 from Maria",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
+        assertEquals("Maria", result.merchant)
+        assertEquals("From: Maria", result.transferAccountName)
+    }
+
+    @Test
+    fun `keep paid to merchant wording as purchase`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Paid €18.00 to Coffee Island with Mastercard ••1234",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertNull(result.transferDirection)
+        assertEquals("Coffee Island with Mastercard", result.merchant)
+    }
+
+    @Test
+    fun `keep google pay merchant purchase wording as purchase`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Paid €22.50 to Zara with Visa ••4321",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertNull(result.transferDirection)
+        assertEquals("Zara with Visa", result.merchant)
+    }
+
+    @Test
+    fun `parse paid to friend wording as transfer`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Paid €18.00 to friend Alex",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.OUTGOING, result.transferDirection)
+        assertEquals("friend Alex", result.merchant)
     }
 
     @Test
@@ -155,5 +238,37 @@ class GoogleWalletParserTest {
         assertNotNull(result)
         assertEquals(8.00, result!!.amount, 0.01)
         assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `parse INR amount with rupee symbol and merchant`() {
+        val result = parser.parse(
+            title = "Payment",
+            text = "₹123.45 at Merchant",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.nbu.paisa.user"
+        )
+
+        assertNotNull(result)
+        assertEquals(123.45, result!!.amount, 0.01)
+        assertEquals("INR", result.currency)
+        assertEquals("Merchant", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+    }
+
+    @Test
+    fun `parse INR amount with code prefix`() {
+        val result = parser.parse(
+            title = "Payment",
+            text = "INR 123.45",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.nbu.paisa.user"
+        )
+
+        assertNotNull(result)
+        assertEquals(123.45, result!!.amount, 0.01)
+        assertEquals("INR", result.currency)
     }
 }

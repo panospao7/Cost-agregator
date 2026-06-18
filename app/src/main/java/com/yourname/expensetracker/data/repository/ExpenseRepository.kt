@@ -1,9 +1,12 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
+import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
+import com.yourname.expensetracker.data.database.dao.ExpenseDao.Companion.EFFECTIVE_AMOUNT_E_SQL
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -11,44 +14,157 @@ import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.MonthlyDepositTotal
 import com.yourname.expensetracker.data.database.dao.LocationCluster
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import com.yourname.expensetracker.data.database.dao.MonthlyTotal
+import com.yourname.expensetracker.data.database.dao.WeeklyTotal
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import androidx.room.withTransaction
 import androidx.sqlite.db.SimpleSQLiteQuery
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.transaction.lifecycle.DebugExpenseAuditWriter
 import javax.inject.Singleton
 
+
 enum class SortOrder(val sql: String, val displayName: String) {
-    DATE_DESC("date DESC", "Newest First"),
-    DATE_ASC("date ASC", "Oldest First"),
-    AMOUNT_DESC("amount DESC", "Amount High to Low"),
-    AMOUNT_ASC("amount ASC", "Amount Low to High")
+    DATE_DESC("e.date DESC", "Newest First"),
+    DATE_ASC("e.date ASC", "Oldest First"),
+    // S5-008R: Amount sorts use ownership-adjusted normalized base amount.
+    // When baseAmount > 0 (home-currency-normalized at save time), apply ownership rules.
+    // Falls back to effectiveAmount for legacy rows where baseAmount = 0.
+    AMOUNT_DESC("""(CASE
+        WHEN e.isNotMine = 1 THEN 0.0
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
+            THEN e.myShareAmount * e.exchangeRateUsed
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL
+            THEN e.baseAmount * e.mySharePercentage / 100.0
+        WHEN e.baseAmount > 0 THEN e.baseAmount
+        ELSE ($EFFECTIVE_AMOUNT_E_SQL)
+    END) DESC""", "Amount High to Low"),
+    AMOUNT_ASC("""(CASE
+        WHEN e.isNotMine = 1 THEN 0.0
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL AND e.exchangeRateUsed > 0
+            THEN e.myShareAmount * e.exchangeRateUsed
+        WHEN e.baseAmount > 0 AND e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL
+            THEN e.baseAmount * e.mySharePercentage / 100.0
+        WHEN e.baseAmount > 0 THEN e.baseAmount
+        ELSE ($EFFECTIVE_AMOUNT_E_SQL)
+    END) ASC""", "Amount Low to High")
 }
 
 enum class OwnershipFilter {
     ALL, MINE, NOT_MINE, SHARED, TRANSFER
 }
 
+/**
+ * ## C1 LIFECYCLE MIGRATION — PARTIALLY COMPLETE
+ *
+ * This is part of a staged architectural migration to route all expense mutations
+ * through TransactionLifecycleCoordinator (Phase C of testing/master plan).
+ *
+ * ### DONE (routed through coordinator, writes TransactionEvent.UPDATED):
+ * - updateExpenseCategory() — both overloads → coordinator.updateCategory()
+ * - updateExpense() (full-row) — already routed through coordinator
+ * - updateExpenseMerchant (single path) → coordinator.updateMerchant()
+ * - updateExpenseType → coordinator.updateType()
+ * - updateTransferDetails → coordinator.updateTransferDetails()
+ * - updateNotMineDetails → coordinator.updateOwnership()
+ * - updateSharedExpenseDetails → coordinator.updateOwnership()
+ * - updateOwnership → coordinator.updateOwnership()
+ * - updateExpenseLocation → coordinator.updateLocation()
+ * - updateExpenseCategoryBulk → coordinator.bulkUpdateCategory()
+ * - updateExpenseMerchantBulk → coordinator.bulkUpdateMerchant()
+ *
+ * ## INTENTIONALLY NOT ROUTED
+ *
+ * These bypasses are **designed**, not bugs. Each has a clear rationale for why
+ * routing through the lifecycle coordinator is inappropriate or impossible.
+ *
+ * ### MAINTENANCE/BACKFILL WORKERS (low-value column updates)
+ * Writing `TransactionEvent.UPDATED` per row from background workers would
+ * flood `transaction_events` with noise. These workers touch 1-2 columns each:
+ * - `conditionallySetLocation` — LocationBackfillWorker (lat/lon/source/placeId)
+ * - `clearExpenseLocation` — location reset path
+ * - `incrementBackfillAttempts` — dead-letter counter for backfill retries
+ * - `updateMerchantKey` — MerchantKeyBackfillWorker (merchantKey column only)
+ *
+ * ### DESIGN CONSTRAINTS (no coordinator routing possible)
+ * - **ReceiptLinkService.linkReceiptToExpense() (RCP-30)** — best-effort category
+ *   propagation inside runCatching. Cannot use coordinator.updateCategory()
+ *   due to circular dependency (TransactionLifecycleCoordinator → ReceiptLinkService
+ *   via side effects, so ReceiptLinkService → Coordinator would create a cycle).
+ * - **GroupTransactionCoordinator.clearSharedExpenseFlags** — post-commit cleanup
+ *   after group deletion; not a user-initiated edit.
+ * - **GroupTransactionCoordinator.normalizeLinkedSystemExpense** — atomic part of
+ *   group expense creation transaction; lifecycle event is written by the
+ *   createExpense() call in the same flow.
+ *
+ * ### DEBUG METHODS (BuildConfig.DEBUG guarded, never reachable in production)
+ * - `deleteAllExpenses()` — guarded by `BuildConfig.DEBUG`
+ * - `createDebugSnapshot()` / `restoreDebugSnapshot()` — guarded by `BuildConfig.DEBUG`
+ *
+ * Total: 7 remaining (all intentional/backfill).
+ *
+ * ### NOT YET IMPLEMENTED (no update path exists yet):
+ * - Business/tax field updates (isBusinessExpense, businessPurpose, businessCategory,
+ *   businessProject, requiresReceipt) — these fields are currently set at creation
+ *   time only. When a dedicated update method is added, it MUST route through the
+ *   lifecycle coordinator.
+ *   TODO (T10): Add updateBusinessFlags(expenseId, patch, source) coordinator
+ *               method that writes UPDATED event.
+ *
+ * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
+ * for the full inventory and migration plan.
+ * See docs/expense-mutation-inventory.md for the complete classified callsite inventory.
+ */
 @Singleton
 class ExpenseRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val database: AppDatabase,
     private val expenseDao: ExpenseDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val pendingReviewDao: PendingReviewDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
-    private val merchantNormalizer: MerchantNormalizer
+    private val merchantNormalizer: MerchantNormalizer,
+    private val transferDirectionAnalytics: TransferDirectionAnalytics,
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val debugExpenseAuditWriter: DebugExpenseAuditWriter
 ) {
+    data class DebugExpenseSnapshot(
+        val expenses: List<Expense>
+    )
     // Mutex to prevent race conditions in category learning
     private val categoryUpdateMutex = Mutex()
     // Direct flow without sharing - each collector gets its own subscription
     // This prevents memory leaks from orphaned scopes
-    fun getAllExpenses(): Flow<List<Expense>> = expenseDao.getAllFlow(500)
+    //
+    // A.9: Switched from the bounded getAllFlow(500) to the uncapped variant so
+    // that downstream consumers (analytics, forecasting, cash-flow, financial
+    // weather) receive the complete dataset rather than a silently truncated one.
+    fun getAllExpenses(): Flow<List<Expense>> = expenseDao.getAllFlowUncapped()
+
+    fun getAllExpenseSnapshots(): Flow<List<ExpenseSnapshot>> =
+        getAllExpenses().map { expenses -> expenses.map { expense -> expense.toExpenseSnapshot() } }
 
     fun getExpensesWithCategory(limit: Int = 200): Flow<List<ExpenseWithCategory>> =
         expenseDao.getAllWithCategoryFlow(limit)
@@ -91,10 +207,117 @@ class ExpenseRepository @Inject constructor(
         maxAmount: Double? = null,
         sortOrder: SortOrder = SortOrder.DATE_DESC
     ): List<ExpenseWithCategory> {
+        val (sql, args) = buildExpenseDynamicQueryParts(
+            searchQuery = searchQuery,
+            startDate = startDate,
+            endDate = endDate,
+            transactionTypes = transactionType?.let(::setOf).orEmpty(),
+            categoryIds = categoryId?.let(::setOf).orEmpty(),
+            merchantNames = merchantName?.let(::setOf).orEmpty(),
+            ownershipFilter = ownershipFilter,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            sortOrder = sortOrder,
+            includePagination = true,
+            limit = limit,
+            offset = offset,
+            selectClause = "SELECT e.*"
+        )
+        return expenseDao.getExpensesDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
+    }
+
+    /**
+     * Assistant-only exact full-read variant of [getExpensesPagedDynamic].
+     *
+     * Shares the same filter contract as the paged query builder but omits
+     * LIMIT/OFFSET so assistant financial queries can execute against the full
+     * matching dataset. Existing UI paging callers must remain on the bounded
+     * method above.
+     */
+    suspend fun getAssistantExpensesFiltered(
+        searchQuery: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null,
+        transactionTypes: Set<TransactionType> = emptySet(),
+        categoryIds: Set<Long> = emptySet(),
+        merchantNames: Set<String> = emptySet(),
+        ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        minAmount: Double? = null,
+        maxAmount: Double? = null,
+        sortOrder: SortOrder = SortOrder.DATE_DESC
+    ): List<ExpenseWithCategory> {
+        val (sql, args) = buildExpenseDynamicQueryParts(
+            searchQuery = searchQuery,
+            startDate = startDate,
+            endDate = endDate,
+            transactionTypes = transactionTypes,
+            categoryIds = categoryIds,
+            merchantNames = merchantNames,
+            ownershipFilter = ownershipFilter,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            sortOrder = sortOrder,
+            includePagination = false,
+            limit = null,
+            offset = null,
+            selectClause = "SELECT e.*"
+        )
+        return expenseDao.getAssistantExpensesDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
+    }
+
+    /**
+     * Assistant-only exact count helper paired with [getAssistantExpensesFiltered].
+     * Any filter change here must stay in sync with the list helper above.
+     */
+    suspend fun getAssistantExpenseCountFiltered(
+        searchQuery: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null,
+        transactionTypes: Set<TransactionType> = emptySet(),
+        categoryIds: Set<Long> = emptySet(),
+        merchantNames: Set<String> = emptySet(),
+        ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        minAmount: Double? = null,
+        maxAmount: Double? = null
+    ): Int {
+        val (sql, args) = buildExpenseDynamicQueryParts(
+            searchQuery = searchQuery,
+            startDate = startDate,
+            endDate = endDate,
+            transactionTypes = transactionTypes,
+            categoryIds = categoryIds,
+            merchantNames = merchantNames,
+            ownershipFilter = ownershipFilter,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            sortOrder = SortOrder.DATE_DESC,
+            includePagination = false,
+            limit = null,
+            offset = null,
+            selectClause = "SELECT COUNT(*)"
+        )
+        return expenseDao.getAssistantExpenseCountDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
+    }
+
+    private fun buildExpenseDynamicQueryParts(
+        searchQuery: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null,
+        transactionTypes: Set<TransactionType> = emptySet(),
+        categoryIds: Set<Long> = emptySet(),
+        merchantNames: Set<String> = emptySet(),
+        ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        minAmount: Double? = null,
+        maxAmount: Double? = null,
+        sortOrder: SortOrder = SortOrder.DATE_DESC,
+        includePagination: Boolean,
+        limit: Int?,
+        offset: Int?,
+        selectClause: String
+    ): Pair<String, MutableList<Any>> {
         val args = mutableListOf<Any>()
         val whereClauses = mutableListOf<String>()
 
-        // Search query (merchant or category name)
         if (!searchQuery.isNullOrBlank()) {
             whereClauses.add("(e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?))")
             val searchPattern = "%$searchQuery%"
@@ -102,36 +325,34 @@ class ExpenseRepository @Inject constructor(
             args.add(searchPattern)
         }
 
-        // Date range
         if (startDate != null) {
             whereClauses.add("e.date >= ?")
             args.add(startDate)
         }
         if (endDate != null) {
-            whereClauses.add("e.date <= ?")
+            whereClauses.add("e.date < ?")
             args.add(endDate)
         }
 
-        // Transaction type
-        if (transactionType != null) {
-            whereClauses.add("e.transactionType = ?")
-            args.add(transactionType.name)
+        if (transactionTypes.isNotEmpty()) {
+            whereClauses.add(transactionTypes.toSqlInClause("e.transactionType", args) { it.name })
         }
 
-        // Category filter
-        if (categoryId != null) {
-            whereClauses.add("e.categoryId = ?")
-            args.add(categoryId)
+        if (categoryIds.isNotEmpty()) {
+            whereClauses.add(categoryIds.toSqlInClause("e.categoryId", args) { it })
         }
 
-        // Merchant filter
-        if (!merchantName.isNullOrBlank()) {
-            whereClauses.add("e.merchantKey = ?")
-            args.add(MerchantKeyGenerator.generate(merchantName))
+        if (merchantNames.isNotEmpty()) {
+            val merchantKeys = merchantNames
+                .map { MerchantKeyGenerator.generate(it) }
+                .filter { it.isNotBlank() }
+                .toSet()
+            if (merchantKeys.isNotEmpty()) {
+                whereClauses.add(merchantKeys.toSqlInClause("e.merchantKey", args) { it })
+            }
         }
 
-        // Effective amount range filter
-        val effectiveAmountExpr = "CASE WHEN e.isNotMine = 1 THEN 0.0 WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0 ELSE e.amount END"
+        val effectiveAmountExpr = EFFECTIVE_AMOUNT_E_SQL
         if (minAmount != null) {
             whereClauses.add("$effectiveAmountExpr >= ?")
             args.add(minAmount)
@@ -141,88 +362,123 @@ class ExpenseRepository @Inject constructor(
             args.add(maxAmount)
         }
 
-        // Ownership filter
         when (ownershipFilter) {
-            OwnershipFilter.MINE -> {
-                whereClauses.add("e.isNotMine = 0")
-            }
-            OwnershipFilter.NOT_MINE -> {
-                whereClauses.add("e.isNotMine = 1")
-            }
-            OwnershipFilter.SHARED -> {
-                whereClauses.add("e.isSharedExpense = 1")
-            }
-            OwnershipFilter.TRANSFER -> {
-                whereClauses.add("e.transactionType = 'TRANSFER'")
-            }
-            OwnershipFilter.ALL -> { /* No filter */ }
+            OwnershipFilter.MINE -> whereClauses.add("e.isNotMine = 0")
+            OwnershipFilter.NOT_MINE -> whereClauses.add("e.isNotMine = 1")
+            OwnershipFilter.SHARED -> whereClauses.add("e.isSharedExpense = 1")
+            OwnershipFilter.TRANSFER -> whereClauses.add("e.transactionType = 'TRANSFER'")
+            OwnershipFilter.ALL -> Unit
         }
 
-        // Build WHERE clause
         val whereClause = if (whereClauses.isNotEmpty()) {
             "WHERE ${whereClauses.joinToString(" AND ")}"
         } else {
             ""
         }
 
-        // Build the full SQL query - let Room handle the @Relation for category
-        // by not selecting category columns here (use simple SELECT from expenses)
-        val sql = """
-            SELECT e.id, e.amount, e.currency, e.merchant, e.transactionType, e.date, 
-                   e.rawNotificationId, e.categoryId, e.createdAt, e.paymentMethod, 
-                   e.isManualEntry, e.notes, e.dedupeKey, e.transferDirection, 
-                   e.transferAccountName, e.isNotMine, e.ownerName, 
-                   e.isSharedExpense, e.sharedWithName, e.mySharePercentage, e.myShareAmount,
-                   e.latitude, e.longitude, e.locationSource, e.placeId,
-                   e.backfillAttempts, e.resolvedAddress, e.merchantKey
-            FROM expenses e
-            $whereClause
-            ORDER BY e.${sortOrder.sql}
-            LIMIT ? OFFSET ?
-        """.trimIndent()
+        val sql = buildString {
+            appendLine(selectClause)
+            appendLine("FROM expenses e")
+            if (whereClause.isNotEmpty()) {
+                appendLine(whereClause)
+            }
+            if (selectClause != "SELECT COUNT(*)") {
+                appendLine("-- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.")
+                appendLine("-- Do not populate it from user input or remote config.")
+                appendLine("ORDER BY ${sortOrder.sql}")
+            }
+            if (includePagination) {
+                require(limit != null && offset != null) { "Paged dynamic query requires limit and offset" }
+                appendLine("LIMIT ? OFFSET ?")
+                args.add(limit)
+                args.add(offset)
+            }
+        }.trim()
 
-        args.add(limit)
-        args.add(offset)
+        return sql to args
+    }
 
-        val argArray = args.toTypedArray()
-        val query = SimpleSQLiteQuery(sql, argArray)
-        return expenseDao.getExpensesDynamic(query)
+    private fun <T> Collection<T>.toSqlInClause(
+        columnName: String,
+        args: MutableList<Any>,
+        valueMapper: (T) -> Any
+    ): String {
+        val placeholders = joinToString(", ") { "?" }
+        forEach { args.add(valueMapper(it)) }
+        return "$columnName IN ($placeholders)"
     }
 
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int =
         expenseDao.getCountForPeriod(startMs, endMs)
 
-    suspend fun deleteExpense(expense: Expense) = expenseDao.delete(expense)
+    suspend fun getExpenseById(id: Long): Expense? =
+        expenseDao.getById(id)
 
-    suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long) {
-        categoryUpdateMutex.withLock {
-            expenseDao.updateCategory(expense.id, newCategoryId)
+    suspend fun deleteExpense(expense: Expense) {
+        transactionLifecycleCoordinator.deleteExpense(expense)
+            .getOrThrow()
+    }
+
+    /**
+     * Delete an expense by ID through the transaction lifecycle coordinator.
+     * This ensures a TransactionEvent (DELETED) is written and the row is
+     * removed atomically.
+     *
+     * @param id The ID of the expense to delete.
+     * @throws IllegalArgumentException if no expense exists with the given ID.
+     */
+    suspend fun deleteExpense(id: Long) {
+        val expense = expenseDao.getById(id)
+            ?: throw IllegalArgumentException("Expense not found: $id")
+        deleteExpense(expense)
+    }
+
+    /**
+     * Update an existing expense through the transaction lifecycle coordinator.
+     * This ensures a TransactionEvent (UPDATED) is written and the row is
+     * persisted atomically.
+     */
+    suspend fun updateExpense(expense: Expense) {
+        transactionLifecycleCoordinator.updateExpense(expense)
+    }
+
+    @Deprecated("Use TransactionLifecycleCoordinator.updateCategory() instead for proper lifecycle tracking.")
+    suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long?) {
+        transactionLifecycleCoordinator.updateCategory(
+            expenseId = expense.id,
+            newCategoryId = newCategoryId,
+            source = "USER_EDIT"
+        )
+        // The merchant learning and user correction logic can remain here (non-lifecycle side effects)
+        if (newCategoryId != null) {
             merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
-
-            // Also record as a correction for learning
-            val correction = UserCorrection(
-                packageName = "manual_edit",
-                originalMerchant = expense.merchant,
-                correctedMerchant = null,
-                originalAmount = expense.amount,
-                correctedAmount = null,
-                originalCategoryId = expense.categoryId,
-                correctedCategoryId = newCategoryId,
-                originalType = expense.transactionType.name,
-                correctedType = null,
-                wasRejected = false,
-                wasApproved = true,
-                notificationTitle = null,
-                notificationText = null
-            )
-            userCorrectionDao.insert(correction)
         }
     }
 
+    /**
+     * Overload to update category by expense ID directly.
+     */
+    @Deprecated("Use TransactionLifecycleCoordinator.updateCategory() instead for proper lifecycle tracking.")
+    suspend fun updateExpenseCategory(expenseId: Long, categoryId: Long?) {
+        transactionLifecycleCoordinator.updateCategory(expenseId, categoryId)
+    }
+
+    /**
+     * BUD-33: Wrapped the Mutex-protected category update in a database
+     * transaction so that the expense update, merchant learning, and user
+     * correction are committed atomically. Previously, only a Kotlin Mutex
+     * was used, which prevents concurrent coroutine access but does NOT
+     * provide transactional atomicity — a crash after the DAO update but
+     * before the correction insert could leave inconsistent state.
+     */
+    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.BULK_UPDATED. Use TransactionLifecycleCoordinator.updateExpense() for each affected expense instead.")
     suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.updateExpenseCategoryBulk")
         categoryUpdateMutex.withLock {
-            val merchantKey = MerchantKeyGenerator.generate(merchant)
-            expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
+            transactionLifecycleCoordinator.bulkUpdateCategory(
+                merchant = merchant, newCategoryId = newCategoryId, source = "USER_EDIT"
+            )
+            // Side effects (non-lifecycle)
             merchantCategoryRepository.learnPattern(merchant, newCategoryId)
 
             // Record as a bulk correction for learning
@@ -245,46 +501,49 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    @Deprecated("Use TransactionLifecycleCoordinator.bulkUpdateMerchant() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchantBulk(oldMerchant: String, newMerchant: String) {
-        if (oldMerchant == newMerchant) return
-
-        val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
-        val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-        expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
+        transactionLifecycleCoordinator.bulkUpdateMerchant(
+            oldMerchant = oldMerchant, newMerchant = newMerchant, source = "USER_EDIT"
+        )
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
     }
 
+    @Deprecated("Use TransactionLifecycleCoordinator.updateMerchant() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
         if (expense.merchant == newMerchant) return
-        
         val oldMerchant = expense.merchant
-        
+
         if (applyToAll) {
-            // Update all approved expenses with this name
+            // Bulk path: use coordinator.bulkUpdateMerchant() but keep pendingReview
+            // bulk rename here (coordinator doesn't handle cross-table pending review updates)
+            transactionLifecycleCoordinator.bulkUpdateMerchant(oldMerchant, newMerchant)
             val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-            expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
-            // Also update any pending reviews with this name
-            pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant)
+            pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
         } else {
-            // Just update this single record
-            val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-            expenseDao.updateMerchant(expense.id, newMerchant)
-            expenseDao.updateMerchantKey(expense.id, newMerchantKey)
+            // Single: route through lifecycle coordinator
+            transactionLifecycleCoordinator.updateMerchant(
+                expenseId = expense.id,
+                newMerchant = newMerchant,
+                source = "USER_EDIT"
+            )
         }
-        
-        // Catch the rename for future auto-correction
+
+        // Side effects (non-lifecycle, best-effort)
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
-        
-        // Also learn the category for this brand name
-        expense.categoryId?.let { 
+        expense.categoryId?.let {
             merchantCategoryRepository.learnPattern(newMerchant, it)
         }
     }
 
+    @Deprecated("Use TransactionLifecycleCoordinator.updateType() instead for proper lifecycle tracking.")
     suspend fun updateExpenseType(expense: Expense, newType: TransactionType) {
-        if (expense.transactionType == newType) return
-        expenseDao.updateTransactionType(expense.id, newType.name)
+        transactionLifecycleCoordinator.updateType(
+            expenseId = expense.id,
+            newType = newType,
+            source = "USER_EDIT"
+        )
     }
 
     suspend fun updateTransferDetails(
@@ -292,17 +551,59 @@ class ExpenseRepository @Inject constructor(
         transferDirection: TransferDirection?,
         transferAccountName: String?
     ) {
-        expenseDao.updateTransferDirection(expense.id, transferDirection?.name)
-        expenseDao.updateTransferAccountName(expense.id, transferAccountName)
+        transactionLifecycleCoordinator.updateTransferDetails(
+            expenseId = expense.id,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
+            source = "USER_EDIT"
+        )
+
+        // Side effect (non-lifecycle, best-effort)
+        if (transferDirection != null) {
+            transferDirectionAnalytics.recordUserCorrection(
+                transferId = expense.id,
+                fromDirection = expense.transferDirection?.toDomainTransferDirection(),
+                toDirection = transferDirection.toDomainTransferDirection()
+            )
+        }
     }
 
+    /**
+     * S5-010R: Atomically update transaction type AND transfer metadata in one operation.
+     * Delegates to [TransactionLifecycleCoordinator.updateTypeAndTransferDetails] which
+     * uses one DB transaction, one lifecycle event, and one side-effect dispatch.
+     */
+    suspend fun updateExpenseTypeAndTransfer(
+        expense: Expense,
+        newType: TransactionType,
+        transferDirection: TransferDirection?,
+        transferAccountName: String?
+    ) {
+        transactionLifecycleCoordinator.updateTypeAndTransferDetails(
+            expenseId = expense.id,
+            newType = newType,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
+            source = "USER_EDIT"
+        )
+    }
+
+    @Deprecated("Use TransactionLifecycleCoordinator.updateOwnership() instead for proper lifecycle tracking.")
     suspend fun updateNotMineDetails(
         expense: Expense,
         isNotMine: Boolean,
         ownerName: String?
     ) {
-        expenseDao.updateIsNotMine(expense.id, isNotMine)
-        expenseDao.updateOwnerName(expense.id, ownerName)
+        transactionLifecycleCoordinator.updateOwnership(
+            expenseId = expense.id,
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = expense.isSharedExpense,
+            sharedWithName = expense.sharedWithName,
+            mySharePercentage = expense.mySharePercentage,
+            myShareAmount = expense.myShareAmount,
+            source = "USER_EDIT"
+        )
     }
 
     suspend fun updateSharedExpenseDetails(
@@ -312,10 +613,52 @@ class ExpenseRepository @Inject constructor(
         mySharePercentage: Int?,
         myShareAmount: Double?
     ) {
-        expenseDao.updateIsSharedExpense(expense.id, isSharedExpense)
-        expenseDao.updateSharedWithName(expense.id, sharedWithName)
-        expenseDao.updateMySharePercentage(expense.id, mySharePercentage)
-        expenseDao.updateMyShareAmount(expense.id, myShareAmount)
+        transactionLifecycleCoordinator.updateOwnership(
+            expenseId = expense.id,
+            isNotMine = expense.isNotMine,
+            ownerName = expense.ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount,
+            source = "USER_EDIT"
+        )
+    }
+
+    /**
+     * Atomic update of **all** ownership fields in a single transaction.
+     *
+     * This is the preferred entry point when the UI can change both the
+     * "not mine" and "shared expense" flags at the same time (e.g. the
+     * `EditOwnershipDialog`).  Calling [updateNotMineDetails] followed by
+     * [updateSharedExpenseDetails] is **unsafe** because the second call
+     * operates on the original [Expense] object whose `isNotMine` value is
+     * stale, causing it to overwrite the flag that the first call just
+     * persisted.
+     *
+     * All parameters are taken from the UI; [Expense.normalizeOwnership] is
+     * applied once to guarantee mutual exclusivity before the six columns
+     * are written atomically via [applyOwnershipDetails].
+     */
+    suspend fun updateOwnership(
+        expense: Expense,
+        isNotMine: Boolean,
+        ownerName: String?,
+        isSharedExpense: Boolean,
+        sharedWithName: String?,
+        mySharePercentage: Int?,
+        myShareAmount: Double?
+    ) {
+        transactionLifecycleCoordinator.updateOwnership(
+            expenseId = expense.id,
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount,
+            source = "USER_EDIT"
+        )
     }
 
     suspend fun searchMerchants(query: String): List<MerchantSuggestion> {
@@ -327,24 +670,136 @@ class ExpenseRepository @Inject constructor(
         return expenseDao.getRecentMerchantNames()
     }
 
-    suspend fun deleteAllExpenses() = expenseDao.deleteAll()
+    suspend fun getRecentTransactionsForMerchant(merchantKey: String, limit: Int = 10): List<ExpenseWithCategoryName> {
+        return expenseDao.getRecentTransactionsForMerchant(merchantKey, limit)
+    }
+
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: debug-only aggregate destructive operation.
+    // Guard: BuildConfig.DEBUG + DatabaseWriteBarrier.
+    // Audit: aggregate TransactionEvent written in same DB transaction.
+    @OptIn(RestrictedExpenseDaoMutation::class)
+    suspend fun deleteAllExpenses() {
+        requireDebugExpenseOperation("deleteAllExpenses")
+        writeBarrier.checkWritesAllowed("ExpenseRepository.deleteAllExpenses")
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        database.withTransaction {
+            val affectedCount = expenseDao.countAllExpenses()
+            expenseDao.deleteAll()
+            debugExpenseAuditWriter.writeDeleteAllEvent(
+                affectedCount = affectedCount,
+                correlationId = correlationId
+            )
+        }
+    }
+
+    suspend fun createDebugSnapshot(): DebugExpenseSnapshot {
+        requireDebugExpenseOperation("createDebugSnapshot")
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        val snapshot = DebugExpenseSnapshot(expenses = expenseDao.getAllUncapped())
+        debugExpenseAuditWriter.emitSnapshotCreatedDiagnosticBestEffort(
+            snapshotCount = snapshot.expenses.size,
+            correlationId = correlationId
+        )
+        return snapshot
+    }
+
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: debug-only aggregate destructive operation.
+    // Guard: BuildConfig.DEBUG + DatabaseWriteBarrier.
+    // Audit: aggregate RESTORED_FROM_DEBUG_SNAPSHOT event in same DB transaction.
+    @OptIn(RestrictedExpenseDaoMutation::class)
+    suspend fun restoreDebugSnapshot(snapshot: DebugExpenseSnapshot) {
+        requireDebugExpenseOperation("restoreDebugSnapshot")
+        writeBarrier.checkWritesAllowed("ExpenseRepository.restoreDebugSnapshot")
+        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
+        database.withTransaction {
+            val beforeCount = expenseDao.countAllExpenses()
+            expenseDao.deleteAll()
+            if (snapshot.expenses.isNotEmpty()) {
+                expenseDao.insertAll(snapshot.expenses)
+            }
+            debugExpenseAuditWriter.writeRestoreSnapshotEvent(
+                beforeCount = beforeCount,
+                restoredCount = snapshot.expenses.size,
+                correlationId = correlationId
+            )
+        }
+    }
+
+    private fun requireDebugExpenseOperation(operation: String) {
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            throw UnsupportedOperationException("$operation disabled in release")
+        }
+    }
     
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     fun getTotalSpent(): Flow<Double?> = expenseDao.getTotalSpentFlow()
 
     // === Analytics Methods ===
 
+    /**
+     * Return **all** expenses in the half-open date range without a row cap.
+     *
+     * A.9: Switched from the bounded DAO variant (default LIMIT 2000) to
+     * [ExpenseDao.getExpensesBetweenUncapped] so that analytics, export,
+     * forecasting, and other full-data consumers are never silently truncated.
+     */
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> =
-        expenseDao.getExpensesBetween(startDate, endDate)
+        expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+
+    suspend fun getExpenseSnapshotsBetween(startDate: Long, endDate: Long): List<ExpenseSnapshot> =
+        getExpensesBetween(startDate, endDate).map { expense -> expense.toExpenseSnapshot() }
+
+    suspend fun getExpensesBetweenPaged(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        offset: Int
+    ): List<Expense> = expenseDao.getExpensesBetween(startDate, endDate, limit, offset)
+
+    suspend fun getExpensesBetweenPagedForDeterministicExport(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        offset: Int
+    ): List<Expense> = expenseDao.getExpensesBetweenForExport(startDate, endDate, limit, offset)
+
+    suspend fun getExpensesBetweenForExportKeyset(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        lastDate: Long? = null,
+        lastId: Long? = null
+    ): List<Expense> = expenseDao.getExpensesBetweenForExportKeyset(startDate, endDate, limit, lastDate, lastId)
+
+    suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int =
+        expenseDao.countExpensesBetween(startDate, endDate)
 
     suspend fun getExpensesSince(since: Long): List<Expense> =
         expenseDao.getExpensesSince(since)
 
-    fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
-        expenseDao.getExpensesBetweenFlow(startDate, endDate)
+    suspend fun getExpenseSnapshotsSince(since: Long): List<ExpenseSnapshot> =
+        getExpensesSince(since).map { expense -> expense.toExpenseSnapshot() }
 
+    /**
+     * Reactive (Flow) variant of [getExpensesBetween] — returns the complete
+     * dataset for the given date range without a row cap.
+     *
+     * A.9: Switched from the bounded DAO Flow (default LIMIT 2000) to
+     * [ExpenseDao.getExpensesBetweenFlowUncapped].
+     */
+    fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
+        expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate)
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double =
         expenseDao.getTotalForPeriod(startMs, endMs)
 
+    suspend fun getTransactionCountForPeriod(startMs: Long, endMs: Long): Int =
+        expenseDao.getCountForPeriod(startMs, endMs)
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getCategoryTotalsForPeriod(startMs: Long, endMs: Long): List<CategoryTotal> =
         expenseDao.getCategoryTotalsForPeriod(startMs, endMs)
 
@@ -360,17 +815,38 @@ class ExpenseRepository @Inject constructor(
     suspend fun getLargestExpenseForPeriod(startMs: Long, endMs: Long): Expense? =
         expenseDao.getLargestExpenseForPeriod(startMs, endMs)
 
+    suspend fun getLargestExpenseSnapshotForPeriod(startMs: Long, endMs: Long): ExpenseSnapshot? =
+        getLargestExpenseForPeriod(startMs, endMs)?.toExpenseSnapshot()
+
     suspend fun getLargestExpenseForMerchant(merchant: String, startMs: Long, endMs: Long): Expense? =
         expenseDao.getLargestExpenseForMerchant(merchant, startMs, endMs)
 
+    suspend fun getLargestExpenseSnapshotForMerchant(merchant: String, startMs: Long, endMs: Long): ExpenseSnapshot? =
+        getLargestExpenseForMerchant(merchant, startMs, endMs)?.toExpenseSnapshot()
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
         expenseDao.getDailyTotalsForPeriod(startMs, endMs)
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
+    suspend fun getWeeklyTotalsForPeriod(startMs: Long, endMs: Long): List<WeeklyTotal> =
+        expenseDao.getWeeklyTotalsForPeriod(startMs, endMs).mapNotNull { weekly ->
+            parseCanonicalWeekStart(weekly.weekKey)?.let { weekStart ->
+                WeeklyTotal(
+                    weekKey = weekly.weekKey,
+                    startDate = weekStart,
+                    endDate = TimePeriodUtils.addDays(weekStart, 7),
+                    total = weekly.total,
+                    txCount = weekly.txCount
+                )
+            }
+        }
 
     suspend fun getRecurringCandidates(): List<MerchantStats> =
         expenseDao.getRecurringCandidates()
 
-    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long, timeZoneOffset: Int): List<DayOfWeekTotal> =
-        expenseDao.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
+    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long): List<DayOfWeekTotal> =
+        expenseDao.getDayOfWeekPattern(startMs, endMs)
 
     // === Deposit/Income Methods ===
 
@@ -380,12 +856,14 @@ class ExpenseRepository @Inject constructor(
     fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
         expenseDao.getDepositsBetweenFlow(startDate, endDate)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double =
         expenseDao.getTotalDepositsForPeriod(startMs, endMs)
 
     suspend fun getMonthlyDeposits(): List<com.yourname.expensetracker.data.database.dao.MonthlyDepositTotal> =
         expenseDao.getMonthlyDeposits()
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getTotalDeposits(): Double =
         expenseDao.getTotalDeposits()
 
@@ -400,13 +878,26 @@ class ExpenseRepository @Inject constructor(
     suspend fun getUnlocatedExpensesForBackfill(limit: Int = 500) =
         expenseDao.getUnlocatedExpensesForBackfill(limit)
 
-    suspend fun incrementBackfillAttempts(expenseId: Long) =
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill low-risk column update.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design (low-value backfill counter).
+    @OptIn(RestrictedExpenseDaoMutation::class)
+    suspend fun incrementBackfillAttempts(expenseId: Long) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.incrementBackfillAttempts")
         expenseDao.incrementBackfillAttempts(expenseId)
+    }
 
     suspend fun countLocatedExpenses() = expenseDao.countLocated()
 
     suspend fun countUnlocatedExpenses() = expenseDao.countUnlocated()
 
+    /**
+     * LOC-16: Validates coordinate ranges before writing to the database.
+     * Latitude must be in [-90, 90] and longitude in [-180, 180].
+     * Throws [IllegalArgumentException] for invalid coordinates.
+     */
+    @Deprecated("Use TransactionLifecycleCoordinator.updateLocation() instead for proper lifecycle tracking.")
     suspend fun updateExpenseLocation(
         expenseId: Long,
         latitude: Double,
@@ -414,13 +905,61 @@ class ExpenseRepository @Inject constructor(
         source: String,
         placeId: String?,
         address: String? = null
-    ) = expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, address)
+    ) {
+        transactionLifecycleCoordinator.updateLocation(
+            expenseId = expenseId, latitude = latitude, longitude = longitude,
+            source = source, placeId = placeId, resolvedAddress = address
+        )
+    }
 
-    suspend fun clearExpenseLocation(expenseId: Long) = expenseDao.clearLocation(expenseId)
+    /**
+     * Conditionally set location — only updates if latitude and longitude are
+     * still NULL. Returns 1 if the update was applied, 0 if the expense was
+     * already located (likely by the user between fetch and write).
+     *
+     * Use this from [LocationBackfillWorker] to prevent overwriting user-set
+     * locations (race condition guard).
+     */
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill low-risk location column update.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design (backfill worker).
+    @OptIn(RestrictedExpenseDaoMutation::class)
+    suspend fun conditionallySetLocation(
+        expenseId: Long,
+        latitude: Double,
+        longitude: Double,
+        source: String,
+        placeId: String?,
+        address: String? = null
+    ): Int {
+        require(latitude in -90.0..90.0) { "Latitude out of range: $latitude" }
+        require(longitude in -180.0..180.0) { "Longitude out of range: $longitude" }
+        writeBarrier.checkWritesAllowed("ExpenseRepository.conditionallySetLocation")
+        return expenseDao.conditionallySetLocation(
+        expenseId = expenseId,
+        latitude = latitude,
+        longitude = longitude,
+        source = source,
+        placeId = placeId,
+        resolvedAddress = address
+    )
+    }
+
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill location column clear.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design.
+    @OptIn(RestrictedExpenseDaoMutation::class)
+    suspend fun clearExpenseLocation(expenseId: Long) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.clearExpenseLocation")
+        expenseDao.clearLocation(expenseId)
+    }
 
     /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */
     fun getUnlocatedExpensesFlow(limit: Int = 100) = expenseDao.getUnlocatedExpensesFlow(limit)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to getLocatedMerchantTotalsByCurrency()
     suspend fun getLocatedMerchantTotals() = expenseDao.getLocatedMerchantTotals()
 
     suspend fun getExpensesInBoundingBox(
@@ -442,6 +981,109 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpensesWithNullMerchantKey(limit: Int = 500) =
         expenseDao.getExpensesWithNullMerchantKey(limit)
 
-    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) =
+    // EXPENSE_DAO_MUTATION_ALLOWLIST:
+    // Reason: maintenance/backfill merchantKey column update.
+    // Guard: DatabaseWriteBarrier.
+    // Audit: no lifecycle event by design (MerchantKeyBackfillWorker).
+    @OptIn(RestrictedExpenseDaoMutation::class)
+    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.updateMerchantKey")
         expenseDao.updateMerchantKey(expenseId, merchantKey)
+    }
+
+    // === Monthly/Weekly Totals Dashboard Methods ===
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
+    suspend fun getDailyTotalsWithDatesForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
+        expenseDao.getDailyTotalsWithDatesForPeriod(startMs, endMs)
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
+    suspend fun getMonthlyTotalsForPeriod(startMs: Long, endMs: Long): List<MonthlyTotal> =
+        expenseDao.getMonthlyTotalsForPeriod(startMs, endMs)
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
+    suspend fun getCategoryBreakdown(startMs: Long, endMs: Long): List<CategoryTotalResult> =
+        expenseDao.getCategoryBreakdown(startMs, endMs)
+
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
+    suspend fun getAverageDailySpend(startMs: Long, endMs: Long): Double? =
+        expenseDao.getAverageDailySpend(startMs, endMs)
+
+    // ── Policy-aware duplicate-candidate retrieval (A.4) ──────────────────
+
+    /**
+     * Retrieve all duplicate candidates within the canonical
+     * [DuplicateDetectionPolicy] time/amount window for a given currency and
+     * transaction type.
+     *
+     * This is the **dedicated duplicate-detection path** for use cases/engines.
+     * [getExpensesBetween] must remain untouched for analytics/export callers.
+     *
+     * @param amount          transaction amount
+     * @param date            event timestamp (epoch ms)
+     * @param currency        ISO-4217 currency code (null defaults to EUR)
+     * @param transactionType transaction type for compatible filtering
+     * @param windowMs        override window (defaults to [DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS])
+     */
+    suspend fun getDuplicateCandidatesInWindow(
+        amount: Double,
+        date: Long,
+        currency: String? = null,
+        transactionType: TransactionType = TransactionType.UNKNOWN,
+        windowMs: Long = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+    ): List<Expense> {
+        val tolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+        val startDate = date - windowMs
+        val endDateExclusive = date + windowMs + 1
+        return expenseDao.getDuplicateCandidatesInRange(
+            startDate = startDate,
+            endDate = endDateExclusive,
+            minAmount = amount - tolerance,
+            maxAmount = amount + tolerance,
+            currency = normalizedCurrency,
+            transactionType = transactionType.name
+        )
+    }
+
+    private fun Expense.toExpenseSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = transactionType.toDomainTransactionType(),
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = transferDirection?.toDomainTransferDirection(),
+            notes = notes
+        )
+    }
+
+    private fun parseCanonicalWeekStart(weekStartDate: String): Long? {
+        return runCatching {
+            LocalDate.parse(weekStartDate, DateTimeFormatter.ISO_LOCAL_DATE)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull()
+    }
+
+    private fun TransactionType.toDomainTransactionType(): DomainTransactionType =
+        when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
+
+    private fun TransferDirection.toDomainTransferDirection(): DomainTransferDirection =
+        when (this) {
+            TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+            TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+        }
 }

@@ -1,0 +1,318 @@
+package com.yourname.expensetracker.domain.business
+
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.MileageTracking
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.data.repository.TaxSettingsRepository
+import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.export.CsvCellSanitizer
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
+
+data class BusinessExpenseReport(
+    val startDate: Long,
+    val endDate: Long,
+    val generatedAt: Long,
+    val totalExpenses: Double,
+    val totalDeductibleExpenses: Double,
+    val expensesByCategory: Map<String, Double>,
+    val expensesByProject: Map<String, Double>,
+    val mileageReport: MileageReport,
+    val expensesMissingReceipts: List<Expense>,
+    val topExpenses: List<Expense>,
+    val formattedReport: String,
+    val isPartial: Boolean = false,
+    val warningMessage: String? = null
+)
+
+data class MileageReport(
+    val totalDistanceKm: Double,
+    val totalDeduction: Double,
+    val deductionRatePerKm: Double?,
+    val effectiveDeductionRatePerKm: Double,
+    val hasMultipleRates: Boolean,
+    val tripCount: Int,
+    val trips: List<MileageTracking>
+)
+
+@Singleton
+class BusinessExpenseReportGenerator @Inject constructor(
+    private val businessExpenseRepository: BusinessExpenseRepository,
+    private val timeProvider: TimeProvider,
+    private val taxSettingsRepository: TaxSettingsRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+) {
+    
+    /**
+     * Generate a comprehensive business expense report for tax purposes.
+     */
+    suspend fun generateReport(
+        startDate: Long,
+        endDate: Long,
+        includeMileage: Boolean = true
+    ): BusinessExpenseReport = withContext(ioDispatcher) {
+        val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
+        
+        // Get all business expenses – enforce purchase-only at the boundary
+        val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
+        
+        // Determine report currency and mixed-currency state
+        val distinctCurrencies = expenses.map { it.currency.uppercase() }.distinct()
+        val isMixedCurrency = distinctCurrencies.size > 1
+        val reportCurrency = if (isMixedCurrency) {
+            taxSettingsRepository.getFilingCurrency().uppercase()
+        } else {
+            distinctCurrencies.firstOrNull() ?: taxSettingsRepository.getFilingCurrency().uppercase()
+        }
+        val warningMessage = if (isMixedCurrency) {
+            "Warning: report contains mixed currencies (${distinctCurrencies.joinToString()}). Totals are raw sums and may be misleading."
+        } else null
+        
+        // Calculate totals
+        var totalExpenses = 0.0
+        for (expense in expenses) {
+            totalExpenses += expense.effectiveAmount
+        }
+        
+        // Group by category – derived from the already-filtered purchase-only list
+        // so that pre-aggregated repository data cannot re-admit non-spend movements
+        val expensesByCategory = mutableMapOf<String, Double>()
+        for (expense in expenses) {
+            val cat = expense.businessCategory ?: continue
+            expensesByCategory[cat] = (expensesByCategory[cat] ?: 0.0) + expense.effectiveAmount
+        }
+        
+        // Group by project – derived from the already-filtered purchase-only list
+        // so that pre-aggregated repository data cannot re-admit non-spend movements
+        val expensesByProject = mutableMapOf<String, Double>()
+        for (expense in expenses) {
+            val proj = expense.businessProject ?: continue
+            expensesByProject[proj] = (expensesByProject[proj] ?: 0.0) + expense.effectiveAmount
+        }
+        
+        // Get expenses missing receipts – enforce purchase-only at the boundary
+        val missingReceipts = businessExpenseRepository.getExpensesMissingReceipts(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
+        
+        // Get top expenses (top 10)
+        val sortedExpenses = expenses.sortedByDescending { it.effectiveAmount }
+        val topExpenses = if (sortedExpenses.size > 10) {
+            sortedExpenses.subList(0, 10)
+        } else sortedExpenses
+        
+        // Get mileage report if requested
+        val mileageReport = if (includeMileage) {
+            generateMileageReport(startDate, endDate)
+        } else {
+            MileageReport(0.0, 0.0, null, 0.0, false, 0, emptyList())
+        }
+        
+        // Calculate total deductible (expenses + mileage)
+        val totalDeductible = totalExpenses + mileageReport.totalDeduction
+        
+        // Generate formatted report
+        val formattedReport = buildString {
+            append("\n")
+            append("========================================\n")
+            append("BUSINESS EXPENSE REPORT\n")
+            append("========================================\n")
+            append("Period: ${formatInstant(startDate, dateFormat)} - ${formatInstant(endDate, dateFormat)}\n")
+            append("Generated: ${formatInstant(timeProvider.now(), dateFormat)}\n")
+            append("\n")
+            if (warningMessage != null) {
+                append("⚠️ $warningMessage\n")
+                append("\n")
+            }
+            append("SUMMARY\n")
+            append("----------------------------------------\n")
+            append("Total Business Expenses: $reportCurrency ${String.format("%.2f", totalExpenses)}\n")
+            append("Total Mileage Deduction: $reportCurrency ${String.format("%.2f", mileageReport.totalDeduction)}\n")
+            append("Total Deductible Amount: $reportCurrency ${String.format("%.2f", totalDeductible)}\n")
+            append("\n")
+            
+            if (expensesByCategory.isNotEmpty()) {
+                append("EXPENSES BY CATEGORY\n")
+                append("----------------------------------------\n")
+                val sortedCategories = expensesByCategory.toList().sortedByDescending { it.second }
+                for ((category, amount) in sortedCategories) {
+                    append("${category}: $reportCurrency ${String.format("%.2f", amount)}\n")
+                }
+                append("\n")
+            }
+            
+            if (expensesByProject.isNotEmpty()) {
+                append("EXPENSES BY PROJECT\n")
+                append("----------------------------------------\n")
+                val sortedProjects = expensesByProject.toList().sortedByDescending { it.second }
+                for ((project, amount) in sortedProjects) {
+                    append("${project}: $reportCurrency ${String.format("%.2f", amount)}\n")
+                }
+                append("\n")
+            }
+            
+            if (includeMileage && mileageReport.totalDistanceKm > 0) {
+                append("MILEAGE DEDUCTION\n")
+                append("----------------------------------------\n")
+                append("Total Distance: ${String.format("%.1f", mileageReport.totalDistanceKm)} km\n")
+                val rateLine = if (mileageReport.hasMultipleRates) {
+                    "Deduction Rate: $reportCurrency ${String.format("%.2f", mileageReport.effectiveDeductionRatePerKm)}/km (weighted average, multiple rates applied)"
+                } else {
+                    "Deduction Rate: $reportCurrency ${String.format("%.2f", mileageReport.deductionRatePerKm ?: 0.0)}/km"
+                }
+                append("$rateLine\n")
+                append("Total Mileage Deduction: $reportCurrency ${String.format("%.2f", mileageReport.totalDeduction)}\n")
+                append("Number of Trips: ${mileageReport.tripCount}\n")
+                append("\n")
+            }
+            
+            if (topExpenses.isNotEmpty()) {
+                append("TOP 10 EXPENSES\n")
+                append("----------------------------------------\n")
+                for ((index, expense) in topExpenses.withIndex()) {
+                    val date = formatInstant(expense.date, dateFormat)
+                    val merchant = expense.merchant.take(25)
+                    val purpose = expense.businessPurpose?.let { " - $it" } ?: ""
+                    append("${index + 1}. ${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${merchant}${purpose}\n")
+                }
+                append("\n")
+            }
+            
+            if (missingReceipts.isNotEmpty()) {
+                append("⚠️ EXPENSES MISSING RECEIPTS\n")
+                append("----------------------------------------\n")
+                for (expense in missingReceipts) {
+                    val date = formatInstant(expense.date, dateFormat)
+                    append("${date} - $reportCurrency ${String.format("%.2f", expense.effectiveAmount)} - ${expense.merchant}\n")
+                }
+                append("\n")
+            }
+            
+            append("========================================\n")
+            append("End of Report\n")
+            append("========================================\n")
+        }
+        
+        BusinessExpenseReport(
+            startDate = startDate,
+            endDate = endDate,
+            generatedAt = timeProvider.now(),
+            totalExpenses = totalExpenses,
+            totalDeductibleExpenses = totalDeductible,
+            expensesByCategory = expensesByCategory,
+            expensesByProject = expensesByProject,
+            mileageReport = mileageReport,
+            expensesMissingReceipts = missingReceipts,
+            topExpenses = topExpenses,
+            formattedReport = formattedReport,
+            isPartial = isMixedCurrency,
+            warningMessage = warningMessage
+        )
+    }
+    
+    /**
+     * Generate a mileage report for a period.
+     */
+    private suspend fun generateMileageReport(startDate: Long, endDate: Long): MileageReport {
+        val trips = businessExpenseRepository.getBusinessMileageBetween(startDate, endDate)
+        
+        var totalDistance = 0.0
+        var totalDeduction = 0.0
+        
+        for (trip in trips) {
+            totalDistance += trip.distanceKm
+            totalDeduction += trip.calculatedDeduction ?: (trip.distanceKm * trip.deductionRatePerKm)
+        }
+        
+        val distinctRates = trips.map { it.deductionRatePerKm }.distinct()
+        val singleRate = distinctRates.singleOrNull()
+        val effectiveRate = if (totalDistance > 0.0) totalDeduction / totalDistance else (singleRate ?: 0.30)
+        
+        return MileageReport(
+            totalDistanceKm = totalDistance,
+            totalDeduction = totalDeduction,
+            deductionRatePerKm = singleRate,
+            effectiveDeductionRatePerKm = effectiveRate,
+            hasMultipleRates = distinctRates.size > 1,
+            tripCount = trips.size,
+            trips = trips
+        )
+    }
+    
+    /**
+     * Generate a CSV export of business expenses for tax filing.
+     */
+    suspend fun generateCSVExport(
+        startDate: Long,
+        endDate: Long,
+        includeMileage: Boolean = true
+    ): String = withContext(ioDispatcher) {
+        val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+        val csv = StringBuilder()
+        
+        // Header
+        csv.append("Date,Merchant,Amount,Currency,Business Category,Business Purpose,Project,Requires Receipt,Notes\n")
+        
+        // Expenses – enforce purchase-only at the boundary
+        val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
+        for (expense in expenses) {
+            val date = formatInstant(expense.date, dateFormat)
+            val merchant = CsvCellSanitizer.sanitize(expense.merchant)
+            val category = CsvCellSanitizer.sanitize(expense.businessCategory ?: "")
+            val purpose = CsvCellSanitizer.sanitize(expense.businessPurpose ?: "")
+            val project = CsvCellSanitizer.sanitize(expense.businessProject ?: "")
+            val requiresReceipt = if (expense.requiresReceipt) "Yes" else "No"
+            val notes = CsvCellSanitizer.sanitize(expense.notes ?: "")
+            
+            csv.append("${date},${merchant},${expense.effectiveAmount},${expense.currency},${category},${purpose},${project},${requiresReceipt},${notes}\n")
+        }
+        
+        // Mileage if requested
+        if (includeMileage) {
+            csv.append("\n")
+            csv.append("Date,Distance (km),Start Location,End Location,Purpose,Project,Deduction Amount\n")
+            
+            val trips = businessExpenseRepository.getBusinessMileageBetween(startDate, endDate)
+            for (trip in trips) {
+                val date = formatInstant(trip.date, dateFormat)
+                val startLoc = CsvCellSanitizer.sanitize(trip.startLocation ?: "")
+                val endLoc = CsvCellSanitizer.sanitize(trip.endLocation ?: "")
+                val purpose = CsvCellSanitizer.sanitize(trip.tripPurpose)
+                val project = CsvCellSanitizer.sanitize(trip.businessProject ?: "")
+                val deduction = trip.calculatedDeduction ?: (trip.distanceKm * trip.deductionRatePerKm)
+                
+                csv.append("${date},${trip.distanceKm},${startLoc},${endLoc},${purpose},${project},${deduction}\n")
+            }
+        }
+        
+        csv.toString()
+    }
+    
+    /**
+     * Formats an epoch-millis timestamp using the given [DateTimeFormatter].
+     * Thread-safe replacement for the legacy `SimpleDateFormat.format(Date(millis))`.
+     */
+    private fun formatInstant(millis: Long, formatter: DateTimeFormatter): String {
+        return Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate().format(formatter)
+    }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
+}

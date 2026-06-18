@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidgetRegistry
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -102,21 +103,10 @@ class DashboardRepository @Inject constructor(
         _configFlow.value = config
     }
 
-    private fun getDefaultConfig(): List<DashboardWidgetConfig> {
-        return listOf(
-            DashboardWidgetConfig("financial_weather", 0),
-            DashboardWidgetConfig("safe_to_spend", 1),
-            DashboardWidgetConfig("financial_runway", 2),
-            DashboardWidgetConfig("monte_carlo_forecast", 3),
-            DashboardWidgetConfig("spending_pace", 4),
-            DashboardWidgetConfig("review_alert", 5),
-            DashboardWidgetConfig("spending_trend", 6),
-            DashboardWidgetConfig("insight", 7),
-            DashboardWidgetConfig("period_summary", 8),
-            DashboardWidgetConfig("budget_health", 9),
-            DashboardWidgetConfig("top_categories", 10),
-            DashboardWidgetConfig("recent_transactions", 11),
-            DashboardWidgetConfig("budget_block_party", 12)
-        )
-    }
+    // S4-001R: Derived from DashboardWidgetRegistry — no hardcoded IDs here
+    private fun getDefaultConfig(): List<DashboardWidgetConfig> =
+        DashboardWidgetRegistry.all
+            .filter { it.defaultVisible }
+            .sortedBy { it.defaultOrder }
+            .map { meta -> DashboardWidgetConfig(meta.id, meta.defaultOrder) }
 }

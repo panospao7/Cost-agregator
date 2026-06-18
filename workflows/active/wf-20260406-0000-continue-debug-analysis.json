@@ -1,0 +1,73 @@
+{
+  "workflow_id": "wf-20260406-0000-continue-debug-analysis",
+  "title": "Continue deep codebase analysis and debugging - cross-reference debugger batches against plan",
+  "mode": "standard",
+  "status": "active",
+  "current_phase": "reviewer-gap-filling",
+  "timestamps": {
+    "created_at": "2026-04-06T00:00:00Z",
+    "updated_at": "2026-04-06T00:10:00Z"
+  },
+  "phases": [
+    {
+      "name": "cross-reference",
+      "status": "completed",
+      "description": "Cross-reference debugger batch files against DEEP-ANALYSIS-BATCH-PLAN.md to verify file coverage"
+    },
+    {
+      "name": "reviewer-analysis",
+      "status": "completed",
+      "description": "Launched 8 parallel @reviewer agents for batches 16,17,18,19,21,22,23,24 - all completed"
+    },
+    {
+      "name": "reviewer-gap-filling",
+      "status": "completed",
+      "description": "Re-generated B05 (full), B09 (full) + filled gaps in B08, B10, B14, B15 reviewer reports"
+    },
+    {
+      "name": "debugger-continuation",
+      "status": "pending",
+      "description": "Launch @debugger to continue analysis on remaining uncovered batches"
+    },
+    {
+      "name": "consolidation",
+      "status": "pending",
+      "description": "Merge reviewer and debugger findings, identify duplicates, prioritize fixes"
+    }
+  ],
+  "tasks": [],
+  "metadata": {
+    "feature_description": "Continue deep codebase analysis and debugging",
+    "review_gate": "required",
+    "test_gate": "required",
+    "security_gate": "optional",
+    "context": "Batches 16-19 covered UI screens (deviated from plan). Batches 21-24 covered Services/Workers, DI/App Setup, Utils/Helpers, Models/Data Classes. B05 and B09 re-generated. B08, B10, B14, B15 gaps filled. B20-B25 still completely missing.",
+    "reviewer_reports": {
+      "batch_01": "DEEP-ANALYSIS-BATCH-01.md",
+      "batch_02": "DEEP-ANALYSIS-BATCH-02.md",
+      "batch_03": "DEEP-ANALYSIS-BATCH-03.md",
+      "batch_04": "DEEP-ANALYSIS-BATCH-04.md",
+      "batch_05": "DEEP-ANALYSIS-BATCH-05.md (RE-GENERATED)",
+      "batch_06": "DEEP-ANALYSIS-BATCH-06.md",
+      "batch_07": "DEEP-ANALYSIS-BATCH-07.md",
+      "batch_08": "DEEP-ANALYSIS-BATCH-08.md (GAPS FILLED)",
+      "batch_09": "DEEP-ANALYSIS-BATCH-09.md (RE-GENERATED)",
+      "batch_10": "DEEP-ANALYSIS-BATCH-10.md (GAPS FILLED)",
+      "batch_11": "DEEP-ANALYSIS-BATCH-11.md",
+      "batch_12": "DEEP-ANALYSIS-BATCH-12.md",
+      "batch_13": "DEEP-ANALYSIS-BATCH-13.md",
+      "batch_14": "DEEP-ANALYSIS-BATCH-14.md (GAPS FILLED)",
+      "batch_15": "DEEP-ANALYSIS-BATCH-15.md (GAPS FILLED)",
+      "batch_16": "DEEP-ANALYSIS-BATCH-16.md",
+      "batch_17": "DEEP-ANALYSIS-BATCH-17.md",
+      "batch_18": "DEEP-ANALYSIS-BATCH-18.md",
+      "batch_19": "DEEP-ANALYSIS-BATCH-19.md",
+      "batch_20": "MISSING",
+      "batch_21": "DEEP-ANALYSIS-BATCH-21.md",
+      "batch_22": "DEEP-ANALYSIS-BATCH-22.md",
+      "batch_23": "DEEP-ANALYSIS-BATCH-23.md",
+      "batch_24": "DEEP-ANALYSIS-BATCH-24.md",
+      "batch_25": "MISSING"
+    }
+  }
+}

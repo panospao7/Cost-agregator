@@ -4,15 +4,19 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.workers.RetryableWorkerException
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
+import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.util.concurrent.TimeUnit
 
 /**
  * WorkManager worker that geocodes existing expenses that have no latitude/longitude.
@@ -25,7 +29,7 @@ import java.util.concurrent.TimeUnit
  *  - Requires the app to be in the foreground *once* so [ForegroundLocationProvider]
  *    can optionally supply a GPS bias — but the worker succeeds even without GPS.
  *
- * Scheduling (called from [ExpenseTrackerApp]):
+ * Scheduling (called from [AppStartupCoordinator]):
  * ```
  * LocationBackfillWorker.schedule(context)
  * ```
@@ -36,83 +40,132 @@ class LocationBackfillWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val expenseRepository: ExpenseRepository,
     private val locationResolver: LocationResolver,
-    private val merchantLocationRepository: MerchantLocationRepository
+    private val merchantLocationRepository: MerchantLocationRepository,
+    private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(appContext, workerParams) {
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result {
         Log.d(TAG, "Backfill worker started")
 
-        // Evict stale merchant-location cache entries before geocoding new ones.
-        // This prevents the resolver from returning outdated cached coordinates.
-        try {
-            merchantLocationRepository.evictStaleCache()
-            Log.d(TAG, "Stale cache eviction complete")
-        } catch (e: Exception) {
-            Log.w(TAG, "Cache eviction failed (non-fatal)", e)
-        }
-
-        // Bug #23 fix: only fetch expenses that haven't exceeded MAX_ATTEMPTS so
-        // unresolvable merchants are not retried indefinitely.
-        val unlocated = try {
-            expenseRepository.getUnlocatedExpensesForBackfill(limit = BATCH_SIZE)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch unlocated expenses", e)
-            return@withContext Result.retry()
-        }
-
-        if (unlocated.isEmpty()) {
-            Log.d(TAG, "No unlocated expenses — nothing to do")
-            return@withContext Result.success()
-        }
-
-        Log.d(TAG, "Processing ${unlocated.size} unlocated expenses")
-        var resolved = 0
-        var failed = 0
-
-        for (expense in unlocated) {
-            if (isStopped) break  // Worker was cancelled
-
-            val result = try {
-                locationResolver.resolve(
-                    rawMerchantName = expense.merchant,
-                    transactionDateMs = expense.date
-                )
+        val guardResult = executionGuard.runGuardedWithContext(
+            WorkerGuardRequest(
+                workerName = "location_backfill",
+                requiredCapabilities = listOf(PrivacyCapability.BACKGROUND_LOCATION_BACKFILL),
+                allowDuringBackupExport = false
+            )
+        ) { ctx ->
+            // Evict stale merchant-location cache entries before geocoding new ones.
+            // This prevents the resolver from returning outdated cached coordinates.
+            try {
+                merchantLocationRepository.evictStaleCache()
+                Log.d(TAG, "Stale cache eviction complete")
             } catch (e: Exception) {
-                Log.w(TAG, "Resolver threw for '${expense.merchant}'", e)
-                // Increment attempt count so we don't retry this forever
-                expenseRepository.incrementBackfillAttempts(expense.id)
-                failed++
-                continue
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "Cache eviction failed (non-fatal)", e)
             }
 
-            when (result) {
-                is LocationResolutionResult.Resolved -> {
-                    expenseRepository.updateExpenseLocation(
-                        expenseId = expense.id,
-                        latitude = result.latitude,
-                        longitude = result.longitude,
-                        source = result.source,
-                        placeId = result.osmId,
-                        address = result.displayAddress
+            // Bug #23 fix: only fetch expenses that haven't exceeded MAX_ATTEMPTS so
+            // unresolvable merchants are not retried indefinitely.
+            val unlocated = try {
+                expenseRepository.getUnlocatedExpensesForBackfill(limit = BATCH_SIZE)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.e(TAG, "Failed to fetch unlocated expenses", e)
+                throw e
+            }
+
+            if (unlocated.isEmpty()) {
+                Log.d(TAG, "No unlocated expenses — nothing to do")
+                return@runGuardedWithContext
+            }
+
+            Log.d(TAG, "Processing ${unlocated.size} unlocated expenses")
+            var resolved = 0
+            var failed = 0
+            var skipped = 0
+            var shouldRetry = false
+
+            for (expense in unlocated) {
+                if (isStopped) break  // Worker was cancelled
+                ctx.checkpoint("location_backfill")
+                ctx.addRowsScanned()
+
+                val merchantToken = merchantLocationRepository
+                    .normalizeKey(expense.merchant)
+                    .anonymizeForLog()
+
+                val result = try {
+                    locationResolver.resolve(
+                        rawMerchantName = expense.merchant,
+                        transactionDateMs = expense.date
                     )
-                    resolved++
-                }
-                is LocationResolutionResult.NeedsUserSelection -> {
-                    // Cannot auto-resolve; leave for user interaction in Map screen.
-                    // Count as a failed attempt so we don't spam Overpass on each run.
-                    Log.d(TAG, "NeedsUserSelection for '${expense.merchant}' — skipping backfill")
-                    expenseRepository.incrementBackfillAttempts(expense.id)
-                }
-                is LocationResolutionResult.Unresolved -> {
-                    Log.d(TAG, "Unresolved for '${expense.merchant}'")
-                    expenseRepository.incrementBackfillAttempts(expense.id)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Log.w(TAG, "Resolver threw for expenseId=${expense.id} merchantToken=$merchantToken", e)
+                    // Transient thrown failure: trigger a retry without consuming the permanent
+                    // attempt budget, consistent with the structured Retryable result path. Unexpected
+                    // exceptions are presumed transient (e.g. geocoder/network outage), so we must not
+                    // permanently abandon the row via incrementBackfillAttempts — only the structured
+                    // Unresolved/NeedsUserSelection paths consume the budget for genuinely ungeocodable rows.
+                    shouldRetry = true
                     failed++
+                    continue
                 }
+
+                when (result) {
+                    is LocationResolutionResult.Resolved -> {
+                        // Use conditional update to avoid overwriting user-set locations
+                        // (race condition: user may have set location between fetch and write).
+                        val affected = expenseRepository.conditionallySetLocation(
+                            expenseId = expense.id,
+                            latitude = result.latitude,
+                            longitude = result.longitude,
+                            source = result.source,
+                            placeId = result.osmId,
+                            address = result.displayAddress
+                        )
+                        if (affected > 0) {
+                            resolved++
+                            ctx.addRowsUpdated()
+                        } else {
+                            Log.d(TAG, "Expense ${expense.id} was already located — skipped (user-set location preserved)")
+                            skipped++
+                            ctx.addRowsSkipped()
+                        }
+                    }
+                    is LocationResolutionResult.Retryable -> {
+                        Log.w(
+                            TAG,
+                            "Retryable backfill failure for expenseId=${expense.id} merchantToken=$merchantToken error=${result.error}"
+                        )
+                        shouldRetry = true
+                        failed++
+                    }
+                    is LocationResolutionResult.NeedsUserSelection -> {
+                        // Cannot auto-resolve; leave for user interaction in Map screen.
+                        // Count as a failed attempt so we don't spam Overpass on each run.
+                        Log.d(TAG, "NeedsUserSelection for expenseId=${expense.id} merchantToken=$merchantToken — skipping backfill")
+                        expenseRepository.incrementBackfillAttempts(expense.id)
+                    }
+                    is LocationResolutionResult.Unresolved -> {
+                        Log.d(TAG, "Unresolved for expenseId=${expense.id} merchantToken=$merchantToken")
+                        expenseRepository.incrementBackfillAttempts(expense.id)
+                        failed++
+                    }
+                }
+            }
+
+            Log.d(TAG, "Backfill run complete: resolved=$resolved skipped=$skipped failed=$failed shouldRetry=$shouldRetry")
+            // P9-PR2 (NEW-P9-009): If stopped mid-loop, signal retry instead of misleading SUCCESS
+            if (isStopped) {
+                throw RetryableWorkerException("Worker stopped mid-backfill, will retry remaining")
+            }
+            if (shouldRetry) {
+                throw RetryableWorkerException("Some backfill resolutions failed, will retry")
             }
         }
 
-        Log.d(TAG, "Backfill run complete: resolved=$resolved failed=$failed")
-        Result.success()
+        return guardResult.toWorkerResult()
     }
 
     companion object {
@@ -125,30 +178,10 @@ class LocationBackfillWorker @AssistedInject constructor(
         /**
          * Enqueue a periodic backfill job.
          * Safe to call multiple times — uses [ExistingPeriodicWorkPolicy.KEEP].
+         * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          */
         fun schedule(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.UNMETERED)  // Wi-Fi only
-                .build()
-
-            val request = PeriodicWorkRequestBuilder<LocationBackfillWorker>(
-                repeatInterval = 6,
-                repeatIntervalTimeUnit = TimeUnit.HOURS
-            )
-                .setConstraints(constraints)
-                .setBackoffCriteria(
-                    BackoffPolicy.EXPONENTIAL,
-                    WorkRequest.MIN_BACKOFF_MILLIS,
-                    TimeUnit.MILLISECONDS
-                )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                request
-            )
-            Log.d(TAG, "Backfill worker scheduled")
+            WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, LocationBackfillWorker::class.java)
         }
     }
 }

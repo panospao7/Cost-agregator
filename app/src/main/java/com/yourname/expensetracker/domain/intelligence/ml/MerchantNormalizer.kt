@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import com.yourname.expensetracker.domain.categorization.AliasLinkResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.StringBKTree
@@ -96,7 +97,10 @@ class MerchantNormalizer @Inject constructor(
         val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
         if (fuzzyResult != null && fuzzyResult.confidence >= 0.95f) {
             // Only auto-learn very high confidence fuzzy matches (95%+)
-            repository.linkAliasToCanonical(rawName, normalizedKey, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
+            val linkResult = linkAliasToCanonical(rawName, fuzzyResult.canonical.id)
+            if (linkResult is AliasLinkResult.Conflict) {
+                Timber.w("C01: Alias link conflict for '$rawName' -> canon ${fuzzyResult.canonical.id}: ${linkResult.message}")
+            }
             return@withContext fuzzyResult
         } else if (fuzzyResult != null) {
             // Lower confidence fuzzy matches - use result but don't auto-learn
@@ -106,7 +110,7 @@ class MerchantNormalizer @Inject constructor(
         // 4. Create new
         if (autoCreate) {
             val newCanonical = createNewMerchant(cleaned, normalizedKey, categoryId)
-            repository.linkAliasToCanonical(rawName, normalizedKey, newCanonical.id, isUserDefined = false, timestamp = timeProvider.now())
+            linkAliasToCanonical(rawName, newCanonical.id)
             invalidateTreeCache()
             
             return@withContext MerchantLookupResult(
@@ -147,11 +151,49 @@ class MerchantNormalizer @Inject constructor(
         }
 
         // 3. Link the original POS name to this brand ID (just in case it wasn't a canonical)
-        val rawNameKey = createSearchKey(cleanMerchantName(rawName))
-        repository.linkAliasToCanonical(rawName, rawNameKey, brandId, isUserDefined = true, timestamp = timeProvider.now())
+        linkAliasToCanonical(rawName, brandId, isUserDefined = true)
         
         Timber.i("Learned alias: $rawName -> $brandName")
         invalidateTreeCache()
+    }
+
+    /**
+     * Links a raw merchant name to a canonical merchant, with conflict detection.
+     *
+     * Checks whether the normalized key is already linked to a different canonical
+     * before inserting. If a conflict exists, returns [AliasLinkResult.Conflict]
+     * instead of silently creating a duplicate alias entry.
+     *
+     * C01: This replaces direct calls to [MerchantNormalizationRepository.linkAliasToCanonical]
+     * so all link paths go through conflict detection.
+     */
+    suspend fun linkAliasToCanonical(
+        rawName: String,
+        canonicalId: Long,
+        isUserDefined: Boolean = false
+    ): AliasLinkResult {
+        val normalizedKey = MerchantKeyGenerator.generate(rawName)
+
+        // Fast-path conflict checks (redundant with repository but avoids DB round-trip).
+        // Note: these reads are not atomic with the DAO @Transaction, so a concurrent
+        // modification could make this fast-path stale. The DAO transaction is the
+        // authoritative source of truth; this is only an optimization.
+        val existingCanonical = repository.getCanonicalBySearchKey(normalizedKey)
+        if (existingCanonical != null && existingCanonical.id != canonicalId) {
+            return AliasLinkResult.Conflict(
+                existingCanonical.id,
+                "Normalized key '$normalizedKey' already linked to canonical ${existingCanonical.id}"
+            )
+        }
+        val existingAlias = repository.getAliasByNormalizedKey(normalizedKey)
+        if (existingAlias != null && existingAlias.canonicalId != canonicalId) {
+            return AliasLinkResult.Conflict(
+                existingAlias.canonicalId,
+                "Alias with key '$normalizedKey' already linked to canonical ${existingAlias.canonicalId}"
+            )
+        }
+
+        return repository.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timeProvider.now())
     }
 
     fun cleanMerchantName(rawName: String): String {
@@ -165,16 +207,36 @@ class MerchantNormalizer @Inject constructor(
         
         val matches = tree.search(normalizedKey, maxDist)
         if (matches.isEmpty()) return null
-        
-        val best = matches.first()
-        val canonical = repository.getCanonicalBySearchKey(best.first) ?: return null
-        val similarity = StringDistanceUtils.jaroWinklerSimilarity(normalizedKey, best.first)
+
+        data class RankedCandidate(
+            val canonical: MerchantCanonical,
+            val distance: Int,
+            val similarity: Float
+        )
+
+        val ranked = matches.mapNotNull { (searchKey, distance) ->
+            val canonical = repository.getCanonicalBySearchKey(searchKey) ?: return@mapNotNull null
+            RankedCandidate(
+                canonical = canonical,
+                distance = distance,
+                similarity = StringDistanceUtils.jaroWinklerSimilarity(normalizedKey, searchKey).toFloat()
+            )
+        }.sortedWith(
+            compareBy<RankedCandidate> { it.distance }
+                .thenByDescending { it.similarity }
+                .thenByDescending { it.canonical.totalOccurrences }
+                .thenByDescending { it.canonical.isVerified }
+                .thenBy { it.canonical.normalizedName.lowercase() }
+                .thenBy { it.canonical.id }
+        )
+
+        val best = ranked.firstOrNull() ?: return null
         
         return MerchantLookupResult(
-            canonical = canonical,
+            canonical = best.canonical,
             alias = null,
-            confidence = similarity.toFloat(),
-            matchType = if (best.second == 0) MatchType.EXACT_MATCH else MatchType.FUZZY_MATCH
+            confidence = best.similarity,
+            matchType = if (best.distance == 0) MatchType.EXACT_MATCH else MatchType.FUZZY_MATCH
         )
     }
 
@@ -184,12 +246,16 @@ class MerchantNormalizer @Inject constructor(
         // Double-check existence inside the lock to prevent redundant insertion attempts
         repository.getCanonicalBySearchKey(key)?.let { return it }
 
+        // C02: Set createdAt and updatedAt on new merchant canonical entities
+        val now = timeProvider.now()
         val canonical = MerchantCanonical(
             normalizedName = formatDisplayName(cleaned),
             searchKey = key,
             categoryId = catId,
             totalOccurrences = 1,
-            isVerified = false
+            isVerified = false,
+            createdAt = now,
+            updatedAt = now
         )
         
         val id = repository.insertCanonical(canonical)
@@ -223,7 +289,11 @@ class MerchantNormalizer @Inject constructor(
             val now = timeProvider.now()
             if (bkTree == null || now - lastTreeRebuild > TREE_REBUILD_INTERVAL) {
                 val tree = StringBKTree.create()
-                repository.getTopMerchants(1000).forEach { tree.insert(it.searchKey) }
+                // C07 DEFERRED: BK-tree built from top 1000 merchants only.
+                // Long-tail (merchants 1001+) use direct normalizedKey lookup via
+                // MerchantNormalizationDao.getCanonicalBySearchKey() as fallback.
+                // Full fuzzy search for all merchants is deferred due to memory/performance tradeoffs.
+                repository.getTopMerchants(/* C07: limit=1000 - long-tail deferred */ 1000).forEach { tree.insert(it.searchKey) }
                 bkTree = tree
                 lastTreeRebuild = now
             }

@@ -1,12 +1,14 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.model.PeriodRange
+import kotlinx.coroutines.test.runTest
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -18,11 +20,11 @@ class MapFinancialQueryToNavigationUseCaseTest {
 
     @Before
     fun setup() {
-        useCase = MapFinancialQueryToNavigationUseCase()
+        useCase = MapFinancialQueryToNavigationUseCase(mockk(relaxed = true))
     }
 
     @Test
-    fun `invoke maps supported list intent to transaction filter`() {
+    fun `invoke maps supported list intent to transaction filter`() = runTest {
         val intent = FinancialQueryIntent(
             rawQuery = "show groceries this month",
             normalizedQuery = "show groceries this month",
@@ -30,7 +32,7 @@ class MapFinancialQueryToNavigationUseCaseTest {
                 period = PeriodRange(100L, 200L),
                 categoryIds = setOf(2L),
                 merchants = setOf("Lidl"),
-                transactionTypes = setOf(TransactionType.PURCHASE),
+                transactionTypes = setOf(DomainTransactionType.PURCHASE),
                 ownership = QueryOwnershipScope.SHARED,
                 minAmount = 10.0,
                 maxAmount = 30.0
@@ -43,15 +45,15 @@ class MapFinancialQueryToNavigationUseCaseTest {
         requireNotNull(result)
         assertEquals(2L, result.categoryId)
         assertEquals("Lidl", result.merchantName)
-        assertEquals(TransactionType.PURCHASE, result.transactionType)
+        assertEquals(DomainTransactionType.PURCHASE, result.transactionType)
         assertEquals(Pair(100L, 200L), result.dateRange)
-        assertEquals(OwnershipFilter.SHARED, result.ownership)
+        assertEquals(DomainOwnershipFilter.SHARED, result.ownership)
         assertEquals(10.0, result.minAmount)
         assertEquals(30.0, result.maxAmount)
     }
 
     @Test
-    fun `invoke maps all ownership to null ownership filter`() {
+    fun `invoke maps all ownership to null ownership filter`() = runTest {
         val intent = FinancialQueryIntent(
             rawQuery = "total this month",
             normalizedQuery = "total this month",

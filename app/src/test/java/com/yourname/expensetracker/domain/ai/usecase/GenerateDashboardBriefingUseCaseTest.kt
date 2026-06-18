@@ -1,20 +1,26 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
+import com.yourname.expensetracker.domain.ai.model.DashboardBudgetWarningInput
+import com.yourname.expensetracker.domain.ai.model.DashboardUpcomingItemInput
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
@@ -27,6 +33,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import kotlin.coroutines.cancellation.CancellationException
 
 class GenerateDashboardBriefingUseCaseTest {
 
@@ -78,19 +85,19 @@ class GenerateDashboardBriefingUseCaseTest {
 
     private fun fakeInput() = DashboardBriefingInput(
         dateKey              = dateKey,
-        weatherHeadline      = "Sunny",
-        weatherSummary       = "All good",
+        weatherHeadline      = UiText.from("Sunny"),
+        weatherSummary       = UiText.from("All good"),
         discretionaryBudget  = 200.0,
         totalCommitted       = 100.0,
         totalLikely          = 150.0,
         pendingReviewCount   = 2,
         currentMonthSpent    = 300.0,
         topCategories        = listOf("Food", "Transport"),
-        budgetWarnings       = emptyList(),
-        upcomingItems        = emptyList()
+        budgetWarnings       = listOf(DashboardBudgetWarningInput(UiText.from("Food"), 80)),
+        upcomingItems        = listOf(DashboardUpcomingItemInput("Rent", 500.0, now, "EUR"))
     )
 
-    private fun freshReadyArtifact() = AiArtifactEntity(
+    private fun freshReadyArtifact() = AiArtifactRecord(
         id            = 5L,
         targetType    = AiTargetType.DASHBOARD,
         targetKey     = "dashboard_home:$dateKey",
@@ -100,7 +107,7 @@ class GenerateDashboardBriefingUseCaseTest {
         provider      = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER,
         modelName     = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL,
         promptVersion = AppConfig.Ai.PROMPT_VERSION_DASHBOARD,
-        sourceHash    = "existing_hash",
+        sourceHash    = AiArtifactSourceHash.forDashboardBriefing(fakeInput()),
         createdAt     = now,
         updatedAt     = now,
         expiresAt     = now + AppConfig.Ai.DASHBOARD_BRIEFING_TTL_MS
@@ -160,16 +167,34 @@ class GenerateDashboardBriefingUseCaseTest {
         coVerify(exactly = 0) { aiArtifactRepository.upsert(any()) }
     }
 
+    @Test
+    fun `invoke regenerates when ready artifact source hash is stale`() = runTest {
+        val briefing = DashboardBriefing(title = "Today's Briefing", text = "Fresh text", tone = "neutral")
+        val staleInput = fakeInput().copy(weatherHeadline = UiText.from("Stormy"))
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any()) } returns staleInput
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshReadyArtifact()
+        coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        useCase(processedData)
+
+        coVerify(exactly = 1) { dashboardBriefingService.generate(any()) }
+        assertEquals(AiArtifactStatus.READY, captured.last().status)
+    }
+
     // ── provider returns null ─────────────────────────────────────────────────
 
     @Test
-    fun `invoke stores FAILED artifact when provider returns null`() = runTest {
+    fun `invoke stores FAILED artifact when provider returns failure`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns null
+        coEvery { dashboardBriefingService.generate(any()) } returns
+            AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -192,9 +217,9 @@ class GenerateDashboardBriefingUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns briefing
+        coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -219,9 +244,9 @@ class GenerateDashboardBriefingUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns briefing
+        coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -239,7 +264,7 @@ class GenerateDashboardBriefingUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { dashboardBriefingService.generate(any()) } throws RuntimeException("Timeout")
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -250,6 +275,30 @@ class GenerateDashboardBriefingUseCaseTest {
         assertTrue(failedArtifact.errorMessage?.contains("Timeout") == true)
     }
 
+    // ── cancellation propagation ──────────────────────────────────────────────
+
+    @Test
+    fun `invoke propagates CancellationException without writing FAILED artifact`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any()) } returns fakeInput()
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dashboardBriefingService.generate(any()) } throws CancellationException("cancelled")
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        try {
+            useCase(processedData)
+            fail("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        // Only the RUNNING tombstone should have been written, no FAILED artifact
+        assertTrue(captured.size == 1)
+        assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
+    }
+
     // ── expiresAt ─────────────────────────────────────────────────────────────
 
     @Test
@@ -257,10 +306,9 @@ class GenerateDashboardBriefingUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns DashboardBriefing(
-            title = "T", text = "B", tone = "neutral"
-        )
-        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { dashboardBriefingService.generate(any()) } returns
+            AiServiceResult.Success(DashboardBriefing(title = "T", text = "B", tone = "neutral"))
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)

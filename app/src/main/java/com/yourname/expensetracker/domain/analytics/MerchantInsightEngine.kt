@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.sqrt
@@ -14,16 +14,19 @@ class MerchantInsightEngine @Inject constructor() {
         private const val RECURRING_THRESHOLD = 3
     }
 
-    fun calculate(allExpenses: List<Expense>): List<MerchantInsight> {
+    fun calculate(
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
+    ): List<MerchantInsight> {
         val purchases = allExpenses.filter { 
-            it.transactionType == TransactionType.PURCHASE && 
+            it.transactionType == DomainTransactionType.PURCHASE && 
             !it.isNotMine 
         }
         
-        val merchantGroups = purchases.groupBy { it.merchant.lowercase() }
+        val merchantGroups = purchases.groupBy { it.canonicalMerchantKey() }
         
         return merchantGroups.map { (_, expenses) ->
-            val merchantName = expenses.first().merchant
+            val merchantName = resolveMerchantDisplayName(expenses)
             val amounts = expenses.map { it.effectiveAmount }
             val total = amounts.sum()
             val count = amounts.size
@@ -45,10 +48,13 @@ class MerchantInsightEngine @Inject constructor() {
                 totalSpent = total,
                 transactionCount = count,
                 isLikelyRecurring = count >= RECURRING_THRESHOLD && stdDev != null && stdDev / avg < 0.3,
-                stdDeviation = stdDev
+                stdDeviation = stdDev,
+                displayCurrency = displayCurrency
             )
         }
         .sortedByDescending { it.totalSpent }
         .take(TOP_MERCHANTS_LIMIT)
     }
+
+
 }

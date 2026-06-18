@@ -1,0 +1,461 @@
+# Database Write Access Allowlist
+# Part of: Global Write/Read/Restore Barrier — PR 5
+#
+# Every direct DAO mutation callsite must be covered by one of:
+#   1. An entry in allowed_writers below
+#   2. debug_only: true  (BuildConfig.DEBUG + write barrier required)
+#   3. migration_only: true  (Room migration classes only)
+#
+# All entries require a non-empty `reason`.
+# Entries with `allowed_until` are temporary and must be migrated.
+
+allowed_writers:
+
+  # ── Expenses / Transaction events ──────────────────────────────
+
+  - class: TransactionLifecycleCoordinator
+    daos:
+      - expenseDao
+      - transactionEventDao
+    requires_write_barrier: false
+    reason: "canonical transaction lifecycle writer — guards at entry via withTransaction"
+
+  - class: ExpenseWriteStore
+    daos:
+      - expenseDao
+    requires_write_barrier: false
+    reason: "write facade — calls check() inline before every DAO mutation"
+
+  - class: ExpenseRepository
+    daos:
+      - expenseDao
+    reason: "approved maintenance/backfill methods — each calls writeBarrier"
+    allowed_until: "migrate to ExpenseWriteStore (PR 11)"
+
+  # ── Notifications ───────────────────────────────────────────────
+
+  - class: NotificationRepository
+    requires_write_barrier: false
+    daos:
+      - rawNotificationDao
+      - pendingReviewDao
+      - pipelineDiagnosticEventDao
+    reason: "canonical notification writer"
+
+  - class: DataRetentionWorker
+    requires_write_barrier: false
+    daos:
+      - rawNotificationDao
+      - pendingReviewDao
+      - expenseDao
+    reason: "purge owner — must call WorkerExecutionGuard checkpoints"
+    allowed_until: "migrate to RetentionCoordinator"
+
+  # ── Receipts / OCR / Email ──────────────────────────────────────
+
+  - class: ReceiptLifecycleCoordinator
+    requires_write_barrier: false
+    daos:
+      - scannedReceiptDao
+      - receiptEventDao
+      - emailReceiptDao
+      - pendingReviewDao
+      - receiptExpenseLinkDao
+    reason: "canonical receipt lifecycle writer"
+
+  - class: ReceiptLinkService
+    requires_write_barrier: false
+    daos:
+      - receiptExpenseLinkDao
+      - scannedReceiptDao
+    reason: "guarded link/unlink — must use DatabaseWriteBarrier not RestoreMaintenanceMode directly"
+    allowed_until: "refactor to use writeBarrier (PR 7)"
+
+  - class: ReceiptRepository
+    requires_write_barrier: false
+    daos:
+      - scannedReceiptDao
+    reason: "receipt status updates — must call writeBarrier"
+    allowed_until: "route all writes through ReceiptLifecycleCoordinator (PR 7)"
+
+  - class: NotificationProcessingPipeline
+    daos:
+      - pipelineDiagnosticEventDao
+      - transactionEventDao
+      - subscriptionCandidateDao
+    reason: "notification processing pipeline — must call writeBarrier at entry (PR 7)"
+    allowed_until: "add writeBarrier at pipeline entry (PR 7)"
+
+  # ── Recurring / Reminders ───────────────────────────────────────
+
+  - class: RecurringRuleLifecycleCoordinator
+    daos:
+      - recurringExpenseDao
+      - recurringLifecycleEventDao
+    reason: "canonical recurring rule writer"
+
+  - class: RecurringLifecycleCoordinator
+    daos:
+      - recurringOccurrenceDao
+      - recurringLifecycleEventDao
+    reason: "canonical recurring occurrence writer"
+
+  - class: RecurringOccurrenceMaterializer
+    requires_write_barrier: false
+    daos:
+      - recurringOccurrenceDao
+      - expenseDao
+    reason: "occurrence generation — must call writeBarrier"
+
+  - class: ReminderDeliveryCoordinator
+    daos:
+      - recurringReminderDeliveryDao
+    reason: "canonical reminder delivery writer"
+
+  - class: ManualRecurringExpenseRepository
+    daos:
+      - manualRecurringExpenseDao
+      - recurringLifecycleEventDao
+    reason: "manual recurring expense writes — must call writeBarrier"
+    allowed_until: "route through RecurringRuleLifecycleCoordinator (PR 7)"
+
+  # ── Budget / Forecast / Planned ─────────────────────────────────
+
+  - class: BudgetRepository
+    daos:
+      - budgetDao
+      - budgetAdjustmentDao
+    reason: "canonical budget writer — notification timestamp updates must call writeBarrier"
+
+  - class: BudgetForecastingEngine
+    daos:
+      - budgetForecastDao
+    reason: "forecast generation — must call writeBarrier"
+
+  - class: PlannedExpenseRepository
+    daos:
+      - plannedExpenseDao
+    reason: "canonical planned expense writer — must call writeBarrier on all paths"
+
+  # ── Backup / Restore ────────────────────────────────────────────
+
+  - class: DatabaseBackupRepositoryImpl
+    daos: []
+    requires_write_barrier: false
+    reason: "file-level backup/restore operations under maintenance mode — restore-internal DAO writes use fresh Room"
+
+  # ── Workers ─────────────────────────────────────────────────────
+  # Workers must NOT write DAOs directly.
+  # They call lifecycle/repository/coordinator methods.
+  # Exceptions listed here are temporary.
+
+  - class: LocationBackfillWorker
+    daos:
+      - expenseDao
+    methods_only:
+      - conditionallySetLocation
+      - clearExpenseLocation
+    reason: "location backfill — routes through ExpenseRepository guarded methods"
+    allowed_until: "migrate to ExpenseWriteStore (PR 11)"
+
+  - class: MerchantKeyBackfillWorker
+    daos:
+      - expenseDao
+    methods_only:
+      - updateMerchantKey
+      - incrementBackfillAttempts
+    reason: "merchant key backfill — routes through ExpenseRepository guarded methods"
+    allowed_until: "migrate to ExpenseWriteStore (PR 11)"
+
+  # ── Bank ────────────────────────────────────────────────────────
+
+  - class: BankConnectionLifecycleCoordinator
+    daos:
+      - bankConnectionDao
+    reason: "canonical bank connection writer"
+    allowed_until: "create BankConnectionLifecycleCoordinator (PR 7)"
+
+  - class: BankSyncCoordinator
+    daos:
+      - bankConnectionDao
+      - expenseDao
+    reason: "canonical bank sync writer — routes through TransactionLifecycleCoordinator for expenses"
+    allowed_until: "create BankSyncCoordinator (PR 7)"
+
+  # ── Export / Import ─────────────────────────────────────────────
+
+  - class: ImportCoordinator
+    daos:
+      - expenseDao
+      - categoryDao
+    reason: "canonical import writer — routes through TransactionLifecycleCoordinator"
+
+  # ── Diagnostics / Logging ───────────────────────────────────────
+
+  - class: WorkerRunLoggerImpl
+    daos:
+      - backgroundJobRunDao
+    reason: "worker run logging — write barrier checked by WorkerExecutionGuard before entry"
+
+  - class: BillReminderWorker
+    requires_write_barrier: false
+    daos:
+      - pipelineDiagnosticEventDao
+    reason: "diagnostic insert inside WorkerExecutionGuard.runGuarded — barrier already checked at entry"
+
+  - class: WarrantyTrackerRepository
+    daos:
+      - warrantyDao
+      - warrantyLifecycleEventDao
+      - receiptEventDao
+    reason: "canonical warranty writer — must call writeBarrier (PR 7 sweep)"
+    allowed_until: "add writeBarrier at public method entrypoints"
+
+  - class: SubscriptionManagerEngine
+    daos:
+      - priceHistoryDao
+      - usageDao
+    reason: "subscription price history and usage — writeBarrier already called at validateAndCreate; remaining methods need guard (PR 7)"
+    allowed_until: "add writeBarrier to recordPriceChange, recordUsage, updateSubscription"
+
+  - class: SubscriptionManagementRepository
+    daos:
+      - subscriptionCandidateDao
+      - subscriptionPriceHistoryDao
+      - subscriptionUsageDao
+    reason: "subscription management — writeBarrier already called on insertUsage, updateSubscription, deleteSubscriptionById"
+
+  - class: InvestmentTracker
+    daos:
+      - investmentDao
+      - investmentValueDao
+      - investmentTransactionDao
+    reason: "canonical investment writer — must call writeBarrier"
+    allowed_until: "add writeBarrier at public method entrypoints"
+
+  - class: BankStatementLifecycleProcessor
+    daos:
+      - receiptEventDao
+      - pendingReviewDao
+      - scannedReceiptDao
+    reason: "bank statement processing — writeBarrier checked at processBankStatement entry (PR 7)"
+
+  - class: ReceiptSideEffectDispatcher
+    requires_write_barrier: false
+    daos:
+      - scannedReceiptDao
+      - receiptEventDao
+    reason: "receipt side effects — writeBarrier already injected and called on some paths; remaining paths need guard"
+    allowed_until: "add writeBarrier to all write paths (PR 7)"
+
+  - class: SettlementCalculator
+    daos:
+      - groupSettlementDao
+    reason: "settlement recording — writeBarrier checked at recordSettlement (PR 7)"
+
+  - class: FinancialHealthScoreV2
+    requires_write_barrier: false
+    daos:
+      - healthScoreHistoryDao
+    reason: "health score history — writeBarrier checked at saveToHistory (PR 7)"
+
+  - class: BudgetMonitor
+    daos:
+      - pipelineDiagnosticEventDao
+    reason: "budget monitoring diagnostics — writeBarrier checked before each insert (PR 7)"
+
+  - class: RecurringExpenseRepository
+    daos:
+      - recurringLifecycleEventDao
+    reason: "recurring lifecycle events — writeBarrier checked at writeLifecycleEvent (PR 7)"
+
+  - class: DismissReminderReceiver
+    daos:
+      - recurringReminderDeliveryDao
+      - recurringLifecycleEventDao
+    reason: "reminder dismiss — writeBarrier checked at onReceive entry (PR 7)"
+
+  - class: SnoozeReminderReceiver
+    daos:
+      - recurringReminderDeliveryDao
+      - recurringLifecycleEventDao
+    reason: "reminder snooze — writeBarrier checked at onReceive entry (PR 7)"
+
+  - class: ReviewQueueRepository
+    daos:
+      - userCorrectionDao
+    reason: "user correction recording — must call writeBarrier"
+    allowed_until: "add writeBarrier to correction write paths (PR 7)"
+
+  - class: SharedExpenseDataPortAdapter
+    daos:
+      - groupMemberDao
+    reason: "group member management — writeBarrier already called at removeMember and addExpense"
+
+  - class: LegacyDataMigrationService
+    daos:
+      - categoryDao
+    requires_write_barrier: false
+    reason: "debug-only legacy data migration"
+
+  - class: CsvExpenseImporter
+    requires_write_barrier: false
+    daos:
+      - categoryDao
+    reason: "CSV import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
+
+  - class: JsonExpenseImporter
+    requires_write_barrier: false
+    daos:
+      - categoryDao
+    reason: "JSON import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
+
+  - class: PipelineDiagnosticEventRepository
+    daos:
+      - pipelineDiagnosticEventDao
+    reason: "pipeline diagnostics — must use MaintenanceSafeDiagnosticSink during blocked modes (PR 9)"
+    allowed_until: "route through MaintenanceSafeDiagnosticSink (PR 9)"
+
+  # ── AI / Assistant ──────────────────────────────────────────────
+
+  - class: AiArtifactRepository
+    daos:
+      - aiArtifactDao
+      - aiChatMessageDao
+      - aiChatSessionDao
+    reason: "AI artifact persistence — read-heavy; writes must call writeBarrier"
+
+  - class: AiChatRepositoryImpl
+    requires_write_barrier: false
+    daos:
+      - aiChatSessionDao
+      - aiChatMessageDao
+    reason: "AI chat session persistence"
+
+  - class: AnomalyAlertRepositoryImpl
+    daos:
+      - anomalyAlertDao
+    reason: "anomaly alert persistence"
+
+  # ── Investments ─────────────────────────────────────────────────
+
+  - class: InvestmentRepository
+    daos:
+      - investmentDao
+      - investmentTransactionDao
+      - investmentValueDao
+    reason: "canonical investment writer"
+
+  - class: BusinessExpenseRepository
+    daos:
+      - mileageTrackingDao
+    reason: "business mileage tracking — must call writeBarrier"
+
+  # ── Savings ─────────────────────────────────────────────────────
+
+  - class: SavingsGoalRepository
+    daos:
+      - savingsGoalDao
+      - savingsSweepPlanDao
+    reason: "canonical savings writer"
+
+  # ── Subscriptions ───────────────────────────────────────────────
+
+  - class: SubscriptionRepository
+    daos:
+      - subscriptionCandidateDao
+      - subscriptionPriceHistoryDao
+      - subscriptionUsageDao
+    reason: "canonical subscription writer"
+
+  # ── Warranties ──────────────────────────────────────────────────
+
+  - class: WarrantyRepository
+    daos:
+      - warrantyDao
+      - warrantyLifecycleEventDao
+    reason: "canonical warranty writer"
+
+  # ── Groups ──────────────────────────────────────────────────────
+
+  - class: GroupLifecycleCoordinator
+    daos:
+      - expenseGroupDao
+      - groupMemberDao
+      - groupExpenseDao
+      - groupSettlementDao
+      - groupLifecycleEventDao
+    reason: "canonical group lifecycle writer"
+
+  - class: GroupTransactionCoordinator
+    requires_write_barrier: false
+    daos:
+      - expenseGroupDao
+      - groupMemberDao
+      - groupExpenseDao
+      - transactionEventDao
+    reason: "atomic group-expense creation within outer transaction"
+
+  - class: GroupsRepositoryImpl
+    requires_write_barrier: false
+    daos:
+      - expenseGroupDao
+      - groupMemberDao
+    reason: "group membership management — must call writeBarrier"
+    allowed_until: "migrate to GroupLifecycleCoordinator (PR 7)"
+
+  # ── Categories / Merchants ──────────────────────────────────────
+
+  - class: CategoryRepository
+    daos:
+      - categoryDao
+    reason: "canonical category writer"
+
+  - class: MerchantCategoryRepository
+    daos:
+      - merchantCategoryDao
+      - merchantNormalizationDao
+      - merchantLocationDao
+    reason: "canonical merchant writer"
+
+  # ── Spending Challenges ─────────────────────────────────────────
+
+  - class: SpendingChallengeRepository
+    daos:
+      - spendingChallengeDao
+    reason: "canonical challenge writer"
+
+  # ── Exchange Rates ──────────────────────────────────────────────
+
+  - class: ExchangeRateRepository
+    daos:
+      - exchangeRateDao
+    reason: "canonical exchange rate writer — network fetch, not user data"
+
+debug_only_writers:
+  # These classes may write DAOs only in DEBUG builds.
+  # Each must also check DatabaseWriteBarrier.
+
+  - class: ExpenseRepository
+    methods_only:
+      - deleteAllExpenses
+      - restoreDebugSnapshot
+    reason: "debug-only data management"
+
+  - class: BudgetRepository
+    debug_only: true
+    reason: "debug-only budget snapshot restore"
+
+  - class: DatabaseBackupRepositoryImpl
+    methods_only:
+      - importDatabase
+    reason: "legacy .db import is debug-only in production"
+
+migration_only_writers:
+  # Room migration classes are exempt from the static guard.
+  - pattern: "app/src/main/java/**/database/migration/**"
+    reason: "Room schema migrations run before app code"
+  - pattern: "app/src/main/java/**/database/AppDatabase.kt"
+    reason: "Room database builder and migration registration"
+  - pattern: "app/src/main/java/**/database/dao/ExpenseGroupDao.kt"
+    reason: "DAO-level helper method that calls memberDao.insertAll — Room infrastructure"

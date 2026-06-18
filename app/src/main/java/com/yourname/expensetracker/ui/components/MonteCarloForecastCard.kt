@@ -15,6 +15,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -29,8 +32,41 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 @Composable
 fun MonteCarloForecastCard(
     result: MonteCarloResult,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
+    currency: String = "EUR"
 ) {
+    // S4-D914-017: Unavailable state — displayCurrency is null when Monte Carlo
+    // result could not be computed (e.g. insufficient data for simulation).
+    if (result.displayCurrency == null) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = SemanticColors.GlassSurface
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.forecast_month_end_title),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = result.confidence.reason,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+        }
+        return
+    }
+
     val confidenceColor = when (result.confidence.level) {
         ConfidenceLevel.HIGH -> SemanticColors.SuccessGreen
         ConfidenceLevel.MODERATE -> SemanticColors.WarningOrange
@@ -62,7 +98,7 @@ fun MonteCarloForecastCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "MONTH-END FORECAST",
+                    text = stringResource(R.string.forecast_month_end_title),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.PrimaryLight,
@@ -96,13 +132,13 @@ fun MonteCarloForecastCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // ── Median projected total (P50) ─────────────────────────────
+                        Text(
+                            text = stringResource(R.string.forecast_likely_total),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.TextSecondary
+                        )
             Text(
-                text = "Likely total",
-                style = MaterialTheme.typography.bodySmall,
-                color = SemanticColors.TextSecondary
-            )
-            Text(
-                text = "€${String.format("%.0f", result.percentile50)}",
+                text = CurrencyFormatter.formatMoney(result.percentile50, currency, showCents = false),
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.ExtraBold,
                 color = SemanticColors.TextPrimary
@@ -112,7 +148,7 @@ fun MonteCarloForecastCard(
 
             // ── Percentile spread ────────────────────────────────────────
             Text(
-                text = "Range: €${String.format("%.0f", result.percentile10)} – €${String.format("%.0f", result.percentile90)}",
+                text = stringResource(R.string.forecast_range_format, result.percentile10, result.percentile90),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextSecondary
             )
@@ -131,11 +167,10 @@ fun MonteCarloForecastCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Left: budget probability
                 if (result.probabilityUnderBudget != null && result.budgetAmount != null) {
                     Column {
                         Text(
-                            "Under budget",
+                            stringResource(R.string.forecast_under_budget),
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextSecondary
                         )
@@ -146,7 +181,7 @@ fun MonteCarloForecastCard(
                             color = probabilityColor ?: SemanticColors.TextPrimary
                         )
                         Text(
-                            "of €${String.format("%.0f", result.budgetAmount)}",
+                            "of ${CurrencyFormatter.formatMoney(result.budgetAmount, currency, showCents = false)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextMuted
                         )
@@ -154,7 +189,7 @@ fun MonteCarloForecastCard(
                 } else {
                     Column {
                         Text(
-                            "No budget set",
+                            stringResource(R.string.forecast_no_budget_set),
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextMuted
                         )
@@ -164,12 +199,12 @@ fun MonteCarloForecastCard(
                 // Center: spent so far
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        "Spent",
+                        stringResource(R.string.forecast_spent),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", result.spentToDate)}",
+                        CurrencyFormatter.formatMoney(result.spentToDate, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -179,12 +214,12 @@ fun MonteCarloForecastCard(
                 // Right: upcoming known
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        "Upcoming",
+                        stringResource(R.string.forecast_upcoming),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", result.knownUpcoming)}",
+                        CurrencyFormatter.formatMoney(result.knownUpcoming, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.WarningOrange
@@ -218,9 +253,9 @@ private fun PercentileBand(result: MonteCarloResult) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("P10", style = MaterialTheme.typography.labelSmall, color = SemanticColors.TextMuted)
-            Text("P50", style = MaterialTheme.typography.labelSmall, color = SemanticColors.PrimaryLight)
-            Text("P90", style = MaterialTheme.typography.labelSmall, color = SemanticColors.TextMuted)
+            Text(stringResource(R.string.forecast_percentile_p10), style = MaterialTheme.typography.labelSmall, color = SemanticColors.TextMuted)
+            Text(stringResource(R.string.forecast_percentile_p50), style = MaterialTheme.typography.labelSmall, color = SemanticColors.PrimaryLight)
+            Text(stringResource(R.string.forecast_percentile_p90), style = MaterialTheme.typography.labelSmall, color = SemanticColors.TextMuted)
         }
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -282,7 +317,7 @@ private fun PercentileBand(result: MonteCarloResult) {
             ) {
                 Spacer(modifier = Modifier.weight(budgetFrac.coerceAtLeast(0.01f)))
                 Text(
-                    "Budget",
+                    stringResource(R.string.forecast_budget_label),
                     style = MaterialTheme.typography.labelSmall,
                     color = SemanticColors.DangerRed,
                     fontSize = 9.sp

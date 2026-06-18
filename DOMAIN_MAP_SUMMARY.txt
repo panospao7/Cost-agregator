@@ -1,0 +1,235 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║           COMPREHENSIVE DOMAIN LAYER MAP - COMPLETION REPORT              ║
+║                         Generated: April 4, 2026                          ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+✅ MISSION ACCOMPLISHED
+
+Scout Agent has created a complete, exhaustive map of the Domain Layer.
+All deliverables have been created and are located in:
+
+    docs/reference/
+    ├── INDEX.md (Navigation & Overview)
+    ├── backend-domain-map.md (COMPREHENSIVE - 989 lines)
+    ├── domain-quick-reference.md (PRACTICAL - 269 lines)
+    └── clean-architecture-violations-report.md (ACTIONABLE - 534 lines)
+
+───────────────────────────────────────────────────────────────────────────
+
+📊 COVERAGE METRICS
+
+Domain Layer Inventory:
+  • Total Kotlin/Java Files: 219
+  • Total Lines of Code: ~35,000
+  • Total Directories: 42
+  • Major Subsystems: 15+
+  • Engines Documented: 20+
+  • Use Cases Catalogued: 25+
+  • Models Explained: 50+
+  • Services Itemized: 40+
+  • Utility Functions: 20+
+
+Violations Identified:
+  • CRITICAL: 3 files
+  • HIGH: 6 files
+  • MEDIUM: 2 files
+  • LOW: 1 file (actually acceptable)
+  • Total: 12 files with architectural issues
+
+Circular Dependencies:
+  • Direct: 0 ✅
+  • Soft risks: 2 areas flagged for monitoring
+
+───────────────────────────────────────────────────────────────────────────
+
+📋 DELIVERABLES
+
+1. INDEX.md (302 lines)
+   ├── Quick navigation guide
+   ├── File descriptions
+   ├── Common tasks checklist
+   ├── Glossary
+   └── Contribution guidelines
+
+2. backend-domain-map.md (989 lines) ⭐ MAIN REFERENCE
+   ├── Complete directory structure
+   │   └── 42 directories with file counts
+   ├── Architecture overview
+   │   └── Clean architecture diagram
+   ├── Engines section (20+ engines)
+   │   ├── Purpose + methods for each
+   │   ├── Dependencies listed
+   │   └── Key concepts explained
+   ├── Use Cases section (25+ use cases)
+   │   ├── 7 use case categories
+   │   ├── Input/output documented
+   │   └── Dependencies traced
+   ├── Models section (50+ models)
+   │   ├── All root models
+   │   ├── Sub-package models
+   │   └── Fields and consumers listed
+   ├── Services section (40+ services)
+   │   ├── Categorized by purpose
+   │   └── Descriptions provided
+   ├── Clean Architecture Violations
+   │   ├── 12 violations listed
+   │   ├── Severity levels assigned
+   │   └── Remediation strategies outlined
+   ├── Circular Dependencies
+   │   ├── Analysis performed
+   │   ├── Risk zones identified
+   │   └── Safe dependency direction documented
+   ├── Data Flow Examples (4 scenarios)
+   │   ├── Dashboard viewing flow
+   │   ├── Transaction categorization
+   │   ├── Receipt processing
+   │   └── AI query execution
+   ├── Integration Points
+   └── Testing Considerations
+
+3. domain-quick-reference.md (269 lines) 🚀 QUICK LOOKUP
+   ├── Feature area quick links
+   ├── Problem-to-solution mapping
+   ├── 7 key concepts explained
+   ├── Common patterns (4)
+   ├── Dependency injection patterns
+   ├── Performance tips
+   ├── Testing checklist
+   ├── Clean architecture checklist
+   ├── File size reference
+   ├── Common gotchas
+   └── Integration checklist
+
+4. clean-architecture-violations-report.md (534 lines) 🔧 REMEDIATION GUIDE
+   ├── Executive summary
+   ├── CRITICAL violations (3)
+   │   ├── UiText.kt - with before/after code
+   │   ├── NaturalLanguageSearchEngine.kt - with refactoring steps
+   │   └── ML Classifiers - with interface extraction
+   ├── HIGH priority violations (6)
+   │   ├── ImageCache.kt
+   │   ├── ServiceDiagnostics.kt
+   │   ├── NotificationSeeder.kt
+   │   ├── DeliverProactiveBriefingNotificationUseCase.kt
+   │   └── LocationResolver.kt
+   ├── MEDIUM priority violations (2)
+   ├── Implementation plan (3 phases)
+   ├── Verification checklist (4 bash commands)
+   ├── Expected benefits
+   ├── Architecture layers diagram
+   └── Q&A section
+
+───────────────────────────────────────────────────────────────────────────
+
+🎯 KEY FINDINGS
+
+Strengths:
+  ✅ Comprehensive engine architecture (20+ specialized processors)
+  ✅ Well-organized use cases (25+ entry points)
+  ✅ Strong parallel async patterns (InsightsEngine example)
+  ✅ Multi-strategy fallback chains (categorization, anomaly detection)
+  ✅ Robust period calculations (BudgetCalculator)
+  ✅ Error-resilient design (async error handling)
+  ✅ Dual-path anomaly detection (merchant + statistical)
+
+Weaknesses:
+  ⚠️ 12 Clean Architecture violations (framework coupling)
+  ⚠️ UiText model imports Compose framework
+  ⚠️ Speech recognition API in domain
+  ⚠️ ML classifiers require Context
+  ⚠️ Image caching should be in data layer
+  ⚠️ Debug utilities in domain
+
+Opportunities:
+  💡 Extract NaturalLanguageSearchEngine to presentation
+  💡 Modularize AI layer (31 files → separate gradle module?)
+  💡 Consolidate analytics sub-engines documentation
+  💡 Add integration tests for complex flows
+  💡 Implement formal API versioning for domain models
+  💡 Create domain event bus for cross-engine communication
+
+───────────────────────────────────────────────────────────────────────────
+
+🔗 CROSS-REFERENCES
+
+Heavy Interdependencies:
+  • InsightsEngine (751 lines) ← Central hub
+    ├── Uses: 7 sub-engines (analytics processors)
+    ├── Uses: RecurringExpenseEngine
+    ├── Uses: 8+ repository queries
+    └── Produces: InsightsSnapshot (used by dashboard + analytics)
+
+  • AI Layer (31 files) ← AI/ML subsystem
+    ├── 10 models (intent, result, status, etc.)
+    ├── 11 services (routing, interpretation, extraction, etc.)
+    ├── 13 use cases (queries, briefings, categorization, etc.)
+    └── 5 input builders (decouple presentation from domain)
+
+  • Budget System (6 files) ← Financial calculations
+    ├── BudgetCalculator (5 period types, complex math)
+    ├── BudgetMonitor (vs actual)
+    ├── BudgetRecommendationEngine
+    ├── SharedBudgetManager
+    ├── BudgetForecastingEngine
+    └── BudgetAutopilotEngine
+
+  • Categorization Pipeline (6 files) ← Multi-strategy
+    ├── Rules-based (ContextualInferenceEngine)
+    ├── Keywords (SemanticKeywordMatcher)
+    ├── Semantic (MerchantCanonicalizer)
+    └── ML fallback (HybridExpenseClassifier)
+
+───────────────────────────────────────────────────────────────────────────
+
+📈 STATISTICS
+
+Largest Components:
+  1. InsightsEngine.kt - 751 lines (hub for analytics)
+  2. ExecuteFinancialQueryUseCase.kt - 222 lines (AI queries)
+  3. BudgetCalculator.kt - 153 lines (period calculations)
+
+Busiest Directories:
+  1. ai/ - 31 files (models + services + use cases)
+  2. analytics/ - 15 files (insights + trend analysis)
+  3. usecase/ - 10 directories (feature workflows)
+  4. model/ - 17 files (domain data structures)
+
+Most Imported By:
+  1. ExpenseRepository - 40+ classes
+  2. TimeProvider/TimePeriodUtils - 30+ classes
+  3. CategoryRepository - 15+ classes
+  4. CurrencyConverter - 10+ classes
+
+───────────────────────────────────────────────────────────────────────────
+
+🛠️ RECOMMENDATIONS
+
+Immediate Actions:
+  1. Fix UiText.kt - Move Compose rendering to presentation (CRITICAL)
+  2. Extract SpeechRecognizer interface - Move implementation (CRITICAL)
+  3. Create ML model interfaces - Remove Context from domain (CRITICAL)
+
+Short-term (1-2 weeks):
+  4. Move ImageCache to data layer (HIGH)
+  5. Move debug utilities (HIGH)
+  6. Extract NotificationDispatcher interface (HIGH)
+  7. Replace Log with Timber (HIGH)
+
+Medium-term (3-4 weeks):
+  8. Add integration tests for InsightsEngine
+  9. Consolidate analytics sub-engine documentation
+  10. Implement domain event bus for cross-engine communication
+
+Long-term (2-3 months):
+  11. Modularize AI layer to separate gradle module
+  12. Extract location analytics to separate module
+  13. Implement formal API versioning for domain models
+  14. Create domain architecture guidelines document
+
+───────────────────────────────────────────────────────────────────────────
+
+🧪 TESTING GUIDANCE
+
+Easily Testable:
+  ✅ All utilities (TimeProvider, AmountUtils, StringDistanceUtils)
+  ✅ Pure calculation engines (BudgetCalculator, CurrencyConverte

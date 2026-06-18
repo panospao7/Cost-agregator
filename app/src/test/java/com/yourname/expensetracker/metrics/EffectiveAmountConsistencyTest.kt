@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.metrics
 
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
@@ -56,7 +57,7 @@ class EffectiveAmountConsistencyTest {
         val notMine = createExpense(500.0, monthStart + 172800000, isNotMine = true)
 
         val pace = spendingPaceCalculator.calculate(
-            monthStart, prevMonthStart, prevMonthEnd, listOf(mine, notMine)
+            monthStart, prevMonthStart, prevMonthEnd, listOf(mine, notMine).toExpenseSnapshots(), "EUR"
         )
         assertEquals("Only mine (100) should count", 100.0, pace.currentMonthSpent, 0.001)
     }
@@ -70,7 +71,7 @@ class EffectiveAmountConsistencyTest {
         val notMine = createExpense(800.0, currentMonth.startMs + 172800000, isNotMine = true)
 
         val result = monthlyComparisonCalculator.calculate(
-            currentMonth, prevMonth, listOf(mine, notMine)
+            currentMonth, prevMonth, listOf(mine, notMine).toExpenseSnapshots(), "EUR"
         )
         assertEquals("Only mine (200) should count", 200.0, result.currentTotal, 0.001)
     }
@@ -83,7 +84,7 @@ class EffectiveAmountConsistencyTest {
         val mine = createExpense(50.0, start + 86400000, isNotMine = false)
         val notMine = createExpense(300.0, start + 86400000, isNotMine = true)
 
-        val insights = dayOfWeekAnalyzer.analyze(start, end, listOf(mine, notMine))
+        val insights = dayOfWeekAnalyzer.analyze(start, end, listOf(mine, notMine).toExpenseSnapshots(), "EUR")
         val totalFromInsights = insights.sumOf { it.totalSpent }
         assertEquals("Only mine (50) should count", 50.0, totalFromInsights, 0.001)
     }
@@ -106,7 +107,7 @@ class EffectiveAmountConsistencyTest {
         )
 
         val pace = spendingPaceCalculator.calculate(
-            monthStart, prevMonthStart, prevMonthEnd, listOf(shared)
+            monthStart, prevMonthStart, prevMonthEnd, listOf(shared).toExpenseSnapshots(), "EUR"
         )
         assertEquals("Should use myShareAmount (40)", 40.0, pace.currentMonthSpent, 0.001)
     }
@@ -125,7 +126,7 @@ class EffectiveAmountConsistencyTest {
         )
 
         val pace = spendingPaceCalculator.calculate(
-            monthStart, prevMonthStart, prevMonthEnd, listOf(shared)
+            monthStart, prevMonthStart, prevMonthEnd, listOf(shared).toExpenseSnapshots(), "EUR"
         )
         assertEquals("Should use 50% of 100 = 50", 50.0, pace.currentMonthSpent, 0.001)
     }
@@ -143,7 +144,7 @@ class EffectiveAmountConsistencyTest {
         )
 
         val result = monthlyComparisonCalculator.calculate(
-            currentMonth, prevMonth, listOf(shared)
+            currentMonth, prevMonth, listOf(shared).toExpenseSnapshots(), "EUR"
         )
         assertEquals("Should use myShareAmount (75)", 75.0, result.currentTotal, 0.001)
     }
@@ -197,7 +198,7 @@ class EffectiveAmountConsistencyTest {
 
         val expectedTotal = 100.0 + 0.0 + 20.0 + (80.0 * 0.25)
         val pace = spendingPaceCalculator.calculate(
-            monthStart, prevMonthStart, prevMonthEnd, expenses
+            monthStart, prevMonthStart, prevMonthEnd, expenses.toExpenseSnapshots(), "EUR"
         )
         assertEquals(expectedTotal, pace.currentMonthSpent, 0.001)
     }
@@ -232,6 +233,7 @@ class EffectiveAmountConsistencyTest {
         merchant = "Test",
         transactionType = TransactionType.PURCHASE,
         date = date,
+        createdAt = System.currentTimeMillis(),
         isNotMine = isNotMine,
         isSharedExpense = isSharedExpense,
         myShareAmount = myShareAmount,

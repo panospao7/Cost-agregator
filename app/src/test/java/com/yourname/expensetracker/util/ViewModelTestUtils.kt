@@ -2,6 +2,7 @@ package com.yourname.expensetracker.util
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -32,7 +33,8 @@ import org.junit.Before
  */
 abstract class ViewModelTestUtils {
 
-    protected val testDispatcher = StandardTestDispatcher()
+    private val testScheduler = TestCoroutineScheduler()
+    protected val testDispatcher = StandardTestDispatcher(testScheduler)
 
     @Before
     open fun setup() {

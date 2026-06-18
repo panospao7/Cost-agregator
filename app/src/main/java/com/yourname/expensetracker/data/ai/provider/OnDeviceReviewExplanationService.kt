@@ -5,6 +5,8 @@ import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.TextPart
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
@@ -27,19 +29,22 @@ class OnDeviceReviewExplanationService @Inject constructor() : ReviewExplanation
         }
     }
 
-    override suspend fun generate(input: ReviewExplanationInput): ReviewExplanation? {
+    override suspend fun generate(input: ReviewExplanationInput): AiServiceResult<ReviewExplanation> {
         return try {
             val model = getOrCreateModel()
             val request = buildRequest(input)
             val response = model.generateContent(request)
-            val text = response.candidates.firstOrNull()?.text ?: return null
-            parseResponse(text)
+            val text = response.candidates.firstOrNull()?.text
+                ?: return AiServiceResult.Failure(AiServiceError.ParseError("Empty response"))
+            val parsed = parseResponse(text)
+                ?: return AiServiceResult.Failure(AiServiceError.ParseError("No usable explanation in response"))
+            AiServiceResult.Success(parsed)
         } catch (e: GenAiException) {
             Timber.w(e, "OnDeviceReviewExplanationService: GenAI error (code=%d)", e.errorCode)
-            null
+            AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
         } catch (e: Exception) {
             Timber.w(e, "OnDeviceReviewExplanationService: unexpected error")
-            null
+            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
         }
     }
 

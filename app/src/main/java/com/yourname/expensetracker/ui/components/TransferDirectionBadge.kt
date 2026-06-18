@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.ui.components
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,14 +12,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.TransferDirection
-import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
  * A badge component that displays transfer direction (INCOMING/OUTGOING)
@@ -49,6 +49,7 @@ fun TransferDirectionBadge(
         )
         null -> UnknownBadge(
             modifier = modifier,
+            showLabel = showLabel,
             compact = compact
         )
     }
@@ -61,19 +62,31 @@ private fun IncomingBadge(
     showLabel: Boolean = true,
     compact: Boolean = false
 ) {
-    val backgroundColor = SemanticColors.SuccessGreen.copy(alpha = 0.12f)
-    val contentColor = SemanticColors.SuccessGreen
-    
+    val backgroundColor = MaterialTheme.colorScheme.secondaryContainer
+    val contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+    val compactContentDescription = buildString {
+        append(stringResource(R.string.a11y_transfer_incoming))
+        accountName?.takeIf { it.isNotBlank() }?.let {
+            append(" ")
+            append(it)
+        }
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(backgroundColor)
+            .then(
+                if (showLabel) Modifier else Modifier.semantics {
+                    contentDescription = compactContentDescription
+                }
+            )
             .padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 4.dp else 6.dp)
     ) {
         Icon(
             imageVector = Icons.Default.ArrowDownward,
-            contentDescription = "Incoming",
+            contentDescription = null,
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
@@ -83,7 +96,7 @@ private fun IncomingBadge(
             
             Text(
                 text = buildString {
-                    append("Incoming")
+                    append(stringResource(R.string.transfer_incoming))
                     accountName?.let { 
                         append(" ")
                         append(it)
@@ -109,19 +122,31 @@ private fun OutgoingBadge(
     showLabel: Boolean = true,
     compact: Boolean = false
 ) {
-    val backgroundColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.12f)
-    val contentColor = SemanticColors.PrimaryIndigo
-    
+    val backgroundColor = MaterialTheme.colorScheme.primaryContainer
+    val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+    val compactContentDescription = buildString {
+        append(stringResource(R.string.a11y_transfer_outgoing))
+        accountName?.takeIf { it.isNotBlank() }?.let {
+            append(" ")
+            append(it)
+        }
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(backgroundColor)
+            .then(
+                if (showLabel) Modifier else Modifier.semantics {
+                    contentDescription = compactContentDescription
+                }
+            )
             .padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 4.dp else 6.dp)
     ) {
         Icon(
             imageVector = Icons.Default.ArrowUpward,
-            contentDescription = "Outgoing",
+            contentDescription = null,
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
@@ -131,7 +156,7 @@ private fun OutgoingBadge(
             
             Text(
                 text = buildString {
-                    append("Outgoing")
+                    append(stringResource(R.string.transfer_outgoing))
                     accountName?.let { 
                         append(" ")
                         append(it)
@@ -153,36 +178,45 @@ private fun OutgoingBadge(
 @Composable
 private fun UnknownBadge(
     modifier: Modifier = Modifier,
+    showLabel: Boolean = true,
     compact: Boolean = false
 ) {
     val backgroundColor = MaterialTheme.colorScheme.surfaceVariant
     val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val compactContentDescription = stringResource(R.string.a11y_transfer_unknown)
     
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(backgroundColor)
+            .then(
+                if (showLabel) Modifier else Modifier.semantics {
+                    contentDescription = compactContentDescription
+                }
+            )
             .padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 4.dp else 6.dp)
     ) {
         Icon(
             imageVector = Icons.Default.HelpOutline,
-            contentDescription = "Direction unknown",
+            contentDescription = null,
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
-        
-        Spacer(modifier = Modifier.width(6.dp))
-        
-        Text(
-            text = "Set Direction",
-            color = contentColor,
-            style = if (compact) {
-                MaterialTheme.typography.labelSmall
-            } else {
-                MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
-            }
-        )
+
+        if (showLabel) {
+            Spacer(modifier = Modifier.width(6.dp))
+
+            Text(
+                text = stringResource(R.string.transfer_set_direction),
+                color = contentColor,
+                style = if (compact) {
+                    MaterialTheme.typography.labelSmall
+                } else {
+                    MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
+                }
+            )
+        }
     }
 }
 
@@ -201,13 +235,13 @@ fun TransferDirectionIcon(
                 modifier = modifier
                     .size(size.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(SemanticColors.SuccessGreen.copy(alpha = 0.15f)),
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.ArrowDownward,
-                    contentDescription = "Incoming",
-                    tint = SemanticColors.SuccessGreen,
+                    contentDescription = stringResource(R.string.a11y_transfer_incoming),
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier = Modifier.size((size * 0.6).dp)
                 )
             }
@@ -217,13 +251,13 @@ fun TransferDirectionIcon(
                 modifier = modifier
                     .size(size.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)),
+                    .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.ArrowUpward,
-                    contentDescription = "Outgoing",
-                    tint = SemanticColors.PrimaryIndigo,
+                    contentDescription = stringResource(R.string.a11y_transfer_outgoing),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.size((size * 0.6).dp)
                 )
             }
@@ -238,7 +272,7 @@ fun TransferDirectionIcon(
             ) {
                 Icon(
                     imageVector = Icons.Default.HelpOutline,
-                    contentDescription = "Unknown",
+                    contentDescription = stringResource(R.string.a11y_transfer_unknown),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size((size * 0.6).dp)
                 )

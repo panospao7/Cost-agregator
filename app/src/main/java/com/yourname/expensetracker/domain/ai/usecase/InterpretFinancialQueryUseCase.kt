@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
@@ -13,11 +13,12 @@ import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.model.PeriodRange
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.first
+import timber.log.Timber
 import java.util.Locale
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 class InterpretFinancialQueryUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
@@ -37,22 +38,121 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             )
         }
 
-        val input = inputBuilder.build(rawQuery, conversationHistory)
+        val input = inputBuilder.build(rawQuery, settings, conversationHistory)
 
-        val providerResult = runCatching {
+        val providerResult = try {
             queryInterpretationService.interpret(input)
-        }.getOrElse {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "InterpretFinancialQueryUseCase: query interpretation provider failed")
             FinancialQueryInterpretationResult.Unsupported(
-                it.message ?: "Query interpretation failed"
+                e.message ?: "Query interpretation failed"
             )
         }
 
         return when (providerResult) {
-            is FinancialQueryInterpretationResult.Structured -> providerResult
-            is FinancialQueryInterpretationResult.Clarification -> providerResult
+            is FinancialQueryInterpretationResult.Structured -> {
+                enrichStructuredResult(providerResult, rawQuery, input.currentTimeMs)
+            }
+            is FinancialQueryInterpretationResult.Clarification -> {
+                // If provider returns another clarification, try local fallback as safety net
+                val fallbackResult = localFallbackInterpret(rawQuery, input.currentTimeMs)
+                // Only use fallback if it produces a structured result
+                if (fallbackResult is FinancialQueryInterpretationResult.Structured) {
+                    fallbackResult
+                } else {
+                    providerResult
+                }
+            }
             is FinancialQueryInterpretationResult.Unsupported ->
-                localFallbackInterpret(input.rawQuery, input.currentTimeMs)
+                localFallbackInterpret(rawQuery, input.currentTimeMs)
         }
+    }
+
+    /**
+     * Merges locally derivable period/category/type/ownership dimensions into a
+     * provider-structured result when the provider omitted them.
+     *
+     * Provider-supplied non-default values are always preserved; local heuristics
+     * only fill gaps so that richer queries (e.g. "largest groceries this week")
+     * retain their grouping/metric richness from the provider while gaining the
+     * period and category filters the provider may not have resolved.
+     */
+    private suspend fun enrichStructuredResult(
+        result: FinancialQueryInterpretationResult.Structured,
+        rawQuery: String,
+        nowMs: Long
+    ): FinancialQueryInterpretationResult.Structured {
+        val intent = result.intent
+        val normalized = rawQuery.trim().lowercase(Locale.getDefault())
+        val filters = intent.filters
+
+        // --- Fill period if provider left it null ---
+        val enrichedPeriod = filters.period ?: resolvePeriod(normalized, nowMs)
+
+        // --- Fill categoryIds if provider left them empty ---
+        val enrichedCategoryIds = if (filters.categoryIds.isEmpty()) {
+            val categories = categoryRepository.getAll()
+            val matchedCategory = categories.firstOrNull { category ->
+                normalized.contains(category.name.lowercase(Locale.getDefault()))
+            }
+            matchedCategory?.id?.let(::setOf) ?: emptySet()
+        } else {
+            filters.categoryIds
+        }
+
+        // --- Fill transactionTypes if provider left them empty ---
+        val enrichedTypes = if (filters.transactionTypes.isEmpty()) {
+            val matchedType = when {
+                normalized.contains("transfer") -> DomainTransactionType.TRANSFER
+                normalized.contains("withdraw") || normalized.contains("atm") -> DomainTransactionType.WITHDRAWAL
+                normalized.contains("deposit") || normalized.contains("income") || normalized.contains("salary") -> DomainTransactionType.DEPOSIT
+                normalized.contains("purchase") || normalized.contains("spend") || normalized.contains("spent") -> DomainTransactionType.PURCHASE
+                else -> null
+            }
+            matchedType?.let(::setOf) ?: emptySet()
+        } else {
+            filters.transactionTypes
+        }
+
+        // --- Fill ownership if provider returned ALL and local cues are stronger ---
+        val enrichedOwnership = if (filters.ownership == QueryOwnershipScope.ALL) {
+            resolveOwnership(normalized)
+        } else {
+            filters.ownership
+        }
+
+        // --- Fill comparison if provider returned NONE and local cues suggest comparison ---
+        val enrichedComparison = if (intent.comparison == QueryComparison.NONE) {
+            if (normalized.contains("compare") || normalized.contains("vs") || normalized.contains("previous")) {
+                QueryComparison.PREVIOUS_EQUIVALENT_PERIOD
+            } else {
+                QueryComparison.NONE
+            }
+        } else {
+            intent.comparison
+        }
+
+        // --- Validate and clamp min/max amounts for AI robustness ---
+        val validatedMinAmount = validateAmountBound(filters.minAmount, "minAmount")
+        val validatedMaxAmount = validateAmountBound(filters.maxAmount, "maxAmount")
+
+        val enrichedFilters = filters.copy(
+            period = enrichedPeriod,
+            categoryIds = enrichedCategoryIds,
+            transactionTypes = enrichedTypes,
+            ownership = enrichedOwnership,
+            minAmount = validatedMinAmount,
+            maxAmount = validatedMaxAmount
+        )
+
+        return result.copy(
+            intent = intent.copy(
+                filters = enrichedFilters,
+                comparison = enrichedComparison
+            )
+        )
     }
 
     private suspend fun localFallbackInterpret(
@@ -72,16 +172,51 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             )
         }
 
+        when {
+            isBarePeriodOnlyQuery(normalized, "this month", "current month") -> return FinancialQueryInterpretationResult.Structured(
+                FinancialQueryIntent(
+                    rawQuery = rawQuery,
+                    normalizedQuery = normalized,
+                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfMonth(now), TimePeriodUtils.getEndOfMonth(now))),
+                    metric = QueryMetric.TOTAL,
+                    grouping = QueryGrouping.NONE,
+                    comparison = QueryComparison.NONE
+                )
+            )
+            isBarePeriodOnlyQuery(normalized, "last month", "previous month") -> return FinancialQueryInterpretationResult.Structured(
+                FinancialQueryIntent(
+                    rawQuery = rawQuery,
+                    normalizedQuery = normalized,
+                    // S11-018: Use TimePeriodUtils instead of Calendar.getInstance()
+                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getMonthRange(now, -1).let { (s, e) -> PeriodRange(s, e) }),
+                    metric = QueryMetric.TOTAL,
+                    grouping = QueryGrouping.NONE,
+                    comparison = QueryComparison.NONE
+                )
+            )
+            isBarePeriodOnlyQuery(normalized, "this week", "current week") -> return FinancialQueryInterpretationResult.Structured(
+                FinancialQueryIntent(
+                    rawQuery = rawQuery,
+                    normalizedQuery = normalized,
+                    // S11-018: Use TimePeriodUtils.getWeekRange instead of Calendar.getInstance()
+                    filters = ExpenseQueryFilters(period = TimePeriodUtils.getWeekRange(now, 0).let { (s, e) -> PeriodRange(s, e) }),
+                    metric = QueryMetric.TOTAL,
+                    grouping = QueryGrouping.NONE,
+                    comparison = QueryComparison.NONE
+                )
+            )
+        }
+
         val categories = categoryRepository.getAll()
         val matchedCategory = categories.firstOrNull { category ->
             normalized.contains(category.name.lowercase(Locale.getDefault()))
         }
 
         val matchedType = when {
-            normalized.contains("transfer") -> TransactionType.TRANSFER
-            normalized.contains("withdraw") || normalized.contains("atm") -> TransactionType.WITHDRAWAL
-            normalized.contains("deposit") || normalized.contains("income") || normalized.contains("salary") -> TransactionType.DEPOSIT
-            normalized.contains("purchase") || normalized.contains("spend") || normalized.contains("spent") -> TransactionType.PURCHASE
+            normalized.contains("transfer") -> DomainTransactionType.TRANSFER
+            normalized.contains("withdraw") || normalized.contains("atm") -> DomainTransactionType.WITHDRAWAL
+            normalized.contains("deposit") || normalized.contains("income") || normalized.contains("salary") -> DomainTransactionType.DEPOSIT
+            normalized.contains("purchase") || normalized.contains("spend") || normalized.contains("spent") -> DomainTransactionType.PURCHASE
             else -> null
         }
 
@@ -162,7 +297,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
     private fun resolvePeriod(query: String, now: Long): PeriodRange? {
         val pair = when {
             query.contains("today") -> TimePeriodUtils.getStartOfDay(now) to now
-            query.contains("this week") || query.contains("week") -> TimePeriodUtils.getLastNDaysRange(now, 7)
+            query.contains("this week") || query.contains("week") -> TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
             query.contains("this month") || query.contains("month") -> TimePeriodUtils.getMonthRange(now, 0)
             query.contains("last month") || query.contains("previous month") -> TimePeriodUtils.getMonthRange(now, -1)
             query.contains("this quarter") || query.contains("quarter") -> TimePeriodUtils.getStartOfQuarter(now) to now
@@ -170,5 +305,73 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             else -> TimePeriodUtils.getMonthRange(now, 0)
         }
         return PeriodRange(start = pair.first, end = pair.second)
+    }
+
+    /**
+     * Validates and clamps an amount bound returned by the AI provider.
+     * Rejects negative values, absurdly large values (> 1 billion), and
+     * NaN/Infinity to prevent downstream errors.
+     */
+    private fun validateAmountBound(value: Double?, fieldName: String): Double? {
+        if (value == null) return null
+        if (value.isNaN() || value.isInfinite()) {
+            Timber.w("InterpretFinancialQueryUseCase: AI returned invalid %s=%s — rejecting", fieldName, value)
+            return null
+        }
+        if (value < 0.0) {
+            Timber.w("InterpretFinancialQueryUseCase: AI returned negative %s=%.2f — clamping to 0", fieldName, value)
+            return 0.0
+        }
+        val MAX_AMOUNT = 1_000_000_000.0
+        if (value > MAX_AMOUNT) {
+            Timber.w("InterpretFinancialQueryUseCase: AI returned excessive %s=%.2f — clamping to %.0f", fieldName, value, MAX_AMOUNT)
+            return MAX_AMOUNT
+        }
+        return value
+    }
+
+    private fun isBarePeriodOnlyQuery(query: String, vararg periodPhrases: String): Boolean {
+        val normalized = query.trim()
+        if (normalized.isBlank()) return false
+        if (periodPhrases.none { phrase -> normalized == phrase || normalized == "$phrase only" || normalized == "for $phrase" }) {
+            return false
+        }
+
+        return !containsRichIntentCue(normalized)
+    }
+
+    private fun containsRichIntentCue(query: String): Boolean {
+        val keywords = listOf(
+            "top",
+            "largest",
+            "biggest",
+            "highest",
+            "average",
+            "avg",
+            "count",
+            "how many",
+            "number of",
+            "show",
+            "list",
+            "merchant",
+            "merchants",
+            "category",
+            "categories",
+            "grocer",
+            "transport",
+            "transfer",
+            "withdraw",
+            "deposit",
+            "purchase",
+            "spend",
+            "spent",
+            "shared",
+            "mine",
+            "not mine",
+            "compare",
+            "vs",
+            "previous"
+        )
+        return keywords.any(query::contains)
     }
 }

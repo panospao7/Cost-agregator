@@ -1,9 +1,18 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.executeCancellable
+import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.NearbyPoi
+import com.yourname.expensetracker.domain.location.NearbyPoiResult
 import com.yourname.expensetracker.domain.location.NearbyPoiService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -11,7 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.util.concurrent.TimeUnit
+import java.text.Normalizer
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.*
@@ -23,19 +32,27 @@ import kotlin.math.*
  * given coordinate, then filters/ranks by name similarity to [merchantName].
  */
 @Singleton
-class OverpassNearbyService @Inject constructor() : NearbyPoiService {
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
+class OverpassNearbyService @Inject constructor(
+    @LocationHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
+) : NearbyPoiService {
 
     override suspend fun findNearby(
         lat: Double,
         lon: Double,
         merchantName: String,
         radiusMetres: Int
-    ): List<NearbyPoi> {
+    ): NearbyPoiResult {
+        // Check privacy gate before making Overpass API calls
+        when (privacyGate.check(PrivacyCapability.OVERPASS_API)) {
+            is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
+                Log.w(TAG, "OVERPASS_API denied by privacy gate — skipping Overpass query")
+                return NearbyPoiResult.Failure(GeocodingError.Disabled)
+            }
+            is PrivacyDecision.Allowed -> { /* proceed */ }
+            else -> { Log.w(TAG, "OVERPASS_API privacy check inconclusive — proceeding fail-safe"); return NearbyPoiResult.Failure(GeocodingError.Disabled) }
+        }
+
         val query = buildOverpassQuery(lat, lon, radiusMetres)
         val body = query.toRequestBody("text/plain".toMediaType())
         val request = Request.Builder()
@@ -45,21 +62,60 @@ class OverpassNearbyService @Inject constructor() : NearbyPoiService {
             .build()
 
         return try {
-            client.newCall(request).execute().use { response ->
+            executeWithRetry(request).use { response ->
                 if (!response.isSuccessful) {
                     Log.w(TAG, "Overpass HTTP ${response.code}")
-                    return@use emptyList()
+                    return@use NearbyPoiResult.Failure(
+                        if (response.code == 429) GeocodingError.RateLimited else GeocodingError.HttpError(response.code)
+                    )
                 }
-                val responseBody = response.body?.string() ?: return@use emptyList()
-                parseAndRank(responseBody, lat, lon, merchantName)
+                val responseBody = response.body?.string()
+                    ?: return@use NearbyPoiResult.Failure(GeocodingError.ParseError)
+                val parsed = parseAndRank(responseBody, lat, lon, merchantName)
+                if (parsed.isEmpty()) NearbyPoiResult.Failure(GeocodingError.NoResults)
+                else NearbyPoiResult.Success(parsed)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: IOException) {
             Log.w(TAG, "Overpass network error: ${e.message}")
-            emptyList()
+            NearbyPoiResult.Failure(GeocodingError.NetworkError)
         } catch (e: JSONException) {
             Log.w(TAG, "Overpass parse error: ${e.message}")
-            emptyList()
+            NearbyPoiResult.Failure(GeocodingError.ParseError)
         }
+    }
+
+    private suspend fun executeWithRetry(
+        request: Request,
+        maxAttempts: Int = 3,
+        initialDelayMs: Long = 400
+    ): okhttp3.Response {
+        var currentDelay = initialDelayMs
+        var lastError: IOException? = null
+        repeat(maxAttempts) { attempt ->
+            try {
+                val response = client.executeCancellable(request)
+                if (response.code >= 500 || response.code == 429) {
+                    if (attempt < maxAttempts - 1) {
+                        response.close()
+                        delay(currentDelay)
+                        currentDelay = (currentDelay * 2).coerceAtMost(3000)
+                        lastError = null
+                        return@repeat
+                    }
+                    return response
+                }
+                return response
+            } catch (e: IOException) {
+                lastError = e
+                if (attempt < maxAttempts - 1) {
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(3000)
+                }
+            }
+        }
+        throw lastError ?: IOException("Overpass request failed after retries")
     }
 
     private fun buildOverpassQuery(lat: Double, lon: Double, radiusMetres: Int): String {
@@ -125,7 +181,7 @@ class OverpassNearbyService @Inject constructor() : NearbyPoiService {
         }
 
         // Sort by name-similarity score (desc) then distance (asc)
-        val normalizedQuery = merchantName.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val normalizedQuery = normalizeNameForRanking(merchantName)
         return pois.sortedWith(
             compareByDescending<NearbyPoi> { nameSimilarity(it.name, normalizedQuery) }
                 .thenBy { it.distanceMetres }
@@ -145,7 +201,7 @@ class OverpassNearbyService @Inject constructor() : NearbyPoiService {
      * Simple Jaccard-like token overlap similarity in [0, 1].
      */
     private fun nameSimilarity(candidateName: String, normalizedQuery: String): Double {
-        val candidate = candidateName.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val candidate = normalizeNameForRanking(candidateName)
         if (candidate.isEmpty() || normalizedQuery.isEmpty()) return 0.0
         if (candidate.contains(normalizedQuery) || normalizedQuery.contains(candidate)) return 0.9
         val shorter = minOf(candidate.length, normalizedQuery.length)
@@ -155,6 +211,21 @@ class OverpassNearbyService @Inject constructor() : NearbyPoiService {
             if (candidate.getOrNull(i) == normalizedQuery.getOrNull(i)) matches++
         }
         return (matches.toDouble() / 4).coerceIn(0.0, 1.0) * (shorter.toDouble() / longer)
+    }
+
+    private fun normalizeNameForRanking(value: String): String {
+        val decomposed = Normalizer.normalize(value, Normalizer.Form.NFKD)
+        val strippedMarks = buildString(decomposed.length) {
+            decomposed.forEach { char ->
+                if (Character.getType(char) != Character.NON_SPACING_MARK.toInt()) {
+                    append(char)
+                }
+            }
+        }
+
+        return strippedMarks
+            .lowercase()
+            .filter { it.isLetterOrDigit() }
     }
 
     /** Haversine distance in metres between two lat/lon points. */

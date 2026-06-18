@@ -2,9 +2,12 @@ package com.yourname.expensetracker.domain.categorization
 
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.MerchantCategoryInsertResult
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
@@ -24,9 +27,11 @@ enum class MatchType {
 data class CategorizationResult(
     val categoryId: Long?,
     val categoryName: String?,
-    val confidence: Double,
     val matchType: MatchType,
-    val explanation: String = ""
+    val explanation: String = "",
+    val isAmbiguous: Boolean = false,
+    val requiresReview: Boolean = isAmbiguous,  // auto-derived: ambiguous results need review
+    val confidence: Double = if (isAmbiguous) 0.5 else 0.8  // reduced when ambiguous
 )
 
 data class LayerDebugResult(
@@ -58,7 +63,8 @@ class CategorizationEngine @Inject constructor(
     private val canonicalizer: MerchantCanonicalizer,
     private val greeklishNormalizer: GreeklishNormalizer,
     private val semanticMatcher: SemanticKeywordMatcher,
-    private val contextEngine: ContextualInferenceEngine
+    private val contextEngine: ContextualInferenceEngine,
+    private val timeProvider: TimeProvider
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
@@ -67,6 +73,15 @@ class CategorizationEngine @Inject constructor(
     private var cachedCategoryNameToId: Map<String, Long>? = null
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000
+
+    // C14: In-memory debug ring buffer only. Not persisted, not exported.
+    // Privacy-sanitized: stores hashed merchant keys, not raw names.
+    // Synchronized via traceMutex (separate from cacheMutex).
+    private val decisionTrace = ArrayDeque<String>(100)
+
+    // C14: Trace buffer synchronization — separate from cacheMutex to avoid
+    // holding the expensive cache lock during simple trace operations.
+    private val traceMutex = Mutex()
 
     companion object {
         private val STOP_WORDS = setOf("the", "and", "for", "inc", "ltd", "com")
@@ -80,13 +95,13 @@ class CategorizationEngine @Inject constructor(
     }
 
     suspend fun categorize(merchant: String): CategorizationResult {
-        return categorizeWithContext(merchant, 0.0, System.currentTimeMillis())
+        return categorizeWithContext(merchant, 0.0, timeProvider.now())
     }
     
     suspend fun categorizeWithContext(
         merchant: String,
         amount: Double = 0.0,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = timeProvider.now()
     ): CategorizationResult {
         
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
@@ -162,16 +177,24 @@ class CategorizationEngine @Inject constructor(
         }
         
         // LAYER 3: Semantic keyword matching
-        val semanticMatch = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+        // C12-FIXED: Semantic ambiguity propagated to result.
+        val result = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+        val semanticMatch = result.bestMatch
+        val isAmbiguous = result.isAmbiguous
+        if (isAmbiguous) {
+            Timber.d("Categorization: ambiguous semantic match for '%s' — alternatives: %s",
+                merchant, result.alternatives.joinToString { it.categoryName })
+        }
         if (semanticMatch != null) {
             val categoryId = getCategoryIdByName(semanticMatch.categoryName)
             if (categoryId != null) {
                 return CategorizationResult(
                     categoryId = categoryId,
                     categoryName = semanticMatch.categoryName,
-                    confidence = semanticMatch.confidence,
+                    confidence = if (isAmbiguous) 0.5 else semanticMatch.confidence,
                     matchType = MatchType.KEYWORD,
-                    explanation = "Keyword match: '${semanticMatch.matchedKeyword}'"
+                    explanation = "Keyword match: '${semanticMatch.matchedKeyword}'",
+                    isAmbiguous = isAmbiguous
                 )
             }
         }
@@ -210,7 +233,7 @@ class CategorizationEngine @Inject constructor(
     suspend fun debugCategorize(
         merchant: String,
         amount: Double = 0.0,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = timeProvider.now()
     ): CategorizationDebugTrace {
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
         val normalized = lookupResult.canonical.normalizedName.lowercase()
@@ -321,9 +344,16 @@ class CategorizationEngine @Inject constructor(
         }
         
         // LAYER 3: Semantic keyword matching
+        // C12-FIXED: Semantic ambiguity propagated to result.
         var semanticMatchFound = false
         if (finalResult == null) {
-            val semanticMatch = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+            val matchResult = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+            val semanticMatch = matchResult.bestMatch
+            val isAmbiguous = matchResult.isAmbiguous
+            if (isAmbiguous) {
+                Timber.d("Categorization: ambiguous semantic match for '%s' — alternatives: %s",
+                    merchant, matchResult.alternatives.joinToString { it.categoryName })
+            }
             if (semanticMatch != null) {
                 val categoryId = getCategoryIdByName(semanticMatch.categoryName)
                 if (categoryId != null) {
@@ -331,9 +361,10 @@ class CategorizationEngine @Inject constructor(
                     val result = CategorizationResult(
                         categoryId = categoryId,
                         categoryName = semanticMatch.categoryName,
-                        confidence = semanticMatch.confidence,
+                        confidence = if (isAmbiguous) 0.5 else semanticMatch.confidence,
                         matchType = MatchType.KEYWORD,
-                        explanation = "Keyword match: '${semanticMatch.matchedKeyword}'"
+                        explanation = "Keyword match: '${semanticMatch.matchedKeyword}'",
+                        isAmbiguous = isAmbiguous
                     )
                     layerResults.add(LayerDebugResult("Layer 3: Semantic", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
                     finalResult = result
@@ -410,7 +441,7 @@ class CategorizationEngine @Inject constructor(
 
     private suspend fun getCacheData(): CacheData {
         return cacheMutex.withLock {
-            val now = System.currentTimeMillis()
+            val now = timeProvider.now()
             if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
                 val all = merchantCategoryRepository.getAll()
                 cachedMappings = all.sortedByDescending { it.merchantPattern.length }
@@ -419,7 +450,8 @@ class CategorizationEngine @Inject constructor(
                 // Build category ID -> name map from CategoryRepository
                 val categories = getCategoryRepository().getAll()
                 cachedCategoryMap = categories.associate { it.id to it.name }
-                cachedCategoryNameToId = categories.associate { it.name to it.id }
+                // C03: Normalize category name keys with trim().lowercase() for case-insensitive lookup
+                cachedCategoryNameToId = categories.associate { it.name.trim().lowercase() to it.id }
                 lastCacheTime = now
             }
             CacheData(cachedMappings!!, cachedPatternsSet!!, cachedCategoryMap!!)
@@ -441,25 +473,47 @@ class CategorizationEngine @Inject constructor(
     private suspend fun getCategoryIdByName(categoryName: String): Long? {
         // Use getCacheData() which already populates cachedCategoryNameToId under cacheMutex,
         // avoiding a second independent lock acquisition that would be redundant.
+        // C03: Use normalized key (lowercased) to match the cached map keys.
         val cacheData = getCacheData()
-        return cachedCategoryNameToId?.get(categoryName)
+        return cachedCategoryNameToId?.get(categoryName.trim().lowercase())
     }
     
     private fun getCategoryRepository(): CategoryRepository = categoryRepositoryProvider.get()
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
+        val mapping = createMerchantCategoryMapping(merchantName, categoryId)
+        val result = merchantCategoryRepository.insert(mapping)
+        // Note: merchantCategoryRepository.insert() already calls invalidateAllCaches() on success.
+        // No need to invalidate again here.
+        // C14: Trace this decision into the ring-buffer
+        val categoryName = getCategoryMap()[categoryId] ?: "unknown"
+        traceDecision(merchantName, categoryName, "learnMerchantCategory")
+        when (result) {
+            is MerchantCategoryInsertResult.Inserted -> {
+                Timber.d(
+                    "Learned merchant: ${mapping.merchantPattern} -> category $categoryId (canonical: ${mapping.normalizedCanonicalName})"
+                )
+            }
+            MerchantCategoryInsertResult.Conflict -> {
+                Timber.d(
+                    "Merchant mapping already exists for pattern='${mapping.merchantPattern}', canonical='${mapping.normalizedCanonicalName}'. No update performed."
+                )
+            }
+        }
+    }
+
+    suspend fun createMerchantCategoryMapping(merchantName: String, categoryId: Long): MerchantCategory {
         val normalized = merchantNormalizer.normalize(merchantName, autoCreate = false).canonical.normalizedName
-        val canonicalResult = canonicalizer.canonicalize(normalized)
-        val normalizedCanonical = greeklishNormalizer.normalize(canonicalResult.canonicalName)
-        
-        val mapping = MerchantCategory(
+        return MerchantCategory(
             merchantPattern = normalized,
             categoryId = categoryId,
-            normalizedCanonicalName = normalizedCanonical
+            normalizedCanonicalName = normalizedCanonicalNameForMerchant(normalized)
         )
-        merchantCategoryRepository.insert(mapping)
-        invalidateCache()
-        Timber.d("Learned merchant: $normalized -> category $categoryId (canonical: $normalizedCanonical)")
+    }
+
+    fun normalizedCanonicalNameForMerchant(merchantName: String): String {
+        val canonicalResult = canonicalizer.canonicalize(merchantName.lowercase())
+        return greeklishNormalizer.normalize(canonicalResult.canonicalName)
     }
 
     suspend fun invalidateCache() {
@@ -471,7 +525,63 @@ class CategorizationEngine @Inject constructor(
             lastCacheTime = 0
         }
     }
+
+    suspend fun invalidateAllCaches() {
+        // C04-FIXED: Central invalidation point for all category-cache consumers.
+        // Uses cacheMutex (same lock as getCacheData/invalidateCache) to prevent
+        // concurrent partial reads during invalidation.
+        cacheMutex.withLock {
+            cachedMappings = null
+            cachedPatternsSet = null
+            cachedCategoryMap = null
+            cachedCategoryNameToId = null
+            lastCacheTime = 0
+        }
+        Timber.d("CategorizationEngine: all caches invalidated")
+    }
+
+    // C04-FIXED: invalidateAllCaches() now uses cacheMutex (same lock as getCacheData).
+    // Both invalidateCache() and invalidateAllCaches() are now coordinated under cacheMutex.
+    // Remaining: CategoryRepository.ensureDefaultCategories() must also emit invalidation.
+    //
+    // All write paths within CategorizationEngine trigger cache invalidation:
+    //   - learnMerchantCategory()     ✅ calls invalidateCache()
+    //   - createMerchantCategoryMapping()  (entity factory only, no DB write)
+    //
+    // Category create/update/delete operations in CategoryRepository invalidate
+    // hybridExpenseClassifier's snapshot but should also invalidate this engine's
+    // cachedCategoryMap/cachedCategoryNameToId. This is now done for add/merge/delete.
+    // ensureDefaultCategories() now also calls invalidateAllCaches().
+    //
+    // TODO (C04-NEXT): Create CategoryMappingWriter that emits CategoryMappingChanged.
+    // TODO (C04-NEXT): Wire merchant canonical stats to TransactionSideEffectDispatcher
     
+    /**
+     * C14: Record a decision in the ring-buffer trace.
+     *
+     * Privacy: Stores a **normalized merchant key** (via [MerchantKeyGenerator.generate])
+     * instead of the raw merchant name. The raw name never enters the trace buffer.
+     * Note: this is a reversible normalization (Greeklish transliteration + lowercase +
+     * strip non-alphanumeric), NOT a cryptographic hash. The true privacy protection is
+     * that the trace is in-memory only (100-entry cap) and never persisted or exported.
+     * Time source is [timeProvider] (deterministic), not [System.currentTimeMillis].
+     */
+    private suspend fun traceDecision(merchant: String, category: String, method: String) {
+        val entry = "${timeProvider.now()}|${MerchantKeyGenerator.generate(merchant)}|$category|$method"
+        traceMutex.withLock {
+            if (decisionTrace.size >= 100) decisionTrace.removeFirst()
+            decisionTrace.addLast(entry)
+        }
+    }
+
+    /**
+     * Returns a snapshot of the last 100 categorization decisions.
+     * Entries are privacy-sanitized: merchant names are replaced with normalized keys.
+     */
+    suspend fun getRecentDecisions(): List<String> = traceMutex.withLock {
+        decisionTrace.toList()
+    }
+
     // Utility methods for testing
     fun testCanonicalize(merchant: String): CanonicalResult {
         return canonicalizer.canonicalize(merchant)

@@ -1,0 +1,187 @@
+package com.yourname.expensetracker.ui.screens.recurringmanual
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+/**
+ * UI state for manual recurring expense management.
+ */
+data class ManualRecurringExpenseUiState(
+    val recurringExpenses: List<ManualRecurringExpense> = emptyList(),
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val totalMonthly: Double = 0.0,
+    val activeCount: Int = 0,
+    val upcomingCount: Int = 0,
+    val referenceNowMillis: Long = 0L
+) {
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<ManualRecurringExpense>>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            error != null -> com.yourname.expensetracker.ui.model.LoadableUiState.Error(com.yourname.expensetracker.domain.model.UiText.DynamicString(error))
+            recurringExpenses.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(com.yourname.expensetracker.domain.model.UiText.DynamicString("No recurring expenses"))
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(recurringExpenses)
+        }
+}
+
+@HiltViewModel
+class ManualRecurringExpenseViewModel @Inject constructor(
+    private val recurringExpenseRepository: ManualRecurringExpenseRepository,
+    private val timeProvider: TimeProvider,
+    currencySettingsRepository: CurrencySettingsRepository
+) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
+    
+    private val _uiState = MutableStateFlow(ManualRecurringExpenseUiState())
+    val uiState: StateFlow<ManualRecurringExpenseUiState> = _uiState.asStateFlow()
+    
+    init {
+        loadRecurringExpenses()
+    }
+    
+    private fun loadRecurringExpenses() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            
+            try {
+                val expenses = recurringExpenseRepository.getAll()
+                val activeExpenses = expenses.filter { it.isActive }
+                
+                // Calculate monthly total
+                val totalMonthly = activeExpenses.sumOf { expense ->
+                    calculateMonthlyAmount(expense.amount, expense.frequency)
+                }
+                
+                // Count upcoming (next 7 days)
+                val oneWeekFromNow = timeProvider.now() + (7L * TimePeriodUtils.DAY_IN_MILLIS)
+                val upcomingCount = activeExpenses.count { it.nextDate <= oneWeekFromNow }
+                
+                _uiState.value = ManualRecurringExpenseUiState(
+                    recurringExpenses = expenses.sortedBy { it.nextDate },
+                    isLoading = false,
+                    error = null,
+                    totalMonthly = totalMonthly,
+                    activeCount = activeExpenses.size,
+                    upcomingCount = upcomingCount,
+                    referenceNowMillis = timeProvider.now()
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Failed to load recurring expenses: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    private fun calculateMonthlyAmount(amount: Double, frequency: RecurrenceFrequency): Double {
+        return RecurrenceCalculator.toMonthlyAmount(amount, frequency)
+    }
+    
+    /**
+     * Add a manual recurring expense.
+     */
+    fun addRecurringExpense(
+        merchant: String,
+        amount: Double,
+        frequency: RecurrenceFrequency,
+        nextDate: Long,
+        note: String?
+    ) {
+        viewModelScope.launch {
+            try {
+                val expense = ManualRecurringExpense(
+                    merchant = merchant,
+                    amount = amount,
+                    frequency = frequency,
+                    nextDate = nextDate,
+                    note = note,
+                    isSubscription = false,
+                    isActive = true
+                )
+                recurringExpenseRepository.insert(expense)
+                loadRecurringExpenses()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to add expense: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Toggle active status.
+     */
+    fun toggleStatus(id: Long, currentStatus: Boolean) {
+        viewModelScope.launch {
+            try {
+                recurringExpenseRepository.setActiveStatus(id, !currentStatus)
+                loadRecurringExpenses()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to update status: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Delete a recurring expense.
+     */
+    fun deleteExpense(id: Long) {
+        viewModelScope.launch {
+            try {
+                recurringExpenseRepository.deleteById(id)
+                loadRecurringExpenses()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to delete: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Mark expense as paid and update next date.
+     */
+    fun markAsPaid(expense: ManualRecurringExpense) {
+        viewModelScope.launch {
+            try {
+                val nextDate = calculateNextDate(expense.nextDate, expense.frequency)
+                recurringExpenseRepository.updateNextDate(expense.id, nextDate)
+                loadRecurringExpenses()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to update: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    private fun calculateNextDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
+        return RecurrenceCalculator.calculateNextDate(currentDate, frequency)
+    }
+    
+    fun refresh() {
+        loadRecurringExpenses()
+    }
+    
+    fun clearError() {
+        _uiState.value = _uiState.value.copy(error = null)
+    }
+}

@@ -1,193 +1,89 @@
 package com.yourname.expensetracker.data.repository
 
-import com.yourname.expensetracker.domain.analytics.InsightsEngine
-import com.yourname.expensetracker.domain.analytics.PaceStatus
-import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedPriority
-import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel as EntityGoalProtection
+import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.model.*
-import com.yourname.expensetracker.domain.model.PlannedExpensePriority as DomainPlannedPriority
-import com.yourname.expensetracker.domain.model.GoalProtectionLevel as DomainGoalProtection
+import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
+import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
+import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository as DomainSavingsGoalRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.SharingStarted
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.Calendar
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import timber.log.Timber
-
-enum class WeatherState {
-    CLEAR_SKIES,      // 🌤️ Comfortable buffer
-    PARTLY_CLOUDY,    // ⛅ Moderate, watch spending
-    CLOUDY,           // ☁️ Tight, limited discretionary
-    RAINY,            // 🌧️ Multiple bills, over pace
-    STORMY,           // ⛈️ Budget danger, immediate action
-    UNKNOWN
-}
-
-data class FinancialWeather(
-    val state: WeatherState,
-    val headline: String,
-    val summary: String,
-    val icon: String, // Emoji
-    val riskLevel: Int, // 0-100
-    val totalCommitted: Double,
-    val totalLikely: Double,
-    val predictedDiscretionary: Double,
-    val discretionaryBudget: Double,
-    val pastSpendingPoints: List<Double> = emptyList(),
-    val projectedSpendingPoints: List<Double> = emptyList(),
-    val upcomingItems: List<UpcomingItem> = emptyList(),
-    val totalRecurringCount: Int = 0,
-    val details: List<NarrativeSection> = emptyList()
-)
 
 @Singleton
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 class FinancialWeatherRepository @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val insightsEngine: InsightsEngine,
     private val budgetRepository: BudgetRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val recurringExpenseEngine: RecurringExpenseEngine,
+    private val mergedRecurringPatternsProvider: MergedRecurringPatternsProvider,
     private val plannedExpenseRepository: PlannedExpenseRepository,
-    private val savingsGoalRepository: SavingsGoalRepository,
+    private val savingsGoalRepository: DomainSavingsGoalRepository,
+    private val forecastInputAssembler: ForecastInputAssembler,
     private val synthesisEngine: SynthesisEngine,
     private val narrativeGenerator: NarrativeGenerator,
     private val analyticsRepository: AnalyticsRepository,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
-    private fun com.yourname.expensetracker.data.database.entity.PlannedExpense.toDomain(): PlannedExpense {
-        return PlannedExpense(
-            id = this.id,
-            description = this.description,
-            amount = this.amount,
-            date = this.date,
-            categoryId = this.categoryId,
-            isRecurring = this.isRecurring,
-            priority = when(this.priority) {
-                EntityPlannedPriority.MUST -> DomainPlannedPriority.MUST
-                EntityPlannedPriority.LIKELY -> DomainPlannedPriority.LIKELY
-                EntityPlannedPriority.OPTIONAL -> DomainPlannedPriority.OPTIONAL
-            }
-        )
-    }
-
     fun getFinancialWeather(): Flow<FinancialWeather> = combine(
         expenseRepository.getAllExpenses().catch { emit(emptyList()) },
         budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
         recurringExpenseRepository.getAllFlow().catch { emit(emptyList()) },
         plannedExpenseRepository.getAllPlannedExpenses().catch { emit(emptyList()) },
-        savingsGoalRepository.getAllGoals().catch { emit(emptyList()) }
-    ) { expenses, budgetStatuses, recurringEntities, plannedEntities, goalEntities ->
-        
-        val plannedExpenses = plannedEntities.map { it.toDomain() }
-        
-        // Use RecurringExpenseEngine to get patterns with ACTUAL confidence scores
-        // This properly detects recurring expenses from transaction history with
-        // confidence values based on detection consistency
-        val recurringPatterns = recurringExpenseEngine.getPatterns(expenses)
-        
-        // Also include manual recurring expenses that may not have been detected
-        // These have 100% confidence since they're user-defined
-        val manualPatterns = recurringEntities.map { entity ->
-            RecurringPattern(
-                id = entity.id,
-                merchantName = entity.merchant,
-                averageAmount = entity.amount,
-                currency = entity.currency,
-                frequency = entity.frequency,
-                nextExpectedDate = entity.nextDate,
-                confidence = 1.0f, // Manual entries are 100% confident
-                periodVarianceDays = 0,
-                amountVariancePercent = 0.0,
-                previousDates = emptyList()
-            )
-        }
-        
-        // Merge detected patterns with manual patterns, removing duplicates by merchant
-        // Manual patterns take precedence (higher confidence)
-        val merchantToPattern = mutableMapOf<String, RecurringPattern>()
-        (recurringPatterns + manualPatterns).forEach { pattern ->
-            val key = pattern.merchantName.lowercase()
-            val existing = merchantToPattern[key]
-            if (existing == null || pattern.confidence > existing.confidence) {
-                merchantToPattern[key] = pattern
-            }
-        }
-        val allRecurringPatterns = merchantToPattern.values.toList()
-        
-        val savingsGoals = goalEntities.map { entity ->
-            SavingsGoal(
-                id = entity.id,
-                name = entity.name,
-                targetAmount = entity.targetAmount,
-                currentAmount = entity.currentAmount,
-                targetDate = entity.targetDate,
-                protectionLevel = when(entity.protectionLevel) {
-                    EntityGoalProtection.STRICT -> DomainGoalProtection.STRICT
-                    EntityGoalProtection.WARNING -> DomainGoalProtection.WARNING
-                    EntityGoalProtection.TRACKING -> DomainGoalProtection.TRACKING
-                }
-            )
-        }
-        
-        // 1. Calculate Past Daily Cumulative Spend
-        // 1. Calculate Past Daily Cumulative Spend
-        val now = timeProvider.now()
-        val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
-        val currentDay = ((now - monthStart) / 86400000L).toInt()
-
-        val purchases = expenses.filter { 
-            it.transactionType == TransactionType.PURCHASE && 
-            it.date >= monthStart &&
-            !it.isNotMine
-        }
-        
-        val amountByDay = DoubleArray(currentDay + 1)
-        val startOfDay = monthStart 
-        
-        purchases.forEach { expense ->
-             val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
-             if (dayIndex in 0..currentDay) {
-                 amountByDay[dayIndex] += expense.effectiveAmount
-             }
-        }
-        
-        var runningTotal = 0.0
-        val pastSumDaily = (0..currentDay).map { day ->
-            runningTotal += amountByDay[day]
-            runningTotal
-        }
-
-        // 2. Get Engines data - Reusing already fetched expenses to avoid redundant DB queries
-        // Filter out isNotMine expenses
-        val expensesForPace = expenses.filter { !it.isNotMine }
-        val pace = insightsEngine.getSpendingPaceSuspend(expensesForPace)
-        
-        // 3. Synthesize Forecast
-        val forecast = synthesisEngine.synthesize(
-            pastSumDaily = pastSumDaily,
-            recurringPatterns = allRecurringPatterns,
-            plannedExpenses = plannedExpenses,
-            savingsGoals = savingsGoals,
-            budgetStatuses = budgetStatuses,
-            spendingPace = pace
+        savingsGoalRepository.observeSavingsGoals().catch { emit(emptyList()) }
+    ) { expenses, budgetStatuses, recurringEntities, plannedEntities, savingsGoals ->
+        val expenseSnapshots = forecastInputAssembler.mapExpenseSnapshots(expenses)
+        // FCST-N1: Pass actual manualRecurringEntities so the assembler can
+        // (a) generate concrete occurrences for manual recurring rules and
+        // (b) properly deduplicate detected patterns against manual ones.
+        // Previously we passed emptyList() and depended on getAllRecurringPatternsSync
+        // doing the merging externally, which meant occurrence generation was skipped.
+        val detectedPatterns = mergedRecurringPatternsProvider.getPatternsFromSnapshots(
+            expenseSnapshots = expenseSnapshots,
+            manualRecurring = emptyList() // detected-only; manual passed separately below
         )
-        
+        val assembledInput = forecastInputAssembler.assemble(
+            expenses = expenseSnapshots,
+            manualRecurringEntities = recurringEntities,
+            detectedRecurringPatterns = detectedPatterns,
+            plannedExpenses = forecastInputAssembler.mapPlannedExpenses(plannedEntities),
+            savingsGoals = forecastInputAssembler.mapSavingsGoals(savingsGoals),
+            budgetStatuses = forecastInputAssembler.mapBudgetSnapshots(budgetStatuses)
+        )
+
+        // 3. Synthesize Forecast
+        val forecast = synthesisEngine.synthesize(assembledInput)
+        // TODO (ARCH-02 Stage 2 / A11): Reduce forecast confidence by input.dataQuality.confidencePenalty.
+        // When conversion warnings exist (isPartial or excludedCount > 0), apply a confidence
+        // penalty proportional to the loss percentage from AnalyticsDataQuality.
+
         // 4. Generate Narrative
-        val narrative = narrativeGenerator.generate(forecast, budgetStatuses)
+        // TODO (A03/Dashboard): Forecast conversions in SynthesisEngine should use
+        // convertAsOf(atMillis=expense.date) for historical accuracy instead of current
+        // rates. Currently forecast inputs use the latest available rates.
+        // ISSUE-2: Use the typed resolved home currency for the narrative/display
+        // currency instead of homeCurrency().first() with a hard EUR fallback. On a
+        // genuine resolution failure, rethrow so the terminal .catch below surfaces an
+        // UNKNOWN weather state rather than silently formatting amounts as EUR.
+        val homeCurrency = when (val resolution = currencySettingsRepository.resolveHomeCurrency()) {
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.FirstRunDefault -> resolution.currency.code
+            is com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Failed ->
+                throw IllegalStateException("Home currency unavailable for weather narrative: ${resolution.reason}")
+        }
+        val narrative = narrativeGenerator.generate(forecast, assembledInput.budgetStatuses, homeCurrency)
 
         // 5. Map to UI Model
         FinancialWeather(
@@ -209,17 +105,21 @@ class FinancialWeatherRepository @Inject constructor(
             projectedSpendingPoints = forecast.components.projectedSpendingPoints,
             upcomingItems = buildUpcomingItems(
                 forecast.components.recurringExpenses,
-                forecast.components.plannedExpenses
+                forecast.components.plannedExpenses,
+                forecast.components.confirmedOccurrences
             ),
-            totalRecurringCount = allRecurringPatterns.size,
-            details = narrative.details
+            totalRecurringCount = assembledInput.recurringPatterns.size,
+            details = narrative.details,
+            isPartial = forecast.isPartial,
+            qualityWarnings = forecast.qualityWarnings,
+            excludedCount = forecast.excludedCount
         )
     }.catch { e ->
         Timber.e(e, "Error generating weather")
         emit(FinancialWeather(
             state = WeatherState.UNKNOWN,
-            headline = "Weather Unavailable",
-            summary = "We couldn't calculate your financial outlook right now.",
+            headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_UNAVAILABLE),
+            summary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_UNAVAILABLE),
             icon = "❓",
             riskLevel = 0,
             totalCommitted = 0.0,
@@ -231,28 +131,81 @@ class FinancialWeatherRepository @Inject constructor(
 
     private fun buildUpcomingItems(
         recurring: List<RecurringPattern>,
-        planned: List<PlannedExpense>
+        planned: List<PlannedExpense>,
+        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList()
     ): List<UpcomingItem> {
         val now = timeProvider.now()
         val startOfToday = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
-        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days
-        
+        val horizon = TimePeriodUtils.addDays(startOfToday, 31) // Exclusive
+
         val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
-        
-        recurring.filter { it.nextExpectedDate in startOfToday..horizon }
+
+        // I1: Use materialised occurrences for manual rules (captures all WEEKLY/BIWEEKLY
+        // repetitions instead of just the first nextExpectedDate).
+        confirmedOccurrences
+            .filter { it.dueDate >= startOfToday && it.dueDate < horizon }
+            .forEach { items.add(UpcomingItem.Occurrence(it)) }
+
+        // Detected-only patterns (id == null) have no occurrences — use single-date fallback.
+        // Manual patterns are already represented via confirmedOccurrences, so skip them
+        // to avoid double-counting in the detected-only fallback.
+        recurring
+            .filter { it.id == null }
+            .filter { it.nextExpectedDate >= startOfToday && it.nextExpectedDate < horizon }
             .forEach { items.add(UpcomingItem.Recurring(it)) }
-            
-        planned.filter { it.date in startOfToday..horizon }
+
+        // P6-P1-4: Fallback — include manual patterns that were silently dropped when their
+        // occurrence generation threw in ForecastInputAssembler.assemble() (line 396-398).
+        // Match by merchant name and amount since ConfirmedOccurrence does not carry sourceId.
+        for (pattern in recurring.filter { it.id != null }) {
+            val alreadyMatched = confirmedOccurrences.any { occ ->
+                occ.merchant == pattern.merchantName &&
+                    kotlin.math.abs(occ.expectedAmount - pattern.averageAmount) < 0.01
+            }
+            if (!alreadyMatched &&
+                pattern.nextExpectedDate >= startOfToday && pattern.nextExpectedDate < horizon
+            ) {
+                items.add(UpcomingItem.Recurring(pattern))
+            }
+        }
+
+        planned.filter { it.date >= startOfToday && it.date < horizon }
             .forEach { items.add(UpcomingItem.Planned(it)) }
-            
+
         return items.sortedBy { it.date }
     }
 
-    fun getAllRecurringPatterns(): Flow<List<com.yourname.expensetracker.data.database.entity.ManualRecurringExpense>> {
-        return recurringExpenseRepository.getAllFlow()
+    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> =
+        combine(
+            expenseRepository.getAllExpenses(),
+            recurringExpenseRepository.getAllFlow()
+        ) { expenses, recurringEntities ->
+            getAllRecurringPatternsSync(expenses, recurringEntities)
+        }
+
+    /**
+     * Synchronous helper that merges manually-entered recurring rules with
+     * detected-from-history patterns. This is the non-Flow version used by
+     * [getFinancialWeather] to include all pattern types in the forecast.
+     */
+    private suspend fun getAllRecurringPatternsSync(
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        recurringEntities: List<com.yourname.expensetracker.data.database.entity.ManualRecurringExpense>
+    ): List<RecurringPattern> {
+        val expenseSnapshots = forecastInputAssembler.mapExpenseSnapshots(expenses)
+        return mergedRecurringPatternsProvider.getPatternsFromSnapshots(
+            expenseSnapshots = expenseSnapshots,
+            manualRecurring = recurringEntities
+        )
     }
 
-    fun getAllPlannedExpenses(): Flow<List<com.yourname.expensetracker.data.database.entity.PlannedExpense>> {
-        return plannedExpenseRepository.getAllPlannedExpenses()
-    }
+    fun getConfirmedRecurringPatterns(): Flow<List<RecurringPattern>> =
+        recurringExpenseRepository.getAllFlow().map { recurringEntities ->
+            mergedRecurringPatternsProvider.getConfirmedPatterns(recurringEntities)
+        }
+
+    fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> =
+        plannedExpenseRepository.getAllPlannedExpenses().map { entities ->
+            forecastInputAssembler.mapPlannedExpenses(entities)
+        }
 }

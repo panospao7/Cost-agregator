@@ -7,7 +7,9 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MLMatchType
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.MerchantCategoryInsertResult
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -24,6 +26,7 @@ class CategorizationEngineDebugTest {
     private val greeklishNormalizer = mockk<GreeklishNormalizer>(relaxed = true)
     private val semanticMatcher = mockk<SemanticKeywordMatcher>(relaxed = true)
     private val contextEngine = mockk<ContextualInferenceEngine>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var engine: CategorizationEngine
 
     @Before
@@ -39,6 +42,7 @@ class CategorizationEngineDebugTest {
             )
         }
         every { categoryRepositoryProvider.get() } returns categoryRepository
+        every { timeProvider.now() } returns 1_710_000_000_000L
         coEvery { categoryRepository.getAll() } returns emptyList()
         engine = CategorizationEngine(
             merchantCategoryRepository,
@@ -47,7 +51,8 @@ class CategorizationEngineDebugTest {
             canonicalizer,
             greeklishNormalizer,
             semanticMatcher,
-            contextEngine
+            contextEngine,
+            timeProvider
         )
     }
 
@@ -101,7 +106,11 @@ class CategorizationEngineDebugTest {
         // Mock the DAO to return the new mapping after insertion
         val newMapping = MerchantCategory(merchantName.lowercase(), categoryId)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(newMapping)
-        coEvery { merchantCategoryRepository.insert(any()) } just runs
+        coEvery { merchantCategoryRepository.insert(any()) } coAnswers {
+            // Real repository calls invalidateAllCaches() on insert success
+            engine.invalidateAllCaches()
+            MerchantCategoryInsertResult.Inserted(1L)
+        }
         
         // This should trigger invalidateCache()
         engine.learnMerchantCategory(merchantName, categoryId)
@@ -114,5 +123,99 @@ class CategorizationEngineDebugTest {
         
         // Verify DAO was called
         coVerify { merchantCategoryRepository.insert(any()) }
+    }
+
+    @Test
+    fun `learnMerchantCategory handles insert conflict without crashing`() = runBlocking {
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Conflict
+
+        // Should not throw
+        engine.learnMerchantCategory("EXISTING_MERCHANT", 5L)
+
+        // Verify insert was called
+        coVerify { merchantCategoryRepository.insert(any()) }
+    }
+
+    @Test
+    fun `invalidateAllCaches clears cache and next categorize reloads from repository`() = runBlocking {
+        // First call: cache is populated
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+            MerchantCategory("starbucks", 1L)
+        )
+        val result1 = engine.categorize("starbucks")
+        assertEquals(MatchType.EXACT, result1.matchType)
+
+        // Change the repository data
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+            MerchantCategory("costa", 2L)
+        )
+
+        // Without invalidation, the old cached data would still be used
+        // After invalidation, the new data should be used
+        engine.invalidateAllCaches()
+
+        val result2 = engine.categorize("costa")
+        assertEquals(MatchType.EXACT, result2.matchType)
+        assertEquals(2L, result2.categoryId)
+    }
+
+    @Test
+    fun `traceDecision stores hashed merchant key not raw name`() = runBlocking {
+        val merchantName = "McDonald's"
+        val categoryId = 5L
+        
+        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
+        
+        engine.learnMerchantCategory(merchantName, categoryId)
+        
+        val decisions = engine.getRecentDecisions()
+        assertTrue("Trace should contain decisions", decisions.isNotEmpty())
+        
+        val lastDecision = decisions.last()
+        // The hashed key for "McDonald's" should be "mcdonalds"
+        assertTrue(
+            "Trace should contain hashed key 'mcdonalds', not raw name. Got: $lastDecision",
+            lastDecision.contains("mcdonalds")
+        )
+        assertFalse(
+            "Trace should NOT contain raw merchant name 'McDonald's'. Got: $lastDecision",
+            lastDecision.contains("McDonald")
+        )
+    }
+
+    @Test
+    fun `traceDecision uses timeProvider not wall clock`() = runBlocking {
+        val fixedTime = 1_710_000_000_000L
+        every { timeProvider.now() } returns fixedTime
+        
+        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
+        
+        engine.learnMerchantCategory("TEST_MERCHANT", 5L)
+        
+        val decisions = engine.getRecentDecisions()
+        val lastDecision = decisions.last()
+        assertTrue(
+            "Trace timestamp should be from timeProvider ($fixedTime). Got: $lastDecision",
+            lastDecision.startsWith("$fixedTime|")
+        )
+    }
+
+    @Test
+    fun `getRecentDecisions returns immutable snapshot`() = runBlocking {
+        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryRepository.insert(any()) } returns MerchantCategoryInsertResult.Inserted(1L)
+        
+        engine.learnMerchantCategory("MERCHANT_A", 1L)
+        
+        val snapshot1 = engine.getRecentDecisions()
+        val size1 = snapshot1.size
+        
+        engine.learnMerchantCategory("MERCHANT_B", 2L)
+        
+        val snapshot2 = engine.getRecentDecisions()
+        assertEquals("Old snapshot should not grow", size1, snapshot1.size)
+        assertTrue("New snapshot should have more entries", snapshot2.size > size1)
     }
 }

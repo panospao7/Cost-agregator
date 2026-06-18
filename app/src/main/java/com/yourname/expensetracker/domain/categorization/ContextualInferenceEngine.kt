@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.categorization
 
-import java.util.Calendar
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,7 +11,21 @@ data class ContextPrediction(
 )
 
 @Singleton
-class ContextualInferenceEngine @Inject constructor() {
+class ContextualInferenceEngine @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
+
+    // TODO (C13): Expand CategorizationContext with additional signals:
+    // - Day-of-week (already partially: dayOfWeek param on inferFromContext)
+    // - Time-of-day (already present via hour)
+    // - Geographic location (GPS-based merchant category hints)
+    // - Recent spending patterns (last-N-transactions category distribution)
+    // - Recurring expense detection (known recurring vs one-off)
+    // - Notification source app package (already partially: notificationSource param)
+    // - Merchant proximity to known locations (via MerchantLocationRepository)
+    // - User correction history (which categories the user manually reassigns)
+    // Each signal should feed into a weighted scoring model rather than
+    // flat confidence boosts.
     
     companion object {
         // Confidence thresholds
@@ -103,9 +117,10 @@ class ContextualInferenceEngine @Inject constructor() {
         notificationSource: String? = null
     ): ContextPrediction? {
         
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        val hour = cal.get(Calendar.HOUR_OF_DAY)
-        val day = dayOfWeek ?: cal.get(Calendar.DAY_OF_WEEK)
+        // C18-FIXED: java.time replaces Calendar.getInstance().
+        val zoned = java.time.Instant.ofEpochMilli(timestamp).atZone(java.time.ZoneId.systemDefault())
+        val hour = zoned.hour
+        val day = dayOfWeek ?: zoned.dayOfWeek.value
         
         val scores = mutableMapOf<String, Double>()
         
@@ -168,7 +183,7 @@ class ContextualInferenceEngine @Inject constructor() {
         
         // Day-based inference
         when (day) {
-            Calendar.SATURDAY, Calendar.SUNDAY -> {
+            java.time.DayOfWeek.SATURDAY.value, java.time.DayOfWeek.SUNDAY.value -> {
                 scores["Entertainment"] = (scores["Entertainment"] ?: 0.0) + BOOST_WEEKEND_ENTERTAINMENT
                 scores["Shopping"] = (scores["Shopping"] ?: 0.0) + BOOST_WEEKEND_SHOPPING
                 scores["Food"] = (scores["Food"] ?: 0.0) + BOOST_WEEKEND_FOOD
@@ -227,7 +242,7 @@ class ContextualInferenceEngine @Inject constructor() {
         }
         
         when (day) {
-            Calendar.SATURDAY, Calendar.SUNDAY -> reasons.add("weekend")
+            java.time.DayOfWeek.SATURDAY.value, java.time.DayOfWeek.SUNDAY.value -> reasons.add("weekend")
         }
         
         source?.let {

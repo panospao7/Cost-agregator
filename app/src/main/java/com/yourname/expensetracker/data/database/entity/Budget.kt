@@ -1,9 +1,13 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 enum class BudgetPeriod {
     DAILY,
@@ -12,6 +16,25 @@ enum class BudgetPeriod {
     YEARLY
 }
 
+/**
+ * Budget entity.
+ *
+ * Active-budget invariants (enforced transactionally in the DAO/repository
+ * layer because Room schema must match generated metadata):
+ *  - At most one active overall budget: `UNIQUE(isActive) WHERE isActive = 1 AND categoryId IS NULL`
+ *  - At most one active budget per category: `UNIQUE(categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL`
+ *
+ * Materialized-key CHECK constraint (applied via migration 106→107):
+ *  - Inactive (isActive=0)          → activeOverallKey IS NULL AND activeCategoryKey IS NULL
+ *  - Active overall (categoryId=NULL) → activeOverallKey = 1 AND activeCategoryKey IS NULL
+ *  - Active by category             → activeOverallKey IS NULL AND activeCategoryKey = categoryId
+ *
+ * ## BUD-1: Category deletion protection
+ * The `categoryId` FK uses `RESTRICT` — deleting a Category that still has
+ * budgets referencing it will fail with a foreign-key violation.
+ * This prevents silent conversion of category budgets into overall budgets.
+ * Callers MUST delete or reassign budgets before deleting a category.
+ */
 @Entity(
     tableName = "budgets",
     foreignKeys = [
@@ -19,12 +42,14 @@ enum class BudgetPeriod {
             entity = Category::class,
             parentColumns = ["id"],
             childColumns = ["categoryId"],
-            onDelete = ForeignKey.SET_NULL
+            onDelete = ForeignKey.RESTRICT
         )
     ],
     indices = [
         Index(value = ["categoryId"]),
-        Index(value = ["isActive"])
+        Index(value = ["isActive"]),
+        Index(value = ["activeOverallKey"], unique = true),
+        Index(value = ["activeCategoryKey"], unique = true)
     ]
 )
 data class Budget(
@@ -32,13 +57,25 @@ data class Budget(
     val categoryId: Long?,              // null = overall budget
     val amount: Double,
     val period: BudgetPeriod,
+    @ColumnInfo(defaultValue = "'ROLLING'") val periodMode: String = "ROLLING", // ROLLING | CALENDAR
     val startDate: Long,                // anchor date for period calculation
-    val isActive: Boolean = true,
-    val notifyAtWarning: Float = 0.75f, // first alert threshold (75%)
-    val notifyAtCritical: Float = 0.90f,// second alert threshold (90%)
-    val rollover: Boolean = false,      // carry unspent to next period
-    val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
+    @ColumnInfo(defaultValue = "0.75") val notifyAtWarning: Float = 0.75f, // first alert threshold (75%)
+    @ColumnInfo(defaultValue = "0.9") val notifyAtCritical: Float = 0.90f,// second alert threshold (90%)
+    @ColumnInfo(defaultValue = "0") val rollover: Boolean = false, // carry unspent to next period
+    @ColumnInfo(defaultValue = "0") val rolloverDeficitTracking: Boolean = false, // carry deficits forward (BUD-12)
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'LEGACY_DEFAULT'") val currencyAssumption: String = "LEGACY_DEFAULT",
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
     val lastWarningNotifiedAt: Long? = null,
     val lastCriticalNotifiedAt: Long? = null,
-    val lastExceededNotifiedAt: Long? = null
-)
+    val lastExceededNotifiedAt: Long? = null,
+    /** Materialized invariant key: set to 1 when isActive=true AND categoryId IS NULL, else NULL. */
+    val activeOverallKey: Long? = null,
+    /** Materialized invariant key: set to categoryId when isActive=true AND categoryId IS NOT NULL, else NULL. */
+    val activeCategoryKey: Long? = null
+) {
+    @get:Ignore
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+}

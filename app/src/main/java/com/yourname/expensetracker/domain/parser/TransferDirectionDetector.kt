@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import java.util.regex.Pattern
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -184,22 +182,22 @@ class TransferDirectionDetector @Inject constructor() {
      * @param text Notification text
      * @param bigText Notification bigText (expanded content)
      * @param transactionType The detected transaction type
-     * @return TransferDirection if detected, null if cannot determine
+     * @return ParsedTransferDirection if detected, null if cannot determine
      */
     fun detectDirection(
         title: String?,
         text: String?,
         bigText: String?,
-        transactionType: TransactionType
-    ): TransferDirection? {
+        transactionType: ParsedTransactionType
+    ): ParsedTransferDirection? {
         // WITHDRAWAL is always OUTGOING
-        if (transactionType == TransactionType.WITHDRAWAL) {
-            return TransferDirection.OUTGOING
+        if (transactionType == ParsedTransactionType.WITHDRAWAL) {
+            return ParsedTransferDirection.OUTGOING
         }
         
         // Only detect for TRANSFER and DEPOSIT types
-        if (transactionType != TransactionType.TRANSFER && 
-            transactionType != TransactionType.DEPOSIT) {
+        if (transactionType != ParsedTransactionType.TRANSFER && 
+            transactionType != ParsedTransactionType.DEPOSIT) {
             return null
         }
         
@@ -227,8 +225,8 @@ class TransferDirectionDetector @Inject constructor() {
         }
         
         return when {
-            incomingScore + fallbackScore.first > outgoingScore + fallbackScore.second -> TransferDirection.INCOMING
-            outgoingScore + fallbackScore.second > incomingScore + fallbackScore.first -> TransferDirection.OUTGOING
+            incomingScore + fallbackScore.first > outgoingScore + fallbackScore.second -> ParsedTransferDirection.INCOMING
+            outgoingScore + fallbackScore.second > incomingScore + fallbackScore.first -> ParsedTransferDirection.OUTGOING
             (incomingScore > 0 || fallbackScore.first > 0) && (outgoingScore > 0 || fallbackScore.second > 0) -> resolveAmbiguousCase(allText)
             else -> null
         }
@@ -274,14 +272,14 @@ class TransferDirectionDetector @Inject constructor() {
             .replace(Regex("""[ώὼ]"""), "ω")
     }
 
-    private fun detectExplicitDirectionalPhrasing(text: String): TransferDirection? {
+    private fun detectExplicitDirectionalPhrasing(text: String): ParsedTransferDirection? {
         return when {
             Regex("""(?iu)\btransfer\s+to\b""").containsMatchIn(text) ||
             Regex("""(?iu)\b(?:μεταφορά|μεταφορα)\s+(?:σε|προς)\b""").containsMatchIn(text) ->
-                TransferDirection.OUTGOING
+                ParsedTransferDirection.OUTGOING
             Regex("""(?iu)\btransfer\s+from\b""").containsMatchIn(text) ||
             Regex("""(?iu)\b(?:μεταφορά|μεταφορα)\s+από\b""").containsMatchIn(text) ->
-                TransferDirection.INCOMING
+                ParsedTransferDirection.INCOMING
             else -> null
         }
     }
@@ -347,7 +345,7 @@ class TransferDirectionDetector @Inject constructor() {
     /**
      * Resolves ambiguous cases where both incoming and outgoing patterns match.
      */
-    private fun resolveAmbiguousCase(text: String): TransferDirection? {
+    private fun resolveAmbiguousCase(text: String): ParsedTransferDirection? {
         val lowerText = text.lowercase()
         
         return when {
@@ -355,42 +353,42 @@ class TransferDirectionDetector @Inject constructor() {
             lowerText.contains("you received") ||
             lowerText.contains("you've received") ||
             lowerText.contains("credited to your") ||
-            lowerText.contains("deposited to your") -> TransferDirection.INCOMING
+            lowerText.contains("deposited to your") -> ParsedTransferDirection.INCOMING
             
             // Strong outgoing indicators
             lowerText.contains("you sent") ||
             lowerText.contains("you've sent") ||
             lowerText.contains("you paid") ||
             lowerText.contains("you've paid") ||
-            lowerText.contains("sent from your") -> TransferDirection.OUTGOING
+            lowerText.contains("sent from your") -> ParsedTransferDirection.OUTGOING
             
             // Amount with +/- signs (check context)
             text.contains("+€") || text.contains("+$") || text.contains("+£") -> {
                 // Check if it's clearly outgoing context
                 if (lowerText.contains("sent") || lowerText.contains("paid to")) {
-                    TransferDirection.OUTGOING
+                    ParsedTransferDirection.OUTGOING
                 } else {
-                    TransferDirection.INCOMING
+                    ParsedTransferDirection.INCOMING
                 }
             }
             
             text.contains("-€") || text.contains("-$") || text.contains("-£") -> {
                 // Check if it's clearly incoming context
                 if (lowerText.contains("received") || lowerText.contains("credited")) {
-                    TransferDirection.INCOMING
+                    ParsedTransferDirection.INCOMING
                 } else {
-                    TransferDirection.OUTGOING
+                    ParsedTransferDirection.OUTGOING
                 }
             }
             
             // Greek disambiguation
             lowerText.contains("ελήφθη") ||  // received
             lowerText.contains("πιστώθηκε") ||  // credited
-            lowerText.contains("πιστωτικό") -> TransferDirection.INCOMING  // credit
+            lowerText.contains("πιστωτικό") -> ParsedTransferDirection.INCOMING  // credit
             
             lowerText.contains("απεστάλη") ||  // sent
             lowerText.contains("χρεωστικό") ||  // debit
-            lowerText.contains("χρέωση") -> TransferDirection.OUTGOING  // charge
+            lowerText.contains("χρέωση") -> ParsedTransferDirection.OUTGOING  // charge
             
             // Still ambiguous
             else -> null
@@ -406,7 +404,7 @@ class TransferDirectionDetector @Inject constructor() {
         title: String?,
         text: String?,
         bigText: String?,
-        transactionType: TransactionType
+        transactionType: ParsedTransactionType
     ): Float {
         val direction = detectDirection(title, text, bigText, transactionType)
             ?: return 0.0f
@@ -414,8 +412,8 @@ class TransferDirectionDetector @Inject constructor() {
         val allText = listOfNotNull(title, text, bigText).joinToString(" ")
         
         val relevantPatterns = when (direction) {
-            TransferDirection.INCOMING -> incomingPatterns
-            TransferDirection.OUTGOING -> outgoingPatterns
+            ParsedTransferDirection.INCOMING -> incomingPatterns
+            ParsedTransferDirection.OUTGOING -> outgoingPatterns
         }
         
         // Count how many patterns matched

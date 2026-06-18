@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.location
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.floor
 
 /**
  * A spending place insight — summary of spending at a single location cluster.
@@ -35,6 +36,14 @@ class LocationInsightsEngine @Inject constructor() {
     /**
      * Compute place insights from [expenses].
      * Results are sorted by [PlaceInsight.totalSpend] descending.
+     *
+     * ## Transaction-type filter contract
+     * The caller (SpendingMapViewModel) pre-filters to spending-only expenses
+     * (PURCHASE transaction type) before invoking this method. Deposits,
+     * transfers, and withdrawals are excluded upstream. This engine does NOT
+     * apply its own transaction-type filter — it relies on the caller contract.
+     *
+     * @see SpendingMapViewModel.recomputeMapData
      */
     fun compute(expenses: List<LocatedExpense>): List<PlaceInsight> {
         if (expenses.isEmpty()) return emptyList()
@@ -53,8 +62,8 @@ class LocationInsightsEngine @Inject constructor() {
         val cells = HashMap<GridCell, Accumulator>()
 
         for (expense in expenses) {
-            val latBucket = (expense.latitude / CLUSTER_RADIUS_DEG).toLong()
-            val lonBucket = (expense.longitude / CLUSTER_RADIUS_DEG).toLong()
+            val latBucket = floor(expense.latitude / CLUSTER_RADIUS_DEG).toLong()
+            val lonBucket = floor(expense.longitude / CLUSTER_RADIUS_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)
             val acc = cells.getOrPut(cell) { Accumulator() }
             acc.totalSpend += expense.amount
@@ -71,6 +80,77 @@ class LocationInsightsEngine @Inject constructor() {
                 val centLat = acc.latSum / acc.count
                 val centLon = acc.lonSum / acc.count
                 // Top merchant(s) by visit count
+                val topMerchants = acc.merchants.entries
+                    .sortedByDescending { it.value }
+                    .take(3)
+                    .map { it.key }
+                PlaceInsight(
+                    placeName = topMerchants.firstOrNull() ?: "Unknown",
+                    latitude = centLat,
+                    longitude = centLon,
+                    totalSpend = acc.totalSpend,
+                    transactionCount = acc.count,
+                    avgTransaction = if (acc.count > 0) acc.totalSpend / acc.count else 0.0,
+                    merchantNames = topMerchants,
+                    lastVisit = acc.lastVisit
+                )
+            }
+            .sortedByDescending { it.totalSpend }
+    }
+
+    /**
+     * Currency-safe place insights using [LocatedMoneyExpense.normalizedAmount].
+     *
+     * Filters to [ConversionStatus.HOME_CURRENCY] and [ConversionStatus.CONVERTED]
+     * only, skipping expenses where conversion failed. Uses the same grid-snap
+     * clustering as [compute].
+     *
+     * ## Transaction-type filter contract
+     * Same as [compute] — the caller (SpendingMapViewModel) pre-filters to
+     * spending-only expenses. This engine only applies currency-conversion
+     * filtering, not transaction-type filtering.
+     */
+    fun computeNormalized(expenses: List<LocatedMoneyExpense>): List<PlaceInsight> {
+        val validExpenses = expenses.filter {
+            it.conversionStatus == ConversionStatus.HOME_CURRENCY ||
+            it.conversionStatus == ConversionStatus.CONVERTED
+        }
+
+        if (validExpenses.isEmpty()) return emptyList()
+
+        data class GridCell(val latBucket: Long, val lonBucket: Long)
+
+        data class Accumulator(
+            var totalSpend: Double = 0.0,
+            var count: Int = 0,
+            var latSum: Double = 0.0,
+            var lonSum: Double = 0.0,
+            var lastVisit: Long = 0L,
+            val merchants: MutableMap<String, Int> = mutableMapOf()
+        )
+
+        val cells = HashMap<GridCell, Accumulator>()
+
+        for (expense in validExpenses) {
+            val normAmount = expense.normalizedAmount ?: continue
+
+            val latBucket = floor(expense.latitude / CLUSTER_RADIUS_DEG).toLong()
+            val lonBucket = floor(expense.longitude / CLUSTER_RADIUS_DEG).toLong()
+            val cell = GridCell(latBucket, lonBucket)
+            val acc = cells.getOrPut(cell) { Accumulator() }
+            acc.totalSpend += normAmount
+            acc.count += 1
+            acc.latSum += expense.latitude
+            acc.lonSum += expense.longitude
+            if (expense.date > acc.lastVisit) acc.lastVisit = expense.date
+            acc.merchants[expense.merchant] = (acc.merchants[expense.merchant] ?: 0) + 1
+        }
+
+        return cells.values
+            .filter { it.count > 0 }
+            .map { acc ->
+                val centLat = acc.latSum / acc.count
+                val centLon = acc.lonSum / acc.count
                 val topMerchants = acc.merchants.entries
                     .sortedByDescending { it.value }
                     .take(3)

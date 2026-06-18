@@ -2,8 +2,16 @@ package com.yourname.expensetracker.domain.logic
 
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,101 +32,20 @@ class RecurringExpenseEngine @Inject constructor(
      */
     suspend fun getPatterns(): List<RecurringPattern> {
         // Limit to last 12 months for performance - INS-009
-        val twelveMonthsAgo = timeProvider.now() - (365L * 24 * 60 * 60 * 1000)
-        val allExpenses = expenseRepository.getExpensesSince(twelveMonthsAgo)
-        return getPatterns(allExpenses)
+        val now = timeProvider.now()
+        val twelveMonthsAgo = TimePeriodUtils.addMonths(now, -12)
+        val allExpenses = expenseRepository.getExpenseSnapshotsSince(twelveMonthsAgo)
+        return getPatternsFromSnapshots(allExpenses)
     }
 
-    /**
-     * Overload for when we already have the list of expenses (e.g. from Analytics).
-     */
-    suspend fun getPatterns(allExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<RecurringPattern> {
+/**
+ * Overload for when we already have the list of expenses (e.g. from Analytics).
+ */
+    suspend fun getPatternsFromSnapshots(allExpenses: List<ExpenseSnapshot>): List<RecurringPattern> {
+        val now = timeProvider.now()
         // 1. Fetch Manual Overrides
         val manualExpenses = recurringExpenseRepository.getAll()
-        // Use lowercase().trim() to match how expenses are grouped (normalized merchant names)
-        val manualMap = manualExpenses.associateBy { it.merchant.lowercase().trim() }
-        
-        // Filter to PURCHASE only — deposits, transfers, and withdrawals are not recurring obligations
-        val purchaseExpenses = allExpenses.filter { 
-            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE 
-        }
 
-        // Group by normalized merchant name - use same key format as manualMap
-        val grouped = purchaseExpenses.groupBy { it.merchant.lowercase().trim() }
-
-        val detectedPatterns = mutableListOf<RecurringPattern>()
-
-        for ((normalizedMerchant, expenses) in grouped) {
-            // Use the most frequent original merchant name or the first one
-            val actualMerchant = expenses.groupBy { it.merchant }
-                .maxByOrNull { it.value.size }?.key ?: normalizedMerchant
-
-            // If we already have a manual rule for this merchant, skip detection
-            if (manualMap.containsKey(normalizedMerchant)) continue
-
-            // Requirement: At least 3 occurrences to form a pattern
-            if (expenses.size < 3) continue 
-
-            // Sort by date ascending to calculate intervals
-            val sorted = expenses.sortedBy { it.date }
-            
-            // 1. Amount Stability Check
-            val amounts = sorted.map { it.effectiveAmount }
-            val avgAmount = amounts.average()
-            if (avgAmount < 0.01) continue
-            val stdDevAmount = calculateStdDev(amounts)
-            // Coefficient of variation: stdDev / mean
-            val amountVariance = if (avgAmount > 0) stdDevAmount / avgAmount else 0.0
-
-            // If amount varies by more than 40%, likely not a fixed subscription/bill (LOW: relax from 35% to group similar amounts)
-            if (amountVariance > 0.40) continue 
-
-            // 2. Interval Analysis
-            val dates = sorted.map { it.date }
-            val intervals = calculateIntervals(dates)
-            
-            val (frequency, confidence, varianceDays) = determineFrequency(intervals, dates)
-
-            // Thresholds: Must be a known frequency and have >=50% confidence.
-            // Using >= preserves valid monthly patterns with day-length drift
-            // (e.g., Jan->Feb->Mar gives two intervals where one still matches).
-            if (frequency != RecurrenceFrequency.IRREGULAR && confidence >= 0.50) {
-
-                // Staleness check: drop patterns whose last occurrence is >6 months ago.
-                // This prevents cancelled/dormant subscriptions from appearing as active recurring items.
-                val sixMonthsAgo = timeProvider.now() - (180L * 24 * 60 * 60 * 1000)
-                if (dates.last() < sixMonthsAgo) continue
-
-                // Predict next date
-                // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
-                val cal = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-                cal.timeInMillis = dates.last()
-                when (frequency) {
-                    RecurrenceFrequency.MONTHLY -> cal.add(java.util.Calendar.MONTH, 1)
-                    RecurrenceFrequency.QUARTERLY -> cal.add(java.util.Calendar.MONTH, 3)
-                    RecurrenceFrequency.SEMI_ANNUALLY -> cal.add(java.util.Calendar.MONTH, 6)
-                    RecurrenceFrequency.ANNUALLY -> cal.add(java.util.Calendar.YEAR, 1)
-                    else -> cal.add(java.util.Calendar.DAY_OF_YEAR, frequency.days)
-                }
-                val nextDate = cal.timeInMillis
-
-                detectedPatterns.add(
-                    RecurringPattern(
-                        merchantName = actualMerchant,
-                        averageAmount = avgAmount,
-                        currency = sorted.first().currency,
-                        frequency = frequency,
-                        periodVarianceDays = varianceDays,
-                        amountVariancePercent = amountVariance,
-                        nextExpectedDate = nextDate,
-                        confidence = confidence.toFloat(),
-                        previousDates = dates.takeLast(5),
-                        categoryId = sorted.first().categoryId
-                    )
-                )
-            }
-        }
-        
         // 3. Convert Manual Entries to RecurringPattern
         val manualPatterns = manualExpenses.map { manual ->
             RecurringPattern(
@@ -128,7 +55,7 @@ class RecurringExpenseEngine @Inject constructor(
                 frequency = manual.frequency,
                 periodVarianceDays = 0,
                 amountVariancePercent = 0.0,
-                nextExpectedDate = manual.nextDate,
+                nextExpectedDate = rollNextExpectedDateForward(manual.nextDate, manual.frequency, now),
                 confidence = 1.0f, // Manual is 100% confident
                 previousDates = emptyList(), // No history needed for display
                 categoryId = null, // Manual entries don't have categoryId yet
@@ -136,7 +63,107 @@ class RecurringExpenseEngine @Inject constructor(
             )
         }
 
+        val manualMerchantKeys = manualExpenses
+            .map { canonicalMerchantKey(it.merchant, null) }
+            .toSet()
+
+        val detectedPatterns = detectPatternsFromSnapshots(
+            allExpenses = allExpenses,
+            excludedMerchantKeys = manualMerchantKeys
+        )
+
         return (manualPatterns + detectedPatterns).sortedByDescending { it.confidence }
+    }
+
+    suspend fun getPatterns(allExpenses: List<Expense>): List<RecurringPattern> {
+        return getPatternsFromSnapshots(allExpenses.map { it.toExpenseSnapshot() })
+    }
+
+    fun detectPatternsFromSnapshots(
+        allExpenses: List<ExpenseSnapshot>,
+        excludedMerchantKeys: Set<String> = emptySet()
+    ): List<RecurringPattern> {
+        val now = timeProvider.now()
+
+        // Filter to PURCHASE only — deposits, transfers, and withdrawals are not recurring obligations
+        val purchaseExpenses = allExpenses.filter {
+            it.transactionType == DomainTransactionType.PURCHASE
+        }
+
+        // Group by canonical merchant key so aliases/casing/spacing variants collapse together.
+        val grouped = purchaseExpenses.groupBy { canonicalMerchantKey(it.merchant, it.merchantKey) }
+
+        val detectedPatterns = mutableListOf<RecurringPattern>()
+
+        for ((merchantKey, expenses) in grouped) {
+            // Use the most frequent original merchant name or the first one
+            val actualMerchant = expenses.groupBy { it.merchant }
+                .maxByOrNull { it.value.size }?.key ?: merchantKey
+
+            if (merchantKey in excludedMerchantKeys) continue
+
+            // Requirement: At least 3 occurrences to form a pattern
+            if (expenses.size < 3) continue
+
+            // Sort by date ascending to calculate intervals
+            val sorted = expenses.sortedBy { it.date }
+
+            // 1. Amount Stability Check
+            val amounts = sorted.map { it.effectiveAmount }
+            val avgAmount = amounts.average()
+            if (avgAmount < 0.01) continue
+            val stdDevAmount = calculateStdDev(amounts)
+            // Coefficient of variation: stdDev / mean
+            val amountVariance = if (avgAmount > 0) stdDevAmount / avgAmount else 0.0
+
+            // If amount varies by more than 40%, likely not a fixed subscription/bill (LOW: relax from 35% to group similar amounts)
+            if (amountVariance > 0.40) continue
+
+            // 2. Interval Analysis
+            val dates = sorted.map { it.date }
+            val intervals = calculateIntervals(dates)
+
+            val (frequency, confidence, varianceDays) = determineFrequency(intervals, dates)
+
+            // Thresholds: Must be a known frequency and have >=50% confidence.
+            // Using >= preserves valid monthly patterns with day-length drift
+            // (e.g., Jan->Feb->Mar gives two intervals where one still matches).
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence >= 0.50) {
+
+                // Staleness check: drop patterns whose last occurrence is >6 months ago.
+                // This prevents cancelled/dormant subscriptions from appearing as active recurring items.
+                val sixMonthsAgo = TimePeriodUtils.addMonths(timeProvider.now(), -6)
+                if (dates.isEmpty() || dates.last() < sixMonthsAgo) continue
+
+                // Predict next date
+                val baseDate = dates.last()
+                val nextDate = RecurrenceCalculator.addFrequencyInterval(baseDate, frequency)
+
+                detectedPatterns.add(
+                    RecurringPattern(
+                        merchantName = actualMerchant,
+                        averageAmount = avgAmount,
+                        currency = sorted.first().currency,
+                        frequency = frequency,
+                        periodVarianceDays = varianceDays,
+                        amountVariancePercent = amountVariance,
+                        nextExpectedDate = rollNextExpectedDateForward(nextDate, frequency, now),
+                        confidence = confidence.toFloat(),
+                        previousDates = dates.takeLast(5),
+                        categoryId = sorted.first().categoryId
+                    )
+                )
+            }
+        }
+
+        return detectedPatterns
+    }
+
+    private fun canonicalMerchantKey(merchant: String, merchantKey: String?): String {
+        return merchantKey
+            ?.takeIf { it.isNotBlank() }
+            ?: MerchantKeyGenerator.generate(merchant).takeIf { it.isNotBlank() }
+            ?: merchant.lowercase().trim()
     }
 
     private fun calculateIntervals(dates: List<Long>): List<Long> {
@@ -153,30 +180,33 @@ class RecurringExpenseEngine @Inject constructor(
         return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
     }
 
+    private fun rollNextExpectedDateForward(
+        nextExpectedDate: Long,
+        frequency: RecurrenceFrequency,
+        now: Long
+    ): Long {
+        if (frequency == RecurrenceFrequency.IRREGULAR) return nextExpectedDate
+
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+        var rolledDate = nextExpectedDate
+        while (rolledDate < todayStart) {
+            val candidate = RecurrenceCalculator.addFrequencyInterval(rolledDate, frequency)
+
+            if (candidate == rolledDate) break
+            rolledDate = candidate
+        }
+
+        return rolledDate
+    }
+
     private fun determineFrequency(intervalsMs: List<Long>, dates: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
         if (intervalsMs.isEmpty()) return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
         
-        // Fix (BUG-003): Use Calendar for proper day interval calculation across DST
+        // Fix (BUG-003): Use calendar-day difference helper across DST boundaries
         val intervalsDays = mutableListOf<Int>()
-        val cal1 = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        val cal2 = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        
+
         for (i in 0 until dates.size - 1) {
-            cal1.timeInMillis = dates[i]
-            cal2.timeInMillis = dates[i + 1]
-            
-            // Clear time fields for accurate day calculation (handles DST edge cases)
-            cal1.set(java.util.Calendar.HOUR_OF_DAY, 0)
-            cal1.set(java.util.Calendar.MINUTE, 0)
-            cal1.set(java.util.Calendar.SECOND, 0)
-            cal1.set(java.util.Calendar.MILLISECOND, 0)
-            
-            cal2.set(java.util.Calendar.HOUR_OF_DAY, 0)
-            cal2.set(java.util.Calendar.MINUTE, 0)
-            cal2.set(java.util.Calendar.SECOND, 0)
-            cal2.set(java.util.Calendar.MILLISECOND, 0)
-            
-            val diffDays = ((cal2.timeInMillis - cal1.timeInMillis) / 86400000.0).roundToInt()
+            val diffDays = TimePeriodUtils.daysBetween(dates[i], dates[i + 1])
             intervalsDays.add(diffDays)
         }
         
@@ -187,6 +217,11 @@ class RecurringExpenseEngine @Inject constructor(
             
         val mode = modeEntry.key
         
+        // NOTE: Frequency detection uses approximate day ranges as a heuristic.
+        // Detected frequencies should be advanced using RecurrenceCalculator
+        // (calendar-aware), not raw day multiplication, for correct behavior
+        // across month boundaries and leap years.
+
         // Map mode to known frequencies with non-overlapping ranges
         // Uses midpoints to avoid gaps between categories
         val frequency = when (mode) {
@@ -217,4 +252,32 @@ class RecurringExpenseEngine @Inject constructor(
 
         return Triple(frequency, consistencyScore, avgDeviation.roundToInt())
     }
+
+    private fun Expense.toExpenseSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = when (transactionType) {
+                TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = when (transferDirection) {
+                TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                null -> null
+            },
+            notes = notes
+        )
+    }
+
 }

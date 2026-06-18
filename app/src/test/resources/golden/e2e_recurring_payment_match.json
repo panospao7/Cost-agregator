@@ -1,0 +1,16 @@
+{
+  "occurrencesGenerated": 2,
+  "remindersCreated": 2,
+  "totalOccurrences": 2,
+  "plannedExpensesCreated": 0,
+  "linkSucceeded": false,
+  "paidOccurrenceCount": 0,
+  "remainingPlannedCount": 2,
+  "dashboardTotal": 12.99,
+  "dashboardTransactionCount": 1,
+  "noDoubleCount": true,
+  "occurrenceStatuses": [
+    "PLANNED",
+    "PLANNED"
+  ]
+}

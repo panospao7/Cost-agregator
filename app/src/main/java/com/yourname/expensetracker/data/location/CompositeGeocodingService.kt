@@ -1,8 +1,15 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
+import com.yourname.expensetracker.domain.location.GeocodingBatchResult
+import com.yourname.expensetracker.domain.location.GeocodingError
+import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +36,8 @@ import kotlin.math.sqrt
  *   - Multi-word query   → all 4 providers in parallel (covers brand + street combos)
  *
  * [search] (background resolution via LocationResolver) delegates directly to
- * Nominatim to preserve existing bias/bounded/countrycodes logic unchanged.
+ * Nominatim by default to preserve existing bias/bounded/countrycodes logic,
+ * with transient-failure fallback cascade to other providers.
  *
  * Services with a missing/blank API key return [emptyList] without making an
  * HTTP call — the provider simply contributes nothing to the merged result.
@@ -39,12 +47,18 @@ class CompositeGeocodingService @Inject constructor(
     private val photon: PhotonGeocodingService,
     private val geoapify: GeoapifyGeocodingService,
     private val googlePlaces: GooglePlacesGeocodingService,
-    private val nominatim: NominatimGeocodingService
+    private val nominatim: NominatimGeocodingService,
+    private val privacyGate: PrivacyGate
 ) : GeocodingService {
 
     /**
-     * Background single-result resolution — delegates entirely to Nominatim
-     * so that countrycodes, bounded, and GPS bias behaviour is unchanged.
+     * Background single-result resolution.
+     *
+     * Primary provider remains Nominatim (preserves existing countrycodes,
+     * bounded, and GPS-bias behaviour). On transient primary failures only,
+     * falls back in order: Photon -> Geoapify -> (optional) Google Places.
+     *
+     * No fallback is attempted for explicit NoResults.
      */
     override suspend fun search(
         merchantName: String,
@@ -52,15 +66,69 @@ class CompositeGeocodingService @Inject constructor(
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingResult? = nominatim.search(merchantName, biasLat, biasLon, cityHint, bounded)
+    ): GeocodingLookupResult {
+        // P8-P1-8: Gate external geocoding via PrivacyGate
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING).blocksExecution()) {
+            Log.w(TAG, "search blocked by privacy gate: EXTERNAL_GEOCODING denied")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        val primary = safeLookup("Nominatim") {
+            nominatim.search(merchantName, biasLat, biasLon, cityHint, bounded)
+        }
+
+        if (primary is GeocodingLookupResult.Success && primary.result != null) {
+            return primary
+        }
+
+        val primaryFailure = primary as? GeocodingLookupResult.Failure
+            ?: return primary
+
+        if (!isTransient(primaryFailure.error)) {
+            // Explicit NoResults and other non-transient failures do not cascade.
+            return primaryFailure
+        }
+
+        for ((providerName, provider) in backgroundFallbackProviders()) {
+            val fallback = safeLookup(providerName) {
+                provider.search(merchantName, biasLat, biasLon, cityHint, bounded)
+            }
+            when (fallback) {
+                is GeocodingLookupResult.Success -> {
+                    if (fallback.result != null) {
+                        Log.d(
+                            TAG,
+                            "search fallback success: $providerName for merchantHash=${merchantName.anonymizeForLog()}"
+                        )
+                        return fallback
+                    }
+                    // Defensive: continue to next fallback for nullable success payloads.
+                }
+                is GeocodingLookupResult.Failure -> {
+                    // Fallback providers are best-effort once primary has already
+                    // failed transiently. Keep cascading across providers and
+                    // preserve the original primary failure if none succeed.
+                    Log.d(TAG, "search fallback failed: $providerName with ${fallback.error}")
+                }
+            }
+        }
+
+        // Preserve primary failure semantics if no fallback yielded a non-null success.
+        return primaryFailure
+    }
 
     /**
      * F2: Reverse-geocode a coordinate — delegates to Nominatim which has the
      * full implementation. The interface default returns null, so without this
      * override long-press pins would never resolve an address.
      */
-    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingResult? =
-        nominatim.reverseGeocode(lat, lon)
+    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult {
+        // P8-P1-8: Gate external geocoding via PrivacyGate
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING).blocksExecution()) {
+            Log.w(TAG, "reverseGeocode blocked by privacy gate: EXTERNAL_GEOCODING denied")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return nominatim.reverseGeocode(lat, lon)
+    }
 
     /**
      * Interactive picker multi-result search.
@@ -82,13 +150,19 @@ class CompositeGeocodingService @Inject constructor(
         biasLon: Double?,
         limit: Int,
         useGoogle: Boolean
-    ): List<GeocodingResult> {
+    ): GeocodingBatchResult {
+        // P8-P1-8: Gate external geocoding via PrivacyGate
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING).blocksExecution()) {
+            Log.w(TAG, "searchMultiple blocked by privacy gate: EXTERNAL_GEOCODING denied")
+            return GeocodingBatchResult.Failure(GeocodingError.Disabled)
+        }
         val complex = isComplexQuery(query)
-        Log.d(TAG, "searchMultiple: \"$query\" complex=$complex useGoogle=$useGoogle")
+        val queryHash = query.anonymizeForLog()
+        Log.d(TAG, "searchMultiple: queryHash=$queryHash complex=$complex useGoogle=$useGoogle")
 
         // ── Step 1: Fire services in parallel ──────────────────────────────
-        val allResults: List<Pair<String, List<GeocodingResult>>> = coroutineScope {
-            val jobs = mutableListOf<Deferred<Pair<String, List<GeocodingResult>>>>()
+        val allResults: List<Pair<String, GeocodingBatchResult>> = coroutineScope {
+            val jobs = mutableListOf<Deferred<Pair<String, GeocodingBatchResult>>>()
 
             // B12 fix: Use Dispatchers.IO for each async job. The geocoding services
             // use blocking OkHttp .execute() calls. Without an explicit IO dispatcher,
@@ -112,20 +186,35 @@ class CompositeGeocodingService @Inject constructor(
 
         // Log contributions from each service
         for ((name, results) in allResults) {
-            Log.d(TAG, "Merge: $name contributed ${results.size} results for \"$query\"")
+            when (results) {
+                is GeocodingBatchResult.Success ->
+                    Log.d(TAG, "Merge: $name contributed ${results.results.size} results for queryHash=$queryHash")
+                is GeocodingBatchResult.Failure ->
+                    Log.w(TAG, "Merge: $name failed for queryHash=$queryHash with ${results.error}")
+            }
         }
 
         // ── Step 2: Merge all results ───────────────────────────────────────
-        val merged = allResults.flatMap { it.second }
+        val merged = allResults.flatMap { (_, result) ->
+            when (result) {
+                is GeocodingBatchResult.Success -> result.results
+                is GeocodingBatchResult.Failure -> emptyList()
+            }
+        }
         if (merged.isEmpty()) {
-            Log.d(TAG, "Merge: all providers returned 0 results for \"$query\"")
-            return emptyList()
+            Log.d(TAG, "Merge: all providers returned 0 results for queryHash=$queryHash")
+            val firstFailure = allResults.asSequence()
+                .mapNotNull { (_, result) -> (result as? GeocodingBatchResult.Failure)?.error }
+                .firstOrNull()
+            return if (firstFailure != null) GeocodingBatchResult.Failure(firstFailure)
+            else GeocodingBatchResult.Failure(GeocodingError.NoResults)
         }
 
         // ── Step 3: Re-rank by qualifier match + confidence ─────────────────
         val qualifiers = extractDiscriminatingQualifiers(query, merged)
         val ranked = if (qualifiers.isNotEmpty()) {
-            Log.d(TAG, "Merge: discriminating qualifier words = $qualifiers")
+            val qualifierHashes = qualifiers.map { it.anonymizeForLog() }
+            Log.d(TAG, "Merge: discriminating qualifier hashes = $qualifierHashes")
             merged.sortedByDescending { result ->
                 val addr = stripAccents(result.displayAddress?.lowercase() ?: "")
                 val matchCount = qualifiers.count { q -> addr.contains(q) }
@@ -144,8 +233,8 @@ class CompositeGeocodingService @Inject constructor(
         // ── Step 5: Trim to limit (at least 10) ────────────────────────────
         val returnLimit = limit.coerceAtLeast(10)
         val final = deduped.take(returnLimit)
-        Log.d(TAG, "Merge: returning ${final.size} results after dedup+rank for \"$query\"")
-        return final
+        Log.d(TAG, "Merge: returning ${final.size} results after dedup+rank for queryHash=$queryHash")
+        return GeocodingBatchResult.Success(final)
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
@@ -263,6 +352,46 @@ class CompositeGeocodingService @Inject constructor(
     }
 
     /**
+     * Background fallback policy:
+     * 1) Photon
+     * 2) Geoapify
+     * 3) Google Places (optional, disabled by default due to quota/cost policy)
+     */
+    private fun backgroundFallbackProviders(): List<Pair<String, GeocodingService>> = buildList {
+        add("Photon" to photon)
+        add("Geoapify" to geoapify)
+        if (ENABLE_GOOGLE_BACKGROUND_FALLBACK) {
+            add("GooglePlaces" to googlePlaces)
+        }
+    }
+
+    private fun isTransient(error: GeocodingError): Boolean = when (error) {
+        GeocodingError.RateLimited,
+        GeocodingError.ServiceDown,
+        GeocodingError.NetworkError,
+        GeocodingError.Timeout -> true
+        is GeocodingError.HttpError -> error.code >= 500
+        is GeocodingError.Unknown -> true
+        else -> false
+    }
+
+    /**
+     * Wraps a geocoding lookup call and normalizes unexpected exceptions.
+     */
+    private suspend fun safeLookup(
+        name: String,
+        block: suspend () -> GeocodingLookupResult
+    ): GeocodingLookupResult = try {
+        block()
+    } catch (e: CancellationException) {
+        Log.d(TAG, "safeLookup[$name]: cancelled, propagating")
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "safeLookup[$name]: failed — ${e.message}")
+        GeocodingLookupResult.Failure(GeocodingError.Unknown(e.message))
+    }
+
+    /**
      * Wraps a geocoding service call. Re-throws [CancellationException] so
      * that coroutine cancellation (debounce, screen exit) propagates correctly
      * and cancels all sibling parallel jobs via [coroutineScope]. All other
@@ -271,18 +400,19 @@ class CompositeGeocodingService @Inject constructor(
      */
     private suspend fun safeSearch(
         name: String,
-        block: suspend () -> List<GeocodingResult>
-    ): List<GeocodingResult> = try {
+        block: suspend () -> GeocodingBatchResult
+    ): GeocodingBatchResult = try {
         block()
     } catch (e: CancellationException) {
         Log.d(TAG, "safeSearch[$name]: cancelled, propagating")
         throw e
     } catch (e: Exception) {
         Log.w(TAG, "safeSearch[$name]: failed — ${e.message}")
-        emptyList()
+        GeocodingBatchResult.Failure(GeocodingError.Unknown(e.message))
     }
 
     private companion object {
         const val TAG = "LocationSearch"
+        private const val ENABLE_GOOGLE_BACKGROUND_FALLBACK = false
     }
 }

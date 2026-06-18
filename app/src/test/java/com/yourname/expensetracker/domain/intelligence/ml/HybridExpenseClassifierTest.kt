@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.categorization.CategorizationResult
 import com.yourname.expensetracker.domain.categorization.MatchType as CategorizationMatchType
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -17,6 +18,7 @@ class HybridExpenseClassifierTest {
     private val categorizationEngine = mockk<CategorizationEngine>(relaxed = true)
     private val nbClassifier = mockk<ExpenseCategoryClassifier>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
+    private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
     private lateinit var hybridClassifier: HybridExpenseClassifier
 
     private val foodCategory = Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")
@@ -27,7 +29,32 @@ class HybridExpenseClassifierTest {
     @Before
     fun setup() {
         coEvery { categoryRepository.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory, uncategorizedCategory)
-        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier)
+        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier, timeProvider)
+    }
+
+    @Test
+    fun `invalidateCategorySnapshot refreshes renamed categories without restart`() = runBlocking {
+        coEvery { categoryRepository.getAll() } returnsMany listOf(
+            listOf(foodCategory, uncategorizedCategory),
+            listOf(foodCategory.copy(name = "Dining"), uncategorizedCategory)
+        )
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = foodCategory.id,
+            categoryName = foodCategory.name,
+            confidence = 0.95,
+            matchType = CategorizationMatchType.EXACT,
+            explanation = "Exact match"
+        )
+
+        hybridClassifier.initialize()
+        hybridClassifier.invalidateCategorySnapshot()
+
+        val result = hybridClassifier.classify(
+            merchantName = "Starbucks",
+            amount = 10.0
+        )
+
+        assertEquals("Dining", result.categoryName)
     }
 
     @Test
@@ -60,7 +87,6 @@ class HybridExpenseClassifierTest {
             matchType = CategorizationMatchType.UNKNOWN,
             explanation = "No match found"
         )
-        coEvery { nbClassifier.isReady() } returns true
         coEvery { nbClassifier.classify(any()) } returns listOf(
             CategoryScore(groceriesCategory.id, "Groceries", 0.9f)
         )
@@ -75,8 +101,8 @@ class HybridExpenseClassifierTest {
     }
 
     @Test
-    fun `fallback used when everything fails`() = runBlocking {
-        // Dictionary returns UNKNOWN result (no category), ML not ready
+    fun `fallback used when ml returns empty results`() = runBlocking {
+        // Dictionary returns UNKNOWN result (no category), ML returns empty (not enough data)
         coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
             categoryId = null,
             categoryName = null,
@@ -84,7 +110,7 @@ class HybridExpenseClassifierTest {
             matchType = CategorizationMatchType.UNKNOWN,
             explanation = "No match found"
         )
-        coEvery { nbClassifier.isReady() } returns false
+        coEvery { nbClassifier.classify(any()) } returns emptyList()
         
         val result = hybridClassifier.classify(
             merchantName = "UnknownMerchant",
@@ -104,7 +130,6 @@ class HybridExpenseClassifierTest {
             matchType = CategorizationMatchType.UNKNOWN,
             explanation = "No match found"
         )
-        coEvery { nbClassifier.isReady() } returns true
         coEvery { nbClassifier.classify(any()) } returns listOf(
             CategoryScore(foodCategory.id, "Food", HybridExpenseClassifier.ML_THRESHOLD)
         )
@@ -121,7 +146,7 @@ class HybridExpenseClassifierTest {
     @Test
     fun `gracefully falls back when category list is empty`() = runBlocking {
         coEvery { categoryRepository.getAll() } returns emptyList()
-        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier)
+        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier, timeProvider)
 
         coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
             categoryId = null,
@@ -130,7 +155,7 @@ class HybridExpenseClassifierTest {
             matchType = CategorizationMatchType.UNKNOWN,
             explanation = "No match found"
         )
-        coEvery { nbClassifier.isReady() } returns false
+        coEvery { nbClassifier.classify(any()) } returns emptyList()
 
         val result = hybridClassifier.classify(
             merchantName = "",
@@ -169,7 +194,6 @@ class HybridExpenseClassifierTest {
             matchType = CategorizationMatchType.UNKNOWN,
             explanation = "No match found"
         )
-        coEvery { nbClassifier.isReady() } returns true
         coEvery { nbClassifier.classify(any()) } returns listOf(
             CategoryScore(foodCategory.id, "Food", 1.2f),
             CategoryScore(groceriesCategory.id, "Groceries", -0.1f)
@@ -187,8 +211,6 @@ class HybridExpenseClassifierTest {
 
     @Test
     fun `blank merchant and empty text immediately falls back`() = runBlocking {
-        coEvery { nbClassifier.isReady() } returns true
-
         val result = hybridClassifier.classify(
             merchantName = "   ",
             amount = 0.0,
@@ -199,5 +221,137 @@ class HybridExpenseClassifierTest {
         assertEquals(MatchType.FALLBACK, result.matchType)
         coVerify(exactly = 0) { categorizationEngine.categorize(any()) }
         coVerify(exactly = 0) { nbClassifier.classify(any()) }
+    }
+
+    @Test
+    fun `cold-start persisted model used on dictionary miss`() = runBlocking {
+        // Simulate cold-start: dictionary miss, but the NB classifier has a
+        // persisted model loaded from disk and returns valid predictions.
+        // No isReady() gate should block this path.
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.classify(any()) } returns listOf(
+            CategoryScore(foodCategory.id, "Food", 0.85f),
+            CategoryScore(groceriesCategory.id, "Groceries", 0.10f)
+        )
+
+        val result = hybridClassifier.classify(
+            merchantName = "ColdStartMerchant",
+            amount = 25.0
+        )
+
+        assertEquals(foodCategory.id, result.categoryId)
+        assertEquals(MatchType.ML_PREDICTION, result.matchType)
+        assertTrue(result.confidence >= HybridExpenseClassifier.ML_THRESHOLD)
+        // Verify ML classify was called — no readiness gate prevented it
+        coVerify(exactly = 1) { nbClassifier.classify(any()) }
+    }
+
+    @Test
+    fun `ml below threshold falls back gracefully`() = runBlocking {
+        // ML returns results but none meet the threshold — should fallback
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.classify(any()) } returns listOf(
+            CategoryScore(foodCategory.id, "Food", 0.1f)
+        )
+
+        val result = hybridClassifier.classify(
+            merchantName = "LowConfidenceMerchant",
+            amount = 10.0
+        )
+
+        assertEquals(uncategorizedCategory.id, result.categoryId)
+        assertEquals(MatchType.FALLBACK, result.matchType)
+    }
+
+    @Test
+    fun `ml exception falls back gracefully`() = runBlocking {
+        // ML throws an exception — should fall back, not crash
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.classify(any()) } throws RuntimeException("ML model corrupted")
+
+        val result = hybridClassifier.classify(
+            merchantName = "ErrorMerchant",
+            amount = 10.0
+        )
+
+        assertEquals(uncategorizedCategory.id, result.categoryId)
+        assertEquals(MatchType.FALLBACK, result.matchType)
+    }
+
+    @Test
+    fun `classifyWithMerchantDictionary propagates ambiguity from CategorizationEngine`() = runBlocking {
+        coEvery { categorizationEngine.categorize("Coffee Shop") } returns CategorizationResult(
+            categoryId = foodCategory.id,
+            categoryName = foodCategory.name,
+            matchType = CategorizationMatchType.KEYWORD,
+            isAmbiguous = true,
+            requiresReview = true,
+            confidence = 0.5,
+            explanation = "Ambiguous semantic match"
+        )
+
+        val result = hybridClassifier.classify("Coffee Shop", 0.0)
+
+        assertTrue(result.isAmbiguous)
+        assertTrue(result.requiresReview)
+        assertEquals("Ambiguous semantic match", result.classificationReason)
+    }
+
+    @Test
+    fun `classify non-ambiguous result does not require review`() = runBlocking {
+        coEvery { categorizationEngine.categorize("Starbucks") } returns CategorizationResult(
+            categoryId = foodCategory.id,
+            categoryName = foodCategory.name,
+            matchType = CategorizationMatchType.EXACT,
+            isAmbiguous = false,
+            requiresReview = false,
+            confidence = 0.98,
+            explanation = "Exact match"
+        )
+
+        val result = hybridClassifier.classify("Starbucks", 0.0)
+
+        assertFalse(result.isAmbiguous)
+        assertFalse(result.requiresReview)
+    }
+
+    @Test
+    fun `ml cancellation exception propagates instead of falling back`() = runBlocking {
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.classify(any()) } throws kotlinx.coroutines.CancellationException("Cancelled")
+
+        try {
+            hybridClassifier.classify(
+                merchantName = "CancelMerchant",
+                amount = 10.0
+            )
+            fail("CancellationException should have propagated, not been caught")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Expected — cancellation must propagate
+        }
     }
 }

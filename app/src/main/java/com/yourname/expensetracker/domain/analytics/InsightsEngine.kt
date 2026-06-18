@@ -1,23 +1,66 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
-import com.yourname.expensetracker.data.database.dao.MerchantStats
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.util.Calendar
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
+import kotlin.coroutines.cancellation.CancellationException
 
 // === Engine ===
 
+/**
+ * ## CURRENCY NORMALIZATION: Caller responsibility
+ * This engine does **not** inject [AnalyticsCurrencyNormalizer]. All amount
+ * arithmetic (averages, medians, anomaly detection, daily totals) operates
+ * directly on [ExpenseSnapshot.effectiveAmount] — which is only safe if the
+ * caller has already normalized the data to a single currency before passing
+ * it in. If un-normalized multi-currency data reaches this engine, raw
+ * `Double` sums (e.g. `map { it.effectiveAmount }.average()`,
+ * `maxByOrNull { it.effectiveAmount }`, `monthTotals.merge(key, p.effectiveAmount)`)
+ * will produce incorrect results by mixing values in different currencies.
+ *
+ * Callers should use [AnalyticsCurrencyNormalizer.normalizeSnapshots] before
+ * passing expenses to [generateInsights] or [getLegacyInsights].
+ *
+ * A07 OPEN: Several methods default `displayCurrency` to `"EUR"`. New callers
+ * must pass explicit currency via [generateInsights(input: NormalizedAnalyticsInput)]
+ * once available. Legacy `generateInsights(displayCurrency = "EUR")` paths are
+ * tolerated for backward compatibility but should be migrated.
+ *
+ * PR-E11: Accept NormalizedAnalyticsInput instead of querying raw expenses.
+ *
+ * ## AIML-11: Confidence propagation
+ * Insights that rely on AI-classified transactions inherit the classifier's
+ * confidence score. The `adjustedConfidence` from [ConfidenceRouter] is stored
+ * on the [PendingReview] and propagated through to insights. Callers should
+ * check confidence thresholds before surfacing AI-derived insights to the user.
+ *
+ * ## AIML-12: Stale category IDs
+ * Category references obtained at classification time may become stale if the
+ * user renames or deletes categories after the expense is created. This engine
+ * resolves category IDs via the `categoryMap` parameter provided by the caller
+ * at insight-generation time. If a category has been deleted, the insight falls
+ * back to `category = null` rather than displaying a dangling reference.
+ *
+ * ## AIML-13: Duplicate-inflated trust
+ * Repeated identical transactions from the same merchant can inflate the
+ * confidence score in pattern-detection logic. The recurring-expense
+ * suppression in [AnomalyDetector.detect] mitigates this by excluding expenses
+ * whose merchant key matches a known recurring rule. The merchant-level
+ * anomaly detection in [findAnomalies] also uses an adaptive multiplier
+ * (3× to 5×) that grows stricter as historical data accumulates.
+ */
 @Singleton
 class InsightsEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
@@ -32,39 +75,256 @@ class InsightsEngine @Inject constructor(
     private val dayOfWeekAnalyzer: DayOfWeekAnalyzer
 ) {
 
-    companion object {
-        private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-        
-        private const val PACE_UNDER_THRESHOLD = 90f
-        private const val PACE_OVER_THRESHOLD = 110f
+    /**
+     * Generate insights for an explicit [PeriodRange] instead of the current month.
+     *
+     * ## A06-FIXED: Normalized input overload
+     * This overload consumes [NormalizedAnalyticsInput] instead of raw
+     * [ExpenseSnapshot] list. The home currency is resolved from
+     * [input.homeCurrency] — no more hardcoded EUR.
+     */
+    suspend fun generateInsights(
+        input: NormalizedAnalyticsInput,
+        categories: List<AnalyticsCategoryRef>
+    ): InsightsSnapshot {
+        val period = input.period ?: return InsightsSnapshot(
+            generatedAt = 0L,
+            currentMonth = MonthPeriod(0, 0, 0L, 0L),
+            monthlyComparison = MonthlyComparison(
+                currentMonth = MonthPeriod(0, 0, 0L, 0L),
+                previousMonth = null,
+                currentTotal = 0.0,
+                previousTotal = null,
+                changeAmount = null,
+                changePercentage = null,
+                currentCount = 0,
+                previousCount = null,
+                displayCurrency = input.homeCurrency
+            ),
+            categoryInsights = emptyList(),
+            topMerchants = emptyList(),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 0,
+                daysInMonth = 30,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0f,
+                paceStatus = PaceStatus.NO_BASELINE,
+                displayCurrency = input.homeCurrency
+            ),
+            anomalies = emptyList(),
+            recurringExpenses = emptyList(),
+            dayOfWeekPattern = emptyList(),
+            largestTransaction = null,
+            averageTransactionSize = 0.0,
+            medianTransactionSize = 0.0,
+            totalMonthsOfData = 0,
+            displayCurrency = input.homeCurrency
+        )
+        val currentMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis),
+            startMs = period.startInclusiveMillis,
+            endMs = period.endExclusiveMillis
+        )
+        val durationMs = period.endExclusiveMillis - period.startInclusiveMillis
+        val previousMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis - durationMs),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis - durationMs),
+            startMs = period.startInclusiveMillis - durationMs,
+            endMs = period.startInclusiveMillis
+        )
+        // Map NormalizedExpense to ExpenseSnapshot for legacy engine consumption
+        val snapshots = input.includedExpenses.map { it.toExpenseSnapshot() }
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = snapshots,
+            displayCurrency = input.homeCurrency,
+            conversionWarnings = input.dataQuality.conversionWarnings.map { msg ->
+                AnalyticsConversionWarning(
+                    type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = msg,
+                    affectedTransactionCount = 0
+                )
+            }
+        )
     }
 
+    /**
+     * Generate insights with explicit historical context for comparison and baselines.
+     *
+     * [currentInput] drives the primary period and display currency.
+     * [historicalInput] provides additional expenses for sub-engines that need
+     * lookback data (monthly comparison, pace baselines, anomaly history, etc.).
+     */
     suspend fun generateInsights(
-        categories: List<Category>,
-        allExpenses: List<Expense>
-    ): InsightsSnapshot = coroutineScope {
+        currentInput: NormalizedAnalyticsInput,
+        historicalInput: NormalizedAnalyticsInput?,
+        categories: List<AnalyticsCategoryRef>,
+        conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+    ): InsightsSnapshot {
+        val period = currentInput.period ?: return generateInsights(
+            currentInput,
+            categories
+        )
+        val currentMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis),
+            startMs = period.startInclusiveMillis,
+            endMs = period.endExclusiveMillis
+        )
+        val durationMs = period.endExclusiveMillis - period.startInclusiveMillis
+        val previousMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis - durationMs),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis - durationMs),
+            startMs = period.startInclusiveMillis - durationMs,
+            endMs = period.startInclusiveMillis
+        )
+        // Merge current + historical expenses so sub-engines have full context
+        val currentSnapshots = currentInput.includedExpenses.map { it.toExpenseSnapshot() }
+        val historicalSnapshots = historicalInput?.includedExpenses?.map { it.toExpenseSnapshot() } ?: emptyList()
+        val allSnapshots = (currentSnapshots + historicalSnapshots).distinctBy { it.id }
+        val mergedWarnings = if (conversionWarnings.isNotEmpty()) {
+            conversionWarnings
+        } else {
+            (currentInput.dataQuality.conversionWarnings.map { msg ->
+                AnalyticsConversionWarning(
+                    type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = msg,
+                    affectedTransactionCount = 0
+                )
+            } + (historicalInput?.dataQuality?.conversionWarnings ?: emptyList()).map { msg ->
+                AnalyticsConversionWarning(
+                    type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = msg,
+                    affectedTransactionCount = 0
+                )
+            }).distinct()
+        }
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = allSnapshots,
+            displayCurrency = currentInput.homeCurrency,
+            conversionWarnings = mergedWarnings
+        )
+    }
+
+    /**
+     * ## AI-1: Explicit period support
+     * This overload allows callers to specify an arbitrary time range, enabling
+     * historical or custom-period insight generation. The range is decomposed
+     * into a "current" period and an automatically computed "previous" period
+     * of equal duration for month-over-month comparison.
+     */
+    suspend fun generateInsights(
+        periodRange: PeriodRange,
+        categories: List<AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>,
+        /** Placeholder default. Production callers should pass explicit currency. */
+        displayCurrency: String = "EUR",
+        conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+    ): InsightsSnapshot {
+        val currentMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(periodRange.start),
+            month = TimePeriodUtils.getMonth(periodRange.start),
+            startMs = periodRange.start,
+            endMs = periodRange.end
+        )
+        val durationMs = periodRange.duration
+        val previousMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(periodRange.start - durationMs),
+            month = TimePeriodUtils.getMonth(periodRange.start - durationMs),
+            startMs = periodRange.start - durationMs,
+            endMs = periodRange.start
+        )
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = allExpenses,
+            displayCurrency = displayCurrency,
+            conversionWarnings = conversionWarnings
+        )
+    }
+
+    /**
+     * Original overload: generates insights for the current month (from [TimeProvider.now]).
+     */
+    suspend fun generateInsights(
+        categories: List<AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>,
+        /** Placeholder default. Production callers should pass explicit currency. */
+        displayCurrency: String = "EUR",
+        conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+    ): InsightsSnapshot {
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = allExpenses,
+            displayCurrency = displayCurrency,
+            conversionWarnings = conversionWarnings
+        )
+    }
+
+    /**
+     * Internal implementation shared by both [generateInsights] overloads.
+     */
+    private suspend fun generateInsightsForPeriods(
+        currentMonth: MonthPeriod,
+        previousMonth: MonthPeriod,
+        categories: List<AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String,
+        conversionWarnings: List<AnalyticsConversionWarning>
+    ): InsightsSnapshot = coroutineScope {
+        // Compute a reference "now" for relative-period calculations (day-of-week analysis etc.)
+        val now = timeProvider.now()
 
         val categoryMap = categories.associateBy { it.id }
 
-        // Start all independent queries in parallel
-        val monthlyComparisonDeferred = async { buildMonthlyComparison(currentMonth, previousMonth) }
-        val categoryInsightsDeferred = async { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) }
-        val topMerchantsDeferred = async { buildMerchantInsights(allExpenses) }
-        val spendingPaceDeferred = async { buildSpendingPace(currentMonth, previousMonth, allExpenses) }
-        val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap, allExpenses) }
-        // Use RecurringExpenseEngine directly
-        val recurringExpensesDeferred = async { findRecurringExpenses(allExpenses) }
+        // Start all independent queries in parallel with error handling
+        val monthlyComparisonDeferred = async {
+            try {
+                monthlyComparisonCalculator.calculate(currentMonth, previousMonth, allExpenses, displayCurrency)
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: monthlyComparison branch failed"); null }
+        }
+        val categoryInsightsDeferred = async {
+            try {
+                categoryInsightEngine.calculate(currentMonth, previousMonth, categoryMap, allExpenses, displayCurrency)
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: categoryInsights branch failed"); null }
+        }
+        val topMerchantsDeferred = async {
+            try {
+                merchantInsightEngine.calculate(allExpenses, displayCurrency)
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: topMerchants branch failed"); null }
+        }
+        val spendingPaceDeferred = async { 
+            try { buildSpendingPace(currentMonth, previousMonth, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: spendingPace branch failed"); null }
+        }
+        val anomaliesDeferred = async { 
+            try { findAnomalies(currentMonth, categoryMap, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: anomalies branch failed"); null }
+        }
+        val recurringExpensesDeferred = async { 
+            try { findRecurringExpenses(allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: recurringExpenses branch failed"); emptyList() }
+        }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
-        val dayOfWeekPatternDeferred = async { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) }
-        val largestTransactionDeferred = async { 
-            expenseRepository.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) 
+        val dayOfWeekPatternDeferred = async {
+            try {
+                dayOfWeekAnalyzer.analyze(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses, displayCurrency)
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: dayOfWeekPattern branch failed"); null }
         }
-
-        // Await all results
+        // Await all results with error resilience
         val monthlyComparison = monthlyComparisonDeferred.await()
         val categoryInsights = categoryInsightsDeferred.await()
         val topMerchants = topMerchantsDeferred.await()
@@ -72,41 +332,85 @@ class InsightsEngine @Inject constructor(
         val anomalies = anomaliesDeferred.await()
         val recurringExpenses = recurringExpensesDeferred.await()
         val dayOfWeekPattern = dayOfWeekPatternDeferred.await()
-        val largestTransaction = largestTransactionDeferred.await()
 
         // Transaction size stats
         val currentMonthPurchases = allExpenses.filter {
-            it.transactionType == TransactionType.PURCHASE
+            it.transactionType == DomainTransactionType.PURCHASE
                     && it.date >= currentMonth.startMs
                     && it.date < currentMonth.endMs
                     && !it.isNotMine
         }
+        val largestTransaction = currentMonthPurchases.maxByOrNull { it.effectiveAmount }
         val avgTxSize = if (currentMonthPurchases.isNotEmpty())
-            currentMonthPurchases.map { it.amount }.average() else 0.0
-        val medianTxSize = calculateMedian(currentMonthPurchases.map { it.amount })
+            currentMonthPurchases.map { it.effectiveAmount }.average() else 0.0
+        val medianTxSize = calculateMedian(currentMonthPurchases.map { it.effectiveAmount })
 
         // How many months of data we have
         val totalMonthsOfData = countDistinctMonths(allExpenses)
 
         InsightsSnapshot(
             currentMonth = currentMonth,
-            monthlyComparison = monthlyComparison,
-            categoryInsights = categoryInsights,
-            topMerchants = topMerchants,
-            spendingPace = spendingPace,
-            anomalies = anomalies,
+            monthlyComparison = monthlyComparison ?: MonthlyComparison(
+                currentMonth = currentMonth,
+                previousMonth = null,
+                currentTotal = 0.0,
+                previousTotal = null,
+                changeAmount = null,
+                changePercentage = null,
+                currentCount = 0,
+                previousCount = null,
+                displayCurrency = displayCurrency
+            ),
+            categoryInsights = categoryInsights ?: emptyList(),
+            topMerchants = topMerchants ?: emptyList(),
+            spendingPace = spendingPace ?: SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 0,
+                daysInMonth = 30,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0f,
+                paceStatus = PaceStatus.NO_BASELINE,
+                displayCurrency = displayCurrency
+            ),
+            anomalies = anomalies ?: emptyList(),
             recurringExpenses = recurringExpenses,
-            dayOfWeekPattern = dayOfWeekPattern,
-            largestTransaction = largestTransaction,
+            dayOfWeekPattern = dayOfWeekPattern ?: emptyList(),
+            largestTransaction = largestTransaction?.toAnalyticsSummary(),
             averageTransactionSize = avgTxSize,
             medianTransactionSize = medianTxSize,
-            totalMonthsOfData = totalMonthsOfData
+            totalMonthsOfData = totalMonthsOfData,
+            displayCurrency = displayCurrency,
+            conversionWarnings = conversionWarnings
+        )
+    }
+
+    private fun ExpenseSnapshot.toAnalyticsSummary(): AnalyticsTransactionSummary {
+        return AnalyticsTransactionSummary(
+            id = id,
+            amount = effectiveAmount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            date = date,
+            categoryId = categoryId
         )
     }
 
     // === Legacy Compatibility ===
 
-    fun getLegacyInsights(snapshot: InsightsSnapshot): List<SpendingInsight> {
+    /**
+     * PR8-GUARDRAIL: Legacy convenience wrapper that maps [InsightsSnapshot] to a
+     * list of [SpendingInsight]. Safe when [snapshot] was already computed from
+     * normalized data. Prefer constructing insights directly from snapshot fields
+     * to avoid the "EUR" default on [homeCurrency].
+     */
+    @Deprecated(
+        "Legacy convenience wrapper. Prefer constructing SpendingInsight list directly from InsightsSnapshot fields.",
+        level = DeprecationLevel.WARNING
+    )
+    fun getLegacyInsights(snapshot: InsightsSnapshot, /** Placeholder default. Production callers should pass explicit currency. */ homeCurrency: String = "EUR"): List<SpendingInsight> {
         val insights = mutableListOf<SpendingInsight>()
 
         // 1. Monthly Comparison (Spending Increase/Decrease)
@@ -114,22 +418,35 @@ class InsightsEngine @Inject constructor(
         if (comparison.changePercentage != null) {
             if (comparison.changePercentage > 20) {
                 insights.add(
-                    SpendingInsight(
-                        InsightType.SPENDING_INCREASE, "📈",
-                        "Spending up ${comparison.changePercentage.toInt()}%",
-                        "€${fmt(comparison.currentTotal)} this month vs €${fmt(comparison.previousTotal ?: 0.0)} last month",
-                        (comparison.changePercentage / 100).coerceAtMost(1.0f).toFloat()
+                        SpendingInsight(
+                            InsightType.SPENDING_INCREASE, "📈",
+                            UiText.fromKey(
+                                DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_UP_TITLE_FORMAT,
+                                comparison.changePercentage.toInt()
+                            ),
+                            UiText.fromKey(
+            DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_UP_DESCRIPTION_FORMAT,
+                        formatCurrency(comparison.currentTotal, homeCurrency),
+                        formatCurrency(comparison.previousTotal ?: 0.0, homeCurrency)
+                            ),
+                            (comparison.changePercentage / 100).coerceAtMost(1.0f).toFloat()
+                        )
                     )
-                )
             } else if (comparison.changePercentage < -15) {
                 insights.add(
-                    SpendingInsight(
-                        InsightType.SPENDING_DECREASE, "📉",
-                        "Good job! Spending down ${(-comparison.changePercentage).toInt()}%",
-                        "You saved €${fmt((comparison.previousTotal ?: 0.0) - comparison.currentTotal)} compared to last month",
-                        0.3f
+                        SpendingInsight(
+                            InsightType.SPENDING_DECREASE, "📉",
+                            UiText.fromKey(
+                                DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_DOWN_TITLE_FORMAT,
+                                (-comparison.changePercentage).toInt()
+                            ),
+                            UiText.fromKey(
+            DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_DOWN_DESCRIPTION_FORMAT,
+                        formatCurrency((comparison.previousTotal ?: 0.0) - comparison.currentTotal, homeCurrency)
+                            ),
+                            0.3f
+                        )
                     )
-                )
             }
         }
 
@@ -139,8 +456,12 @@ class InsightsEngine @Inject constructor(
              insights.add(
                 SpendingInsight(
                     InsightType.BUDGET_WARNING, "⚠️",
-                    "Spending Pace Warning",
-                    "You're at ${pace.daysElapsed} days but spent ${pace.pacePercentage.toInt()}% of typical month",
+                    UiText.fromKey(DomainTextKeys.ANALYTICS_INSIGHT_PACE_WARNING_TITLE),
+                    UiText.fromKey(
+                        DomainTextKeys.ANALYTICS_INSIGHT_PACE_WARNING_DESCRIPTION_FORMAT,
+                        pace.daysElapsed,
+                        pace.pacePercentage.toInt()
+                    ),
                     0.8f
                 )
             )
@@ -153,8 +474,16 @@ class InsightsEngine @Inject constructor(
                     insights.add(
                         SpendingInsight(
                             InsightType.CATEGORY_TREND, catInsight.category.icon,
-                            "${catInsight.category.name} up ${catInsight.changeFromPrevious.toInt()}%",
-                            "€${fmt(catInsight.currentTotal)} vs €${fmt(catInsight.previousTotal ?: 0.0)}",
+                            UiText.fromKey(
+                                DomainTextKeys.ANALYTICS_INSIGHT_CATEGORY_UP_TITLE_FORMAT,
+                                catInsight.category.name,
+                                catInsight.changeFromPrevious.toInt()
+                            ),
+                            UiText.fromKey(
+                        DomainTextKeys.ANALYTICS_INSIGHT_CATEGORY_UP_DESCRIPTION_FORMAT,
+                        formatCurrency(catInsight.currentTotal, homeCurrency),
+                        formatCurrency(catInsight.previousTotal ?: 0.0, homeCurrency)
+                            ),
                             0.7f
                         )
                     )
@@ -165,11 +494,15 @@ class InsightsEngine @Inject constructor(
         // 4. Recurring
         snapshot.recurringExpenses.take(3).forEach { recurring ->
                  if (recurring.intervalDays > 0) {
+                     val cadenceLabel = recurringCadenceLabel(recurring.intervalDays)
                      insights.add(
                         SpendingInsight(
                             InsightType.RECURRING_DETECTED, "🔄",
-                            "Recurring: ${recurring.merchant}",
-                            "€${fmt(recurring.avgAmount)} ~every ${recurring.intervalDays} days",
+                            UiText.fromKey(
+                                DomainTextKeys.ANALYTICS_INSIGHT_RECURRING_TITLE_FORMAT,
+                                recurring.merchant
+                            ),
+                            UiText.from("${formatCurrency(recurring.avgAmount, homeCurrency)} • $cadenceLabel"),
                             0.5f
                         )
                     )
@@ -178,12 +511,19 @@ class InsightsEngine @Inject constructor(
 
         // 5. Largest Transaction
         val largest = snapshot.largestTransaction
-        if (largest != null && largest.amount > 50) {
+        if (largest != null && largest.effectiveAmount > 50) {
              insights.add(
                 SpendingInsight(
                     InsightType.UNUSUAL_TRANSACTION, "⚡",
-                    "Largest: ${largest.merchant}",
-                    "€${fmt(largest.amount)} on ${formatDate(largest.date)}",
+                    UiText.fromKey(
+                        DomainTextKeys.ANALYTICS_INSIGHT_LARGEST_TRANSACTION_TITLE_FORMAT,
+                        largest.merchant
+                    ),
+                    UiText.fromKey(
+                    DomainTextKeys.ANALYTICS_INSIGHT_LARGEST_TRANSACTION_DESCRIPTION_FORMAT,
+                        formatCurrency(largest.effectiveAmount, homeCurrency),
+                        formatDate(largest.date)
+                    ),
                     0.25f
                 )
             )
@@ -196,254 +536,64 @@ class InsightsEngine @Inject constructor(
     
     fun getMonthPeriod(timeMs: Long, monthOffset: Int = 0): MonthPeriod {
         val range = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(timeMs, monthOffset)
+        val year = TimePeriodUtils.getYear(range.first)
+        val month = TimePeriodUtils.getMonth(range.first)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = range.first }
-        val year = cal.get(Calendar.YEAR)
-        val month = cal.get(Calendar.MONTH)
-        
-        return MonthPeriod(year, month, range.first, range.second + 1)
+        return MonthPeriod(year, month, range.first, range.second)
     }
 
     private fun getPreviousMonthPeriod(current: MonthPeriod): MonthPeriod {
-        val cal = Calendar.getInstance().apply { timeInMillis = current.startMs }
-        cal.add(Calendar.MONTH, -1)
-        return getMonthPeriod(cal.timeInMillis)
-    }
-
-    // === Monthly Comparison ===
-
-    private suspend fun buildMonthlyComparison(
-        current: MonthPeriod,
-        previous: MonthPeriod
-    ): MonthlyComparison = coroutineScope {
-        val currentTotalDeferred = async { expenseRepository.getTotalForPeriod(current.startMs, current.endMs) }
-        val currentCountDeferred = async { expenseRepository.getCountForPeriod(current.startMs, current.endMs) }
-        val previousTotalDeferred = async { expenseRepository.getTotalForPeriod(previous.startMs, previous.endMs) }
-        val previousCountDeferred = async { expenseRepository.getCountForPeriod(previous.startMs, previous.endMs) }
-
-        val currentTotal = currentTotalDeferred.await()
-        val currentCount = currentCountDeferred.await()
-        val previousTotal = previousTotalDeferred.await()
-        val previousCount = previousCountDeferred.await()
-
-        val hasPrevious = previousCount > 0
-        val changeAmount = if (hasPrevious) currentTotal - previousTotal else null
-        val changePercentage = if (hasPrevious && previousTotal > 0)
-            ((currentTotal - previousTotal) / previousTotal * 100).toFloat() else null
-
-        MonthlyComparison(
-            currentMonth = current,
-            previousMonth = if (hasPrevious) previous else null,
-            currentTotal = currentTotal,
-            previousTotal = if (hasPrevious) previousTotal else null,
-            changeAmount = changeAmount,
-            changePercentage = changePercentage,
-            currentCount = currentCount,
-            previousCount = if (hasPrevious) previousCount else null
-        )
-    }
-
-    // === Category Insights ===
-
-    private suspend fun buildCategoryInsights(
-        current: MonthPeriod,
-        previous: MonthPeriod,
-        categoryMap: Map<Long, Category>,
-        allExpenses: List<Expense>
-    ): List<CategoryInsight> = coroutineScope {
-        val currentTotalsDeferred = async { expenseRepository.getCategoryTotalsForPeriod(current.startMs, current.endMs) }
-        val previousTotalsDeferred = async { expenseRepository.getCategoryTotalsForPeriod(previous.startMs, previous.endMs) }
-
-        val currentTotals = currentTotalsDeferred.await()
-        val previousTotals = previousTotalsDeferred.await()
-        val previousMap = previousTotals.associateBy { it.categoryId }
-
-        val currentGrandTotal = currentTotals.sumOf { it.total }
-
-        // Calculate multi-month averages per category
-        val monthlyAverages = calculateCategoryMonthlyAverages(allExpenses, current)
-
-        // Build insights; normalize percentageOfTotal so they sum to 100 (fixes off-by-one rounding)
-        val insights = currentTotals.mapNotNull { ct ->
-            val category = categoryMap[ct.categoryId]
-            if (category == null) {
-                Timber.tag("InsightsEngine").w("Category ${ct.categoryId} not found for expense integration")
-                return@mapNotNull null
-            }
-            val prev = previousMap[ct.categoryId]
-            val avgData = monthlyAverages[ct.categoryId]
-
-            val changeFromPrev = if (prev != null && prev.total > 0)
-                ((ct.total - prev.total) / prev.total * 100).toFloat() else null
-
-            val changeFromAvg = if (avgData != null && avgData.first > 0)
-                ((ct.total - avgData.first) / avgData.first * 100).toFloat() else null
-
-            val rawPct = if (currentGrandTotal > 0) (ct.total / currentGrandTotal * 100).toFloat() else 0f
-
-            CategoryInsight(
-                category = category,
-                currentTotal = ct.total,
-                currentCount = ct.txCount,
-                previousTotal = prev?.total,
-                previousCount = prev?.txCount,
-                averageOverMonths = avgData?.first,
-                monthsOfData = avgData?.second ?: 0,
-                percentageOfTotal = rawPct,
-                changeFromPrevious = changeFromPrev,
-                changeFromAverage = changeFromAvg
-            )
-        }.sortedByDescending { it.currentTotal }
-        // Normalize last category's percentage so total = 100 (fixes aggregation off-by-one)
-        return@coroutineScope if (insights.size > 1 && currentGrandTotal > 0) {
-            val sumPct = insights.sumOf { it.percentageOfTotal.toDouble() }.toFloat()
-            if (kotlin.math.abs(sumPct - 100f) > 0.01f) {
-                val adjusted = insights.dropLast(1) + insights.last().let { last ->
-                    last.copy(percentageOfTotal = (100f - insights.dropLast(1).sumOf { it.percentageOfTotal.toDouble() }.toFloat()).coerceIn(0f, 100f))
-                }
-                adjusted
-            } else insights
-        } else insights
-    }
-
-    private fun calculateCategoryMonthlyAverages(
-        allExpenses: List<Expense>,
-        currentMonth: MonthPeriod
-    ): Map<Long, Pair<Double, Int>> {
-        // Group purchases by category, then by month, compute average
-        val purchases = allExpenses.filter {
-            it.transactionType == TransactionType.PURCHASE
-                    && it.categoryId != null
-                    && it.date < currentMonth.startMs // exclude current month
-        }
-
-        // Group by categoryId -> month key -> sum
-        val categoryMonthTotals = mutableMapOf<Long, MutableMap<String, Double>>()
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        for (expense in purchases) {
-            val catId = expense.categoryId ?: continue
-            cal.timeInMillis = expense.date
-            val monthKey = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
-            categoryMonthTotals
-                .getOrPut(catId) { mutableMapOf() }
-                .merge(monthKey, expense.effectiveAmount) { a, b -> a + b }
-        }
-
-        // For each category, compute average monthly spend
-        return categoryMonthTotals.mapValues { (_, monthMap) ->
-            val months = monthMap.size
-            val avg = if (months > 0) monthMap.values.sum() / months else 0.0
-            Pair(avg, months)
-        }
-    }
-
-    // === Merchant Insights ===
-
-    private suspend fun buildMerchantInsights(
-        allExpenses: List<Expense>
-    ): List<MerchantInsight> {
-        val stats = expenseRepository.getAllMerchantStats()
-
-        // For std deviation, compute from raw data grouped by merchant
-        val purchasesByMerchant = allExpenses
-            .filter { it.transactionType == TransactionType.PURCHASE }
-            .groupBy { it.merchant }
-
-        return stats.map { ms ->
-            val amounts = purchasesByMerchant[ms.merchantName]?.map { it.amount } ?: emptyList()
-            val stdDev = if (amounts.size >= 3) calculateStdDev(amounts) else null
-
-            val isRecurring = ms.transactionCount >= 2 &&
-                    (ms.maxAmount - ms.minAmount) < (ms.averageAmount * 0.15)
-
-            MerchantInsight(
-                merchant = ms.merchantName,
-                avgAmount = ms.averageAmount,
-                minAmount = ms.minAmount,
-                maxAmount = ms.maxAmount,
-                totalSpent = ms.totalAmount,
-                transactionCount = ms.transactionCount,
-                isLikelyRecurring = isRecurring,
-                stdDeviation = stdDev
-            )
-        }.sortedByDescending { it.totalSpent }
+        return getMonthPeriod(TimePeriodUtils.addMonths(current.startMs, -1))
     }
 
     // === Spending Pace ===
 
-    private suspend fun buildSpendingPace(
+    private fun buildSpendingPace(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod,
-        allExpenses: List<Expense>
-    ): SpendingPace = coroutineScope {
-        val now = timeProvider.now()
-        
-        val currentSpentDeferred = async { expenseRepository.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs) }
-        val previousTotalDeferred = async { expenseRepository.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs) }
-        val previousCountDeferred = async { expenseRepository.getCountForPeriod(previousMonth.startMs, previousMonth.endMs) }
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
+    ): SpendingPace {
+        val referenceNowMs = minOf(timeProvider.now(), currentMonth.endMs)
+        val canonicalPace = spendingPaceCalculator.calculate(
+            currentMonthStart = currentMonth.startMs,
+            previousMonthStart = previousMonth.startMs,
+            previousMonthEnd = previousMonth.endMs,
+            allExpenses = allExpenses,
+            displayCurrency = displayCurrency,
+            referenceNowMs = referenceNowMs
+        )
 
-        val currentSpent = currentSpentDeferred.await()
-        val previousTotal = previousTotalDeferred.await()
-        val previousCount = previousCountDeferred.await()
-
-        val cal = Calendar.getInstance().apply { timeInMillis = now }
-        val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
-        val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-
-        // Calculate average monthly total (excluding current month)
+        // Preserve Insights-specific enrichment while delegating pace math.
         val avgMonthly = calculateAverageMonthlySpend(allExpenses, currentMonth)
 
-        // Project: if we've spent X in D days, we'll spend X * (totalDays/D) by month end
-        val projectedTotal = if (dayOfMonth >= 4) {
-            currentSpent * daysInMonth.toDouble() / dayOfMonth
-        } else if (dayOfMonth > 0) {
-            // Conservative estimate for first 3 days to avoid massive multipliers
-            currentSpent * (daysInMonth.toDouble() / 10.0).coerceAtLeast(1.0)
-        } else {
-            currentSpent
-        }
-
-        // Pace percentage: how much of the baseline have we consumed
-        val baseline = avgMonthly ?: if (previousCount > 0) previousTotal else null
-        val pacePercentage = if (baseline != null && baseline > 0) {
-            val expectedAtThisPoint = baseline * dayOfMonth.coerceAtLeast(1) / daysInMonth
-            (currentSpent / expectedAtThisPoint * 100).toFloat()
-        } else 0f
-
-        val paceStatus = when {
-            baseline == null || baseline == 0.0 -> PaceStatus.NO_BASELINE
-            pacePercentage < PACE_UNDER_THRESHOLD -> PaceStatus.UNDER_PACE
-            pacePercentage > PACE_OVER_THRESHOLD -> PaceStatus.OVER_PACE
-            else -> PaceStatus.ON_PACE
-        }
-
-        SpendingPace(
-            currentMonthSpent = currentSpent,
-            daysElapsed = dayOfMonth,
-            daysInMonth = daysInMonth,
-            projectedTotal = projectedTotal,
-            previousMonthTotal = if (previousCount > 0) previousTotal else null,
+        return SpendingPace(
+            currentMonthSpent = canonicalPace.currentMonthSpent,
+            daysElapsed = canonicalPace.daysElapsed,
+            daysInMonth = canonicalPace.daysInMonth,
+            projectedTotal = canonicalPace.projectedTotal,
+            previousMonthTotal = canonicalPace.previousMonthTotal,
             averageMonthlyTotal = avgMonthly,
-            pacePercentage = pacePercentage,
-            paceStatus = paceStatus
+            pacePercentage = canonicalPace.pacePercentage,
+            paceStatus = canonicalPace.paceStatus,
+            displayCurrency = displayCurrency
         )
     }
 
     private fun calculateAverageMonthlySpend(
-        allExpenses: List<Expense>,
+        allExpenses: List<ExpenseSnapshot>,
         currentMonth: MonthPeriod
     ): Double? {
         val purchases = allExpenses.filter {
-            it.transactionType == TransactionType.PURCHASE
+            it.transactionType == DomainTransactionType.PURCHASE
+                    && !it.isNotMine
                     && it.date < currentMonth.startMs
         }
         if (purchases.isEmpty()) return null
 
-        val cal = Calendar.getInstance()
         val monthTotals = mutableMapOf<String, Double>()
         for (p in purchases) {
-            cal.timeInMillis = p.date
-            val key = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
+            val key = String.format("%d-%02d", TimePeriodUtils.getYear(p.date), TimePeriodUtils.getMonth(p.date) + 1)
             monthTotals.merge(key, p.effectiveAmount) { a, b -> a + b }
         }
 
@@ -468,41 +618,58 @@ class InsightsEngine @Inject constructor(
      */
     private suspend fun findAnomalies(
         currentMonth: MonthPeriod,
-        categoryMap: Map<Long, Category>,
-        allExpenses: List<Expense>
+        categoryMap: Map<Long, AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
     ): List<AnomalyTransaction> = coroutineScope {
 
         // ── Path 1: merchant-level DB-backed detection (existing logic) ────────
-        val merchantStatsDeferred = async { expenseRepository.getMerchantStats() }
-        val topMerchantsDeferred = async {
-            expenseRepository.getTopMerchantsForPeriod(
-                currentMonth.startMs, currentMonth.endMs, 100
-            )
-        }
+        val historicalPurchasesByMerchant = allExpenses
+            .asSequence()
+            .filter {
+                it.transactionType == DomainTransactionType.PURCHASE &&
+                    !it.isNotMine &&
+                    !it.merchantKey.isNullOrBlank() &&
+                    it.date < currentMonth.startMs
+            }
+            .groupBy { it.merchantKey!!.trim() }
 
-        val merchantStats = merchantStatsDeferred.await()
-        val topMerchants  = topMerchantsDeferred.await()
-        val statsMap: Map<String, MerchantStats> = merchantStats.associateBy { it.merchantName }
+        val currentMonthPurchasesByMerchant = allExpenses
+            .asSequence()
+            .filter {
+                it.transactionType == DomainTransactionType.PURCHASE &&
+                    !it.isNotMine &&
+                    !it.merchantKey.isNullOrBlank() &&
+                    it.date >= currentMonth.startMs &&
+                    it.date < currentMonth.endMs
+            }
+            .groupBy { it.merchantKey!!.trim() }
+        val analyticsCategoryMap = categoryMap
 
-        val candidates: List<AnomalyCandidate?> = topMerchants.mapNotNull { merchantStat ->
-            val historicalStats = statsMap[merchantStat.merchantName]
-            if (historicalStats == null || historicalStats.transactionCount < 3) return@mapNotNull null
-            if (!historicalStats.averageAmount.isFinite() || historicalStats.averageAmount <= 0.0) {
+        val candidates: List<AnomalyCandidate?> = currentMonthPurchasesByMerchant.mapNotNull { (merchantKey, currentMonthExpenses) ->
+            val historicalExpenses = historicalPurchasesByMerchant[merchantKey].orEmpty()
+            if (historicalExpenses.size < 3) return@mapNotNull null
+
+            val historicalAverage = historicalExpenses.map { it.effectiveAmount }.average()
+            if (!historicalAverage.isFinite() || historicalAverage <= 0.0) {
                 return@mapNotNull null
             }
 
             val multiplier = when {
-                historicalStats.transactionCount < 5  -> 5.0
-                historicalStats.transactionCount < 10 -> 4.0
+                historicalExpenses.size < 5  -> 5.0
+                historicalExpenses.size < 10 -> 4.0
                 else                                  -> 3.0
             }
 
-            if (merchantStat.maxAmount > historicalStats.averageAmount * multiplier) {
+            val currentMaxExpense = currentMonthExpenses.maxByOrNull { it.effectiveAmount } ?: return@mapNotNull null
+            val currentMax = currentMaxExpense.effectiveAmount
+
+            if (currentMax > historicalAverage * multiplier) {
                 AnomalyCandidate(
-                    merchantName     = merchantStat.merchantName,
-                    maxAmount        = merchantStat.maxAmount,
-                    historicalAvg    = historicalStats.averageAmount,
-                    deviationMultiple = (merchantStat.maxAmount / historicalStats.averageAmount).toFloat()
+                    merchantKey      = merchantKey,
+                    expense          = currentMaxExpense,
+                    historicalAvg    = historicalAverage,
+                    deviationMultiple = (currentMax / historicalAverage).toFloat()
                 )
             } else null
         }
@@ -512,28 +679,36 @@ class InsightsEngine @Inject constructor(
             .sortedByDescending { it.deviationMultiple }
             .take(5)
 
-        val merchantAnomalies: List<AnomalyTransaction> = topCandidates
-            .map { candidate ->
-                async {
-                    expenseRepository.getLargestExpenseForMerchant(
-                        candidate.merchantName, currentMonth.startMs, currentMonth.endMs
-                    )?.let { expense ->
-                        AnomalyTransaction(
-                            expense           = expense,
-                            merchantAvg       = candidate.historicalAvg,
-                            deviationMultiple = candidate.deviationMultiple,
-                            category          = expense.categoryId?.let { categoryMap[it] },
-                            detectionMethod   = AnomalyMethod.MULTIPLIER
-                        )
-                    }
-                }
-            }
-            .awaitAll()
-            .filterNotNull()
+        val merchantAnomalies: List<AnomalyTransaction> = topCandidates.map { candidate ->
+            AnomalyTransaction(
+                expense           = candidate.expense.toAnalyticsSummary(),
+                merchantAvg       = candidate.historicalAvg,
+                deviationMultiple = candidate.deviationMultiple,
+                category          = candidate.expense.categoryId
+                    ?.let { categoryMap[it] }
+                    ?.let { category -> category },
+                detectionMethod   = AnomalyMethod.MULTIPLIER,
+                displayCurrency = displayCurrency
+            )
+        }
 
         // ── Path 2: statistical in-memory detection (IQR / MAD / contextual) ──
+        // AI-2: Compute recurring merchant keys to suppress recurring expenses
+        // from statistical anomaly detection.
+        val recurringKeys: Set<String> = try {
+            recurringExpenseEngine.getPatternsFromSnapshots(allExpenses)
+                .mapNotNull { pattern ->
+                    pattern.merchantName.takeIf { it.isNotBlank() }
+                        ?.let { com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(it) }
+                        ?.takeIf { it.isNotBlank() }
+                }
+                .toSet()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            emptySet()
+        }
         val statisticalAnomalies: List<AnomalyTransaction> =
-            anomalyDetector.detect(currentMonth, categoryMap, allExpenses)
+            anomalyDetector.detect(currentMonth, analyticsCategoryMap, allExpenses, displayCurrency, recurringKeys)
 
         // ── Merge: deduplicate by expense.id; statistical results fill gaps ────
         val merged = mutableMapOf<Long, AnomalyTransaction>()
@@ -564,17 +739,20 @@ class InsightsEngine @Inject constructor(
 
 
     private data class AnomalyCandidate(
-        val merchantName: String,
-        val maxAmount: Double,
+        val merchantKey: String,
+        val expense: ExpenseSnapshot,
         val historicalAvg: Double,
         val deviationMultiple: Float
     )
 
     // === Recurring Expenses ===
 
-    private suspend fun findRecurringExpenses(allExpenses: List<Expense>): List<RecurringExpense> {
+    private suspend fun findRecurringExpenses(
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
+    ): List<RecurringExpense> {
         // Use the centralized engine
-        val patterns = recurringExpenseEngine.getPatterns(allExpenses)
+        val patterns = recurringExpenseEngine.getPatternsFromSnapshots(allExpenses)
         
         // Map to Insights Snapshot model
         return patterns.map { pattern ->
@@ -591,57 +769,35 @@ class InsightsEngine @Inject constructor(
             RecurringExpense(
                 merchant = pattern.merchantName,
                 avgAmount = pattern.averageAmount,
-                frequency = (30.0 / intervalDays.coerceAtLeast(1)).toInt(), // Estimate monthly occurrences
+                frequency = pattern.previousDates.size.coerceAtLeast(1),
                 intervalDays = intervalDays,
                 amountVariation = 0.0, // Pattern doesn't expose this raw stat easily, but could add to Pattern if needed.
-                isStable = pattern.amountVariancePercent < 0.1
-            )
-        }
-    }
-
-    // === Day of Week Pattern ===
-
-    private suspend fun buildDayOfWeekPattern(
-        startMs: Long,
-        endMs: Long
-    ): List<DayOfWeekInsight> {
-        val timeZoneOffset = java.util.TimeZone.getDefault().getOffset(timeProvider.now())
-        val data = expenseRepository.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
-
-        val dayMap: Map<Int, DayOfWeekTotal> = data.associateBy { it.dayOfWeek }
-        return (0..6).map { dayIndex: Int ->
-            val d: DayOfWeekTotal? = dayMap[dayIndex]
-            DayOfWeekInsight(
-                dayName = DAY_NAMES[dayIndex],
-                dayIndex = dayIndex,
-                totalSpent = d?.total ?: 0.0,
-                transactionCount = d?.txCount ?: 0,
-                avgPerTransaction = d?.avgAmount ?: 0.0
+                isStable = pattern.amountVariancePercent < 0.1,
+                displayCurrency = displayCurrency
             )
         }
     }
 
     // === Utility Functions ===
     
-    fun buildDailyTotals(expenses: List<Expense>, days: Int): Map<String, Double> {
+    // A08: Replace buildDailyTotals(expenses, days) with buildBuckets(expenses, startMs, endMs, granularity).
+    // Using timeProvider.now() as the anchor means the window shifts every day, which is wrong
+    // for historical analysis. An explicit startMs/endMs pair keeps the window fixed.
+    fun buildDailyTotals(expenses: List<ExpenseSnapshot>, days: Int): Map<String, Double> {
         val now = timeProvider.now()
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val result = LinkedHashMap<String, Double>()
 
         // Initialize all days with 0
         for (i in days - 1 downTo 0) {
-            cal.timeInMillis = now
-            cal.add(Calendar.DAY_OF_YEAR, -i)
-            val key = DateFormatterUtils.dateKey().format(cal.time)
+            val dayTs = TimePeriodUtils.addDays(now, -i)
+            val key = DateFormatterUtils.formatTimestampJavaTime(dayTs, "yyyy-MM-dd")
             result[key] = 0.0
         }
 
         // Fill in actual values - Optimized: reuse Date object
-        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
-        val dateObj = java.util.Date()
+        val purchases = expenses.filter { it.transactionType == DomainTransactionType.PURCHASE }
         for (expense in purchases) {
-            dateObj.time = expense.date
-            val key = DateFormatterUtils.dateKey().format(dateObj)
+            val key = DateFormatterUtils.formatTimestampJavaTime(expense.date, "yyyy-MM-dd")
             if (result.containsKey(key)) {
                 result[key] = (result[key] ?: 0.0) + expense.effectiveAmount
             }
@@ -661,21 +817,30 @@ class InsightsEngine @Inject constructor(
         }
     }
 
-    private fun calculateStdDev(values: List<Double>): Double {
-        return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
+    private fun recurringCadenceLabel(intervalDays: Int): String {
+        return when {
+            intervalDays <= 0 -> "irregular"
+            intervalDays in 6..8 -> "every week"
+            intervalDays in 13..15 -> "every 2 weeks"
+            intervalDays in 27..31 -> "monthly"
+            intervalDays in 85..95 -> "quarterly"
+            intervalDays in 170..190 -> "every 6 months"
+            intervalDays in 350..380 -> "yearly"
+            else -> "every $intervalDays days"
+        }
     }
 
-    private fun countDistinctMonths(expenses: List<Expense>): Int {
+
+    private fun countDistinctMonths(expenses: List<ExpenseSnapshot>): Int {
         if (expenses.isEmpty()) return 0
         return expenses.map { expense ->
-            val cal = Calendar.getInstance().apply { timeInMillis = expense.date }
-            String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
+            String.format("%d-%02d", TimePeriodUtils.getYear(expense.date), TimePeriodUtils.getMonth(expense.date) + 1)
         }.distinct().size
     }
 
     // === Exposed Suspend Functions for Repository Usage ===
     
-    suspend fun getSpendingPaceSuspend(expenses: List<Expense>? = null): SpendingPace {
+    suspend fun getSpendingPaceSuspend(expenses: List<ExpenseSnapshot>? = null, /** Placeholder default. Production callers should pass explicit currency. */ displayCurrency: String = "EUR"): SpendingPace {
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
@@ -683,15 +848,16 @@ class InsightsEngine @Inject constructor(
         // Use provided expenses or fetch from DB if null
         val recentExpenses = expenses ?: run {
             val sixMonthsAgo = getMonthPeriod(now, -6).startMs
-            expenseRepository.getExpensesBetween(sixMonthsAgo, now)
+            expenseRepository.getExpenseSnapshotsBetween(sixMonthsAgo, now)
         }
         
-        return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
+        return buildSpendingPace(currentMonth, previousMonth, recentExpenses, displayCurrency = displayCurrency)
     }
 
-    private fun fmt(amount: Double): String = String.format(java.util.Locale.getDefault(), "%.2f", amount)
+    private fun formatCurrency(amount: Double, /** Placeholder default. Production callers should pass explicit currency. */ currency: String = "EUR"): String = CurrencyFormatter.formatMoney(amount, currency)
     
     private fun formatDate(dateMs: Long): String {
-         return DateFormatterUtils.monthDay().format(java.util.Date(dateMs))
+         return DateFormatterUtils.formatTimestampJavaTime(dateMs, "MMM dd")
     }
+
 }

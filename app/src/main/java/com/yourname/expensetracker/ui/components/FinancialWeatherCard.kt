@@ -18,14 +18,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.UpcomingItem
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.text.SimpleDateFormat
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.util.*
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Repeat
@@ -33,21 +38,23 @@ import androidx.compose.material.icons.filled.EventNote
 
 @Composable
 fun FinancialWeatherCard(
-    state: WeatherState,
-    headline: String,
-    summary: String,
-    icon: String,
-    totalCommitted: Double,
-    totalLikely: Double,
-    discretionaryBudget: Double,
-    pastSpendingPoints: List<Double> = emptyList(),
-    projectedSpendingPoints: List<Double> = emptyList(),
-    upcomingItems: List<UpcomingItem> = emptyList(),
-    details: List<com.yourname.expensetracker.domain.model.NarrativeSection> = emptyList(),
-    totalRecurringCount: Int = 0,
-    onManageClick: () -> Unit = {},
-    onPlanClick: () -> Unit = {},
-    modifier: Modifier = Modifier
+ state: WeatherState,
+ headline: UiText,
+ summary: UiText,
+ icon: String,
+ totalCommitted: Double,
+ totalLikely: Double,
+ discretionaryBudget: Double,
+ pastSpendingPoints: List<Double> = emptyList(),
+ projectedSpendingPoints: List<Double> = emptyList(),
+ upcomingItems: List<UpcomingItem> = emptyList(),
+ referenceNowMillis: Long,
+ details: List<com.yourname.expensetracker.domain.model.NarrativeSection> = emptyList(),
+ totalRecurringCount: Int = 0,
+ onManageClick: () -> Unit = {},
+ onPlanClick: () -> Unit = {},
+ modifier: Modifier = Modifier,
+ currency: String
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -125,16 +132,16 @@ fun FinancialWeatherCard(
                 Spacer(modifier = Modifier.width(16.dp))
 
                 Column {
-                    Text(
-                        text = "FINANCIAL WEATHER",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = SemanticColors.TextSecondary,
-                        letterSpacing = 1.sp
-                    )
+                Text(
+                    text = stringResource(R.string.financial_weather_title),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 1.sp
+                )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = headline.uppercase(),
+                        text = headline.asString().uppercase(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Black,
                         color = textColor
@@ -145,7 +152,7 @@ fun FinancialWeatherCard(
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = summary,
+                text = summary.asString(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextPrimary,
                 lineHeight = 20.sp
@@ -158,9 +165,9 @@ fun FinancialWeatherCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                ForecastMetric("COMMITTED", totalCommitted, SemanticColors.TextSecondary)
-                ForecastMetric("LIKELY", totalLikely, SemanticColors.TextSecondary)
-                ForecastMetric("AVAILABLE", discretionaryBudget, textColor)
+            ForecastMetric("COMMITTED", totalCommitted, SemanticColors.TextSecondary, currency = currency)
+            ForecastMetric("LIKELY", totalLikely, SemanticColors.TextSecondary, currency = currency)
+            ForecastMetric("AVAILABLE", discretionaryBudget, textColor, currency = currency)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -212,13 +219,13 @@ fun FinancialWeatherCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "UPCOMING (NEXT 30 DAYS)",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = SemanticColors.TextSecondary,
-                        letterSpacing = 0.5.sp
-                    )
+                Text(
+                    text = stringResource(R.string.financial_upcoming),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 0.5.sp
+                )
                     
                     Row {
                         TextButton(
@@ -254,7 +261,7 @@ fun FinancialWeatherCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 upcomingItems.take(3).forEach { item ->
-                    UpcomingRow(item)
+                    UpcomingRow(item = item, referenceNowMillis = referenceNowMillis, currency = currency)
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             } else {
@@ -294,7 +301,7 @@ fun FinancialWeatherCard(
                             modifier = Modifier.height(24.dp)
                         ) {
                             Text(
-                                "MANAGE RECURRING", 
+                                stringResource(R.string.financial_weather_manage_recurring),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.PrimaryIndigo
                             )
@@ -307,7 +314,7 @@ fun FinancialWeatherCard(
 }
 
 @Composable
-fun ForecastMetric(label: String, amount: Double, color: Color) {
+fun ForecastMetric(label: String, amount: Double, color: Color, currency: String) {
     Column {
         Text(
             text = label,
@@ -317,7 +324,7 @@ fun ForecastMetric(label: String, amount: Double, color: Color) {
             letterSpacing = 0.5.sp
         )
         Text(
-            text = "€${String.format(Locale.US, "%.0f", amount)}",
+            text = CurrencyFormatter.formatMoney(amount, currency, showCents = false),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = color
@@ -326,13 +333,16 @@ fun ForecastMetric(label: String, amount: Double, color: Color) {
 }
 
 @Composable
-fun UpcomingRow(item: UpcomingItem) {
-    val daysUntil = ((item.date - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
+fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String) {
+    val daysUntil = TimePeriodUtils.daysBetween(
+        TimePeriodUtils.getStartOfDay(referenceNowMillis),
+        TimePeriodUtils.getStartOfDay(item.date)
+    )
     
     val dateLabel = when {
-        daysUntil <= 0 -> "Today"
-        daysUntil == 1 -> "Tomorrow"
-        else -> DateFormatterUtils.get("EEE, MMM d").format(Date(item.date))
+        daysUntil <= 0 -> stringResource(R.string.financial_weather_today)
+        daysUntil == 1 -> stringResource(R.string.financial_weather_tomorrow)
+        else -> DateFormatterUtils.formatTimestampJavaTime(item.date, "EEE, MMM d")
     }
 
     Row(
@@ -342,11 +352,15 @@ fun UpcomingRow(item: UpcomingItem) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             // Distinction Icon
-            val icon = if (item is UpcomingItem.Recurring) Icons.Default.Repeat else Icons.Default.EventNote
-            val badgeText = if (item is UpcomingItem.Recurring) {
-                item.pattern.frequency.name.lowercase().capitalize()
-            } else {
-                "Planned"
+            val icon = when (item) {
+                is UpcomingItem.Recurring -> Icons.Default.Repeat
+                is UpcomingItem.Occurrence -> Icons.Default.Repeat
+                is UpcomingItem.Planned -> Icons.Default.EventNote
+            }
+            val badgeText = when (item) {
+                is UpcomingItem.Recurring -> item.pattern.frequency.name.lowercase().capitalize()
+                is UpcomingItem.Occurrence -> stringResource(R.string.financial_weather_recurring)
+                is UpcomingItem.Planned -> stringResource(R.string.financial_weather_planned)
             }
 
             Box(
@@ -389,7 +403,7 @@ fun UpcomingRow(item: UpcomingItem) {
         }
         
         Text(
-            text = "€${String.format(Locale.US, "%.0f", item.amount)}",
+            text = CurrencyFormatter.formatMoney(item.amount, currency, showCents = false),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = SemanticColors.TextPrimary
@@ -411,7 +425,7 @@ fun DetailSection(section: com.yourname.expensetracker.domain.model.NarrativeSec
             }
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = section.title.uppercase(),
+                text = section.title.asString().uppercase(),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = SemanticColors.TextSecondary,
@@ -435,7 +449,7 @@ fun DetailSection(section: com.yourname.expensetracker.domain.model.NarrativeSec
                     modifier = Modifier.padding(end = 8.dp)
                 )
                 Text(
-                    text = item,
+                    text = item.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextPrimary,
                     lineHeight = 16.sp

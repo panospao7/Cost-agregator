@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.data.repository.SourceStatsRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.data.database.entity.SourceStats
@@ -22,10 +22,11 @@ class ConfidenceRouterEdgeCaseTest {
     private val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val fixedNow = 1_700_000_000_000L
 
     @Before
     fun setup() {
-        every { timeProvider.now() } returns System.currentTimeMillis()
+        every { timeProvider.now() } returns fixedNow
         router = ConfidenceRouter(sourceStatsRepository, userCorrectionRepository, classifier, timeProvider)
         coEvery { sourceStatsRepository.getByPackage(any()) } returns null
         coEvery { userCorrectionRepository.getMerchantTotalCorrections(any()) } returns 0
@@ -37,7 +38,7 @@ class ConfidenceRouterEdgeCaseTest {
     }
 
     private fun makeParsed(confidence: Float, merchant: String = "TestMerchant") =
-        ParsedTransaction(10.0, "EUR", merchant, TransactionType.PURCHASE, confidence)
+        ParsedTransaction(10.0, "EUR", merchant, ParsedTransactionType.PURCHASE, confidence)
 
     @Test
     fun `exact threshold boundary - auto accept at exactly 0_85`() = runBlocking {
@@ -79,7 +80,8 @@ class ConfidenceRouterEdgeCaseTest {
             SourceStats(
                 packageName = "com.test",
                 totalNotifications = 0,
-                acceptedAsExpense = 0
+                acceptedAsExpense = 0,
+                lastSeen = fixedNow
             )
         
         val result = router.route(makeParsed(0.90f), "com.test")

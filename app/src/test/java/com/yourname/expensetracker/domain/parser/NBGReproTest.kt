@@ -22,7 +22,7 @@ class NBGReproTest {
         }
         // Real MerchantCleaner to see how it handles the over-matched merchant
         merchantCleaner = MerchantCleaner()
-        parser = GreekBankParser(currencyNormalizer, merchantCleaner)
+        parser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR")
     }
 
     @Test

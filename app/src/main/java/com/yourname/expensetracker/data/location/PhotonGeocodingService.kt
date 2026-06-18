@@ -1,15 +1,24 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
+import com.yourname.expensetracker.data.location.internal.executeCancellable
+import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.location.GeocodingBatchResult
+import com.yourname.expensetracker.domain.location.GeocodingError
+import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.delay
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,14 +27,15 @@ import javax.inject.Singleton
  * Uses OSM data with excellent fuzzy matching. Returns GeoJSON FeatureCollection.
  *
  * Used as the first tier in the [CompositeGeocodingService] cascade.
+ *
+ * **Internal use only.** Do not inject this class directly — use [GeocodingService]
+ * which routes through [CompositeGeocodingService] with privacy gate enforcement.
  */
 @Singleton
-class PhotonGeocodingService @Inject constructor() : GeocodingService {
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+class PhotonGeocodingService @Inject constructor(
+    @LocationHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
+) : GeocodingService {
 
     override suspend fun search(
         merchantName: String,
@@ -33,7 +43,17 @@ class PhotonGeocodingService @Inject constructor() : GeocodingService {
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingResult? = searchMultiple(merchantName, biasLat, biasLon, limit = 1).firstOrNull()
+    ): GeocodingLookupResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Photon geocoding blocked by privacy gate: ${gateCheck.reason()}")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return when (val result = searchMultiple(merchantName, biasLat, biasLon, limit = 1)) {
+            is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
+            is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+        }
+    }
 
     override suspend fun searchMultiple(
         query: String,
@@ -41,9 +61,14 @@ class PhotonGeocodingService @Inject constructor() : GeocodingService {
         biasLon: Double?,
         limit: Int,
         useGoogle: Boolean
-    ): List<GeocodingResult> {
+    ): GeocodingBatchResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Photon geocoding blocked by privacy gate: ${gateCheck.reason()}")
+            return GeocodingBatchResult.Failure(GeocodingError.Disabled)
+        }
         val url = buildUrl(query, biasLat, biasLon, limit)
-        Log.d(TAG, "==> Photon request: $url")
+        Log.d(TAG, "==> Photon request ${buildSafeLogRoute(query, biasLat, biasLon, limit)}")
 
         val request = Request.Builder()
             .url(url)
@@ -52,22 +77,58 @@ class PhotonGeocodingService @Inject constructor() : GeocodingService {
 
         return try {
             // B16 fix: use response.use {} to ensure body is closed even on exceptions
-            client.newCall(request).execute().use { response ->
+            executeWithRetry(request).use { response ->
                 Log.d(TAG, "    HTTP ${response.code}")
                 if (!response.isSuccessful) {
                     Log.w(TAG, "    Photon HTTP ${response.code}")
-                    return emptyList()
+                    return GeocodingBatchResult.Failure(
+                        if (response.code == 429) GeocodingError.RateLimited else GeocodingError.HttpError(response.code)
+                    )
                 }
-                val body = response.body?.string() ?: return emptyList()
-                parseResults(body).also { Log.d(TAG, "    <== ${it.size} results") }
+                val body = response.body?.string() ?: return GeocodingBatchResult.Failure(GeocodingError.ParseError)
+                val parsed = parseResults(body)
+                Log.d(TAG, "    <== ${parsed.size} results")
+                if (parsed.isEmpty()) GeocodingBatchResult.Failure(GeocodingError.NoResults)
+                else GeocodingBatchResult.Success(parsed)
             }
         } catch (e: IOException) {
             Log.e(TAG, "    Photon network error: ${e.message}")
-            emptyList()
+            GeocodingBatchResult.Failure(GeocodingError.NetworkError)
         } catch (e: JSONException) {
             Log.e(TAG, "    Photon parse error: ${e.message}")
-            emptyList()
+            GeocodingBatchResult.Failure(GeocodingError.ParseError)
         }
+    }
+
+    private suspend fun executeWithRetry(
+        request: Request,
+        maxAttempts: Int = 3,
+        initialDelayMs: Long = 300
+    ): okhttp3.Response {
+        var currentDelay = initialDelayMs
+        var lastError: IOException? = null
+        repeat(maxAttempts) { attempt ->
+            try {
+                val response = client.executeCancellable(request)
+                if (response.code >= 500 || response.code == 429) {
+                    if (attempt < maxAttempts - 1) {
+                        response.close()
+                        delay(currentDelay)
+                        currentDelay = (currentDelay * 2).coerceAtMost(2000)
+                        return@repeat
+                    }
+                    return response
+                }
+                return response
+            } catch (e: IOException) {
+                lastError = e
+                if (attempt < maxAttempts - 1) {
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(2000)
+                }
+            }
+        }
+        throw lastError ?: IOException("Photon request failed after retries")
     }
 
     private fun buildUrl(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
@@ -80,6 +141,15 @@ class PhotonGeocodingService @Inject constructor() : GeocodingService {
             sb.append("&lat=$biasLat&lon=$biasLon")
         }
         return sb.toString()
+    }
+
+    private fun buildSafeLogRoute(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
+        val bias = if (biasLat != null && biasLon != null) {
+            "lat=<redacted>&lon=<redacted>&coordsHash=${"$biasLat,$biasLon".anonymizeForLog()}"
+        } else {
+            "lat=<none>&lon=<none>"
+        }
+        return "/api/?q=<redacted:${query.length}>&limit=$limit&lang=en&$bias"
     }
 
     private fun parseResults(body: String): List<GeocodingResult> {

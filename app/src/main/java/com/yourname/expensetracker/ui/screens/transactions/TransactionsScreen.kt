@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.shape.CircleShape
@@ -35,30 +36,41 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
-import com.yourname.expensetracker.data.database.model.formattedAmount
-import com.yourname.expensetracker.data.database.model.formattedDate
+import com.yourname.expensetracker.data.database.model.formattedTime
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.ui.components.asString
+import androidx.compose.ui.platform.LocalContext
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
+import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
 import java.util.*
 
 private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expensetracker.data.repository.OwnershipFilter {
@@ -72,6 +84,30 @@ private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expenset
 }
 
 // ============================================================
+// ROUTE — owns Hilt injection; delegates to TransactionsScreen
+// S5-025: Separated for testability; TransactionsScreen can be tested with fake ViewModel
+// ============================================================
+
+@Composable
+fun TransactionsRoute(
+    initialFilter: TransactionFilter? = null,
+    highlightedExpenseId: Long? = null,
+    onNavigateToAnalytics: () -> Unit = {},
+    onAddExpense: () -> Unit = {},
+    onOpenVisualSplit: (Expense) -> Unit = {},
+    viewModel: TransactionsViewModel = hiltViewModel()
+) {
+    TransactionsScreen(
+        viewModel = viewModel,
+        initialFilter = initialFilter,
+        highlightedExpenseId = highlightedExpenseId,
+        onNavigateToAnalytics = onNavigateToAnalytics,
+        onAddExpense = onAddExpense,
+        onOpenVisualSplit = onOpenVisualSplit
+    )
+}
+
+// ============================================================
 // MAIN SCREEN
 // ============================================================
 
@@ -80,7 +116,10 @@ private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expenset
 fun TransactionsScreen(
     viewModel: TransactionsViewModel = hiltViewModel(),
     initialFilter: TransactionFilter? = null,
-    onNavigateToAnalytics: () -> Unit = {}
+    highlightedExpenseId: Long? = null,
+    onNavigateToAnalytics: () -> Unit = {},
+    onAddExpense: () -> Unit = {},
+    onOpenVisualSplit: (Expense) -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val groupedTransactions by viewModel.groupedTransactions.collectAsState()
@@ -89,19 +128,25 @@ fun TransactionsScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val activeFilter by viewModel.filter.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
+    val hasReachedEnd by viewModel.hasReachedEnd.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
+ val homeCurrency by viewModel.homeCurrency.collectAsState()
     val ownershipFilter by viewModel.ownershipFilter.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
+    val debugActionsEnabled = BuildConfig.DEBUG
     
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     
-    // Initial filter application
+    // S5-002: Apply or clear route-provided filter on every navigation
     LaunchedEffect(initialFilter) {
         if (initialFilter != null) {
             viewModel.applyFilter(initialFilter)
+        } else {
+            viewModel.clearRouteFilter()
         }
     }
 
@@ -113,6 +158,7 @@ fun TransactionsScreen(
     var expenseToChangeType by remember { mutableStateOf<Expense?>(null) }
     var expenseToEditOwnership by remember { mutableStateOf<Expense?>(null) }
     var expenseToDebug by remember { mutableStateOf<Expense?>(null) }
+    var expenseToViewProvenance by remember { mutableStateOf<Expense?>(null) }
     var expenseToEditLocation by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -120,16 +166,18 @@ fun TransactionsScreen(
     
     // Pull-to-refresh state
     val pullToRefreshState = rememberPullToRefreshState()
-    var isRefreshing by remember { mutableStateOf(false) }
     
     // Error handling
     val snackbarHostState = remember { SnackbarHostState() }
     
+    val context = LocalContext.current
+    val mutatingExpenseIds by viewModel.mutatingExpenseIds.collectAsState()
+
     // Collect error messages
     LaunchedEffect(Unit) {
         viewModel.error.collect { message ->
             snackbarHostState.showSnackbar(
-                message = message,
+                message = message.asString(context),
                 duration = SnackbarDuration.Short
             )
         }
@@ -138,8 +186,10 @@ fun TransactionsScreen(
     // Collect success messages
     LaunchedEffect(Unit) {
         viewModel.successMessage.collect { message ->
+            // S5-012: Close pending dialogs on success
+            expenseToDelete = null
             snackbarHostState.showSnackbar(
-                message = message,
+                message = message.asString(context),
                 duration = SnackbarDuration.Short,
                 actionLabel = "OK"
             )
@@ -154,7 +204,8 @@ fun TransactionsScreen(
             selectedTab == TransactionTab.ALL && 
             lastVisibleItem >= totalItems - 5 && 
             totalItems > 0 &&
-            !isLoadingMore
+            !isLoadingMore &&
+            !hasReachedEnd
         }
     }
     
@@ -165,15 +216,8 @@ fun TransactionsScreen(
         }
     }
     
-    // Handle refresh
-    LaunchedEffect(isRefreshing) {
-        if (isRefreshing) {
-            viewModel.refresh()
-            isRefreshing = false
-        }
-    }
-
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Column {
@@ -192,7 +236,7 @@ fun TransactionsScreen(
                                     value = searchQuery,
                                     onValueChange = { viewModel.search(it) },
                                     modifier = Modifier.fillMaxWidth(),
-                                    placeholder = { Text("Search transactions...") },
+                                    placeholder = { Text(stringResource(R.string.transactions_search_placeholder)) },
                                     leadingIcon = { 
                                         Icon(Icons.Rounded.Search, contentDescription = null) 
                                     },
@@ -201,7 +245,7 @@ fun TransactionsScreen(
                                             showSearch = false
                                             viewModel.search("")
                                         }) {
-                                            Icon(Icons.Rounded.Close, contentDescription = "Close search")
+                                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.transactions_close_search_cd))
                                         }
                                     },
                                     singleLine = true,
@@ -217,18 +261,29 @@ fun TransactionsScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = onNavigateToAnalytics) {
-                            Icon(Icons.Rounded.BarChart, contentDescription = "Advanced Analytics")
+                        val navigateAnalyticsCd = stringResource(R.string.transactions_navigate_analytics_cd)
+                        IconButton(
+                            onClick = onNavigateToAnalytics,
+                            modifier = Modifier.semantics { contentDescription = navigateAnalyticsCd }
+                        ) {
+                            Icon(Icons.Rounded.BarChart, contentDescription = null)
                         }
                         Box {
-                            IconButton(onClick = { showSortMenu = true }) {
-                                Icon(Icons.Rounded.Sort, contentDescription = "Sort")
+                            val openSortMenuCd = stringResource(R.string.transactions_open_sort_menu_cd, sortOrder.displayName)
+                            IconButton(
+                                onClick = { showSortMenu = true },
+                                modifier = Modifier.semantics { contentDescription = openSortMenuCd }
+                            ) {
+                                Icon(Icons.Rounded.Sort, contentDescription = null)
                             }
                             DropdownMenu(
                                 expanded = showSortMenu,
                                 onDismissRequest = { showSortMenu = false }
                             ) {
+                                val sortSelected = stringResource(R.string.transactions_sort_selected)
+                                val sortNotSelected = stringResource(R.string.transactions_sort_not_selected)
                                 com.yourname.expensetracker.data.repository.SortOrder.values().forEach { order ->
+                                    val sortByCd = stringResource(R.string.transactions_sort_by_cd, order.displayName, if (sortOrder == order) sortSelected else sortNotSelected)
                                     DropdownMenuItem(
                                         text = { 
                                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -237,7 +292,7 @@ fun TransactionsScreen(
                                                     Spacer(modifier = Modifier.width(8.dp))
                                                     Icon(
                                                         Icons.Rounded.Check, 
-                                                        contentDescription = "Selected",
+                                                        contentDescription = null,
                                                         modifier = Modifier.size(16.dp),
                                                         tint = MaterialTheme.colorScheme.primary
                                                     )
@@ -247,23 +302,57 @@ fun TransactionsScreen(
                                         onClick = {
                                             viewModel.setSortOrder(order)
                                             showSortMenu = false
+                                        },
+                                        modifier = Modifier.semantics { 
+                                            contentDescription = sortByCd
                                         }
                                     )
                                 }
                             }
                         }
-                        IconButton(onClick = { showFilterSheet = true }) {
-                            Icon(Icons.Rounded.FilterList, contentDescription = "Filter")
+                        val openFiltersCd = stringResource(R.string.transactions_open_filters_cd)
+                        IconButton(
+                            onClick = { showFilterSheet = true },
+                            modifier = Modifier.semantics { contentDescription = openFiltersCd }
+                        ) {
+                            Icon(Icons.Rounded.FilterList, contentDescription = null)
                         }
                         if (!showSearch) {
-                            IconButton(onClick = { showSearch = true }) {
-                                Icon(Icons.Rounded.Search, contentDescription = "Search")
+                            val openSearchCd = stringResource(R.string.transactions_open_search_cd)
+                            IconButton(
+                                onClick = { showSearch = true },
+                                modifier = Modifier.semantics { contentDescription = openSearchCd }
+                            ) {
+                                Icon(Icons.Rounded.Search, contentDescription = null)
                             }
                         }
-                    }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = SemanticColors.BaseNavy,
+                        titleContentColor = SemanticColors.TextPrimary
+                    )
                 )
                 
                 // Tab row with counts - scrollable for proper tab widths
+                val tabSelectedStr = stringResource(R.string.transactions_tab_selected)
+                val tabNotSelectedStr = stringResource(R.string.transactions_tab_not_selected)
+                // S5-003: Show active date-range filter chip above tabs
+                if (activeFilter?.dateRange != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.Start
+                    ) {
+                        androidx.compose.material3.FilterChip(
+                            selected = true,
+                            onClick = { viewModel.clearRouteFilter() },
+                            label = { Text(stringResource(R.string.transactions_filter_date_range), style = MaterialTheme.typography.labelSmall) },
+                            trailingIcon = { Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Clear date filter", modifier = Modifier.size(14.dp)) }
+                        )
+                    }
+                }
+
                 ScrollableTabRow(
                     selectedTabIndex = selectedTab.ordinal,
                     edgePadding = 0.dp,
@@ -282,6 +371,7 @@ fun TransactionsScreen(
                 ) {
                     TransactionTab.values().forEach { tab ->
                         val count = tabCounts[tab] ?: 0
+                        val tabCd = stringResource(R.string.transactions_tab_cd_format, tab.label, if (selectedTab == tab) tabSelectedStr else tabNotSelectedStr, count)
                         Tab(
                             selected = selectedTab == tab,
                             onClick = { 
@@ -310,6 +400,9 @@ fun TransactionsScreen(
                                         }
                                     }
                                 }
+                            },
+                            modifier = Modifier.semantics { 
+                                contentDescription = tabCd
                             }
                         )
                     }
@@ -321,6 +414,13 @@ fun TransactionsScreen(
                         color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        val filteredByPrefix = stringResource(R.string.transactions_filtered_by_prefix)
+                        val ownershipMine = stringResource(R.string.transactions_ownership_mine)
+                        val ownershipNotMine = stringResource(R.string.transactions_ownership_not_mine)
+                        val ownershipShared = stringResource(R.string.transactions_ownership_shared)
+                        val ownershipTransfers = stringResource(R.string.transactions_ownership_transfers)
+                        val ownershipAll = stringResource(R.string.transactions_ownership_all)
+                        val clearFiltersCd = stringResource(R.string.transactions_clear_all_filters_cd)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -328,29 +428,29 @@ fun TransactionsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            val filterText = buildString {
-                                append("Filtered by: ")
-                                val parts = mutableListOf<String>()
-                                activeFilter?.merchantName?.let { parts.add("Merchant: $it") }
-                                activeFilter?.categoryId?.let { id -> 
-                                    categories.find { it.id == id }?.name?.let { parts.add("Category: $it") }
-                                }
-                                activeFilter?.transactionType?.let { parts.add("Type: ${it.name}") }
-                                activeFilter?.dateRange?.let { parts.add("Date range") }
-                                activeFilter?.ownership?.let {
-                                    val label = when (it) {
-                                        com.yourname.expensetracker.data.repository.OwnershipFilter.MINE -> "Mine"
-                                        com.yourname.expensetracker.data.repository.OwnershipFilter.NOT_MINE -> "Not mine"
-                                        com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED -> "Shared"
-                                        com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER -> "Transfers"
-                                        com.yourname.expensetracker.data.repository.OwnershipFilter.ALL -> "All"
-                                    }
-                                    parts.add("Ownership: $label")
-                                }
-                                activeFilter?.minAmount?.let { parts.add("Min: %.2f".format(it)) }
-                                activeFilter?.maxAmount?.let { parts.add("Max: %.2f".format(it)) }
-                                append(parts.joinToString(", "))
+                        val filterText = buildString {
+                            append(filteredByPrefix)
+                            val parts = mutableListOf<String>()
+                            activeFilter?.merchantName?.let { parts.add(stringResource(R.string.transactions_filter_merchant_format, it)) }
+                            activeFilter?.categoryId?.let { id -> 
+                                categories.find { it.id == id }?.name?.let { parts.add(stringResource(R.string.transactions_filter_category_format, it)) }
                             }
+                            activeFilter?.transactionType?.let { parts.add(stringResource(R.string.transactions_filter_type_format, it.name)) }
+                            activeFilter?.dateRange?.let { parts.add(stringResource(R.string.transactions_filter_date_range)) }
+                            activeFilter?.ownership?.let {
+                                val label = when (it) {
+                                    com.yourname.expensetracker.data.repository.OwnershipFilter.MINE -> ownershipMine
+                                    com.yourname.expensetracker.data.repository.OwnershipFilter.NOT_MINE -> ownershipNotMine
+                                    com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED -> ownershipShared
+                                    com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER -> ownershipTransfers
+                                    com.yourname.expensetracker.data.repository.OwnershipFilter.ALL -> ownershipAll
+                                }
+                                parts.add(stringResource(R.string.transactions_filter_ownership_format, label))
+                            }
+                            activeFilter?.minAmount?.let { parts.add(stringResource(R.string.transactions_filter_min_format, it)) }
+                            activeFilter?.maxAmount?.let { parts.add(stringResource(R.string.transactions_filter_max_format, it)) }
+                            append(parts.joinToString(", "))
+                        }
                             
                             Text(
                                 text = filterText,
@@ -361,13 +461,15 @@ fun TransactionsScreen(
                             
                             IconButton(
                                 onClick = { viewModel.clearFilter() },
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .semantics { contentDescription = clearFiltersCd }
                             ) {
                                 Icon(
                                     Icons.Rounded.Close,
-                                    contentDescription = "Clear filter",
+                                    contentDescription = null,
                                     tint = SemanticColors.PrimaryIndigo,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -382,27 +484,23 @@ fun TransactionsScreen(
             isRefreshing = isRefreshing,
             onRefresh = { 
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                isRefreshing = true 
+                viewModel.refresh()
             },
             modifier = Modifier.padding(padding)
         ) {
             when {
                 isLoading && transactions.isEmpty() -> {
-                    // Initial loading state
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            color = SemanticColors.PrimaryIndigo
-                        )
-                    }
+                    // Initial loading state with skeleton
+                    ListSkeleton(
+                        itemCount = 8,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 }
                 transactions.isEmpty() -> {
                     // Empty state with illustration
                     EmptyTransactionsState(
                         hasSearch = searchQuery.isNotBlank(),
-                        onAddClick = { /* Navigate to add expense */ }
+                        onAddClick = onAddExpense
                     )
                 }
                 else -> {
@@ -410,8 +508,8 @@ fun TransactionsScreen(
                     LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
+                            start = 20.dp,
+                            end = 20.dp,
                             top = 8.dp,
                             bottom = 80.dp
                         ),
@@ -421,10 +519,31 @@ fun TransactionsScreen(
                         groupedTransactions.forEach { (dateString, items) ->
                             // Date header
                             stickyHeader {
+                                val currencies = items.map { it.expense.currency.uppercase() }.toSet()
+                                val groupCurrency = currencies.singleOrNull()
+                                val totalAmount: Double?
+                                val displayCurrency: String?
+                                if (groupCurrency != null) {
+                                    // S5-007: Same-currency group — use group currency
+                                    totalAmount = items.sumOf { it.expense.signedEffectiveAmount() }
+                                    displayCurrency = groupCurrency
+                                } else {
+                                    // S5-024R-A/B: Mixed — use normalizedEffectiveAmount with baseCurrency
+                                    val baseCurrencies = items.map { it.expense.baseCurrency.uppercase() }.toSet()
+                                    val commonBase = baseCurrencies.singleOrNull()
+                                    if (commonBase != null && items.all { it.expense.baseAmount > 0 }) {
+                                        totalAmount = items.sumOf { it.expense.normalizedEffectiveAmount }
+                                        displayCurrency = commonBase // use stored baseCurrency, not current homeCurrency
+                                    } else {
+                                        totalAmount = null
+                                        displayCurrency = null
+                                    }
+                                }
                                 DateHeader(
                                     date = dateString,
-                                    totalAmount = items.sumOf { it.expense.effectiveAmount },
-                                    itemCount = items.size
+                                    totalAmount = totalAmount,
+                                    itemCount = items.size,
+                                    homeCurrency = displayCurrency
                                 )
                             }
                             
@@ -436,14 +555,20 @@ fun TransactionsScreen(
                             ) { item ->
                                 TransactionItem(
                                     transaction = item,
+                                    isHighlighted = highlightedExpenseId == item.expense.id,
                                     onDelete = { expenseToDelete = item.expense },
                                     onEditCategory = { expenseToCategorize = item.expense },
                                     onMarkRecurring = { expenseToRecurring = item.expense },
                                     onRename = { expenseToRename = item.expense },
                                     onChangeType = { expenseToChangeType = item.expense },
                                     onEditOwnership = { expenseToEditOwnership = item.expense },
-                                    onDebug = { expenseToDebug = item.expense },
-                                    onEditLocation = { expenseToEditLocation = item.expense }
+                                    onDebug = {
+                                        if (debugActionsEnabled) {
+                                            expenseToDebug = item.expense
+                                        }
+                                    },
+                                    onEditLocation = { expenseToEditLocation = item.expense },
+                                    onViewProvenance = { expenseToViewProvenance = item.expense }
                                 )
                             }
                         }
@@ -464,6 +589,21 @@ fun TransactionsScreen(
                                     )
                                 }
                             }
+                        } else if (selectedTab == TransactionTab.ALL && hasReachedEnd && transactions.isNotEmpty()) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 20.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "You've reached the end",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = SemanticColors.TextMuted
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -480,8 +620,9 @@ fun TransactionsScreen(
                 expense = expenseToDelete!!,
                 onDismiss = { expenseToDelete = null },
                 onConfirm = {
+                    // S5-012: Don't close immediately - close on success event
                     viewModel.deleteExpense(expenseToDelete!!)
-                    expenseToDelete = null
+                    // Dialog closes via LaunchedEffect on successMessage below
                 }
             )
         }
@@ -492,13 +633,25 @@ fun TransactionsScreen(
                 onDismiss = { expenseToRecurring = null },
                 onFrequencySelected = { frequency ->
                     expenseToRecurring?.let { viewModel.markAsRecurring(it, frequency) }
-                    expenseToRecurring = null
+                    // S5-036: Do NOT close immediately — wait for recurringSuccess event
                 }
             )
+            // S5-036: Close only after success
+            LaunchedEffect(Unit) {
+                viewModel.recurringSuccess.collect { expenseId ->
+                    if (expenseId == expenseToRecurring?.id) expenseToRecurring = null
+                }
+            }
         }
 
         // Category picker dialog
         if (expenseToCategorize != null) {
+            // S5-014/S5-026: Close only after success event matching this expense
+            LaunchedEffect(Unit) {
+                viewModel.categoryUpdateSuccess.collect { expenseId ->
+                    if (expenseId == expenseToCategorize?.id) expenseToCategorize = null
+                }
+            }
             CategoryPickerDialog(
                 categories = categories,
                 currentCategoryId = expenseToCategorize?.categoryId,
@@ -506,7 +659,6 @@ fun TransactionsScreen(
                 onDismiss = { expenseToCategorize = null },
                 onCategorySelected = { categoryId, applyToAll ->
                     expenseToCategorize?.let { viewModel.updateCategory(it, categoryId, applyToAll) }
-                    expenseToCategorize = null
                 }
             )
         }
@@ -517,16 +669,16 @@ fun TransactionsScreen(
                 categories = categories,
                 currentFilter = activeFilter,
                 currentOwnershipFilter = ownershipFilter,
+                referenceNowMs = viewModel.referenceNow(),
                 onDismiss = { showFilterSheet = false },
                 onApply = { filter, ownership ->
-                    if (filter != null) {
+                    if (filter != null || ownership != OwnershipFilter.ALL) {
                         viewModel.applyFilter(
-                            filter.copy(ownership = ownership.toRepositoryOwnershipFilter())
+                            (filter ?: TransactionFilter()).copy(ownership = ownership.toRepositoryOwnershipFilter())
                         )
                     } else {
                         viewModel.clearFilter()
                     }
-                    viewModel.setOwnershipFilter(ownership)
                     showFilterSheet = false
                 },
                 onClear = {
@@ -538,45 +690,216 @@ fun TransactionsScreen(
 
         // Rename merchant dialog
         if (expenseToRename != null) {
+            // S5-014R: Close only after renameSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.renameSuccess.collect { expenseId ->
+                    if (expenseId == expenseToRename?.id) expenseToRename = null
+                }
+            }
             RenameMerchantDialog(
                 currentName = expenseToRename?.merchant ?: "",
                 onDismiss = { expenseToRename = null },
                 onConfirm = { newName, applyToAll ->
                     expenseToRename?.let { viewModel.updateMerchant(it, newName, applyToAll) }
-                    expenseToRename = null
                 }
             )
         }
 
         // Change type dialog
         if (expenseToChangeType != null) {
+            // S5-014R: Close only after typeChangeSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.typeChangeSuccess.collect { expenseId ->
+                    if (expenseId == expenseToChangeType?.id) expenseToChangeType = null
+                }
+            }
             ChangeTypeDialog(
                 currentType = expenseToChangeType?.transactionType ?: TransactionType.PURCHASE,
+                currentTransferDirection = expenseToChangeType?.transferDirection,
+                currentTransferAccountName = expenseToChangeType?.transferAccountName,
                 onDismiss = { expenseToChangeType = null },
-                onConfirm = { newType ->
-                    expenseToChangeType?.let { viewModel.updateExpenseType(it, newType) }
-                    expenseToChangeType = null
+                onConfirm = { newType, transferDirection, transferAccountName ->
+                    expenseToChangeType?.let {
+                        viewModel.updateExpenseType(
+                            expense = it,
+                            newType = newType,
+                            transferDirection = transferDirection,
+                            transferAccountName = transferAccountName
+                        )
+                    }
                 }
             )
         }
 
         // Edit ownership/not-mine/shared dialog
         if (expenseToEditOwnership != null) {
+            // S5-014R: Close only after ownershipSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.ownershipSuccess.collect { expenseId ->
+                    if (expenseId == expenseToEditOwnership?.id) expenseToEditOwnership = null
+                }
+            }
             EditOwnershipDialog(
                 expense = expenseToEditOwnership!!,
                 onDismiss = { expenseToEditOwnership = null },
-                onSave = { isNotMine, ownerName, isShared, sharedWith, sharePercent, shareAmount ->
-                    expenseToEditOwnership?.let { expense ->
-                        viewModel.updateNotMineDetails(expense, isNotMine, ownerName)
-                        viewModel.updateSharedExpenseDetails(expense, isShared, sharedWith, sharePercent, shareAmount)
-                    }
+                onOpenVisualSplit = { expense ->
                     expenseToEditOwnership = null
-                }
+                    onOpenVisualSplit(expense)
+                },
+        onSave = { isNotMine, ownerName, isShared, sharedWith, sharePercent, shareAmount ->
+            expenseToEditOwnership?.let { expense ->
+                val finalIsShared = isShared && !isNotMine
+                viewModel.updateOwnership(
+                    expense = expense,
+                    isNotMine = isNotMine,
+                    ownerName = ownerName,
+                    isSharedExpense = finalIsShared,
+                    sharedWithName = sharedWith,
+                    mySharePercentage = sharePercent,
+                    myShareAmount = shareAmount
+                )
+            }
+        }
             )
         }
         
+        // Provenance Info Overlay
+        if (expenseToViewProvenance != null) {
+            val provenanceLinks by viewModel.provenanceLinks.collectAsState()
+            val provenanceSummary by viewModel.provenanceSummary.collectAsState()
+            val isProvenanceLoading by viewModel.isProvenanceLoading.collectAsState()
+
+            LaunchedEffect(expenseToViewProvenance) {
+                viewModel.loadProvenanceForExpense(expenseToViewProvenance!!.id)
+            }
+
+            Dialog(
+                onDismissRequest = {
+                    viewModel.clearProvenance()
+                    expenseToViewProvenance = null
+                },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true
+                )
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth(0.92f)
+                        .fillMaxHeight(0.75f),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp)
+                    ) {
+                        // Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Source Provenance",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            IconButton(onClick = {
+                                viewModel.clearProvenance()
+                                expenseToViewProvenance = null
+                            }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Close")
+                            }
+                        }
+
+                        Text(
+                            text = expenseToViewProvenance!!.merchant,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.TextSecondary,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+
+                        HorizontalDivider()
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (isProvenanceLoading) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Summary card
+                                item {
+                                    if (provenanceSummary != null) {
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.08f)
+                                            ),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                Text(
+                                                    text = "Summary",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = provenanceSummary!!,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Links
+                                val links = provenanceLinks
+                                if (links != null) {
+                                    if (links.isEmpty()) {
+                                        item {
+                                            Text(
+                                                text = "No provenance data available for this expense.",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = SemanticColors.TextSecondary,
+                                                modifier = Modifier.padding(vertical = 8.dp)
+                                            )
+                                        }
+                                    } else {
+                                        item {
+                                            Text(
+                                                text = "${links.size} source link(s):",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(vertical = 4.dp)
+                                            )
+                                        }
+
+                                        items(links) { link ->
+                                            ProvenanceLinkCard(link)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Debug Screen Overlay
-        if (expenseToDebug != null) {
+        if (debugActionsEnabled && expenseToDebug != null) {
             Dialog(
                 onDismissRequest = { expenseToDebug = null },
                 properties = androidx.compose.ui.window.DialogProperties(
@@ -601,16 +924,22 @@ fun TransactionsScreen(
 
         // Edit location bottom sheet
         if (expenseToEditLocation != null) {
+            // S5-035: Close only after locationSaveSuccess event
+            LaunchedEffect(Unit) {
+                viewModel.locationSaveSuccess.collect { expenseId ->
+                    if (expenseId == expenseToEditLocation?.id) expenseToEditLocation = null
+                }
+            }
             EditLocationDialog(
                 expense = expenseToEditLocation!!,
                 onDismiss = { expenseToEditLocation = null },
                 onSave = { lat, lon, address, osmId ->
                     expenseToEditLocation?.let { viewModel.updateLocation(it, lat, lon, address, osmId) }
-                    expenseToEditLocation = null
+                    // Do NOT close immediately — wait for locationSaveSuccess
                 },
                 onClear = {
                     expenseToEditLocation?.let { viewModel.clearLocation(it) }
-                    expenseToEditLocation = null
+                    expenseToEditLocation = null // clear is immediate (no async)
                 },
                 geocodingService = viewModel.geocodingService
             )
@@ -627,8 +956,15 @@ private fun EmptyTransactionsState(
     hasSearch: Boolean,
     onAddClick: () -> Unit
 ) {
+    val emptySearchCd = stringResource(R.string.transactions_empty_search_cd)
+    val emptyNoTransactionsCd = stringResource(R.string.transactions_empty_no_transactions_cd)
+    val addFirstExpenseCd = stringResource(R.string.transactions_add_first_expense_cd)
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics { 
+                contentDescription = if (hasSearch) emptySearchCd else emptyNoTransactionsCd
+            },
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -657,14 +993,14 @@ private fun EmptyTransactionsState(
             )
             
             Text(
-                text = if (hasSearch) "No results found" else stringResource(R.string.no_transactions_title),
+                text = if (hasSearch) stringResource(R.string.transactions_no_search_results_title) else stringResource(R.string.no_transactions_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = SemanticColors.TextPrimary
             )
             
             Text(
                 text = if (hasSearch) {
-                    "Try a different search term"
+                    stringResource(R.string.transactions_no_search_results_subtitle)
                 } else {
                     stringResource(R.string.no_transactions_subtitle)
                 },
@@ -679,11 +1015,12 @@ private fun EmptyTransactionsState(
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f),
                         contentColor = SemanticColors.PrimaryIndigo
-                    )
+                    ),
+                    modifier = Modifier.semantics { contentDescription = addFirstExpenseCd }
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Add Expense")
+                    Text(stringResource(R.string.transactions_add_expense_button))
                 }
             }
         }
@@ -697,8 +1034,10 @@ private fun EmptyTransactionsState(
 @Composable
 private fun DateHeader(
     date: String,
-    totalAmount: Double,
-    itemCount: Int
+    totalAmount: Double?,
+    itemCount: Int,
+    /** Placeholder default. Production callers should pass explicit currency. */
+    homeCurrency: String? = null
 ) {
     Box(
         modifier = Modifier
@@ -729,7 +1068,7 @@ private fun DateHeader(
                         color = SemanticColors.TextPrimary
                     )
                     Text(
-                        text = "$itemCount transaction${if (itemCount != 1) "s" else ""}",
+                        text = stringResource(R.string.transactions_date_header_count_format, itemCount, if (itemCount == 1) stringResource(R.string.transactions_date_header_count_suffix_single) else stringResource(R.string.transactions_date_header_count_suffix_plural)),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextMuted,
                         fontWeight = FontWeight.Medium
@@ -738,13 +1077,27 @@ private fun DateHeader(
                 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = if (totalAmount < 0) SemanticColors.DangerRed.copy(alpha = 0.1f) else SemanticColors.SuccessGreen.copy(alpha = 0.1f)
+                    color = when {
+                        totalAmount == null -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        totalAmount < 0 -> SemanticColors.DangerRed.copy(alpha = 0.1f)
+                        totalAmount > 0 -> SemanticColors.SuccessGreen.copy(alpha = 0.1f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    }
                 ) {
                     Text(
-                        text = "€${String.format(java.util.Locale.getDefault(), "%.2f", kotlin.math.abs(totalAmount))}",
-                        style = MaterialTheme.typography.titleSmall,
+                        text = if (totalAmount == null || homeCurrency == null) {
+                            stringResource(R.string.transactions_mixed_currencies)
+                        } else {
+                            CurrencyFormatter.formatMoneyWithSign(totalAmount, homeCurrency)
+                        },
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (totalAmount < 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen,
+                        color = when {
+                            totalAmount == null -> SemanticColors.TextSecondary
+                            totalAmount < 0 -> SemanticColors.DangerRed
+                            totalAmount > 0 -> SemanticColors.SuccessGreen
+                            else -> SemanticColors.TextSecondary
+                        },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
@@ -760,6 +1113,7 @@ private fun DateHeader(
 @Composable
 private fun TransactionItem(
     transaction: ExpenseWithCategory,
+    isHighlighted: Boolean,
     onDelete: () -> Unit,
     onEditCategory: () -> Unit,
     onMarkRecurring: () -> Unit,
@@ -767,10 +1121,40 @@ private fun TransactionItem(
     onChangeType: () -> Unit,
     onEditOwnership: () -> Unit,
     onDebug: () -> Unit,
-    onEditLocation: () -> Unit
+    onEditLocation: () -> Unit,
+    onViewProvenance: () -> Unit = {}
 ) {
     val expense = transaction.expense
     val category = transaction.category
+    var showActionMenu by remember { mutableStateOf(false) }
+    
+    // Pre-load string resources
+    val uncategorizedLabel = stringResource(R.string.uncategorized_label)
+    val categoryCdFormat = stringResource(R.string.transactions_category_cd_format, category?.name ?: uncategorizedLabel)
+    val categoryUncategorizedCd = stringResource(R.string.transactions_category_uncategorized_cd)
+    val merchantRenameCd = stringResource(R.string.transactions_merchant_rename_cd_format, expense.merchant)
+    val manualEntryCd = stringResource(R.string.transactions_manual_entry_cd)
+    val doubleTapToEditCd = stringResource(R.string.transactions_double_tap_to_edit_cd)
+    val paymentMethodCash = stringResource(R.string.transactions_payment_method_cash)
+    val paymentMethodBankTransfer = stringResource(R.string.transactions_payment_method_bank_transfer)
+    val paymentMethodCard = stringResource(R.string.transactions_payment_method_card)
+    val changeTypeCd = stringResource(R.string.transactions_change_type_cd_format, expense.transactionType.name)
+    val typePurchase = stringResource(R.string.transactions_transaction_type_purchase)
+    val typeDeposit = stringResource(R.string.transactions_transaction_type_deposit)
+    val typeWithdrawal = stringResource(R.string.transactions_transaction_type_withdrawal)
+    val typeTransfer = stringResource(R.string.transactions_transaction_type_transfer)
+    val typeUnknown = stringResource(R.string.transactions_transaction_type_unknown)
+    val ownershipNotMine = stringResource(R.string.transactions_ownership_not_mine_icon)
+    val ownershipShared = stringResource(R.string.transactions_ownership_shared_icon)
+    val ownershipTransfer = stringResource(R.string.transactions_ownership_transfer_icon)
+    val ownershipSettings = stringResource(R.string.transactions_ownership_settings_icon)
+    val editOwnershipCd = stringResource(R.string.transactions_edit_ownership_cd)
+    val markRecurringCd = stringResource(R.string.transactions_mark_recurring_cd)
+    val editLocationCd = stringResource(R.string.transactions_edit_location_cd)
+    val addLocationCd = stringResource(R.string.transactions_add_location_cd)
+    val deleteTransactionCd = stringResource(R.string.transactions_delete_transaction_cd)
+    val moreOptionsCd = stringResource(R.string.a11y_more_options)
+    val debugMenuLabel = stringResource(R.string.home_debug_menu)
     
     // Safe color parsing with fallback
     val categoryColor = remember(transaction.categoryColor) {
@@ -780,14 +1164,18 @@ private fun TransactionItem(
             SemanticColors.PrimaryIndigo
         }
     }
-
+    
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            containerColor = if (isHighlighted) {
+                SemanticColors.PrimaryIndigo.copy(alpha = 0.16f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            }
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
@@ -811,13 +1199,25 @@ private fun TransactionItem(
                         shape = CircleShape
                     )
                     .clickable { onEditCategory() }
-                    .padding(4.dp),
+                    .padding(4.dp)
+                    .semantics { contentDescription = categoryCdFormat },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = category?.icon ?: "❓",
-                    fontSize = 26.sp
-                )
+                if (category?.icon != null) {
+                    val categoryIconCd = stringResource(R.string.transactions_category_icon_cd_format, category.name)
+                    Text(
+                        text = category.icon,
+                        fontSize = 26.sp,
+                        modifier = Modifier.semantics { contentDescription = categoryIconCd }
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.HelpOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(14.dp))
@@ -839,8 +1239,9 @@ private fun TransactionItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
-                            .weight(1f, fill = false)
+                            .weight(1f)
                             .clickable { onRename() }
+                            .semantics { contentDescription = merchantRenameCd }
                     )
                     
                     // Manual entry indicator
@@ -849,10 +1250,13 @@ private fun TransactionItem(
                             shape = RoundedCornerShape(4.dp),
                             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)
                         ) {
-                            Text(
-                                text = "✏️",
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            Icon(
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = manualEntryCd,
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                                tint = SemanticColors.PrimaryIndigo
                             )
                         }
                     }
@@ -860,8 +1264,10 @@ private fun TransactionItem(
                     // Edit icon hint
                     Icon(
                         imageVector = Icons.Rounded.Edit,
-                        contentDescription = "Tap to rename",
-                        modifier = Modifier.size(14.dp),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .semantics { contentDescription = doubleTapToEditCd },
                         tint = SemanticColors.TextMuted.copy(alpha = 0.5f)
                     )
                 }
@@ -871,24 +1277,36 @@ private fun TransactionItem(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Payment method icon
-                    val (methodIcon, methodDesc) = when (expense.paymentMethod) {
-                        PaymentMethod.CASH -> "💵" to "Cash"
-                        PaymentMethod.BANK_TRANSFER -> "🏦" to "Bank"
-                        PaymentMethod.CARD -> "💳" to "Card"
-                        else -> "" to ""
+                    // Payment method icon - remember to avoid recalculation
+                    val (methodIcon, methodDesc) = remember(expense.paymentMethod, paymentMethodCash, paymentMethodBankTransfer, paymentMethodCard) {
+                        when (expense.paymentMethod) {
+                            PaymentMethod.CASH -> Icons.Rounded.Payments to paymentMethodCash
+                            PaymentMethod.BANK_TRANSFER -> Icons.Rounded.AccountBalance to paymentMethodBankTransfer
+                            PaymentMethod.CARD -> Icons.Rounded.CreditCard to paymentMethodCard
+                            else -> null to null
+                        }
                     }
                     
-                    if (methodIcon.isNotEmpty()) {
-                        Text(methodIcon, fontSize = 12.sp)
+                    if (methodIcon != null) {
+                        Icon(
+                            imageVector = methodIcon,
+                            contentDescription = methodDesc,
+                            modifier = Modifier.size(14.dp),
+                            tint = SemanticColors.TextSecondary
+                        )
                         Spacer(modifier = Modifier.width(2.dp))
                     }
                     
                     Text(
-                        text = category?.name ?: stringResource(R.string.uncategorized_label),
+                        text = category?.name ?: uncategorizedLabel,
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary,
-                        modifier = Modifier.clickable { onEditCategory() }
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onEditCategory() }
+                            .semantics { contentDescription = if (category != null) categoryCdFormat else categoryUncategorizedCd }
                     )
                 }
                 
@@ -905,7 +1323,7 @@ private fun TransactionItem(
                 
                 // Time
                 Text(
-                    text = transaction.formattedDate,
+                    text = transaction.formattedTime,
                     style = MaterialTheme.typography.labelSmall,
                     color = SemanticColors.TextMuted
                 )
@@ -950,89 +1368,172 @@ private fun TransactionItem(
                 
 
                 
-                // Action buttons row
+                // Action buttons row (primary + overflow to preserve text space)
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     // Change type action
                     IconButton(
                         onClick = onChangeType,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(Dimens.TouchTargetMin)
+                            .semantics { contentDescription = changeTypeCd }
                     ) {
                         val typeIcon = when (expense.transactionType) {
-                            TransactionType.PURCHASE -> "💸"
-                            TransactionType.DEPOSIT -> "💰"
-                            TransactionType.WITHDRAWAL -> "🏧"
-                            TransactionType.TRANSFER -> "🔄"
-                            else -> "❓"
+                            TransactionType.PURCHASE -> Icons.Rounded.ShoppingCart
+                            TransactionType.DEPOSIT -> Icons.Rounded.ArrowCircleDown
+                            TransactionType.WITHDRAWAL -> Icons.Rounded.ArrowCircleUp
+                            TransactionType.TRANSFER -> Icons.Rounded.SyncAlt
+                            else -> Icons.Rounded.HelpOutline
                         }
-                        Text(
-                            text = typeIcon,
-                            fontSize = 16.sp
+                        Icon(
+                            imageVector = typeIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f)
                         )
                     }
 
-                    // Edit ownership/not-mine/shared action
-                    IconButton(
-                        onClick = onEditOwnership,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        val ownershipIcon = when {
-                            expense.isNotMine -> "👤"
-                            expense.isSharedExpense -> "🤝"
-                            expense.transactionType == TransactionType.TRANSFER -> "🔄"
-                            else -> "⚙️"
+                    // Overflow menu for secondary actions
+                    Box {
+                        IconButton(
+                            onClick = { showActionMenu = true },
+                            modifier = Modifier
+                                .size(Dimens.TouchTargetMin)
+                                .semantics { contentDescription = moreOptionsCd }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = SemanticColors.TextSecondary
+                            )
                         }
-                        Text(
-                            text = ownershipIcon,
-                            fontSize = 16.sp
-                        )
-                    }
 
-                    // Recurring action
-                    IconButton(
-                        onClick = onMarkRecurring,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Repeat,
-                            contentDescription = stringResource(R.string.mark_recurring_content_description),
-                            tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                        DropdownMenu(
+                            expanded = showActionMenu,
+                            onDismissRequest = { showActionMenu = false }
+                        ) {
+                            val (ownershipIcon, _) = remember(expense.isNotMine, expense.isSharedExpense, expense.transactionType, ownershipNotMine, ownershipShared, ownershipTransfer, ownershipSettings) {
+                                when {
+                                    expense.isNotMine -> Icons.Rounded.Person to ownershipNotMine
+                                    expense.isSharedExpense -> Icons.Rounded.People to ownershipShared
+                                    expense.transactionType == TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to ownershipTransfer
+                                    else -> Icons.Rounded.Settings to ownershipSettings
+                                }
+                            }
 
-                    // Location pin action
-                    IconButton(
-                        onClick = onEditLocation,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (expense.latitude != null) Icons.Filled.LocationOn else Icons.Rounded.AddLocationAlt,
-                            contentDescription = "Edit location",
-                            tint = if (expense.latitude != null)
-                                SemanticColors.PrimaryIndigo.copy(alpha = 0.8f)
-                            else
-                                SemanticColors.TextMuted.copy(alpha = 0.5f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                            DropdownMenuItem(
+                                text = { Text(editOwnershipCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onEditOwnership()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = ownershipIcon,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
 
-                    // Delete action
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Delete,
-                            contentDescription = stringResource(R.string.delete_button),
-                            tint = SemanticColors.DangerRed.copy(alpha = 0.6f),
-                            modifier = Modifier.size(18.dp)
-                        )
+                            DropdownMenuItem(
+                                text = { Text(markRecurringCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onMarkRecurring()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Repeat,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = { Text(if (expense.latitude != null) editLocationCd else addLocationCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onEditLocation()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (expense.latitude != null) Icons.Filled.LocationOn else Icons.Rounded.AddLocationAlt,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.transactions_view_provenance)) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onViewProvenance()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Link,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+
+                            if (BuildConfig.DEBUG) {
+                                DropdownMenuItem(
+                                    text = { Text(debugMenuLabel) },
+                                    onClick = {
+                                        showActionMenu = false
+                                        onDebug()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.BugReport,
+                                            contentDescription = null
+                                        )
+                                    }
+                                )
+                            }
+
+                            DropdownMenuItem(
+                                text = { Text(deleteTransactionCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onDelete()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Delete,
+                                        contentDescription = null,
+                                        tint = SemanticColors.DangerRed.copy(alpha = 0.8f)
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+private fun Expense.signedEffectiveAmount(): Double {
+    return when (transactionType.toDomainType()) {
+        DomainTransactionType.PURCHASE,
+        DomainTransactionType.WITHDRAWAL -> -effectiveAmount
+        DomainTransactionType.DEPOSIT -> effectiveAmount
+        DomainTransactionType.TRANSFER,
+        DomainTransactionType.UNKNOWN -> 0.0
+    }
+}
+
+private fun TransactionType.toDomainType(): DomainTransactionType {
+    return when (this) {
+        TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+        TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+        TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+        TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+        TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
     }
 }
 
@@ -1186,7 +1687,7 @@ fun CategoryPickerDialog(
                     value = searchText,
                     onValueChange = { searchText = it },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Search categories...") },
+                    placeholder = { Text(stringResource(R.string.category_search_placeholder)) },
                     leadingIcon = { 
                         Icon(Icons.Rounded.Search, contentDescription = null) 
                     },
@@ -1233,7 +1734,7 @@ fun CategoryPickerDialog(
                                 if (isSelected) {
                                     Icon(
                                         Icons.Rounded.Check,
-                                        contentDescription = "Selected",
+                                        contentDescription = stringResource(R.string.transactions_selected_cd),
                                         tint = SemanticColors.PrimaryIndigo,
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -1256,7 +1757,7 @@ fun CategoryPickerDialog(
                             onCheckedChange = { applyToAll = it }
                         )
                         Text(
-                            text = "Apply to all past transactions for $currentMerchant",
+                            text = stringResource(R.string.transactions_apply_to_all_past, currentMerchant),
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(start = 8.dp)
                         )
@@ -1286,11 +1787,11 @@ fun RenameMerchantDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
-        title = { Text("Rename Merchant") },
+        title = { Text(stringResource(R.string.transactions_rename_merchant_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
-                    "Assigning a brand name helps the app learn. Future transactions from this source will be auto-corrected.",
+                    stringResource(R.string.transactions_rename_merchant_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )
@@ -1301,11 +1802,11 @@ fun RenameMerchantDialog(
                         name = it
                         isError = it.isBlank()
                     },
-                    label = { Text("Brand Name") },
+                    label = { Text(stringResource(R.string.transactions_brand_name_label)) },
                     singleLine = true,
                     isError = isError,
                     supportingText = if (isError) {
-                        { Text("Name cannot be empty") }
+                        { Text(stringResource(R.string.transactions_brand_name_empty_error)) }
                     } else null,
                     modifier = Modifier.fillMaxWidth(),
                     leadingIcon = {
@@ -1329,7 +1830,7 @@ fun RenameMerchantDialog(
                         colors = CheckboxDefaults.colors(checkedColor = SemanticColors.PrimaryIndigo)
                     )
                     Text(
-                        "Apply to all past and pending entries",
+                        stringResource(R.string.transactions_apply_to_all_entries),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextPrimary
                     )
@@ -1364,19 +1865,30 @@ fun RenameMerchantDialog(
 @Composable
 fun ChangeTypeDialog(
     currentType: TransactionType,
+    currentTransferDirection: TransferDirection?,
+    currentTransferAccountName: String?,
     onDismiss: () -> Unit,
-    onConfirm: (TransactionType) -> Unit
+    onConfirm: (TransactionType, TransferDirection?, String) -> Unit
 ) {
     var selectedType by remember { mutableStateOf(currentType) }
+    var transferDirection by remember { mutableStateOf(currentTransferDirection) }
+    var transferAccountName by remember { mutableStateOf(currentTransferAccountName.orEmpty()) }
+    val transferAccountNameTrimmed = transferAccountName.trim()
+    val hasTransferMetadataChange = currentType == TransactionType.TRANSFER && selectedType == TransactionType.TRANSFER && (
+        transferDirection != currentTransferDirection ||
+            transferAccountNameTrimmed != currentTransferAccountName.orEmpty().trim()
+        )
+    val transferMetadataValid = selectedType != TransactionType.TRANSFER ||
+        (transferDirection != null && transferAccountNameTrimmed.isNotBlank())
 
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.SwapHoriz, contentDescription = null) },
-        title = { Text("Change Transaction Type") },
+        title = { Text(stringResource(R.string.transactions_change_type_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Incorrectly categorized? Change the type here.",
+                    stringResource(R.string.transactions_change_type_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )
@@ -1400,10 +1912,10 @@ fun ChangeTypeDialog(
                         else -> "❓"
                     }
                     val typeDescription = when (type) {
-                        TransactionType.PURCHASE -> "Money spent on purchases"
-                        TransactionType.DEPOSIT -> "Money received (salary, transfer in)"
-                        TransactionType.WITHDRAWAL -> "Cash withdrawn from ATM"
-                        TransactionType.TRANSFER -> "Money transferred between accounts"
+                        TransactionType.PURCHASE -> stringResource(R.string.transactions_type_purchase_description)
+                        TransactionType.DEPOSIT -> stringResource(R.string.transactions_type_deposit_description)
+                        TransactionType.WITHDRAWAL -> stringResource(R.string.transactions_type_withdrawal_description)
+                        TransactionType.TRANSFER -> stringResource(R.string.transactions_type_transfer_description)
                         else -> ""
                     }
 
@@ -1444,22 +1956,54 @@ fun ChangeTypeDialog(
                         }
                     }
                 }
+
+                if (selectedType == TransactionType.TRANSFER) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.add_expense_transfer_direction),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = transferDirection == TransferDirection.INCOMING,
+                            onClick = { transferDirection = TransferDirection.INCOMING },
+                            label = { Text(stringResource(R.string.add_expense_incoming)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = transferDirection == TransferDirection.OUTGOING,
+                            onClick = { transferDirection = TransferDirection.OUTGOING },
+                            label = { Text(stringResource(R.string.add_expense_outgoing)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = transferAccountName,
+                        onValueChange = { transferAccountName = it.take(100) },
+                        label = { Text(stringResource(R.string.add_expense_account_name_label)) },
+                        placeholder = { Text(stringResource(R.string.add_expense_account_placeholder)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        isError = transferAccountNameTrimmed.isBlank()
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(selectedType) },
-                enabled = selectedType != currentType,
+                onClick = { onConfirm(selectedType, transferDirection, transferAccountNameTrimmed) },
+                enabled = (selectedType != currentType || hasTransferMetadataChange) && transferMetadataValid,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SemanticColors.PrimaryIndigo
                 )
             ) {
-                Text("Update Type")
+                Text(stringResource(R.string.transactions_update_type_button))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.cancel_button))
             }
         }
     )
@@ -1469,6 +2013,7 @@ fun ChangeTypeDialog(
 fun EditOwnershipDialog(
     expense: Expense,
     onDismiss: () -> Unit,
+    onOpenVisualSplit: (Expense) -> Unit,
     onSave: (isNotMine: Boolean, ownerName: String, isShared: Boolean, sharedWithName: String, sharePercentage: String, shareAmount: String) -> Unit
 ) {
     var isNotMine by remember { mutableStateOf(expense.isNotMine) }
@@ -1477,18 +2022,22 @@ fun EditOwnershipDialog(
     var sharedWithName by remember { mutableStateOf(expense.sharedWithName ?: "") }
     var mySharePercentage by remember { mutableStateOf(expense.mySharePercentage?.toString() ?: "") }
     var myShareAmount by remember { mutableStateOf(expense.myShareAmount?.toString() ?: "") }
+    val canOpenVisualSplit = expense.id > 0L
+    val parsedSharePercentage = mySharePercentage.toIntOrNull()
+    val isSharePercentageInvalid = isSharedExpense && mySharePercentage.isNotBlank() &&
+        (parsedSharePercentage == null || parsedSharePercentage !in 0..100)
 
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.PersonAdd, contentDescription = null) },
-        title = { Text("Edit Expense Details") },
+        title = { Text(stringResource(R.string.transactions_edit_expense_details_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    "Ownership",
+                    stringResource(R.string.transactions_ownership_section),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -1497,27 +2046,32 @@ fun EditOwnershipDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Not mine (belongs to someone else)")
+                    Text(stringResource(R.string.transactions_not_mine_label))
                     Switch(
                         checked = isNotMine,
-                        onCheckedChange = { isNotMine = it }
+                        onCheckedChange = {
+                            isNotMine = it
+                            if (it) {
+                                isSharedExpense = false
+                            }
+                        }
                     )
                 }
                 if (isNotMine) {
                     OutlinedTextField(
                         value = ownerName,
                         onValueChange = { ownerName = it },
-                        label = { Text("Owner name") },
+                        label = { Text(stringResource(R.string.transactions_owner_name_label)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("e.g., Partner, Roommate") }
+                        placeholder = { Text(stringResource(R.string.transactions_owner_name_placeholder)) }
                     )
                 }
 
                 HorizontalDivider()
 
                 Text(
-                    "Shared Expense",
+                    stringResource(R.string.transactions_shared_expense_section),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -1526,32 +2080,56 @@ fun EditOwnershipDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Split with someone")
+                    Text(stringResource(R.string.transactions_split_with_someone))
                     Switch(
                         checked = isSharedExpense,
-                        onCheckedChange = { isSharedExpense = it }
+                        onCheckedChange = {
+                            isSharedExpense = it
+                            if (it) {
+                                isNotMine = false
+                            }
+                        }
                     )
                 }
                 if (isSharedExpense) {
+                    TextButton(
+                        onClick = { onOpenVisualSplit(expense) },
+                        enabled = canOpenVisualSplit,
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Rounded.PieChart, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.feature_visual_split))
+                    }
                     OutlinedTextField(
                         value = sharedWithName,
                         onValueChange = { sharedWithName = it },
-                        label = { Text("Shared with") },
+                        label = { Text(stringResource(R.string.transactions_shared_with_label)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             value = mySharePercentage,
-                            onValueChange = { mySharePercentage = it.filter { c -> c.isDigit() } },
-                            label = { Text("My %") },
+                            onValueChange = { input ->
+                                val filtered = input.filter { c -> c.isDigit() }.take(3)
+                                mySharePercentage = when {
+                                    filtered.isBlank() -> ""
+                                    filtered.toIntOrNull() == null -> ""
+                                    filtered.toInt() > 100 -> "100"
+                                    else -> filtered
+                                }
+                            },
+                            label = { Text(stringResource(R.string.transactions_my_percentage_label)) },
                             modifier = Modifier.weight(1f),
-                            singleLine = true
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            isError = isSharePercentageInvalid
                         )
                         OutlinedTextField(
                             value = myShareAmount,
                             onValueChange = { myShareAmount = it.filter { c -> c.isDigit() || c == '.' } },
-                            label = { Text("Or amount") },
+                            label = { Text(stringResource(R.string.transactions_or_amount_label)) },
                             modifier = Modifier.weight(1f),
                             singleLine = true
                         )
@@ -1561,12 +2139,12 @@ fun EditOwnershipDialog(
                 if (expense.transactionType == TransactionType.TRANSFER) {
                     HorizontalDivider()
                     Text(
-                        "Transfer Direction",
+                        stringResource(R.string.transactions_transfer_direction_section),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Transfer type can be changed in the type dialog",
+                        stringResource(R.string.transactions_transfer_direction_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -1578,14 +2156,15 @@ fun EditOwnershipDialog(
                 onClick = {
                     onSave(isNotMine, ownerName, isSharedExpense, sharedWithName, mySharePercentage, myShareAmount)
                 },
-                modifier = Modifier
+                modifier = Modifier,
+                enabled = !isSharePercentageInvalid
             ) {
-                Text("Save")
+                Text(stringResource(R.string.transactions_save_button))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.cancel_button))
             }
         }
     )
@@ -1610,8 +2189,8 @@ private fun EditLocationDialog(
     if (showClearConfirmation) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showClearConfirmation = false },
-            title = { Text("Clear Location?") },
-            text = { Text("This will permanently remove the location from this transaction. The backfill worker may re-resolve it later.") },
+            title = { Text(stringResource(R.string.transactions_clear_location_title)) },
+            text = { Text(stringResource(R.string.transactions_clear_location_message)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1619,10 +2198,10 @@ private fun EditLocationDialog(
                         onClear()
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = SemanticColors.DangerRed)
-                ) { Text("Clear") }
+                ) { Text(stringResource(R.string.transactions_clear_button)) }
             },
             dismissButton = {
-                TextButton(onClick = { showClearConfirmation = false }) { Text("Cancel") }
+                TextButton(onClick = { showClearConfirmation = false }) { Text(stringResource(R.string.cancel_button)) }
             }
         )
     }
@@ -1646,7 +2225,7 @@ private fun EditLocationDialog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Edit Location",
+                    text = stringResource(R.string.transactions_edit_location_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -1657,7 +2236,7 @@ private fun EditLocationDialog(
                             contentColor = SemanticColors.DangerRed
                         )
                     ) {
-                        Text("Clear")
+                        Text(stringResource(R.string.transactions_clear_button))
                     }
                 }
             }
@@ -1700,9 +2279,102 @@ private fun EditLocationDialog(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
                 ) {
-                    Text("Save Location")
+                    Text(stringResource(R.string.transactions_save_location_button))
                 }
             }
         }
+    }
+}
+
+// ============================================================
+// PROVENANCE CARD COMPONENT
+// ============================================================
+
+@Composable
+private fun ProvenanceLinkCard(link: EntitySourceLink) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // Primary source type and role
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = link.sourceType,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                if (link.isPrimary) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = "PRIMARY",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = SemanticColors.PrimaryIndigo
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = "Role: ${link.linkRole}",
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextSecondary
+            )
+
+            // Additional source info
+            ProvenanceInfoRow("Source", link.sourceEntityType)
+            ProvenanceInfoRow("Status", link.linkStatus)
+            if (link.confidence != null) {
+                ProvenanceInfoRow("Confidence", "${link.confidence}")
+            }
+            if (link.metadataJson != null) {
+                Text(
+                    text = "Metadata: ${link.metadataJson}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = SemanticColors.TextMuted,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProvenanceInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "$label: ",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = SemanticColors.TextSecondary
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = SemanticColors.TextPrimary
+        )
     }
 }

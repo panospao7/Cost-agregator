@@ -1,9 +1,10 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,6 +16,8 @@ data class TransferInsights(
     val autoDetectedIncoming: Int = 0,
     val autoDetectedOutgoing: Int = 0,
     val unknownDirections: Int = 0,
+    val correctDetections: Int = 0,
+    val totalDetections: Int = 0,
     val accuracyPercentage: Float = 0f,
     val detectionRate: Float = 0f,
     val topIncomingSources: List<String> = emptyList(),
@@ -46,110 +49,165 @@ data class TransferInsights(
 @Singleton
 class TransferDirectionAnalytics @Inject constructor() {
 
+    companion object {
+        private const val MAX_TRACKED_TRANSFERS = 10_000
+        private const val TRANSFER_PRUNE_BATCH_SIZE = 2_000
+        private const val MAX_TRACKED_ENDPOINTS = 1_000
+    }
+
     private val _insights = MutableStateFlow(TransferInsights())
     val insights: StateFlow<TransferInsights> = _insights.asStateFlow()
 
-    private val incomingSources = mutableMapOf<String, Int>()
-    private val outgoingDestinations = mutableMapOf<String, Int>()
+    private data class TrackedTransferDetection(
+        val autoDetectedDirection: DomainTransferDirection,
+        val accountName: String?,
+        val wasCorrect: Boolean,
+        val correctedDirection: DomainTransferDirection? = null
+    )
+
+    private val trackedDetectionsByTransferId = ConcurrentHashMap<Long, TrackedTransferDetection>()
+    private val frozenIncomingSources = ConcurrentHashMap<String, Int>()
+    private val frozenOutgoingDestinations = ConcurrentHashMap<String, Int>()
+    private val stateLock = Any()
+
+    private var frozenTotalTransfers: Int = 0
+    private var frozenAutoDetectedIncoming: Int = 0
+    private var frozenAutoDetectedOutgoing: Int = 0
+    private var frozenUnknownDirections: Int = 0
+    private var frozenCorrectDetections: Int = 0
+    private var frozenTotalDetections: Int = 0
 
     /**
      * Record a successful auto-detection.
      */
     fun recordAutoDetection(
-        direction: TransferDirection,
+        direction: DomainTransferDirection,
         accountName: String?,
-        wasCorrect: Boolean = true
+        wasCorrect: Boolean = true,
+        transferId: Long? = null
     ) {
-        val current = _insights.value
-        val newTotal = current.totalTransfers + 1
-
-        val newIncoming = if (direction == TransferDirection.INCOMING) {
-            current.autoDetectedIncoming + 1
-        } else {
-            current.autoDetectedIncoming
-        }
-
-        val newOutgoing = if (direction == TransferDirection.OUTGOING) {
-            current.autoDetectedOutgoing + 1
-        } else {
-            current.autoDetectedOutgoing
-        }
-
-        // Track source/destination
-        accountName?.let { name ->
-            when (direction) {
-                TransferDirection.INCOMING -> {
-                    incomingSources[name] = incomingSources.getOrDefault(name, 0) + 1
+        synchronized(stateLock) {
+            if (transferId != null) {
+                val existing = trackedDetectionsByTransferId.putIfAbsent(
+                    transferId,
+                    TrackedTransferDetection(
+                        autoDetectedDirection = direction,
+                        accountName = accountName,
+                        wasCorrect = wasCorrect
+                    )
+                )
+                if (existing != null) {
+                    // Idempotency: this transfer has already been recorded.
+                    return
                 }
-                TransferDirection.OUTGOING -> {
-                    outgoingDestinations[name] = outgoingDestinations.getOrDefault(name, 0) + 1
+                pruneTransferTrackingIfNeeded()
+                publishInsights()
+                return
+            }
+
+            // Untracked record: fold directly into frozen aggregates.
+            frozenTotalTransfers += 1
+            frozenTotalDetections += 1
+            if (direction == DomainTransferDirection.INCOMING) {
+                frozenAutoDetectedIncoming += 1
+            } else {
+                frozenAutoDetectedOutgoing += 1
+            }
+            if (wasCorrect) {
+                frozenCorrectDetections += 1
+            }
+            accountName?.let { name ->
+                when (direction) {
+                    DomainTransferDirection.INCOMING -> frozenIncomingSources.merge(name, 1, Int::plus)
+                    DomainTransferDirection.OUTGOING -> frozenOutgoingDestinations.merge(name, 1, Int::plus)
                 }
             }
+            pruneEndpointTrackingIfNeeded()
+            publishInsights()
         }
-
-        val detected = newIncoming + newOutgoing
-        val newDetectionRate = if (newTotal > 0) {
-            (detected.toFloat() / newTotal) * 100
-        } else 0f
-
-        val correctDetections = if (wasCorrect) detected else detected - 1
-        val newAccuracy = if (detected > 0) {
-            (correctDetections.toFloat() / detected) * 100
-        } else 0f
-
-        _insights.value = current.copy(
-            totalTransfers = newTotal,
-            autoDetectedIncoming = newIncoming,
-            autoDetectedOutgoing = newOutgoing,
-            detectionRate = newDetectionRate,
-            accuracyPercentage = newAccuracy,
-            topIncomingSources = incomingSources.entries
-                .sortedByDescending { it.value }
-                .take(5)
-                .map { it.key },
-            topOutgoingDestinations = outgoingDestinations.entries
-                .sortedByDescending { it.value }
-                .take(5)
-                .map { it.key }
-        )
     }
 
     /**
      * Record a transfer with unknown direction (detection failed).
      */
     fun recordUnknownDirection() {
-        val current = _insights.value
-        val newTotal = current.totalTransfers + 1
-        val newUnknown = current.unknownDirections + 1
-
-        val detected = current.autoDetectedIncoming + current.autoDetectedOutgoing
-        val newDetectionRate = if (newTotal > 0) {
-            (detected.toFloat() / newTotal) * 100
-        } else 0f
-
-        _insights.value = current.copy(
-            totalTransfers = newTotal,
-            unknownDirections = newUnknown,
-            detectionRate = newDetectionRate
-        )
+        synchronized(stateLock) {
+            frozenTotalTransfers += 1
+            frozenUnknownDirections += 1
+            publishInsights()
+        }
     }
 
     /**
      * Record a user correction (they changed the direction).
      */
-    fun recordUserCorrection(fromDirection: TransferDirection?, toDirection: TransferDirection) {
-        // This indicates the auto-detection was wrong
-        // Adjust accuracy calculation
-        val current = _insights.value
-        val detected = current.autoDetectedIncoming + current.autoDetectedOutgoing
+    fun recordUserCorrection(fromDirection: DomainTransferDirection?, toDirection: DomainTransferDirection) {
+        // Without a transfer id we cannot guarantee idempotent correction accounting.
+        // Keep as compatibility no-op; callers should use the transferId overload.
+        if (fromDirection == null || fromDirection == toDirection) return
+    }
 
-        if (detected > 0 && fromDirection != null) {
-            val correctDetections = (detected * current.accuracyPercentage / 100) - 1
-            val newAccuracy = (correctDetections / detected) * 100
+    /**
+     * Record a correction for a specific transfer id.
+     * Ensures each transfer impacts accuracy at most once unless corrected back.
+     */
+    fun recordUserCorrection(
+        transferId: Long,
+        fromDirection: DomainTransferDirection?,
+        toDirection: DomainTransferDirection
+    ) {
+        synchronized(stateLock) {
+            val tracked = trackedDetectionsByTransferId[transferId] ?: return
+            if (fromDirection != null && fromDirection == toDirection) return
 
-            _insights.value = current.copy(
-                accuracyPercentage = newAccuracy.coerceAtLeast(0f)
-            )
+            val correctedDirection = if (toDirection == tracked.autoDetectedDirection) null else toDirection
+            if (tracked.correctedDirection == correctedDirection) {
+                return
+            }
+
+            trackedDetectionsByTransferId[transferId] = tracked.copy(correctedDirection = correctedDirection)
+            publishInsights()
+        }
+    }
+
+    private fun pruneTransferTrackingIfNeeded() {
+        val currentSize = trackedDetectionsByTransferId.size
+        if (currentSize <= MAX_TRACKED_TRANSFERS) return
+
+        val toRemoveCount = (currentSize - MAX_TRACKED_TRANSFERS + TRANSFER_PRUNE_BATCH_SIZE)
+            .coerceAtMost(currentSize)
+
+        val idsToRemove = trackedDetectionsByTransferId.keys
+            .asSequence()
+            .take(toRemoveCount)
+            .toList()
+
+        idsToRemove.forEach { transferId ->
+            val removed = trackedDetectionsByTransferId.remove(transferId) ?: return@forEach
+            foldTrackedDetectionIntoFrozenAggregates(removed)
+        }
+
+        pruneEndpointTrackingIfNeeded()
+    }
+
+    private fun pruneEndpointTrackingIfNeeded() {
+        pruneEndpointMap(frozenIncomingSources)
+        pruneEndpointMap(frozenOutgoingDestinations)
+    }
+
+    private fun pruneEndpointMap(map: ConcurrentHashMap<String, Int>) {
+        if (map.size <= MAX_TRACKED_ENDPOINTS) return
+
+        val retainedKeys = map.entries
+            .sortedByDescending { it.value }
+            .take(MAX_TRACKED_ENDPOINTS)
+            .map { it.key }
+            .toHashSet()
+
+        map.keys.forEach { key ->
+            if (!retainedKeys.contains(key)) {
+                map.remove(key)
+            }
         }
     }
 
@@ -157,30 +215,144 @@ class TransferDirectionAnalytics @Inject constructor() {
      * Reset all analytics data.
      */
     fun reset() {
-        _insights.value = TransferInsights()
-        incomingSources.clear()
-        outgoingDestinations.clear()
+        synchronized(stateLock) {
+            _insights.value = TransferInsights()
+            frozenIncomingSources.clear()
+            frozenOutgoingDestinations.clear()
+            trackedDetectionsByTransferId.clear()
+            frozenTotalTransfers = 0
+            frozenAutoDetectedIncoming = 0
+            frozenAutoDetectedOutgoing = 0
+            frozenUnknownDirections = 0
+            frozenCorrectDetections = 0
+            frozenTotalDetections = 0
+        }
+    }
+
+    private fun foldTrackedDetectionIntoFrozenAggregates(detection: TrackedTransferDetection) {
+        val effectiveDirection = detection.correctedDirection ?: detection.autoDetectedDirection
+        val effectiveCorrect = detection.wasCorrect && detection.correctedDirection == null
+
+        frozenTotalTransfers += 1
+        frozenTotalDetections += 1
+        if (effectiveDirection == DomainTransferDirection.INCOMING) {
+            frozenAutoDetectedIncoming += 1
+        } else {
+            frozenAutoDetectedOutgoing += 1
+        }
+        if (effectiveCorrect) {
+            frozenCorrectDetections += 1
+        }
+
+        detection.accountName?.let { name ->
+            when (effectiveDirection) {
+                DomainTransferDirection.INCOMING -> frozenIncomingSources.merge(name, 1, Int::plus)
+                DomainTransferDirection.OUTGOING -> frozenOutgoingDestinations.merge(name, 1, Int::plus)
+            }
+        }
+    }
+
+    private fun publishInsights() {
+        val trackedIncomingSources = HashMap<String, Int>()
+        val trackedOutgoingDestinations = HashMap<String, Int>()
+        var trackedIncoming = 0
+        var trackedOutgoing = 0
+        var trackedDetections = 0
+        var trackedCorrect = 0
+
+        trackedDetectionsByTransferId.values.forEach { detection ->
+            val effectiveDirection = detection.correctedDirection ?: detection.autoDetectedDirection
+            val effectiveCorrect = detection.wasCorrect && detection.correctedDirection == null
+
+            trackedDetections += 1
+            if (effectiveDirection == DomainTransferDirection.INCOMING) {
+                trackedIncoming += 1
+            } else {
+                trackedOutgoing += 1
+            }
+            if (effectiveCorrect) {
+                trackedCorrect += 1
+            }
+
+            detection.accountName?.let { endpoint ->
+                when (effectiveDirection) {
+                    DomainTransferDirection.INCOMING -> trackedIncomingSources.merge(endpoint, 1, Int::plus)
+                    DomainTransferDirection.OUTGOING -> trackedOutgoingDestinations.merge(endpoint, 1, Int::plus)
+                }
+            }
+        }
+
+        val mergedIncomingSources = mergeEndpointCounts(frozenIncomingSources, trackedIncomingSources)
+        val mergedOutgoingDestinations = mergeEndpointCounts(frozenOutgoingDestinations, trackedOutgoingDestinations)
+
+        val totalTransfers = frozenTotalTransfers + trackedDetections
+        val autoDetectedIncoming = frozenAutoDetectedIncoming + trackedIncoming
+        val autoDetectedOutgoing = frozenAutoDetectedOutgoing + trackedOutgoing
+        val totalDetections = frozenTotalDetections + trackedDetections
+        val correctDetections = frozenCorrectDetections + trackedCorrect
+
+        val detectionRate = if (totalTransfers > 0) {
+            (totalDetections.toFloat() / totalTransfers.toFloat()) * 100f
+        } else {
+            0f
+        }
+        val accuracy = if (totalDetections > 0) {
+            (correctDetections.toFloat() / totalDetections.toFloat()) * 100f
+        } else {
+            0f
+        }
+
+        _insights.value = TransferInsights(
+            totalTransfers = totalTransfers,
+            autoDetectedIncoming = autoDetectedIncoming,
+            autoDetectedOutgoing = autoDetectedOutgoing,
+            unknownDirections = frozenUnknownDirections,
+            correctDetections = correctDetections,
+            totalDetections = totalDetections,
+            accuracyPercentage = accuracy,
+            detectionRate = detectionRate,
+            topIncomingSources = mergedIncomingSources.entries
+                .sortedByDescending { it.value }
+                .take(5)
+                .map { it.key },
+            topOutgoingDestinations = mergedOutgoingDestinations.entries
+                .sortedByDescending { it.value }
+                .take(5)
+                .map { it.key }
+        )
+    }
+
+    private fun mergeEndpointCounts(
+        frozenCounts: Map<String, Int>,
+        trackedCounts: Map<String, Int>
+    ): Map<String, Int> {
+        val merged = HashMap<String, Int>(frozenCounts.size + trackedCounts.size)
+        frozenCounts.forEach { (key, value) -> merged[key] = value }
+        trackedCounts.forEach { (key, value) -> merged.merge(key, value, Int::plus) }
+        return merged
     }
 
     /**
      * Get a summary report for debugging.
      */
     fun getReport(): String {
-        val i = _insights.value
-        return buildString {
-            appendLine("=== Transfer Direction Analytics ===")
-            appendLine("Total Transfers: ${i.totalTransfers}")
-            appendLine("Detection Rate: ${i.formattedDetectionRate}")
-            appendLine("Accuracy: ${i.formattedAccuracy}")
-            appendLine("Auto-detected Incoming: ${i.autoDetectedIncoming}")
-            appendLine("Auto-detected Outgoing: ${i.autoDetectedOutgoing}")
-            appendLine("Unknown Directions: ${i.unknownDirections}")
-            appendLine()
-            appendLine("Top Incoming Sources:")
-            i.topIncomingSources.forEach { appendLine("  - $it") }
-            appendLine()
-            appendLine("Top Outgoing Destinations:")
-            i.topOutgoingDestinations.forEach { appendLine("  - $it") }
+        synchronized(stateLock) {
+            val i = _insights.value
+            return buildString {
+                appendLine("=== Transfer Direction Analytics ===")
+                appendLine("Total Transfers: ${i.totalTransfers}")
+                appendLine("Detection Rate: ${i.formattedDetectionRate}")
+                appendLine("Accuracy: ${i.formattedAccuracy}")
+                appendLine("Auto-detected Incoming: ${i.autoDetectedIncoming}")
+                appendLine("Auto-detected Outgoing: ${i.autoDetectedOutgoing}")
+                appendLine("Unknown Directions: ${i.unknownDirections}")
+                appendLine()
+                appendLine("Top Incoming Sources:")
+                i.topIncomingSources.forEach { appendLine("  - $it") }
+                appendLine()
+                appendLine("Top Outgoing Destinations:")
+                i.topOutgoingDestinations.forEach { appendLine("  - $it") }
+            }
         }
     }
 }

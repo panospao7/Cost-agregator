@@ -17,10 +17,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.debug.DebugData
+import com.yourname.expensetracker.domain.debug.DebugIssue
+import com.yourname.expensetracker.domain.debug.IssueSeverity
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
 
 /**
  * Debug viewer for OCR and parsing results.
@@ -131,7 +135,7 @@ private fun RawTextTab(debugData: DebugData) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "Characters: ${debugData.rawText.length} | Lines: ${debugData.rawText.lines().size}",
+                text = stringResource(R.string.debug_characters_lines_format, debugData.rawText.length, debugData.rawText.lines().size),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -149,7 +153,7 @@ private fun RawTextTab(debugData: DebugData) {
                 
                 TextButton(
                     onClick = {
-                        clipboardManager.setText(AnnotatedString(debugData.toJson()))
+                        clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
                     }
                 ) {
                     Icon(Icons.Default.Code, null, Modifier.size(16.dp))
@@ -257,7 +261,7 @@ private fun ParsedDataTab(debugData: DebugData) {
                     
                     TextButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(debugData.toJson()))
+                            clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
                         },
                         modifier = Modifier.align(Alignment.End)
                     ) {
@@ -393,7 +397,7 @@ private fun LogsTab(debugData: DebugData) {
         ) {
             TextButton(
                 onClick = {
-                    clipboardManager.setText(AnnotatedString(debugData.toJson()))
+                    clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
                 }
             ) {
                 Icon(Icons.Default.Code, null, Modifier.size(16.dp))
@@ -603,82 +607,6 @@ private fun IssueCard(issue: DebugIssue, accentColor: Color) {
 }
 
 private fun formatDate(timestamp: Long): String {
-    return DateFormatterUtils.shortDateWithTime().format(Date(timestamp))
-}
-
-/**
- * Data class to hold debug information for display.
- */
-data class DebugData(
-    val rawText: String,
-    val parsedTransactions: List<ParsedTransaction>,
-    val parsingLogs: List<String> = emptyList(),
-    val processingTimeMs: Long = 0,
-    val parserUsed: String = "Unknown",
-    val issues: List<DebugIssue> = emptyList()
-) {
-    /**
-     * Export debug data as structured JSON for AI analysis
-     */
-    fun toJson(): String {
-        val issueCounts = issues.groupingBy { it.severity }.eachCount()
-        
-        return buildString {
-            appendLine("{")
-            appendLine("  \"metadata\": {")
-            appendLine("    \"timestamp\": \"${DateFormatterUtils.isoTimestamp().format(java.util.Date())}\",")
-            appendLine("    \"processingTimeMs\": $processingTimeMs,")
-            appendLine("    \"parserUsed\": \"$parserUsed\"")
-            appendLine("  },")
-            appendLine("  \"rawText\": {")
-            appendLine("    \"lineCount\": ${rawText.lines().size},")
-            appendLine("    \"characterCount\": ${rawText.length},")
-            appendLine("    \"preview\": \"${rawText.take(200).replace("\"", "\\\"").replace("\n", "\\n")}...\"")
-            appendLine("  },")
-            appendLine("  \"transactions\": [")
-            parsedTransactions.forEachIndexed { index, tx ->
-                appendLine("    {")
-                appendLine("      \"index\": $index,")
-                appendLine("      \"merchant\": \"${tx.merchant.replace("\"", "\\\"")}\",")
-                appendLine("      \"amount\": ${tx.amount},")
-                appendLine("      \"currency\": \"${tx.currency}\",")
-                appendLine("      \"confidence\": ${tx.confidence},")
-                appendLine("      \"type\": \"${tx.type.name}\",")
-                appendLine("      \"date\": ${tx.date ?: "null"},")
-                val txIssues = issues.filter { it.transactionIndex == index }
-                appendLine("      \"issues\": [${txIssues.joinToString { "\"${it.category}\"" }}]")
-                append("    }")
-                if (index < parsedTransactions.size - 1) appendLine(",")
-                else appendLine()
-            }
-            appendLine("  ],")
-            appendLine("  \"issues\": {")
-            appendLine("    \"critical\": ${issueCounts[IssueSeverity.CRITICAL] ?: 0},")
-            appendLine("    \"warnings\": ${issueCounts[IssueSeverity.WARNING] ?: 0},")
-            appendLine("    \"info\": ${issueCounts[IssueSeverity.INFO] ?: 0},")
-            appendLine("    \"details\": [")
-            issues.forEachIndexed { index, issue ->
-                appendLine("      {")
-                appendLine("        \"severity\": \"${issue.severity.name}\",")
-                appendLine("        \"category\": \"${issue.category}\",")
-                appendLine("        \"message\": \"${issue.message.replace("\"", "\\\"")}\",")
-                appendLine("        \"transactionIndex\": ${issue.transactionIndex ?: "null"},")
-                appendLine("        \"suggestion\": ${if (issue.suggestion != null) "\"${issue.suggestion.replace("\"", "\\\"")}\"" else "null"}")
-                append("      }")
-                if (index < issues.size - 1) appendLine(",")
-                else appendLine()
-            }
-            appendLine("    ]")
-            appendLine("  },")
-            appendLine("  \"parsingLogs\": [")
-            parsingLogs.forEachIndexed { index, log ->
-                append("    \"${log.replace("\"", "\\\"")}\"")
-                if (index < parsingLogs.size - 1) appendLine(",")
-                else appendLine()
-            }
-            appendLine("  ]")
-            appendLine("}")
-        }
-    }
+    return DateFormatterUtils.formatTimestampJavaTime(timestamp, "dd/MM/yyyy HH:mm")
 }
 

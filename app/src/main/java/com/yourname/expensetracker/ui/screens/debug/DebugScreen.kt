@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.ui.screens.debug
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.animation.animateContentSize
@@ -20,12 +23,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -35,7 +40,17 @@ import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.service.debug.MigrationResult
+import kotlinx.coroutines.launch
 import java.util.*
+
+private enum class DebugDestructiveAction {
+    CLEAR_ALL,
+    RESET_EXPENSES,
+    RESET_BUDGETS,
+    RESET_SOURCE_STATS
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,7 +58,38 @@ fun DebugScreen(
     onDismiss: () -> Unit,
     viewModel: DebugViewModel = hiltViewModel()
 ) {
+    if (!BuildConfig.DEBUG) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.debug_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
+                        }
+                    }
+                )
+            }
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.debug_disabled_in_release),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+        return
+    }
+
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     val notifications by viewModel.filteredNotifications.collectAsState()
     val count by viewModel.notificationCount.collectAsState()
     val packages by viewModel.packages.collectAsState()
@@ -57,6 +103,7 @@ fun DebugScreen(
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
     var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
     var showCategorizationDebug by remember { mutableStateOf(false) }
+    var pendingConfirmationAction by remember { mutableStateOf<DebugDestructiveAction?>(null) }
 
     if (showCategorizationDebug) {
         CategorizationDebugScreen(onNavigateBack = { showCategorizationDebug = false })
@@ -64,17 +111,18 @@ fun DebugScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Debug: Notifications ($count)") },
+                title = { Text(stringResource(R.string.debug_title_format, count)) },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.clearAll() }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Clear all")
+                    IconButton(onClick = { pendingConfirmationAction = DebugDestructiveAction.CLEAR_ALL }) {
+                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear))
                     }
                 }
             )
@@ -97,8 +145,13 @@ fun DebugScreen(
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
-                    Text("Open Notification Access Settings")
+                    Text(stringResource(R.string.debug_open_notification_settings))
                 }
+            }
+
+            // Database Management Section
+            item {
+                DatabaseManagementSection(viewModel)
             }
 
             // 1.5 Service Diagnostics
@@ -118,7 +171,7 @@ fun DebugScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "📡 Service Diagnostics",
+                                stringResource(R.string.debug_section_service_diagnostics),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -126,7 +179,7 @@ fun DebugScreen(
                                 TextButton(
                                     onClick = { diagnosticsStats = viewModel.getServiceDiagnostics() }
                                 ) {
-                                    Text("↻", fontSize = 14.sp)
+                                    Text(stringResource(R.string.debug_refresh), fontSize = 14.sp)
                                 }
                                 TextButton(
                                     onClick = { 
@@ -134,7 +187,7 @@ fun DebugScreen(
                                         diagnosticsStats = viewModel.getServiceDiagnostics()
                                     }
                                 ) {
-                                    Text("Reset", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                    Text(stringResource(R.string.debug_reset), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                                 }
                             }
                         }
@@ -151,7 +204,7 @@ fun DebugScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF4CAF50)
                                 )
-                                Text("Starts", style = MaterialTheme.typography.bodySmall)
+                                Text(stringResource(R.string.debug_status_starts), style = MaterialTheme.typography.bodySmall)
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
@@ -160,7 +213,7 @@ fun DebugScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFFFC107)
                                 )
-                                Text("Disconnects", style = MaterialTheme.typography.bodySmall)
+                                Text(stringResource(R.string.debug_status_disconnects), style = MaterialTheme.typography.bodySmall)
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
@@ -169,7 +222,7 @@ fun DebugScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFF44336)
                                 )
-                                Text("Killed", style = MaterialTheme.typography.bodySmall)
+                                Text(stringResource(R.string.debug_status_killed), style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         
@@ -182,20 +235,20 @@ fun DebugScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    "Last start: ${
+                                    stringResource(R.string.debug_last_start, 
                                         if (diagnosticsStats.lastRestartTime > 0) 
-                                            DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastRestartTime))
-                                        else "Never"
-                                    }",
+                                            DateFormatterUtils.formatTimestampJavaTime(diagnosticsStats.lastRestartTime, "HH:mm:ss dd/MM")
+                                        else stringResource(R.string.debug_status_active)
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp
                                 )
                                 Text(
-                                    "Last kill: ${
+                                    stringResource(R.string.debug_last_kill,
                                         if (diagnosticsStats.lastKillTime > 0) 
-                                            DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastKillTime))
-                                        else "Never"
-                                    }",
+                                            DateFormatterUtils.formatTimestampJavaTime(diagnosticsStats.lastKillTime, "HH:mm:ss dd/MM")
+                                        else stringResource(R.string.debug_status_active)
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp,
                                     color = if (diagnosticsStats.lastKillTime > diagnosticsStats.lastRestartTime) 
@@ -223,29 +276,29 @@ fun DebugScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                "🤖 AI Runtime Diagnostics",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            TextButton(onClick = viewModel::refreshAiRuntimeStatuses) {
-                                Text("Refresh")
-                            }
+                        Text(
+                            stringResource(R.string.debug_section_ai_runtime),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(onClick = viewModel::refreshAiRuntimeStatuses) {
+                            Text(stringResource(R.string.debug_refresh))
+                        }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            "Network: ${if (aiRuntimeMeta.networkAvailable) "available" else "offline"}",
+                            stringResource(R.string.debug_network_available),
                             style = MaterialTheme.typography.bodySmall
                         )
                         DebugRuntimeGuidance(aiSettings, aiRuntimeStatuses.values.any { it != OnDeviceModelStatus.AVAILABLE })
                         Text(
-                            "Wi-Fi: ${if (aiRuntimeMeta.wifiConnected) "connected" else "not connected"}",
+                            stringResource(R.string.debug_network_connected),
                             style = MaterialTheme.typography.bodySmall
                         )
                         if (aiRuntimeMeta.lastRefreshedAt > 0L) {
                             Text(
-                                "Last refreshed: ${DateFormatterUtils.timeWithSecondsAndDate().format(Date(aiRuntimeMeta.lastRefreshedAt))}",
+                                stringResource(R.string.debug_last_refreshed, DateFormatterUtils.formatTimestampJavaTime(aiRuntimeMeta.lastRefreshedAt, "HH:mm:ss dd/MM")),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 10.sp
                             )
@@ -307,14 +360,14 @@ fun DebugScreen(
                             HorizontalDivider()
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Recent AI runtime events",
+                                stringResource(R.string.debug_recent_ai_events),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             aiRuntimeEvents.take(8).forEach { event ->
                                 Text(
-                                    text = "${DateFormatterUtils.timeWithSecondsAndDate().format(Date(event.timestamp))} • ${event.type} • ${event.message}",
+                                    text = "${DateFormatterUtils.formatTimestampJavaTime(event.timestamp, "HH:mm:ss dd/MM")} • ${event.type} • ${event.message}",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp
                                 )
@@ -330,7 +383,7 @@ fun DebugScreen(
                             HorizontalDivider()
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Phase 4A rollout state",
+                                stringResource(R.string.debug_phase_4a_rollout),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -361,13 +414,13 @@ fun DebugScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            "🧪 Mass Simulation",
+                            stringResource(R.string.debug_section_mass_simulation),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         
-                        Text("Quantity: ${simulationCount.toInt()}")
+                        Text(stringResource(R.string.debug_quantity_format, simulationCount.toInt()))
                         Slider(
                             value = simulationCount,
                             onValueChange = { simulationCount = it },
@@ -386,7 +439,7 @@ fun DebugScreen(
                                     color = MaterialTheme.colorScheme.onPrimary
                                 )
                             } else {
-                                Text("Generate ${simulationCount.toInt()} Transactions")
+                                Text(stringResource(R.string.debug_generate_transactions, simulationCount.toInt()))
                             }
                         }
                     }
@@ -400,7 +453,7 @@ fun DebugScreen(
                         onClick = { showCategorizationDebug = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("🛠️ Categorization Pipeline Debug")
+                        Text(stringResource(R.string.debug_categorization_pipeline))
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -412,7 +465,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.tertiary
                         )
                     ) {
-                        Text("Simulate Single Purchase (€12.50)")
+                        Text(stringResource(R.string.debug_simulate_purchase))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -424,7 +477,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.primary
                         )
                     ) {
-                        Text("Simulate Single Deposit (€500)")
+                        Text(stringResource(R.string.debug_simulate_deposit))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -436,43 +489,43 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.secondary
                         )
                     ) {
-                        Text("Sync Active Notifications")
+                        Text(stringResource(R.string.debug_sync_notifications))
                     }
                     
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
-                        onClick = { viewModel.resetExpenses() },
+                        onClick = { pendingConfirmationAction = DebugDestructiveAction.RESET_EXPENSES },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
-                        Text("Reset All Expenses")
+                        Text(stringResource(R.string.debug_reset_expenses))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
-                        onClick = { viewModel.resetBudgets() },
+                        onClick = { pendingConfirmationAction = DebugDestructiveAction.RESET_BUDGETS },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                         )
                     ) {
-                        Text("Reset All Budgets")
+                        Text(stringResource(R.string.debug_reset_budgets))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
-                        onClick = { viewModel.resetSourceStats() },
+                        onClick = { pendingConfirmationAction = DebugDestructiveAction.RESET_SOURCE_STATS },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
                         )
                     ) {
-                        Text("Reset Trust Scores")
+                        Text(stringResource(R.string.debug_reset_trust_scores))
                     }
                 }
             }
@@ -503,7 +556,7 @@ fun DebugScreen(
                             FilterChip(
                                 selected = selectedFilter == null,
                                 onClick = { viewModel.setPackageFilter(null) },
-                                label = { Text("All") }
+                                label = { Text(stringResource(R.string.debug_filter_all)) }
                             )
                         }
                         items(packages, key = { it }) { pkg ->
@@ -528,7 +581,7 @@ fun DebugScreen(
                 if (blockedApps.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Blocked Apps:",
+                        text = stringResource(R.string.debug_blocked_apps),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         color = MaterialTheme.colorScheme.error
@@ -549,14 +602,14 @@ fun DebugScreen(
                                         color = MaterialTheme.colorScheme.error
                                     ) 
                                 },
-                                trailingIcon = {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Unblock",
-                                        modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.error
-                                    )
-                                },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.debug_notification_unblock),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            },
                                 colors = InputChipDefaults.inputChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
                                 )
@@ -578,10 +631,10 @@ fun DebugScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("No notifications captured yet")
+                            Text(stringResource(R.string.debug_notification_no_notifications))
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Make sure notification access is enabled",
+                                stringResource(R.string.debug_notification_access_required),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -591,7 +644,7 @@ fun DebugScreen(
                 item {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        "Captured Notifications (${notifications.size})",
+                        stringResource(R.string.debug_captured_notifications_count, notifications.size),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.outline
@@ -616,6 +669,111 @@ fun DebugScreen(
                 }
             }
         }
+    }
+
+    if (pendingConfirmationAction != null) {
+        val action = pendingConfirmationAction!!
+        val title = when (action) {
+            DebugDestructiveAction.CLEAR_ALL -> stringResource(R.string.debug_confirm_clear_all_title)
+            DebugDestructiveAction.RESET_EXPENSES -> stringResource(R.string.debug_confirm_reset_expenses_title)
+            DebugDestructiveAction.RESET_BUDGETS -> stringResource(R.string.debug_confirm_reset_budgets_title)
+            DebugDestructiveAction.RESET_SOURCE_STATS -> stringResource(R.string.debug_confirm_reset_trust_scores_title)
+        }
+        val message = when (action) {
+            DebugDestructiveAction.CLEAR_ALL -> stringResource(R.string.debug_confirm_clear_all_message)
+            DebugDestructiveAction.RESET_EXPENSES -> stringResource(R.string.debug_confirm_reset_expenses_message)
+            DebugDestructiveAction.RESET_BUDGETS -> stringResource(R.string.debug_confirm_reset_budgets_message)
+            DebugDestructiveAction.RESET_SOURCE_STATS -> stringResource(R.string.debug_confirm_reset_trust_scores_message)
+        }
+
+        AlertDialog(
+            onDismissRequest = { pendingConfirmationAction = null },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingConfirmationAction = null
+                        scope.launch {
+                            when (action) {
+                                DebugDestructiveAction.CLEAR_ALL -> {
+                                    val hadData = viewModel.clearAllWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_clear_all_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoClearAll()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_data_to_clear))
+                                    }
+                                }
+                                DebugDestructiveAction.RESET_EXPENSES -> {
+                                    val hadData = viewModel.resetExpensesWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_reset_expenses_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoResetExpenses()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_expenses_to_reset))
+                                    }
+                                }
+                                DebugDestructiveAction.RESET_BUDGETS -> {
+                                    val hadData = viewModel.resetBudgetsWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_reset_budgets_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoResetBudgets()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_budgets_to_reset))
+                                    }
+                                }
+                                DebugDestructiveAction.RESET_SOURCE_STATS -> {
+                                    val hadData = viewModel.resetSourceStatsWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_reset_trust_scores_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoResetSourceStats()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_trust_scores_to_reset))
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(stringResource(R.string.action_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingConfirmationAction = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
     }
 }
 
@@ -682,9 +840,14 @@ private fun AiCapability.supportsCloudFallback(): Boolean = when (this) {
     AiCapability.REVIEW_EXPLANATION,
     AiCapability.QUERY_INTERPRETATION,
     AiCapability.RECEIPT_EXTRACTION,
+    AiCapability.WARRANTY_EXTRACTION,
+    AiCapability.RECEIPT_ITEM_CATEGORIZATION,
     AiCapability.CATEGORIZATION_FALLBACK,
     AiCapability.DEDUPE_JUDGE -> true
-    AiCapability.LOCATION_SUMMARY -> false
+    AiCapability.LOCATION_SUMMARY,
+    AiCapability.NOTIFICATION_PARSE -> false // On-device only
+    AiCapability.REVIEW_PRIORITIZATION -> false // On-device only
+    AiCapability.SEMANTIC_DEDUPE -> false // On-device only
 }
 
 private fun AiCapability.debugRuntimeLabel(): String = when (this) {
@@ -692,9 +855,14 @@ private fun AiCapability.debugRuntimeLabel(): String = when (this) {
     AiCapability.REVIEW_EXPLANATION -> "review explanations"
     AiCapability.QUERY_INTERPRETATION -> "AI"
     AiCapability.RECEIPT_EXTRACTION -> "receipt assist"
+    AiCapability.WARRANTY_EXTRACTION -> "warranty extraction"
     AiCapability.CATEGORIZATION_FALLBACK -> "categorization"
     AiCapability.DEDUPE_JUDGE -> "duplicate detection"
     AiCapability.LOCATION_SUMMARY -> "location summaries"
+    AiCapability.NOTIFICATION_PARSE -> "notification parsing"
+    AiCapability.REVIEW_PRIORITIZATION -> "review prioritization"
+    AiCapability.SEMANTIC_DEDUPE -> "semantic duplicate detection"
+    AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "receipt item categorization"
 }
 
 @Composable
@@ -735,7 +903,7 @@ fun NotificationCard(
                     fontSize = 14.sp
                 )
                 Text(
-                    text = DateFormatterUtils.timeWithSecondsAndDate().format(Date(notification.capturedAt)),
+                    text = DateFormatterUtils.formatTimestampJavaTime(notification.capturedAt, "HH:mm:ss dd/MM"),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -774,7 +942,7 @@ fun NotificationCard(
                 
                 // Package name
                 Text(
-                    text = "Package: ${notification.packageName}",
+                    text = stringResource(R.string.debug_notification_package, notification.packageName),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.outline
@@ -783,7 +951,7 @@ fun NotificationCard(
                 // SubText if present
                 notification.subText?.let {
                     Text(
-                        text = "SubText: $it",
+                        text = stringResource(R.string.debug_notification_subtext, it),
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.outline
@@ -794,7 +962,7 @@ fun NotificationCard(
                 notification.extrasJson?.let {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Extras:",
+                        text = stringResource(R.string.debug_notification_extras),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -813,14 +981,14 @@ fun NotificationCard(
                 ) {
                     AssistChip(
                         onClick = onMarkRelevant,
-                        label = { Text("Expense ✓", fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.debug_notification_expense), fontSize = 11.sp) },
                         leadingIcon = {
                             Icon(Icons.Default.Check, null, Modifier.size(16.dp))
                         }
                     )
                     AssistChip(
                         onClick = onMarkIrrelevant,
-                        label = { Text("Ignore ✗", fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.debug_notification_ignore), fontSize = 11.sp) },
                         leadingIcon = {
                             Icon(Icons.Default.Close, null, Modifier.size(16.dp))
                         }
@@ -830,7 +998,7 @@ fun NotificationCard(
                     
                     AssistChip(
                         onClick = onBlockPackage,
-                        label = { Text("Block App", fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.debug_notification_block_app), fontSize = 11.sp) },
                         colors = AssistChipDefaults.assistChipColors(
                             containerColor = MaterialTheme.colorScheme.errorContainer,
                             labelColor = MaterialTheme.colorScheme.onErrorContainer
@@ -865,41 +1033,45 @@ fun MlStatsSection(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "🧠 ML Classifier",
+                stringResource(R.string.debug_section_ml_classifier),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        "Status: ${if (classifierStats.isReady) "✅ Active" else "⏳ Training"}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Positive samples: ${classifierStats.totalPositive}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Negative samples: ${classifierStats.totalNegative}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Vocabulary: ${classifierStats.vocabularySize} words",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                OutlinedButton(
-                    onClick = onRetrain,
-                    enabled = classifierStats.totalPositive + classifierStats.totalNegative >= 20
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Retrain", fontSize = 12.sp)
+                    Column {
+                        Text(
+                            stringResource(
+                                R.string.debug_status_format,
+                                stringResource(R.string.label_status),
+                                if (classifierStats.isReady) stringResource(R.string.debug_status_active) else stringResource(R.string.debug_status_training)
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(R.string.debug_label_positive_samples, classifierStats.totalPositive),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(R.string.debug_label_negative_samples, classifierStats.totalNegative),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(R.string.debug_label_vocabulary, classifierStats.vocabularySize),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onRetrain,
+                        enabled = classifierStats.totalPositive + classifierStats.totalNegative >= 20
+                    ) {
+                        Text(stringResource(R.string.debug_retrain), fontSize = 12.sp)
+                    }
                 }
-            }
 
             // Source trust scores
             if (sourceStats.isNotEmpty()) {
@@ -907,7 +1079,7 @@ fun MlStatsSection(
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "📊 Source Trust Scores",
+                    stringResource(R.string.debug_section_source_trust),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -946,4 +1118,690 @@ fun MlStatsSection(
             }
         }
     }
+}
+
+@Composable
+private fun DatabaseManagementSection(viewModel: DebugViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val databaseStats by viewModel.databaseStats.collectAsState()
+    val exportResult by viewModel.databaseExportResult.collectAsState()
+    val importResult by viewModel.databaseImportResult.collectAsState()
+    
+    // Load stats when section becomes visible
+    LaunchedEffect(Unit) {
+        viewModel.loadDatabaseStats()
+    }
+    
+    // Handle export/import results
+    LaunchedEffect(exportResult) {
+        when (exportResult) {
+            is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success -> {
+                val result = exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success
+                val path = result.filePath
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(R.string.debug_toast_export_success, path),
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                result.warning?.let { warning ->
+                    android.widget.Toast.makeText(
+                        context,
+                        warning,
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                viewModel.clearExportResult()
+            }
+            is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error -> {
+                val message = (exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error).message
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(R.string.debug_toast_export_failed, message),
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                viewModel.clearExportResult()
+            }
+            else -> {}
+        }
+    }
+    
+    LaunchedEffect(importResult) {
+        when (importResult) {
+            is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success -> {
+                val summary = (importResult as com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success).summary
+                val isEmptyData = summary.transactionCount == 0 && summary.categoryCount == 0
+                
+                val message = if (isEmptyData) {
+                    buildString {
+                        append("⚠️ Import completed but no data found!")
+                        append("\n• ${summary.transactionCount} transactions")
+                        append("\n• ${summary.categoryCount} categories")
+                        append("\n\nThe backup may be corrupted or from a very old version.")
+                    }
+                } else {
+                    buildString {
+                        append("✅ Import verified!")
+                        if (summary.transactionCount > 0) {
+                            append("\n📊 Imported ${summary.transactionCount} transactions")
+                        }
+                        if (summary.categoryCount > 0) {
+                            append("\n📂 ${summary.categoryCount} categories")
+                        }
+                        if (summary.merchantCount > 0) {
+                            append("\n🏪 ${summary.merchantCount} merchants")
+                        }
+                        if (summary.budgetCount > 0) {
+                            append("\n💰 ${summary.budgetCount} budgets")
+                        }
+                        if (summary.pendingReviewCount > 0) {
+                            append("\n⏳ ${summary.pendingReviewCount} pending reviews")
+                        }
+                        append("\n\nRestart app to use all data.")
+                    }
+                }
+                android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearImportResult()
+                viewModel.loadDatabaseStats() // Refresh stats
+            }
+            is com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart -> {
+                android.widget.Toast.makeText(context, "✅ Database imported successfully!\n\nPlease restart the app to access all imported data.", android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearImportResult()
+                viewModel.loadDatabaseStats() // Refresh stats
+            }
+            is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error -> {
+                val message = (importResult as com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error).message
+                // Show full error message with detailed explanation
+                android.widget.Toast.makeText(context, "❌ Import blocked:\n$message", android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearImportResult()
+            }
+            else -> {}
+        }
+    }
+    
+    var showImportDialog by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
+    var showCsvImportDialog by remember { mutableStateOf(false) }
+    var showLegacyMigrationDialog by remember { mutableStateOf(false) }
+    
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    stringResource(R.string.debug_section_database_management),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Database Stats
+            databaseStats?.let { stats ->
+                Text(
+                    stringResource(R.string.debug_current_data),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    stringResource(R.string.debug_transactions_count, stats.transactionCount),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    stringResource(R.string.debug_categories_count, stats.categoryCount),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    stringResource(R.string.debug_merchants_count, stats.merchantCount),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    stringResource(R.string.debug_pending_reviews_count, stats.pendingReviewCount),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            
+            // Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Export Button
+                Button(
+                    onClick = { viewModel.exportDatabase() },
+                    modifier = Modifier.weight(1f),
+                    enabled = exportResult !is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Loading
+                ) {
+                    if (exportResult is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(stringResource(R.string.debug_export), fontSize = 12.sp)
+                    }
+                }
+                
+                // Import Button
+                Button(
+                    onClick = { showImportDialog = true },
+                    modifier = Modifier.weight(1f),
+                    enabled = importResult !is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Loading
+                ) {
+                    if (importResult is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(stringResource(R.string.debug_import), fontSize = 12.sp)
+                    }
+                }
+                
+                // Reset Button
+                OutlinedButton(
+                    onClick = { showResetDialog = true },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(stringResource(R.string.debug_reset), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // CSV Import Button (for migrating from old versions)
+                OutlinedButton(
+                    onClick = { showCsvImportDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.debug_import_csv_button), fontSize = 12.sp)
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Legacy Database Migration Button
+                OutlinedButton(
+                    onClick = { showLegacyMigrationDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.debug_migrate_legacy_db), fontSize = 12.sp)
+                }
+            }
+        }
+    
+    // Import Dialog
+    if (showImportDialog) {
+        ImportDatabaseDialog(
+            context = context,
+            onDismiss = { showImportDialog = false },
+            onImport = { uri ->
+                viewModel.importDatabase(uri, context)
+                showImportDialog = false
+            }
+        )
+    }
+    
+    // Reset Confirmation Dialog (BAK-10: typed confirmation required)
+    if (showResetDialog) {
+        val resetSuccessMessage = stringResource(R.string.debug_toast_reset_success)
+        var typedConfirmation by remember { mutableStateOf("") }
+        val isConfirmed = typedConfirmation.equals("DELETE", ignoreCase = true)
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+        title = { Text(stringResource(R.string.debug_dialog_reset_database_title)) },
+        text = { 
+            Column {
+                Text(stringResource(R.string.debug_dialog_reset_database_message))
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = typedConfirmation,
+                    onValueChange = { typedConfirmation = it },
+                    label = { Text("Type DELETE to confirm") },
+                    singleLine = true,
+                    isError = typedConfirmation.isNotEmpty() && !isConfirmed,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = if (isConfirmed) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                        cursorColor = MaterialTheme.colorScheme.onSurface
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (viewModel.resetDatabase(typedConfirmation)) {
+                        showResetDialog = false
+                        android.widget.Toast.makeText(context, resetSuccessMessage, android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Reset cancelled: type DELETE to confirm", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error
+                ),
+                enabled = isConfirmed
+            ) {
+                Text(stringResource(R.string.debug_reset))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { showResetDialog = false }) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+        )
+    }
+    
+    // Legacy Database Migration Result Handling
+    val migrationResult by viewModel.migrationResult.collectAsState()
+    LaunchedEffect(migrationResult) {
+        migrationResult?.let { result ->
+            val message = buildString {
+                appendLine("✅ Migration complete!")
+                appendLine("Categories: ${result.categories.imported} imported, ${result.categories.skipped} skipped, ${result.categories.failed} failed")
+                appendLine("Expenses: ${result.expenses.imported} imported, ${result.expenses.skipped} skipped, ${result.expenses.failed} failed")
+                appendLine("Budgets: ${result.budgets.imported} imported, ${result.budgets.failed} failed")
+                appendLine("Recurring: ${result.recurringRules.imported} imported, ${result.recurringRules.failed} failed")
+                appendLine("Planned: ${result.plannedExpenses.imported} imported, ${result.plannedExpenses.failed} failed")
+                appendLine("Savings: ${result.savingsGoals.imported} imported, ${result.savingsGoals.failed} failed")
+            }
+            android.widget.Toast.makeText(context, message.trimEnd(), android.widget.Toast.LENGTH_LONG).show()
+            viewModel.clearMigrationResult()
+            viewModel.loadDatabaseStats()
+        }
+    }
+
+    // Legacy Migration File Picker Dialog
+    if (showLegacyMigrationDialog) {
+        LegacyMigrationDialog(
+            context = context,
+            onDismiss = { showLegacyMigrationDialog = false },
+            onMigrate = { uri ->
+                viewModel.migrateLegacyDatabase(uri)
+                showLegacyMigrationDialog = false
+            }
+        )
+    }
+
+    // CSV Import Dialog
+    if (showCsvImportDialog) {
+        CsvImportDialog(
+            context = context,
+            onDismiss = { showCsvImportDialog = false },
+            onImport = { uri ->
+                // Read CSV content and import
+                val csvContent = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    stream.bufferedReader().readText()
+                }
+                
+                csvContent?.let { content ->
+                    scope.launch {
+                        val importer = viewModel.csvExpenseImporter
+                        val result = importer.importFromContent(content) { progress, total ->
+                            // Could update UI with progress here
+                        }
+
+                        when (result) {
+                            is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Success -> {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.debug_import_success_format, result.imported, result.errors),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                            is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Error -> {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.debug_import_failed_format, result.message),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                }
+                showCsvImportDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun ImportDatabaseDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onImport: (android.net.Uri) -> Unit
+) {
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var selectedUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let { selectedUri = it }
+        selectedUri?.let { uri ->
+            // Get filename from URI
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0 && cursor.moveToFirst()) {
+                    selectedFileName = cursor.getString(nameIndex)
+                }
+            }
+        }
+    }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.debug_dialog_import_database_title)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.debug_dialog_select_file),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // File picker button
+                OutlinedButton(
+                    onClick = { launcher.launch(arrayOf("application/octet-stream", "*/*")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (selectedFileName == null) stringResource(R.string.debug_dialog_select_file) else stringResource(R.string.debug_dialog_change_file))
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Show selected file info
+                if (selectedFileName != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                stringResource(R.string.debug_dialog_selected),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                selectedFileName!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        stringResource(R.string.debug_import_no_file),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    stringResource(R.string.debug_dialog_import_replace_data),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { 
+                    selectedUri?.let { onImport(it) }
+                },
+                enabled = selectedUri != null
+            ) {
+                Text(stringResource(R.string.debug_import))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun CsvImportDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onImport: (android.net.Uri) -> Unit
+) {
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var selectedUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var importProgress by remember { mutableStateOf(0) }
+    var isImporting by remember { mutableStateOf(false) }
+    
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let { selectedUri = it }
+        selectedUri?.let { uri ->
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) {
+                        selectedFileName = cursor.getString(nameIndex)
+                    }
+                }
+            }
+        }
+    }
+    
+    AlertDialog(
+        onDismissRequest = { if (!isImporting) onDismiss() },
+        title = { Text(stringResource(R.string.debug_dialog_import_csv_title)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.debug_import_csv_format_description),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                OutlinedButton(
+                    onClick = { launcher.launch(arrayOf("text/csv", "text/plain", "*/*")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isImporting
+                ) {
+                    Text(if (selectedFileName == null) stringResource(R.string.debug_select_csv_file) else stringResource(R.string.debug_dialog_change_file))
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                if (selectedFileName != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                stringResource(R.string.debug_dialog_selected),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                selectedFileName!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    
+                    if (isImporting) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LinearProgressIndicator(
+                            progress = { importProgress / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            stringResource(R.string.debug_importing_progress, importProgress),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                } else {
+                    Text(
+                        stringResource(R.string.debug_import_no_file),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    stringResource(R.string.debug_import_replace_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { 
+                    selectedUri?.let { onImport(it) }
+                },
+                enabled = selectedUri != null && !isImporting
+            ) {
+                Text(stringResource(R.string.debug_import_csv))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun LegacyMigrationDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onMigrate: (android.net.Uri) -> Unit
+) {
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var selectedUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let { selectedUri = it }
+        selectedUri?.let { uri ->
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) {
+                        selectedFileName = cursor.getString(nameIndex)
+                    }
+                }
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Migrate Legacy Database") },
+        text = {
+            Column {
+                Text(
+                    text = "Select an old backup database file (.db) to migrate data into the current app.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Categories, expenses, budgets, recurring rules, planned expenses, and savings goals will be imported.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Duplicate items (by name or dedup key) will be skipped.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedButton(
+                    onClick = { launcher.launch(arrayOf("application/octet-stream", "*/*")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (selectedFileName == null) "Select database file" else "Change file")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (selectedFileName != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Selected:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                selectedFileName!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        "No file selected. Choose a .db file from your backup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "Existing data with the same name/keys will be preserved. No data will be overwritten.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    selectedUri?.let { onMigrate(it) }
+                },
+                enabled = selectedUri != null
+            ) {
+                Text("Migrate Data")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }

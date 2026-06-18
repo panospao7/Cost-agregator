@@ -12,6 +12,8 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 
+import com.yourname.expensetracker.data.database.entity.CategorizationStatus
+
 class Converters {
     @TypeConverter
     fun fromTransactionType(value: TransactionType): String {
@@ -116,4 +118,24 @@ class Converters {
     @TypeConverter
     fun toAssistantMessageKind(value: String): AssistantMessageKind =
         try { AssistantMessageKind.valueOf(value) } catch (_: IllegalArgumentException) { AssistantMessageKind.ERROR }
+
+    // ------------------------------------------------------------------
+    // Categorization Status
+    // ------------------------------------------------------------------
+
+    @TypeConverter
+    fun fromCategorizationStatus(value: CategorizationStatus?): String? {
+        return value?.name
+    }
+
+    @TypeConverter
+    fun toCategorizationStatus(value: String?): CategorizationStatus? {
+        return value?.let {
+            try {
+                CategorizationStatus.valueOf(it)
+            } catch (e: IllegalArgumentException) {
+                CategorizationStatus.PENDING
+            }
+        }
+    }
 }

@@ -20,8 +20,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter as VMOwnershipFilter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -29,6 +32,7 @@ fun TransactionFilterSheet(
     categories: List<Category>,
     currentFilter: TransactionFilter?,
     currentOwnershipFilter: VMOwnershipFilter,
+    referenceNowMs: Long,
     onDismiss: () -> Unit,
     onApply: (TransactionFilter?, VMOwnershipFilter) -> Unit,
     onClear: () -> Unit
@@ -36,10 +40,18 @@ fun TransactionFilterSheet(
     var selectedCategoryId by remember { mutableStateOf(currentFilter?.categoryId) }
     var selectedType by remember { mutableStateOf(currentFilter?.transactionType) }
     var selectedOwnership by remember { mutableStateOf(currentOwnershipFilter) }
-    var selectedYear by remember { mutableStateOf<Int?>(null) }
-    var selectedMonth by remember { mutableStateOf<Int?>(null) }
-    // Date range filtering can be complex to build visually from scratch quickly,
-    // so for now we'll stick to defining category, type and ownership which covers the 90% use case.
+    // Initialize year/month chips from the existing filter's dateRange so an
+    // existing explicit range is visible/editable when re-opening the sheet.
+    var selectedYear by remember {
+        mutableStateOf(currentFilter?.dateRange?.let { (start, _) ->
+            TimePeriodUtils.getYear(start)
+        })
+    }
+    var selectedMonth by remember {
+        mutableStateOf(currentFilter?.dateRange?.let { (start, _) ->
+            TimePeriodUtils.getMonth(start) + 1  // getMonth() is 0-based; chips are 1-based
+        })
+    }
 
     val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -63,34 +75,36 @@ fun TransactionFilterSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Filter Transactions",
+                    text = stringResource(R.string.filter_transactions_title),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 TextButton(
                     onClick = {
+                        // S5-029: Reset All clears visible AND hidden route-only fields
                         selectedCategoryId = null
                         selectedType = null
                         selectedOwnership = VMOwnershipFilter.ALL
                         selectedYear = null
                         selectedMonth = null
+                        onClear() // clears minAmount/maxAmount/correlationId/merchantName
                     }
                 ) {
-                    Text("Reset All", color = SemanticColors.DangerRed)
+                    Text(stringResource(R.string.filter_reset_all), color = SemanticColors.DangerRed)
                 }
             }
 
             // Transaction Type Section
-            FilterSection(title = "Transaction Type") {
+            FilterSection(title = stringResource(R.string.filter_transaction_type_title)) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    val types = listOf(null to "All Types") + TransactionType.values()
+                    val types = listOf(null to stringResource(R.string.filter_all_types)) + TransactionType.values()
                         .filter { it != TransactionType.UNKNOWN }
-                        .map { it to it.name }
+                        .map { it to getTransactionTypeLabel(it) }
                     
                     types.forEach { (type, label) ->
                         FilterChip(
@@ -113,7 +127,7 @@ fun TransactionFilterSheet(
             }
 
             // Ownership Section
-            FilterSection(title = "Ownership") {
+            FilterSection(title = stringResource(R.string.filter_ownership_title)) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -123,7 +137,7 @@ fun TransactionFilterSheet(
                         FilterChip(
                             selected = selectedOwnership == ownership,
                             onClick = { selectedOwnership = ownership },
-                            label = { Text(ownership.label) },
+                            label = { Text(stringResource(getOwnershipLabelRes(ownership))) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
                                 selectedLabelColor = SemanticColors.PrimaryIndigo
@@ -140,14 +154,14 @@ fun TransactionFilterSheet(
             }
 
             // Category Section
-            FilterSection(title = "Category") {
+            FilterSection(title = stringResource(R.string.filter_category_title)) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     item {
                         CategorySelectCard(
-                            name = "All Categories",
+                            name = stringResource(R.string.filter_all_categories),
                             icon = "📁",
                             colorHex = "#808080", // Gray
                             isSelected = selectedCategoryId == null,
@@ -167,13 +181,13 @@ fun TransactionFilterSheet(
             }
 
             // Date Range - Year section
-            FilterSection(title = "Year") {
+            FilterSection(title = stringResource(R.string.filter_year_title)) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+                    val currentYear = TimePeriodUtils.getYear(referenceNowMs)
                     listOf(currentYear, currentYear - 1, currentYear - 2, currentYear - 3).forEach { year ->
                         FilterChip(
                             selected = selectedYear == year,
@@ -194,7 +208,7 @@ fun TransactionFilterSheet(
                     FilterChip(
                         selected = selectedYear == null,
                         onClick = { selectedYear = null },
-                        label = { Text("All Years") },
+                        label = { Text(stringResource(R.string.filter_all_years)) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
                             selectedLabelColor = SemanticColors.PrimaryIndigo
@@ -211,16 +225,16 @@ fun TransactionFilterSheet(
 
             // Month selection (only if year is selected)
             if (selectedYear != null) {
-                FilterSection(title = "Month") {
+                FilterSection(title = stringResource(R.string.filter_month_title)) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         listOf(
-                            1 to "Jan", 2 to "Feb", 3 to "Mar", 4 to "Apr",
-                            5 to "May", 6 to "Jun", 7 to "Jul", 8 to "Aug",
-                            9 to "Sep", 10 to "Oct", 11 to "Nov", 12 to "Dec"
+                            1 to stringResource(R.string.month_jan_short), 2 to stringResource(R.string.month_feb_short), 3 to stringResource(R.string.month_mar_short), 4 to stringResource(R.string.month_apr_short),
+                            5 to stringResource(R.string.month_may_short), 6 to stringResource(R.string.month_jun_short), 7 to stringResource(R.string.month_jul_short), 8 to stringResource(R.string.month_aug_short),
+                            9 to stringResource(R.string.month_sep_short), 10 to stringResource(R.string.month_oct_short), 11 to stringResource(R.string.month_nov_short), 12 to stringResource(R.string.month_dec_short)
                         ).forEach { (month, name) ->
                             FilterChip(
                                 selected = selectedMonth == month,
@@ -246,58 +260,35 @@ fun TransactionFilterSheet(
 
             Button(
                 onClick = {
-                    val calendar = java.util.Calendar.getInstance()
-                    var startDate: Long? = null
-                    var endDate: Long? = null
-
-                    if (selectedYear != null) {
-                        calendar.timeInMillis = System.currentTimeMillis()
-                        calendar.set(java.util.Calendar.YEAR, selectedYear!!)
+                    // Build the date range using TimePeriodUtils half-open convention
+                    // [startInclusive, endExclusive) — no 23:59:59 clamping.
+                    val dateRangeToUse: Pair<Long, Long>? = if (selectedYear != null) {
                         if (selectedMonth != null) {
-                            calendar.set(java.util.Calendar.MONTH, selectedMonth!! - 1)
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                            calendar.set(java.util.Calendar.MINUTE, 0)
-                            calendar.set(java.util.Calendar.SECOND, 0)
-                            startDate = calendar.timeInMillis
-                            
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH))
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 23)
-                            calendar.set(java.util.Calendar.MINUTE, 59)
-                            calendar.set(java.util.Calendar.SECOND, 59)
-                            endDate = calendar.timeInMillis
+                            // Specific year + month: e.g., 2024-Mar-01 00:00 → 2024-Apr-01 00:00
+                            TimePeriodUtils.getMonthRange(selectedYear!!, selectedMonth!!)
                         } else {
-                            calendar.set(java.util.Calendar.MONTH, 0)
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                            calendar.set(java.util.Calendar.MINUTE, 0)
-                            calendar.set(java.util.Calendar.SECOND, 0)
-                            startDate = calendar.timeInMillis
-                            
-                            calendar.set(java.util.Calendar.MONTH, 11)
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, 31)
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 23)
-                            calendar.set(java.util.Calendar.MINUTE, 59)
-                            calendar.set(java.util.Calendar.SECOND, 59)
-                            endDate = calendar.timeInMillis
+                            // Year only: e.g., 2024-Jan-01 00:00 → 2025-Jan-01 00:00
+                            TimePeriodUtils.getYearRange(selectedYear!!)
                         }
-                    }
-                    
-                    val dateRangeToUse = if (startDate != null && endDate != null) {
-                        Pair(startDate, endDate)
                     } else {
-                        currentFilter?.dateRange
+                        // No year selected → date filter is explicitly cleared (null),
+                        // NOT a fallback to the previous filter's dateRange.
+                        null
                     }
 
-                    val newFilter = if (selectedCategoryId != null || selectedType != null || dateRangeToUse != null) {
-                        TransactionFilter(
-                            categoryId = selectedCategoryId,
-                            transactionType = selectedType,
-                            merchantName = currentFilter?.merchantName,
-                            dateRange = dateRangeToUse
-                        )
-                    } else {
+                    // S5-006R: Build from currentFilter so route-only fields survive Apply even when no visible field selected
+                    val base = currentFilter ?: TransactionFilter()
+                    val candidate = base.copy(
+                        categoryId = selectedCategoryId,
+                        transactionType = selectedType,
+                        dateRange = dateRangeToUse
+                    )
+                    val newFilter = if (candidate.categoryId == null && candidate.transactionType == null &&
+                        candidate.dateRange == null && candidate.merchantName == null &&
+                        candidate.minAmount == null && candidate.maxAmount == null && candidate.correlationId == 0L) {
                         null
+                    } else {
+                        candidate
                     }
                     onApply(newFilter, selectedOwnership)
                 },
@@ -305,7 +296,7 @@ fun TransactionFilterSheet(
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
             ) {
-                Text("Apply Filters", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.filter_apply), style = MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -324,6 +315,28 @@ private fun FilterSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         content()
+    }
+}
+
+@Composable
+private fun getTransactionTypeLabel(type: TransactionType): String {
+    return when (type) {
+        TransactionType.PURCHASE -> stringResource(R.string.transaction_type_purchase)
+        TransactionType.DEPOSIT -> stringResource(R.string.transaction_type_deposit)
+        TransactionType.WITHDRAWAL -> stringResource(R.string.transaction_type_withdrawal)
+        TransactionType.TRANSFER -> stringResource(R.string.transaction_type_transfer)
+        TransactionType.UNKNOWN -> stringResource(R.string.transaction_type_unknown)
+    }
+}
+
+@Composable
+private fun getOwnershipLabelRes(ownership: VMOwnershipFilter): Int {
+    return when (ownership) {
+        VMOwnershipFilter.ALL -> R.string.transactions_ownership_all
+        VMOwnershipFilter.MINE -> R.string.transactions_ownership_mine
+        VMOwnershipFilter.NOT_MINE -> R.string.transactions_ownership_not_mine
+        VMOwnershipFilter.SHARED -> R.string.transactions_ownership_shared
+        VMOwnershipFilter.TRANSFER -> R.string.transactions_ownership_transfers
     }
 }
 
@@ -360,14 +373,14 @@ private fun CategorySelectCard(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.TopEnd
             ) {
-                if (isSelected) {
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = "Selected",
-                        tint = categoryColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
+            if (isSelected) {
+                Icon(
+                    Icons.Rounded.Check,
+                    contentDescription = stringResource(R.string.filter_selected_cd),
+                    tint = categoryColor,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
             }
             Text(icon, style = MaterialTheme.typography.headlineMedium)
             Spacer(modifier = Modifier.height(8.dp))

@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
@@ -17,12 +17,16 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.ai.provider.StrictAiJsonParsing
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestCategoryFallbackUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
@@ -139,7 +143,7 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
         }
 
         val now = timeProvider.now()
-        val sourceHash = input.hashCode().toString()
+        val sourceHash = AiArtifactSourceHash.forReviewCategorizationFallback(input)
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.CATEGORIZATION_FALLBACK)
         if (!force &&
             existing != null &&
@@ -154,7 +158,7 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
                 ?.let { return CategoryAssistGenerationResult.Success(it, fromCache = true) }
         }
 
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType = input.targetType,
             targetId = input.targetId,
             targetKey = targetKey,
@@ -204,7 +208,10 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
                 )
                 CategoryAssistGenerationResult.Success(validated, fromCache = false)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            Timber.e(e, "SuggestCategoryFallbackUseCase: provider call failed for $targetKey")
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,
@@ -251,23 +258,22 @@ private fun CategoryAssistSuggestion.toPayloadJson(): String {
 private fun String.toCategoryAssistSuggestionOrNull(): CategoryAssistSuggestion? {
     return runCatching {
         val root = JSONObject(this)
+        val categoryId = StrictAiJsonParsing.run { root.positiveIdOrNull("categoryId") } ?: return null
+        val confidence = if (root.has("confidence") && !root.isNull("confidence")) {
+            StrictAiJsonParsing.run { root.boundedConfidenceOrNull("confidence") } ?: return null
+        } else {
+            null
+        }
         CategoryAssistSuggestion(
-            categoryId = root.optLong("categoryId"),
+            categoryId = categoryId,
             categoryName = root.optString("categoryName"),
-            confidence = if (root.has("confidence") && !root.isNull("confidence")) root.optDouble("confidence").toFloat() else null,
+            confidence = confidence,
             rationale = root.optString("rationale").takeIf { it.isNotBlank() },
-            alternativeCategoryIds = root.optJSONArray("alternativeCategoryIds").toLongList()
+            alternativeCategoryIds = StrictAiJsonParsing.run {
+                root.optJSONArray("alternativeCategoryIds").positiveLongs()
+            }
         )
     }.getOrNull()
-}
-
-private fun JSONArray?.toLongList(): List<Long> {
-    if (this == null) return emptyList()
-    return buildList(length()) {
-        for (index in 0 until length()) {
-            add(optLong(index))
-        }
-    }
 }
 
 private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String {

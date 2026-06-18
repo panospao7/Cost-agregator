@@ -12,6 +12,13 @@ class ServiceDiagnostics @Inject constructor(
 ) {
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    /**
+     * Single synchronization owner for all counter writes and snapshot reads.
+     * Prevents lost updates from concurrent read-modify-write cycles and
+     * ensures [getStats] returns a consistent snapshot.
+     */
+    private val lock = Any()
+
     companion object {
         private const val PREFS_NAME = "service_diagnostics"
         private const val KEY_SERVICE_START_COUNT = "service_start_count"
@@ -22,33 +29,41 @@ class ServiceDiagnostics @Inject constructor(
     }
 
     fun recordServiceStart() {
-        prefs.edit().apply {
-            putInt(KEY_SERVICE_START_COUNT, getServiceStartCount() + 1)
-            putLong(KEY_LAST_RESTART_TIME, System.currentTimeMillis())
-        }.commit()
+        synchronized(lock) {
+            prefs.edit().apply {
+                putInt(KEY_SERVICE_START_COUNT, prefs.getInt(KEY_SERVICE_START_COUNT, 0) + 1)
+                putLong(KEY_LAST_RESTART_TIME, System.currentTimeMillis())
+            }.commit()
+        }
     }
 
     fun recordServiceKilled() {
-        prefs.edit().apply {
-            putInt(KEY_SERVICE_KILLED_COUNT, getServiceKilledCount() + 1)
-            putLong(KEY_LAST_KILL_TIME, System.currentTimeMillis())
-        }.commit()
+        synchronized(lock) {
+            prefs.edit().apply {
+                putInt(KEY_SERVICE_KILLED_COUNT, prefs.getInt(KEY_SERVICE_KILLED_COUNT, 0) + 1)
+                putLong(KEY_LAST_KILL_TIME, System.currentTimeMillis())
+            }.commit()
+        }
     }
 
     fun recordListenerDisconnected() {
-        prefs.edit().apply {
-            putInt(KEY_LISTENER_DISCONNECT_COUNT, getListenerDisconnectCount() + 1)
-        }.commit()
+        synchronized(lock) {
+            prefs.edit().apply {
+                putInt(KEY_LISTENER_DISCONNECT_COUNT, prefs.getInt(KEY_LISTENER_DISCONNECT_COUNT, 0) + 1)
+            }.commit()
+        }
     }
 
-    fun getServiceStartCount(): Int = prefs.getInt(KEY_SERVICE_START_COUNT, 0)
-    fun getServiceKilledCount(): Int = prefs.getInt(KEY_SERVICE_KILLED_COUNT, 0)
-    fun getListenerDisconnectCount(): Int = prefs.getInt(KEY_LISTENER_DISCONNECT_COUNT, 0)
-    fun getLastRestartTime(): Long = prefs.getLong(KEY_LAST_RESTART_TIME, 0)
-    fun getLastKillTime(): Long = prefs.getLong(KEY_LAST_KILL_TIME, 0)
+    fun getServiceStartCount(): Int = synchronized(lock) { prefs.getInt(KEY_SERVICE_START_COUNT, 0) }
+    fun getServiceKilledCount(): Int = synchronized(lock) { prefs.getInt(KEY_SERVICE_KILLED_COUNT, 0) }
+    fun getListenerDisconnectCount(): Int = synchronized(lock) { prefs.getInt(KEY_LISTENER_DISCONNECT_COUNT, 0) }
+    fun getLastRestartTime(): Long = synchronized(lock) { prefs.getLong(KEY_LAST_RESTART_TIME, 0) }
+    fun getLastKillTime(): Long = synchronized(lock) { prefs.getLong(KEY_LAST_KILL_TIME, 0) }
 
     fun resetStats() {
-        prefs.edit().clear().commit()
+        synchronized(lock) {
+            prefs.edit().clear().commit()
+        }
     }
 
     data class Stats(
@@ -59,11 +74,13 @@ class ServiceDiagnostics @Inject constructor(
         val lastKillTime: Long
     )
 
-    fun getStats(): Stats = Stats(
-        startCount = getServiceStartCount(),
-        killedCount = getServiceKilledCount(),
-        disconnectCount = getListenerDisconnectCount(),
-        lastRestartTime = getLastRestartTime(),
-        lastKillTime = getLastKillTime()
-    )
+    fun getStats(): Stats = synchronized(lock) {
+        Stats(
+            startCount = prefs.getInt(KEY_SERVICE_START_COUNT, 0),
+            killedCount = prefs.getInt(KEY_SERVICE_KILLED_COUNT, 0),
+            disconnectCount = prefs.getInt(KEY_LISTENER_DISCONNECT_COUNT, 0),
+            lastRestartTime = prefs.getLong(KEY_LAST_RESTART_TIME, 0),
+            lastKillTime = prefs.getLong(KEY_LAST_KILL_TIME, 0)
+        )
+    }
 }

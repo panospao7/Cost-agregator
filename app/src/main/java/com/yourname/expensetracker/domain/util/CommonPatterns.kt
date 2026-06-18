@@ -11,6 +11,24 @@ object CommonPatterns {
         Pattern.CASE_INSENSITIVE
     )
 
+    /**
+     * Shared grouped-amount token fragment for embedding inside parser-specific regexes.
+     *
+     * Captures the full raw numeric token including optional thousands separators.
+     * Supported formats:
+     * - Plain decimal: 12.50, 8,99
+     * - US grouped: 1,234.56 / 12,345.67
+     * - EU grouped: 1.234,56 / 12.345,67
+     * - Integer with groups: 1,000 / 1.000
+     *
+     * The captured token should be passed to [AmountUtils.parseAmount] for normalization.
+     * This fragment is intentionally narrow: it requires at least one digit and does NOT
+     * match sign prefixes, currency symbols, or whitespace — those belong in the
+     * surrounding parser regex.
+     */
+    const val GROUPED_AMOUNT_TOKEN: String =
+        """\d{1,3}(?:[.,]\d{3})*[.,]\d{1,2}|\d+[.,]\d{1,2}|\d{1,3}(?:[.,]\d{3})+"""
+
     // Common merchant noise prefixes (DUP-006 consolidation)
     val MERCHANT_PREFIXES = listOf(
         "VRP*", "SQ *", "PAYPAL *", "IZ *", "ZETTLE *", "SUMUP *", 

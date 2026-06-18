@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import java.util.Calendar
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -28,9 +28,81 @@ import kotlin.math.abs
  *
  * This class operates purely on the in-memory expense list — no DB calls.
  * It complements [InsightsEngine]'s merchant-level DB-backed detection.
+ *
+ * ## AIML-6: Historical baselines for anomaly detection (planned)
+ * Currently all [detect] methods compare expenses only within the current month
+ * ([monthPeriod]). This misses seasonal patterns (e.g. higher heating bills in
+ * winter, holiday shopping spikes) and treats every month as independent.
+ *
+ * The plan is to compute historical period baselines:
+ *
+ * 1. **Same-month-last-year comparison**: For each category, pull expenses from
+ *    the same calendar month in the prior year and compute the median and MAD.
+ *    Flag expenses that exceed the historical median by > 3×MAD of the historical
+ *    distribution, not just the current month's distribution.
+ * 2. **Rolling multi-month baseline**: Compute a moving average of the past 3
+ *    months' per-category spending. Use this as the expected range. An expense
+ *    is anomalous if it exceeds the rolling mean by > 2 standard deviations
+ *    (computed across the rolling window).
+ * 3. **Year-over-year trend deviation**: For recurring seasonal expenses, compute
+ *    the ratio of current-month-total to same-month-last-year-total. If the ratio
+ *    deviates from 1.0 by more than a configurable threshold (e.g. 40%), flag all
+ *    expenses in the category as a "seasonal anomaly" rather than individual outliers.
+ *
+ * To support this, [detect] would need an additional parameter (e.g. a
+ * [HistoricalContext] data class) providing pre-aggregated historical stats.
+ * The caller ([InsightsEngine.findAnomalies]) would be responsible for computing
+ * these from the expense DAO and passing them in.
+ *
+ * ## AI-2: Recurring-expense suppression (RESOLVED)
+ * Recurring/scheduled expenses (rent, subscriptions, insurance premiums) are
+ * now suppressed via the [suppressRecurringMerchantKeys] parameter on [detect].
+ * The caller passes a set of merchant keys derived from recurring rules
+ * ([com.yourname.expensetracker.domain.logic.RecurringExpenseEngine.getPatterns]),
+ * and expenses whose merchant key matches are excluded from statistical outlier
+ * detection. This prevents routine bills from triggering anomaly alerts while
+ * still catching unusual spikes in recurring amounts.
+ *
+ * ## AIML-11: Confidence propagation
+ * This detector does NOT use AI confidence scores — it uses purely statistical
+ * methods (IQR, MAD, contextual) on raw numerical amounts. However, the
+ * [detect] method receives pre-filtered expenses that may have been created
+ * via the AI auto-accept path (see [NotificationProcessingPipeline]).
+ * These expenses carry no confidence metadata, so the statistical methods
+ * treat them identically to manually-entered transactions.
+ *
+ * ## AIML-12: Stale category IDs
+ * Category IDs from stale AI classifications are handled at the caller level
+ * ([InsightsEngine.findAnomalies]) which resolves category references through
+ * the `categoryMap` parameter. If a category has been deleted, the anomaly
+ * is displayed without a category reference rather than showing a stale ID.
+ *
+ * ## AIML-13: Duplicate-inflated trust
+ * Repeated identical transactions from the same merchant can create a
+ * statistical baseline that masks genuinely anomalous spikes (e.g. a €50
+ * recurring charge every month raises the category average, so a €150
+ * one-time charge becomes harder to detect). The recurring-expense suppression
+ * parameter [suppressRecurringMerchantKeys] mitigates this by removing
+ * known-recurring expenses from the statistical pool before computing
+ * thresholds. Callers are responsible for computing the suppression set
+ * from [com.yourname.expensetracker.domain.logic.RecurringExpenseEngine.getPatterns].
  */
 @Singleton
-class AnomalyDetector @Inject constructor() {
+class AnomalyDetector @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
+
+    private fun ExpenseSnapshot.toAnalyticsSummary(): AnalyticsTransactionSummary {
+        return AnalyticsTransactionSummary(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            date = date,
+            categoryId = categoryId
+        )
+    }
 
     companion object {
         // Minimum samples required before any method runs for a group
@@ -39,6 +111,7 @@ class AnomalyDetector @Inject constructor() {
 
         // IQR fence multiplier (Tukey's standard: 1.5 = mild outlier, 3.0 = extreme)
         private const val IQR_FENCE = 1.5
+        private const val ZERO_DISPERSION_MULTIPLIER = 3.0
 
         // Modified Z-score threshold (Iglewicz & Hoaglin recommend 3.5)
         private const val MAD_ZSCORE_THRESHOLD = 3.5
@@ -57,8 +130,7 @@ class AnomalyDetector @Inject constructor() {
     }
 
     private fun timeSlot(timestampMs: Long): TimeSlot {
-        val hour = Calendar.getInstance().apply { timeInMillis = timestampMs }
-            .get(Calendar.HOUR_OF_DAY)
+        val hour = TimePeriodUtils.getHourOfDay(timestampMs)
         return when (hour) {
             in 6..11  -> TimeSlot.MORNING
             in 12..17 -> TimeSlot.AFTERNOON
@@ -68,16 +140,16 @@ class AnomalyDetector @Inject constructor() {
     }
 
     private fun dayName(timestampMs: Long): String {
-        val dow = Calendar.getInstance().apply { timeInMillis = timestampMs }
-            .get(Calendar.DAY_OF_WEEK)
+        val dow = TimePeriodUtils.getDayOfWeek(timestampMs)
+        // A18: Replace Calendar constants with java.time.DayOfWeek
         return when (dow) {
-            Calendar.MONDAY    -> "Monday"
-            Calendar.TUESDAY   -> "Tuesday"
-            Calendar.WEDNESDAY -> "Wednesday"
-            Calendar.THURSDAY  -> "Thursday"
-            Calendar.FRIDAY    -> "Friday"
-            Calendar.SATURDAY  -> "Saturday"
-            else               -> "Sunday"
+            java.util.Calendar.MONDAY    -> "Monday"
+            java.util.Calendar.TUESDAY   -> "Tuesday"
+            java.util.Calendar.WEDNESDAY -> "Wednesday"
+            java.util.Calendar.THURSDAY  -> "Thursday"
+            java.util.Calendar.FRIDAY    -> "Friday"
+            java.util.Calendar.SATURDAY  -> "Saturday"
+            else                         -> "Sunday"
         }
     }
 
@@ -90,19 +162,32 @@ class AnomalyDetector @Inject constructor() {
      * Results are sorted by [AnomalyTransaction.deviationMultiple] descending
      * (most extreme first).
      *
-     * Signature is identical to the original — drop-in replacement.
+     * ## AI-2: Recurring-expense suppression
+     * When [suppressRecurringMerchantKeys] is non-empty, any expense whose
+     * [ExpenseSnapshot.merchantKey] matches a key in this set is excluded from
+     * anomaly detection. This prevents routine recurring bills (rent, subscriptions,
+     * insurance) from triggering statistical outlier alerts. The caller is
+     * responsible for computing the set of merchant keys from recurring rules
+     * (e.g. via [com.yourname.expensetracker.domain.logic.RecurringExpenseEngine.getPatterns]).
+     *
+     * @param suppressRecurringMerchantKeys Set of merchant keys to suppress. Default empty = no suppression.
      */
     fun detect(
         monthPeriod: MonthPeriod,
-        categoryMap: Map<Long, Category>,
-        allExpenses: List<Expense>
+        categoryMap: Map<Long, AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR",
+        suppressRecurringMerchantKeys: Set<String> = emptySet()
     ): List<AnomalyTransaction> {
 
         val monthExpenses = allExpenses.filter { expense ->
             expense.date >= monthPeriod.startMs &&
             expense.date < monthPeriod.endMs &&
-            expense.transactionType == TransactionType.PURCHASE &&
-            !expense.isNotMine
+            expense.transactionType == DomainTransactionType.PURCHASE &&
+            !expense.isNotMine &&
+            // AI-2: Skip expenses whose merchant key matches a recurring rule
+            (suppressRecurringMerchantKeys.isEmpty() || expense.merchantKey == null ||
+                expense.merchantKey !in suppressRecurringMerchantKeys)
         }
 
         if (monthExpenses.size < MIN_SAMPLES_GLOBAL) return emptyList()
@@ -122,7 +207,7 @@ class AnomalyDetector @Inject constructor() {
 
             // ── 1. IQR ────────────────────────────────────────────────────────
             if (amounts.size >= MIN_SAMPLES_GLOBAL) {
-                val iqrOutliers = detectIqr(expenses, amounts, category, categoryAvg)
+                val iqrOutliers = detectIqr(expenses, amounts, category, categoryAvg, displayCurrency)
                 iqrOutliers.forEach { anomaly ->
                     flagged.merge(anomaly.expense.id, anomaly) { existing, new ->
                         // MAD > IQR > CONTEXTUAL > MULTIPLIER in priority
@@ -134,7 +219,7 @@ class AnomalyDetector @Inject constructor() {
 
             // ── 2. MAD ────────────────────────────────────────────────────────
             if (amounts.size >= MIN_SAMPLES_GLOBAL) {
-                val madOutliers = detectMad(expenses, amounts, category, categoryAvg)
+                val madOutliers = detectMad(expenses, amounts, category, categoryAvg, displayCurrency)
                 madOutliers.forEach { anomaly ->
                     flagged.merge(anomaly.expense.id, anomaly) { existing, new ->
                         if (new.detectionMethod.ordinal > existing.detectionMethod.ordinal) new
@@ -144,7 +229,7 @@ class AnomalyDetector @Inject constructor() {
             }
 
             // ── 3. Contextual ─────────────────────────────────────────────────
-            val contextualOutliers = detectContextual(expenses, category, categoryAvg)
+            val contextualOutliers = detectContextual(expenses, category, categoryAvg, displayCurrency)
             contextualOutliers.forEach { anomaly ->
                 // Only add contextual if not already flagged by a stronger method
                 if (!flagged.containsKey(anomaly.expense.id)) {
@@ -165,6 +250,7 @@ class AnomalyDetector @Inject constructor() {
             .sortedByDescending { it.deviationMultiple }
     }
 
+
     // ─── Detection methods ────────────────────────────────────────────────────
 
     /**
@@ -175,27 +261,38 @@ class AnomalyDetector @Inject constructor() {
      * to the very outliers we are trying to detect.
      */
     private fun detectIqr(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         amounts: List<Double>,
-        category: Category?,
-        categoryAvg: Double
+        category: AnalyticsCategoryRef?,
+        categoryAvg: Double,
+        displayCurrency: String
     ): List<AnomalyTransaction> {
         val sorted = amounts.sorted()
         val q1 = percentile(sorted, 25.0)
         val q3 = percentile(sorted, 75.0)
         val iqr = q3 - q1
-        if (iqr == 0.0) return emptyList()
+        if (iqr == 0.0) {
+            return detectZeroDispersionOutliers(
+                expenses = expenses,
+                category = category,
+                categoryAvg = categoryAvg,
+                baseline = q3,
+                detectionMethod = AnomalyMethod.IQR,
+                displayCurrency = displayCurrency
+            )
+        }
 
         val upperFence = q3 + IQR_FENCE * iqr
 
         return expenses.filter { it.effectiveAmount > upperFence }.map { expense ->
             AnomalyTransaction(
-                expense = expense,
+                expense = expense.toAnalyticsSummary(),
                 merchantAvg = categoryAvg,
                 deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
                 detectionMethod = AnomalyMethod.IQR,
-                categoryAvg = categoryAvg
+                categoryAvg = categoryAvg,
+                displayCurrency = displayCurrency
             )
         }
     }
@@ -210,10 +307,11 @@ class AnomalyDetector @Inject constructor() {
      * harder to detect. Recommended by Iglewicz & Hoaglin (1993).
      */
     private fun detectMad(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         amounts: List<Double>,
-        category: Category?,
-        categoryAvg: Double
+        category: AnalyticsCategoryRef?,
+        categoryAvg: Double,
+        displayCurrency: String
     ): List<AnomalyTransaction> {
         val sorted = amounts.sorted()
         val median = percentile(sorted, 50.0)
@@ -221,20 +319,29 @@ class AnomalyDetector @Inject constructor() {
         val absoluteDeviations = amounts.map { abs(it - median) }.sorted()
         val mad = percentile(absoluteDeviations, 50.0)
 
-        // If MAD is zero (all values identical), fall back — no outliers possible
-        if (mad == 0.0) return emptyList()
+        if (mad == 0.0) {
+            return detectZeroDispersionOutliers(
+                expenses = expenses,
+                category = category,
+                categoryAvg = categoryAvg,
+                baseline = median,
+                detectionMethod = AnomalyMethod.MAD,
+                displayCurrency = displayCurrency
+            )
+        }
 
         return expenses.filter { expense ->
             val modifiedZ = MAD_SCALE * (expense.effectiveAmount - median) / mad
             modifiedZ > MAD_ZSCORE_THRESHOLD
         }.map { expense ->
             AnomalyTransaction(
-                expense = expense,
+                expense = expense.toAnalyticsSummary(),
                 merchantAvg = categoryAvg,
                 deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
                 detectionMethod = AnomalyMethod.MAD,
-                categoryAvg = categoryAvg
+                categoryAvg = categoryAvg,
+                displayCurrency = displayCurrency
             )
         }
     }
@@ -249,9 +356,10 @@ class AnomalyDetector @Inject constructor() {
      * Requires at least [MIN_SAMPLES_CONTEXTUAL] entries per context group.
      */
     private fun detectContextual(
-        expenses: List<Expense>,
-        category: Category?,
-        categoryAvg: Double
+        expenses: List<ExpenseSnapshot>,
+        category: AnalyticsCategoryRef?,
+        categoryAvg: Double,
+        displayCurrency: String
     ): List<AnomalyTransaction> {
         val result = mutableListOf<AnomalyTransaction>()
 
@@ -268,7 +376,18 @@ class AnomalyDetector @Inject constructor() {
             val q1 = percentile(amounts, 25.0)
             val q3 = percentile(amounts, 75.0)
             val iqr = q3 - q1
-            if (iqr == 0.0) continue
+            if (iqr == 0.0) {
+                result += detectZeroDispersionOutliers(
+                    expenses = contextExpenses,
+                    category = category,
+                    categoryAvg = categoryAvg,
+                    baseline = q3,
+                    detectionMethod = AnomalyMethod.CONTEXTUAL,
+                    contextualNote = "Unusual for a $day ${slot.label}",
+                    displayCurrency = displayCurrency
+                )
+                continue
+            }
 
             val upperFence = q3 + IQR_FENCE * iqr
 
@@ -278,13 +397,14 @@ class AnomalyDetector @Inject constructor() {
                     val contextAvg = amounts.average()
                     result.add(
                         AnomalyTransaction(
-                            expense = expense,
+                            expense = expense.toAnalyticsSummary(),
                             merchantAvg = contextAvg,
                             deviationMultiple = if (contextAvg > 0) (expense.effectiveAmount / contextAvg).toFloat() else 0f,
                             category = category,
                             detectionMethod = AnomalyMethod.CONTEXTUAL,
                             contextualNote = "Unusual for a $day ${slot.label}",
-                            categoryAvg = categoryAvg
+                            categoryAvg = categoryAvg,
+                            displayCurrency = displayCurrency
                         )
                     )
                 }
@@ -308,5 +428,34 @@ class AnomalyDetector @Inject constructor() {
         val fraction = index - index.toInt()
         return lower + fraction * (upper - lower)
     }
+
+    private fun detectZeroDispersionOutliers(
+        expenses: List<ExpenseSnapshot>,
+        category: AnalyticsCategoryRef?,
+        categoryAvg: Double,
+        baseline: Double,
+        detectionMethod: AnomalyMethod,
+        contextualNote: String? = null,
+        displayCurrency: String
+    ): List<AnomalyTransaction> {
+        if (baseline <= 0.0) return emptyList()
+
+        val spikeThreshold = baseline * ZERO_DISPERSION_MULTIPLIER
+        return expenses
+            .filter { it.effectiveAmount > spikeThreshold }
+            .map { expense ->
+                AnomalyTransaction(
+                    expense = expense.toAnalyticsSummary(),
+                    merchantAvg = categoryAvg,
+                    deviationMultiple = if (baseline > 0) (expense.effectiveAmount / baseline).toFloat() else 0f,
+                    category = category,
+                    detectionMethod = detectionMethod,
+                    contextualNote = contextualNote,
+                    categoryAvg = categoryAvg,
+                    displayCurrency = displayCurrency
+                )
+            }
+
+}
 
 }

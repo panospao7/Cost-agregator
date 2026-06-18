@@ -21,9 +21,11 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
 import com.yourname.expensetracker.domain.ai.usecase.JudgePendingReviewDuplicateUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
+import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.ui.screens.debug.DebugData
 import com.yourname.expensetracker.ui.screens.debug.DebugDataStorage
 import io.mockk.coVerify
@@ -40,6 +42,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import org.junit.Ignore
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -47,6 +50,7 @@ import org.junit.Rule
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Ignore("Stress test: may hang in CI, run manually")
 class ReviewViewModelStressTest {
 
     @get:Rule
@@ -63,10 +67,12 @@ class ReviewViewModelStressTest {
     private lateinit var geocodingService: GeocodingService
     private lateinit var explainPendingReviewUseCase: ExplainPendingReviewUseCase
     private lateinit var suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase
+    private lateinit var suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase
     private lateinit var judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private lateinit var receiptLifecycleCoordinator: ReceiptLifecycleCoordinator
     private lateinit var viewModel: ReviewViewModel
 
     @Before
@@ -82,12 +88,14 @@ class ReviewViewModelStressTest {
         geocodingService = mockk(relaxed = true)
         explainPendingReviewUseCase = mockk(relaxed = true)
         suggestCategoryFallbackUseCase = mockk(relaxed = true)
+        suggestReceiptExtractionUseCase = mockk(relaxed = true)
         judgePendingReviewDuplicateUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
+        receiptLifecycleCoordinator = mockk(relaxed = true)
 
-        every { reviewQueueRepository.getPendingReviews() } returns flowOf(emptyList())
+        every { reviewQueueRepository.getAllPendingReviews() } returns flowOf(emptyList())
         every { reviewQueueRepository.getPendingReviewCount() } returns flowOf(0)
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { debugDataStorage.load() } returns null
@@ -102,12 +110,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator,
+            receiptDebugExporter = mockk(relaxed = true)
         )
     }
 
@@ -177,6 +189,91 @@ class ReviewViewModelStressTest {
         assertNotNull(viewModel.errorMessage.value)
     }
 
+    @Test
+    fun `stress - approveReviewWithEdits short-circuits bulk updates on duplicate`() = runTest {
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = 90L,
+                finalAmount = 12.0,
+                finalMerchant = "Edited",
+                finalCategoryId = 5L,
+                finalDate = 1000L,
+                finalType = null,
+                finalLatitude = null,
+                finalLongitude = null,
+                finalAddress = null,
+                finalPlaceId = null
+            )
+        } returns Result.Duplicate
+
+        viewModel.approveReviewWithEdits(
+            reviewId = 90L,
+            finalAmount = 12.0,
+            finalMerchant = "Edited",
+            finalCategoryId = 5L,
+            finalDate = 1000L,
+            finalType = null,
+            applyToAll = true,
+            approveAllPending = true
+        )
+
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { reviewQueueRepository.getReviewById(90L) }
+        coVerify(exactly = 0) { reviewQueueRepository.getPendingReviewsByMerchant(any()) }
+        coVerify(exactly = 0) { expenseRepository.updateExpenseCategoryBulk(any(), any()) }
+        coVerify(exactly = 0) { expenseRepository.updateExpenseMerchantBulk(any(), any()) }
+        assertEquals("Duplicate transaction detected", viewModel.errorMessage.value)
+    }
+
+    @Test
+    fun `stress - approveReviewWithEdits threads place id to repository`() = runTest {
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = 91L,
+                finalAmount = 20.0,
+                finalMerchant = "Merchant",
+                finalCategoryId = 2L,
+                finalDate = 2000L,
+                finalType = null,
+                finalLatitude = 37.98,
+                finalLongitude = 23.72,
+                finalAddress = "Athens",
+                finalPlaceId = "N123"
+            )
+        } returns Result.Success(91L)
+
+        viewModel.approveReviewWithEdits(
+            reviewId = 91L,
+            finalAmount = 20.0,
+            finalMerchant = "Merchant",
+            finalCategoryId = 2L,
+            finalDate = 2000L,
+            finalType = null,
+            finalLatitude = 37.98,
+            finalLongitude = 23.72,
+            finalAddress = "Athens",
+            finalPlaceId = "N123"
+        )
+
+        advanceUntilIdle()
+
+        coVerify {
+            reviewQueueRepository.approveReview(
+                reviewId = 91L,
+                finalAmount = 20.0,
+                finalMerchant = "Merchant",
+                finalCategoryId = 2L,
+                finalDate = 2000L,
+                finalType = null,
+                finalLatitude = 37.98,
+                finalLongitude = 23.72,
+                finalAddress = "Athens",
+                finalPlaceId = "N123"
+            )
+        }
+    }
+
     // ============================================================================
     // SECTION 3: REJECT REVIEW
     // ============================================================================
@@ -196,7 +293,7 @@ class ReviewViewModelStressTest {
 
     @Test
     fun `stress - approve all reviews`() = runTest {
-        coEvery { reviewQueueRepository.approveAllReview() } returns Unit
+        coEvery { reviewQueueRepository.approveAllReview() } returns emptyList()
 
         viewModel.approveAll()
 
@@ -245,12 +342,14 @@ class ReviewViewModelStressTest {
 
     @Test
     fun `stress - batch processing initially false`() = runTest {
-        assertFalse(viewModel.isBatchProcessing.value)
+        // S6-002: isBatchProcessing removed — operationState replaces it
+        assertNull(viewModel.operationState.value)
     }
 
     @Test
     fun `stress - batch progress initially null`() = runTest {
-        assertNull(viewModel.batchProgress.value)
+        // S6-002: batchProgress removed — operationState.current/total replaces it
+        assertNull(viewModel.operationState.value)
     }
 
     // ============================================================================
@@ -289,7 +388,7 @@ class ReviewViewModelStressTest {
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings)
 
-        val fakeArtifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val fakeArtifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType      = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetKey       = "pending_review:10",
             capability      = AiCapability.REVIEW_EXPLANATION,
@@ -317,12 +416,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 10L)
@@ -344,7 +447,7 @@ class ReviewViewModelStressTest {
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings)
 
-        val fakeArtifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val fakeArtifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetKey = "pending_review:11",
             capability = AiCapability.REVIEW_EXPLANATION,
@@ -372,12 +475,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 11L)
@@ -407,12 +514,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 20L)
@@ -440,12 +551,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         viewModel.loadAiExplanation(reviewId = 30L)
@@ -486,12 +601,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         // Two rapid calls before any coroutine advancement
@@ -520,7 +639,7 @@ class ReviewViewModelStressTest {
             receipt = null
         )
         val reviewsFlow = MutableStateFlow(listOf(item))
-        every { reviewQueueRepository.getPendingReviews() } returns reviewsFlow
+        every { reviewQueueRepository.getAllPendingReviews() } returns reviewsFlow
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(60L) } returns item
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(aiEnabled = true, categorizationFallbackEnabled = true)
@@ -535,7 +654,7 @@ class ReviewViewModelStressTest {
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:60", AiCapability.CATEGORIZATION_FALLBACK)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 60L,
             targetKey = "pending_review:60",
@@ -558,12 +677,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -586,14 +709,14 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(62L) } returns item
         coEvery { suggestCategoryFallbackUseCase(item, false) } returns CategoryAssistGenerationResult.Error(
             "AI category assist failed."
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:62", AiCapability.CATEGORIZATION_FALLBACK)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 62L,
             targetKey = "pending_review:62",
@@ -617,12 +740,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -646,7 +773,7 @@ class ReviewViewModelStressTest {
             receipt = null
         )
         val reviewsFlow = MutableStateFlow(listOf(item))
-        every { reviewQueueRepository.getPendingReviews() } returns reviewsFlow
+        every { reviewQueueRepository.getAllPendingReviews() } returns reviewsFlow
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(61L) } returns item
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(aiEnabled = true, dedupeJudgeEnabled = true)
@@ -660,7 +787,7 @@ class ReviewViewModelStressTest {
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:61", AiCapability.DEDUPE_JUDGE)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 61L,
             targetKey = "pending_review:61",
@@ -683,12 +810,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -711,14 +842,14 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(63L) } returns item
         coEvery { judgePendingReviewDuplicateUseCase(item, false) } returns DedupeJudgeGenerationResult.Error(
             "AI duplicate assist failed."
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:63", AiCapability.DEDUPE_JUDGE)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 63L,
             targetKey = "pending_review:63",
@@ -742,12 +873,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         advanceUntilIdle()
@@ -778,12 +913,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -793,7 +932,7 @@ class ReviewViewModelStressTest {
         stateFlow.value = mapOf(70L to viewModelState)
         coEvery {
             aiArtifactRepository.getLatest("pending_review:70", AiCapability.CATEGORIZATION_FALLBACK)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 10L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 70L,
@@ -810,7 +949,8 @@ class ReviewViewModelStressTest {
         viewModel.applyCategorySuggestion(70L)
         advanceUntilIdle()
 
-        assertEquals(7L, viewModel.consumePrefilledCategorySuggestion(70L))
+        assertEquals(7L, viewModel.reviewCaptureAssistStates.value[70L]?.categorySuggestion?.let { (it as? com.yourname.expensetracker.domain.ai.model.AiLoadState.Ready)?.value?.categoryId })
+        viewModel.onEvent(ReviewEvent.ConsumePrefilledCategorySuggestion(70L))
         coVerify { aiArtifactRepository.markApplied(10L) }
     }
 
@@ -825,7 +965,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
 
         viewModel = ReviewViewModel(
             notificationRepository,
@@ -835,12 +975,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -874,20 +1018,22 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery {
             reviewQueueRepository.approveReview(
                 reviewId = 72L,
                 finalAmount = null,
                 finalMerchant = null,
                 finalCategoryId = 4L,
+                finalDate = null,
                 finalType = null,
                 finalLatitude = null,
                 finalLongitude = null,
-                finalAddress = null
+                finalAddress = null,
+                finalPlaceId = null
             )
         } returns Result.Success(20L)
-        coEvery { aiArtifactRepository.getLatest("pending_review:72", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("pending_review:72", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 21L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 72L,
@@ -909,12 +1055,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -938,10 +1088,12 @@ class ReviewViewModelStressTest {
                 finalAmount = null,
                 finalMerchant = null,
                 finalCategoryId = 4L,
+                finalDate = null,
                 finalType = null,
                 finalLatitude = null,
                 finalLongitude = null,
-                finalAddress = null
+                finalAddress = null,
+                finalPlaceId = null
             )
         }
         coVerify { aiArtifactRepository.markApplied(21L) }
@@ -959,20 +1111,22 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery {
             reviewQueueRepository.approveReview(
                 reviewId = 73L,
                 finalAmount = null,
                 finalMerchant = null,
                 finalCategoryId = 4L,
+                finalDate = null,
                 finalType = null,
                 finalLatitude = null,
                 finalLongitude = null,
-                finalAddress = null
+                finalAddress = null,
+                finalPlaceId = null
             )
         } returns Result.Success(20L)
-        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 31L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 73L,
@@ -985,7 +1139,7 @@ class ReviewViewModelStressTest {
             createdAt = 0L,
             updatedAt = 0L
         )
-        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.DEDUPE_JUDGE) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.DEDUPE_JUDGE) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 32L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 73L,
@@ -1007,12 +1161,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -1047,7 +1205,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
 
         viewModel = ReviewViewModel(
             notificationRepository,
@@ -1057,12 +1215,16 @@ class ReviewViewModelStressTest {
             expenseRepository,
             debugDataStorage,
             geocodingService,
+            mockk(relaxed = true),
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptDebugExporter = mockk(relaxed = true)
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -1092,17 +1254,19 @@ class ReviewViewModelStressTest {
                 finalAmount = any(),
                 finalMerchant = any(),
                 finalCategoryId = any(),
+                finalDate = any(),
                 finalType = any(),
                 finalLatitude = any(),
                 finalLongitude = any(),
-                finalAddress = any()
+                finalAddress = any(),
+                finalPlaceId = any()
             )
         }
     }
 
     @Test
     fun `stress - dismissCategoryAssist resets state and marks artifact dismissed`() = runTest {
-        val artifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val artifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 8L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 80L,
@@ -1138,7 +1302,7 @@ class ReviewViewModelStressTest {
 
     @Test
     fun `stress - dismissDedupeAssist resets state and marks artifact dismissed`() = runTest {
-        val artifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val artifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 9L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 81L,

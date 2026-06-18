@@ -33,7 +33,10 @@ data class ClassificationResult(
     val categoryName: String,
     val confidence: Float,
     val alternatives: List<CategoryScore> = emptyList(),
-    val matchType: MatchType
+    val matchType: MatchType,
+    val isAmbiguous: Boolean = false,
+    val requiresReview: Boolean = false,
+    val classificationReason: String? = null
 )
 
 /**

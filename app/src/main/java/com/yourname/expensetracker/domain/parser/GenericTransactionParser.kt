@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.util.AppConstants
 import java.util.regex.Pattern
 
@@ -13,6 +11,14 @@ import java.util.regex.Pattern
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.TimeProvider
+import timber.log.Timber
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.ResolverStyle
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,7 +26,8 @@ import javax.inject.Singleton
 class GenericTransactionParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
     private val merchantCleaner: MerchantCleaner,
-    private val directionDetector: TransferDirectionDetector  // NEW: Direction detection
+    private val directionDetector: TransferDirectionDetector,  // NEW: Direction detection
+    private val timeProvider: TimeProvider
 ) {
 
     // Strong signals that this is a REAL transaction notification
@@ -45,7 +52,7 @@ class GenericTransactionParser @Inject constructor(
     private val depositSignals by lazy {
         listOf(
             // English deposit patterns
-            Pattern.compile("""(?:deposit|credited|received|incoming|transfer\s*received)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:deposit|credited|refund(?:ed)?|top(?:-|\s)?up|added\s+money)[\p{L}\s]*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
             // Greek deposit patterns
             Pattern.compile("""(?:κατάθεση|πίστωση|μισθοδοσία|επιστροφή)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
             // Salary patterns
@@ -53,14 +60,36 @@ class GenericTransactionParser @Inject constructor(
         )
     }
 
+    private val transferSignals by lazy {
+        listOf(
+            Pattern.compile("""transfer\s+(?:received|from|to|sent|in|out|inbound|outbound)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:incoming|outgoing)\s+transfer""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""received\s+[€$£]?\s*\d[\d.,]*.*\bfrom\b""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""sent\s+[€$£]?\s*\d[\d.,]*.*\bto\b""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""transferred\s+[€$£]?\s*\d[\d.,]*.*\b(?:to|from)\b""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:έμβασμα|εμβασμα|μεταφορ[αά])""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        )
+    }
+
     // NEGATIVE signals — if present, this is NOT a transaction
     // Using Regex to enforce word boundaries for English words to avoid "Coffee" matching "offer"
     private val negativeSignalsPattern by lazy {
         Pattern.compile(
-            """\b(offer|discount|save\s+up\s+to|earn|free|up\s+to|starting\s+from|balance|otp|verification|code|unsubscribe|opt\s+out|sale|%\s+off|promo|your\s+order|tracking|shipped|delivered|reminder|rate\s+us|review|survey)\b|""" +
-            """(προσφορά|έκπτωση|εξοικονομ|κέρδισε|δωρεάν|έως|υπόλοιπο|κωδικός|υπενθύμιση)""",
+            """\b(offer|discount|save\s+up\s+to|earn|free|up\s+to|starting\s+from|otp|verification|code|unsubscribe|opt\s+out|sale|%\s+off|promo|your\s+order|tracking|shipped|delivered|reminder|rate\s+us|review|survey)\b|""" +
+            """(προσφορά|έκπτωση|εξοικονομ|κέρδισε|δωρεάν|έως|κωδικός|υπενθύμιση)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
+    }
+
+    private val balanceStripPattern by lazy {
+        Pattern.compile(
+            """(?m)^\s*(υπόλοιπ[οό]|balance)\s*:?\s*.*$""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
+    }
+
+    private fun stripBalanceLines(text: String): String {
+        return balanceStripPattern.matcher(text).replaceAll("").trim()
     }
 
     private val amountPattern by lazy {
@@ -76,17 +105,18 @@ class GenericTransactionParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val rawFullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val fullText = stripBalanceLines(rawFullText)
         val lowerFull = fullText.lowercase()
 
-        // 1. Check negative signals first
         if (negativeSignalsPattern.matcher(lowerFull).find()) return null
 
-        // 2. Check for DEPOSIT signals FIRST (high priority)
+        // 2. Check for transfer/deposit signals FIRST (high priority)
+        val hasTransferSignal = transferSignals.any { it.matcher(lowerFull).find() }
         val hasDepositSignal = depositSignals.any { it.matcher(lowerFull).find() }
 
-        // 3. If not deposit, require at least one STRONG transaction signal
-        if (!hasDepositSignal) {
+        // 3. If not transfer/deposit, require at least one STRONG transaction signal
+        if (!hasTransferSignal && !hasDepositSignal) {
             val hasStrongSignal = strongTransactionSignals.any { it.matcher(lowerFull).find() }
             if (!hasStrongSignal) return null
         }
@@ -101,7 +131,11 @@ class GenericTransactionParser @Inject constructor(
         val merchant = extractMerchant(fullText, title)
 
         // 7. Determine transaction type
-        val transactionType = if (hasDepositSignal) TransactionType.DEPOSIT else TransactionType.PURCHASE
+        val transactionType = when {
+            hasTransferSignal -> ParsedTransactionType.TRANSFER
+            hasDepositSignal -> ParsedTransactionType.DEPOSIT
+            else -> ParsedTransactionType.PURCHASE
+        }
         
         // 8. Detect transfer direction for deposits/transfers
         val direction = directionDetector.detectDirection(title, text, bigText, transactionType)
@@ -120,8 +154,8 @@ class GenericTransactionParser @Inject constructor(
             transferDirection = direction,
             transferAccountName = accountName?.let { 
                 when (direction) {
-                    TransferDirection.INCOMING -> "From: $it"
-                    TransferDirection.OUTGOING -> "To: $it"
+                    ParsedTransferDirection.INCOMING -> "From: $it"
+                    ParsedTransferDirection.OUTGOING -> "To: $it"
                     else -> null
                 }
             }
@@ -215,31 +249,81 @@ class GenericTransactionParser @Inject constructor(
             val groups = match.groupValues
             if (groups.size < 4) continue
             try {
-                val (day, month, year) = when {
-                    groups[1].length == 4 -> Triple(groups[3].toInt(), groups[2].toInt(), groups[1].toInt())  // ISO yyyy-MM-dd
-                    groups[3].length == 4 -> Triple(groups[1].toInt(), groups[2].toInt(), groups[3].toInt())  // dd/MM/yyyy
+                val parsedDate = when {
+                    groups[1].length == 4 -> parseStrictLocalDate(
+                        dateText = "%04d-%02d-%02d".format(
+                            groups[1].toInt(),
+                            groups[2].toInt(),
+                            groups[3].toInt()
+                        ),
+                        formatter = DateTimeFormatter.ofPattern("uuuu-MM-dd").withResolverStyle(ResolverStyle.STRICT)
+                    )
+
+                    groups[3].length == 4 -> parseStrictLocalDate(
+                        dateText = "%02d/%02d/%04d".format(
+                            groups[1].toInt(),
+                            groups[2].toInt(),
+                            groups[3].toInt()
+                        ),
+                        formatter = DateTimeFormatter.ofPattern("dd/MM/uuuu").withResolverStyle(ResolverStyle.STRICT)
+                    )
+
                     groups[3].length == 2 -> {
-                        val y = groups[3].toInt()
-                        Triple(groups[1].toInt(), groups[2].toInt(), if (y < 50) 2000 + y else 1900 + y)
+                        val year = groups[3].toInt()
+                        parseStrictLocalDate(
+                            dateText = "%02d/%02d/%04d".format(
+                                groups[1].toInt(),
+                                groups[2].toInt(),
+                                if (year < 50) 2000 + year else 1900 + year
+                            ),
+                            formatter = DateTimeFormatter.ofPattern("dd/MM/uuuu").withResolverStyle(ResolverStyle.STRICT)
+                        )
                     }
+
                     groups[2].matches(Regex("""[A-Za-z]+""")) -> {
-                        val m = months.indexOf(groups[2].take(3).lowercase()) + 1
-                        if (m in 1..12) Triple(groups[1].toInt(), m, groups[3].toInt()) else continue
+                        val monthToken = groups[2].take(3).lowercase(Locale.ENGLISH)
+                        if (monthToken !in months) {
+                            null
+                        } else {
+                            parseStrictLocalDate(
+                                dateText = "%02d %s %04d".format(
+                                    groups[1].toInt(),
+                                    monthToken.replaceFirstChar { it.titlecase(Locale.ENGLISH) },
+                                    groups[3].toInt()
+                                ),
+                                formatter = DateTimeFormatter.ofPattern("dd MMM uuuu", Locale.ENGLISH)
+                                    .withResolverStyle(ResolverStyle.STRICT)
+                            )
+                        }
                     }
-                    else -> continue
+
+                    else -> null
                 }
-                val cal = java.util.Calendar.getInstance()
-                cal.set(java.util.Calendar.YEAR, year)
-                cal.set(java.util.Calendar.MONTH, month - 1)
-                cal.set(java.util.Calendar.DAY_OF_MONTH, day.coerceIn(1, cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)))
-                cal.set(java.util.Calendar.HOUR_OF_DAY, 12)
-                cal.set(java.util.Calendar.MINUTE, 0)
-                cal.set(java.util.Calendar.SECOND, 0)
-                cal.set(java.util.Calendar.MILLISECOND, 0)
-                val ts = cal.timeInMillis
-                if (ts in 1..(System.currentTimeMillis() + 86_400_000)) return ts
-            } catch (_: Exception) { }
+
+                val ts = parsedDate
+                    ?.atTime(12, 0)
+                    ?.atZone(ZoneId.systemDefault())
+                    ?.toInstant()
+                    ?.toEpochMilli()
+                    ?: continue
+
+                val now = timeProvider.now()
+                if (ts in 1..now + 86_400_000) return ts
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to parse date from pattern")
+            }
         }
         return null
+    }
+
+    private fun parseStrictLocalDate(
+        dateText: String,
+        formatter: DateTimeFormatter
+    ): LocalDate? {
+        return try {
+            LocalDate.parse(dateText, formatter)
+        } catch (_: DateTimeParseException) {
+            null
+        }
     }
 }

@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.location
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.util.GeoUtils
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,6 +39,46 @@ data class TravelInsight(
     val travelTrips: List<TravelTrip>
 )
 
+/** Currency-safe version of [TravelTrip] using [MoneyAggregate]. */
+data class NormalizedTravelTrip(
+    /** Approximate start date of the trip (epoch ms). */
+    val startDate: Long,
+    /** Approximate end date of the trip (epoch ms). */
+    val endDate: Long,
+    /** Total amount spent during this trip as a [MoneyAggregate]. */
+    val aggregate: MoneyAggregate,
+    /** Number of transactions during this trip. */
+    val transactionCount: Int,
+    /** Representative destination hint for the trip (derived from resolved address). */
+    val destinationHint: String?
+) {
+    /** Convenience accessor for aggregate display amount. */
+    val totalSpend: Double get() = aggregate.displayAmount
+}
+
+/** Currency-safe version of [TravelInsight] using [MoneyAggregate] for all spend totals. */
+data class NormalizedTravelInsight(
+    /** Estimated home area centroid latitude (null if home could not be determined). */
+    val homeLatitude: Double?,
+    /** Estimated home area centroid longitude (null if home could not be determined). */
+    val homeLongitude: Double?,
+    /** Aggregate spend in expenses classified as HOME (≤ 5 km from home centroid). */
+    val homeAggregate: MoneyAggregate,
+    /** Aggregate spend in expenses classified as LOCAL (5–50 km from home centroid). */
+    val localAggregate: MoneyAggregate,
+    /** Aggregate spend in expenses classified as TRAVEL (> 50 km from home centroid). */
+    val travelAggregate: MoneyAggregate,
+    /** Number of distinct inferred trips with per-trip [MoneyAggregate]. */
+    val travelTrips: List<NormalizedTravelTrip>
+) {
+    /** Convenience accessor for home aggregate display amount. */
+    val homeSpend: Double get() = homeAggregate.displayAmount
+    /** Convenience accessor for local aggregate display amount. */
+    val localSpend: Double get() = localAggregate.displayAmount
+    /** Convenience accessor for travel aggregate display amount. */
+    val travelSpend: Double get() = travelAggregate.displayAmount
+}
+
 /**
  * Domain-layer engine that detects home area and travel patterns from located expenses.
  *
@@ -51,6 +95,20 @@ data class TravelInsight(
 @Singleton
 class TravelDetectionEngine @Inject constructor() {
 
+    /**
+     * PR8-GUARDRAIL: Raw-Double sums without MoneyAggregate safety.
+     * If [expenses] contains mixed currencies, home/travel/local totals will be silently incorrect.
+     * Only safe when caller has pre-normalized all amounts to the same currency.
+     * Preferred: [computeNormalized] with [LocatedMoneyExpense] and a [CurrencyConverter].
+     */
+    @Deprecated(
+        message = "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
+        replaceWith = ReplaceWith(
+            "computeNormalized(expenses.map { it.toLocatedMoneyExpense(homeCurrency) }, homeCurrency, converter)",
+            "com.yourname.expensetracker.domain.location.LocatedMoneyExpense"
+        ),
+        level = DeprecationLevel.WARNING
+    )
     fun compute(expenses: List<Expense>): TravelInsight? {
         val located = expenses.filter { it.latitude != null && it.longitude != null }
         if (located.size < MIN_EXPENSES_FOR_HOME) return null
@@ -124,7 +182,7 @@ class TravelDetectionEngine @Inject constructor() {
         var tripEnd = sorted[0].date
         var tripSpend = sorted[0].effectiveAmount
         var tripCount = 1
-        var tripDest = sorted[0].resolvedAddress?.split(",")?.getOrNull(1)?.trim()
+        var tripDest = parseDestinationHint(sorted[0].resolvedAddress)
 
         for (i in 1 until sorted.size) {
             val exp = sorted[i]
@@ -134,7 +192,7 @@ class TravelDetectionEngine @Inject constructor() {
                 tripSpend += exp.effectiveAmount
                 tripCount++
                 if (tripDest == null) {
-                    tripDest = exp.resolvedAddress?.split(",")?.getOrNull(1)?.trim()
+                    tripDest = parseDestinationHint(exp.resolvedAddress)
                 }
             } else {
                 // Save previous trip and start a new one
@@ -143,13 +201,182 @@ class TravelDetectionEngine @Inject constructor() {
                 tripEnd = exp.date
                 tripSpend = exp.effectiveAmount
                 tripCount = 1
-                tripDest = exp.resolvedAddress?.split(",")?.getOrNull(1)?.trim()
+                tripDest = parseDestinationHint(exp.resolvedAddress)
             }
         }
         // Flush last trip
         trips.add(TravelTrip(tripStart, tripEnd, tripSpend, tripCount, tripDest))
 
         return trips
+    }
+
+    private fun parseDestinationHint(resolvedAddress: String?): String? {
+        val parts = resolvedAddress
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+
+        return when {
+            parts.size >= 2 -> parts[1]
+            parts.size == 1 -> parts[0]
+            else -> null
+        }
+    }
+
+    // ── Normalized (currency-safe) methods ───────────────────────────────
+
+    /**
+     * Currency-safe home/travel detection using [LocatedMoneyExpense].
+     *
+     * Same algorithm as [compute] but:
+     * - Accepts [LocatedMoneyExpense] with pre-normalised amounts
+     * - Skips expenses where [ConversionStatus] is [ConversionStatus.FAILED]
+     * - Returns [NormalizedTravelInsight] with [MoneyAggregate] fields instead of
+     *   raw [Double] sums
+     *
+     * @param expenses  Located expenses with normalised amounts.
+     * @param homeCurrency  User's home currency code (e.g. "EUR").
+     * @param converter  CurrencyConverter for multi-currency aggregation via [MoneyAggregateBuilder].
+     * @return A [NormalizedTravelInsight] if home could be determined, or null if
+     *         fewer than [MIN_EXPENSES_FOR_HOME] valid expenses are available.
+     */
+    suspend fun computeNormalized(
+        expenses: List<LocatedMoneyExpense>,
+        homeCurrency: String,
+        converter: CurrencyConverter
+    ): NormalizedTravelInsight? {
+        val validExpenses = expenses.filter {
+            it.normalizedAmountOrNull != null
+        }
+        if (validExpenses.size < MIN_EXPENSES_FOR_HOME) return null
+
+        // ── 1. Determine home area using a ~5 km grid ──────────────────────
+        data class GridCell(val latBucket: Long, val lonBucket: Long)
+
+        val cellCounts = HashMap<GridCell, Int>()
+        val cellLatSum = HashMap<GridCell, Double>()
+        val cellLonSum = HashMap<GridCell, Double>()
+
+        for (exp in validExpenses) {
+            val lat = exp.latitude
+            val lon = exp.longitude
+            val cell = GridCell((lat / HOME_GRID_DEG).toLong(), (lon / HOME_GRID_DEG).toLong())
+            cellCounts[cell] = (cellCounts[cell] ?: 0) + 1
+            cellLatSum[cell] = (cellLatSum[cell] ?: 0.0) + lat
+            cellLonSum[cell] = (cellLonSum[cell] ?: 0.0) + lon
+        }
+
+        val homeCell = cellCounts.maxByOrNull { it.value }?.key
+            ?: return null
+
+        val homeCellCount = cellCounts[homeCell]!!
+        val homeLat = cellLatSum[homeCell]!! / homeCellCount
+        val homeLon = cellLonSum[homeCell]!! / homeCellCount
+
+        // ── 2. Classify each valid expense ─────────────────────────────────
+        val homeExpenses = mutableListOf<LocatedMoneyExpense>()
+        val localExpenses = mutableListOf<LocatedMoneyExpense>()
+        val travelExpenses = mutableListOf<LocatedMoneyExpense>()
+
+        for (exp in validExpenses) {
+            val distKm = GeoUtils.haversineKm(homeLat, homeLon, exp.latitude, exp.longitude)
+            when {
+                distKm <= HOME_RADIUS_KM  -> homeExpenses.add(exp)
+                distKm <= LOCAL_RADIUS_KM -> localExpenses.add(exp)
+                else -> travelExpenses.add(exp)
+            }
+        }
+
+        // ── 3. Build MoneyAggregate for each category ──────────────────────
+        val homeAggregate = buildAggregate(homeExpenses, homeCurrency, converter)
+        val localAggregate = buildAggregate(localExpenses, homeCurrency, converter)
+        val travelAggregate = buildAggregate(travelExpenses, homeCurrency, converter)
+
+        // ── 4. Group travel expenses into trips ────────────────────────────
+        val trips = groupIntoTripsNormalized(travelExpenses, homeCurrency, converter)
+
+        return NormalizedTravelInsight(
+            homeLatitude = homeLat,
+            homeLongitude = homeLon,
+            homeAggregate = homeAggregate,
+            localAggregate = localAggregate,
+            travelAggregate = travelAggregate,
+            travelTrips = trips
+        )
+    }
+
+    /**
+     * Groups [LocatedMoneyExpense]s into trips using the same gap logic as
+     * [groupIntoTrips], but builds a [MoneyAggregate] per trip.
+     */
+    private suspend fun groupIntoTripsNormalized(
+        travelExpenses: List<LocatedMoneyExpense>,
+        homeCurrency: String,
+        converter: CurrencyConverter
+    ): List<NormalizedTravelTrip> {
+        if (travelExpenses.isEmpty()) return emptyList()
+
+        val sorted = travelExpenses.sortedBy { it.date }
+        val trips = mutableListOf<NormalizedTravelTrip>()
+
+        var tripStart = sorted[0].date
+        var tripEnd = sorted[0].date
+        var tripExpenses = mutableListOf(sorted[0])
+        var tripDest: String? = parseDestinationHint(sorted[0].resolvedAddress)
+
+        for (i in 1 until sorted.size) {
+            val exp = sorted[i]
+            if (exp.date - tripEnd <= TRIP_GAP_MS) {
+                // Continue same trip
+                tripEnd = exp.date
+                tripExpenses.add(exp)
+                if (tripDest == null) {
+                    tripDest = parseDestinationHint(exp.resolvedAddress)
+                }
+            } else {
+                // Save previous trip and start a new one
+                trips.add(
+                    NormalizedTravelTrip(
+                        startDate = tripStart,
+                        endDate = tripEnd,
+                        aggregate = buildAggregate(tripExpenses, homeCurrency, converter),
+                        transactionCount = tripExpenses.size,
+                        destinationHint = tripDest
+                    )
+                )
+                tripStart = exp.date
+                tripEnd = exp.date
+                tripExpenses = mutableListOf(exp)
+                tripDest = parseDestinationHint(exp.resolvedAddress)
+            }
+        }
+        // Flush last trip
+        trips.add(
+            NormalizedTravelTrip(
+                startDate = tripStart,
+                endDate = tripEnd,
+                aggregate = buildAggregate(tripExpenses, homeCurrency, converter),
+                transactionCount = tripExpenses.size,
+                destinationHint = tripDest
+            )
+        )
+
+        return trips
+    }
+
+    /**
+     * Build a [MoneyAggregate] from a list of [LocatedMoneyExpense]s.
+     * Returns an empty aggregate when the list is empty.
+     */
+    private suspend fun buildAggregate(
+        expenses: List<LocatedMoneyExpense>,
+        homeCurrency: String,
+        converter: CurrencyConverter
+    ): MoneyAggregate {
+        if (expenses.isEmpty()) return MoneyAggregate.empty(CurrencyCode.parseOr(homeCurrency, CurrencyCode.EUR))
+        val buckets = expenses.map { Pair(it.normalizedAmountOrNull!!, it.normalizedCurrency) }
+        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, converter)
     }
 
     private companion object {

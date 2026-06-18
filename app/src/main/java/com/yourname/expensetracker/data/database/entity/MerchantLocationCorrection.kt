@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -46,7 +47,9 @@ data class MerchantLocationCorrection(
      * Stable key used as the unique conflict target.
      * Format: "<normalizedMerchant>|<latBucket>|<lonBucket>" where buckets
      * snap to ~5 km grid cells.  For global corrections (areaLatitude == null)
-     * the value is "<normalizedMerchant>|global".
+     * the value is plain "global" — matching the canonical representation in
+     * [MerchantLocation.areaKey] and the DAO queries that filter on
+     * `areaKey = 'global'`.
      */
     val areaKey: String = buildAreaKey(normalizedMerchantName, areaLatitude, areaLongitude),
 
@@ -54,7 +57,7 @@ data class MerchantLocationCorrection(
      * Radius in kilometres around (areaLatitude, areaLongitude) within which
      * this correction is considered valid.  Default 5 km covers most city areas.
      */
-    val areaRadiusKm: Float = 5.0f,
+    @ColumnInfo(defaultValue = "5.0") val areaRadiusKm: Float = 5.0f,
 
     /** Optional OSM ID of the corrected node (if user picked from Overpass results). */
     val osmId: String? = null,
@@ -62,7 +65,8 @@ data class MerchantLocationCorrection(
     /** Human-readable place name for the corrected location. */
     val displayAddress: String? = null,
 
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 ) {
     companion object {
         /**
@@ -77,7 +81,7 @@ data class MerchantLocationCorrection(
             areaLat: Double?,
             areaLon: Double?
         ): String {
-            if (areaLat == null || areaLon == null) return "$normalizedMerchant|global"
+            if (areaLat == null || areaLon == null) return "global"
             val latBucket = kotlin.math.floor(areaLat / AREA_SNAP_DEG).toLong()
             val lonBucket = kotlin.math.floor(areaLon / AREA_SNAP_DEG).toLong()
             return "$normalizedMerchant|$latBucket|$lonBucket"

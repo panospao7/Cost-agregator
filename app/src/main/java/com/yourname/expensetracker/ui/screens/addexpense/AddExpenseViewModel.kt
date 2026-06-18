@@ -3,15 +3,12 @@ package com.yourname.expensetracker.ui.screens.addexpense
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
-import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
-import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,36 +21,46 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 import kotlinx.coroutines.isActive
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 
 data class AddExpenseState(
-    val merchant: String = "",
-    val amount: String = "",
-    val selectedCategoryId: Long? = null,
-    val paymentMethod: PaymentMethod = PaymentMethod.CASH,
-    val transactionType: TransactionType = TransactionType.PURCHASE,
-    val date: Long = System.currentTimeMillis(),
-    val notes: String = "",
-    val showNotes: Boolean = false,
-    val showTransactionType: Boolean = false,
-    val isRecurring: Boolean = false,
-    val recurrenceFrequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
-    val suggestions: List<MerchantSuggestion> = emptyList(),
-    val showSuggestions: Boolean = false,
-    val isSaving: Boolean = false,
-    val saveResult: SaveResult? = null,
-    val merchantError: String? = null,
-    val amountError: String? = null,
-    val transferDirection: TransferDirection? = null,
-    val transferAccountName: String = "",
-    val isNotMine: Boolean = false,
-    val ownerName: String = "",
-    val isSharedExpense: Boolean = false,
-    val sharedWithName: String = "",
-    val mySharePercentage: String = "",
-    val myShareAmount: String = ""
+ val merchant: String = "",
+ val amount: String = "",
+ val selectedCategoryId: Long? = null,
+ val paymentMethod: PaymentMethod = PaymentMethod.CASH,
+ val transactionType: TransactionType = TransactionType.PURCHASE,
+ val date: Long = 0L,
+ val notes: String = "",
+ val showNotes: Boolean = false,
+ val showTransactionType: Boolean = false,
+ val isRecurring: Boolean = false,
+ val recurrenceFrequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
+ val suggestions: List<MerchantSuggestion> = emptyList(),
+ val showSuggestions: Boolean = false,
+ val isSaving: Boolean = false,
+ val saveResult: SaveResult? = null,
+ val mutation: com.yourname.expensetracker.ui.model.MutationState = com.yourname.expensetracker.ui.model.MutationState.idle(),
+ val merchantError: String? = null,
+ val amountError: String? = null,
+ val transferDirection: TransferDirection? = null,
+ val transferAccountName: String = "",
+ val isNotMine: Boolean = false,
+ val ownerName: String = "",
+ val isSharedExpense: Boolean = false,
+ val sharedWithName: String = "",
+ val mySharePercentage: String = "",
+ val myShareAmount: String = "",
+ /**
+  * S5-001/S5-002: Typed currency state — never defaults to "EUR" sentinel.
+  * null = still loading; non-null = loaded (including real "EUR" users).
+  */
+ val homeCurrency: String? = null
 )
 
 sealed class SaveResult {
@@ -66,9 +73,9 @@ sealed class SaveResult {
 class AddExpenseViewModel @Inject constructor(
     private val manualExpenseRepository: ManualExpenseRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
-    private val categoryRepository: CategoryRepository,
-    private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+ private val categoryRepository: CategoryRepository,
+ private val timeProvider: TimeProvider,
+ private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AddExpenseState(date = timeProvider.now()))
@@ -77,7 +84,18 @@ class AddExpenseViewModel @Inject constructor(
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private var searchJob: Job? = null
+ private var searchJob: Job? = null
+ private var initialValuesApplied: Boolean = false
+
+ private var homeCurrencyJob: Job? = null
+
+ init {
+ homeCurrencyJob = viewModelScope.launch {
+ currencySettingsRepository.homeCurrency().collect { hc ->
+ _state.update { it.copy(homeCurrency = hc) }
+ }
+ }
+ }
 
     fun updateMerchant(value: String) {
         val sanitized = value.take(100) // Max 100 chars
@@ -96,15 +114,21 @@ class AddExpenseViewModel @Inject constructor(
                 delay(300)
                 if (!isActive) return@launch
                 
-                val suggestions = expenseRepository.searchMerchants(sanitized)
-                
-                if (!isActive) return@launch
-                
-                _state.update {
-                    it.copy(
-                        suggestions = suggestions,
-                        showSuggestions = suggestions.isNotEmpty()
-                    )
+                try {
+                    val suggestions = expenseRepository.searchMerchants(sanitized)
+                    if (!isActive) return@launch
+                    _state.update {
+                        it.copy(
+                            suggestions = suggestions,
+                            showSuggestions = suggestions.isNotEmpty()
+                        )
+                    }
+                } catch (e: Exception) {
+                    // S5-008: Silently clear suggestions on failure (non-critical)
+                    Timber.w(e, "Merchant suggestion search failed for: $sanitized")
+                    if (isActive) {
+                        _state.update { it.copy(suggestions = emptyList(), showSuggestions = false) }
+                    }
                 }
             }
         } else {
@@ -117,7 +141,7 @@ class AddExpenseViewModel @Inject constructor(
             it.copy(
                 merchant = suggestion.merchant,
                 selectedCategoryId = suggestion.categoryId ?: it.selectedCategoryId,
-                amount = if (it.amount.isBlank()) String.format("%.2f", suggestion.avgAmount) else it.amount,
+                amount = if (it.amount.isBlank()) com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(String.format(java.util.Locale.US, "%.2f", suggestion.avgAmount)) else it.amount,
                 suggestions = emptyList(),
                 showSuggestions = false,
                 merchantError = null
@@ -130,11 +154,10 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun updateAmount(value: String) {
-        // Only allow valid decimal input
-        val filtered = value.filter { it.isDigit() || it == '.' || it == ',' }
+        val sanitized = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
         _state.update {
             it.copy(
-                amount = filtered,
+                amount = sanitized,
                 amountError = null,
                 saveResult = null
             )
@@ -150,7 +173,14 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun selectTransactionType(type: TransactionType) {
-        _state.update { it.copy(transactionType = type) }
+        // S5-011: Clear transfer metadata when leaving TRANSFER type
+        _state.update {
+            if (type == TransactionType.TRANSFER) {
+                it.copy(transactionType = type)
+            } else {
+                it.copy(transactionType = type, transferDirection = null, transferAccountName = "")
+            }
+        }
     }
 
     fun updateDate(dateMs: Long) {
@@ -186,7 +216,19 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun setIsNotMine(value: Boolean) {
-        _state.update { it.copy(isNotMine = value) }
+        _state.update {
+            if (value) {
+                it.copy(
+                    isNotMine = true,
+                    isSharedExpense = false,
+                    sharedWithName = "",
+                    mySharePercentage = "",
+                    myShareAmount = ""
+                )
+            } else {
+                it.copy(isNotMine = false)
+            }
+        }
     }
 
     fun updateOwnerName(name: String) {
@@ -194,7 +236,22 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun setIsSharedExpense(value: Boolean) {
-        _state.update { it.copy(isSharedExpense = value) }
+        _state.update {
+            if (value) {
+                it.copy(
+                    isSharedExpense = true,
+                    isNotMine = false,
+                    ownerName = ""
+                )
+            } else {
+                it.copy(
+                    isSharedExpense = false,
+                    sharedWithName = "",
+                    mySharePercentage = "",
+                    myShareAmount = ""
+                )
+            }
+        }
     }
 
     fun updateSharedWithName(name: String) {
@@ -206,12 +263,23 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun updateMyShareAmount(value: String) {
-        val filtered = value.filter { it.isDigit() || it == '.' || it == ',' }
-        _state.update { it.copy(myShareAmount = filtered.take(10)) }
+        val sanitized = com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(value)
+        _state.update { it.copy(myShareAmount = sanitized) }
     }
 
     fun save() {
         val currentState = _state.value
+
+        // S5-007: Guard against double-tap
+        if (currentState.isSaving) return
+
+        // S5-001: Block save until currency is loaded — null means still loading
+        // Real EUR users (homeCurrency == "EUR") are allowed through once loaded
+        val currency = currentState.homeCurrency
+        if (currency == null) {
+            _state.update { it.copy(saveResult = SaveResult.Error("Loading currency settings..."), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Loading currency settings..."))) }
+            return
+        }
 
         // Validate
         val merchantTrimmed = currentState.merchant.trim()
@@ -233,17 +301,67 @@ class AddExpenseViewModel @Inject constructor(
 
         // Reject future dates — allow up to end of today to accommodate timezone edge cases
         val endOfToday = run {
-            val cal = java.util.Calendar.getInstance()
-            cal.timeInMillis = timeProvider.now()
-            cal.set(java.util.Calendar.HOUR_OF_DAY, 23)
-            cal.set(java.util.Calendar.MINUTE, 59)
-            cal.set(java.util.Calendar.SECOND, 59)
-            cal.set(java.util.Calendar.MILLISECOND, 999)
-            cal.timeInMillis
+            TimePeriodUtils.getEndOfDay(timeProvider.now()) - 1
         }
         if (currentState.date > endOfToday) {
-            _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future")) }
+            _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Date cannot be in the future"))) }
             return
+        }
+
+        val transferAccountNameTrimmed = currentState.transferAccountName.trim()
+        if (currentState.transactionType == TransactionType.TRANSFER) {
+            if (currentState.transferDirection == null) {
+                _state.update {
+                    it.copy(saveResult = SaveResult.Error("Transfer direction is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer direction is required for transfer transactions")))
+                }
+                return
+            }
+            if (transferAccountNameTrimmed.isBlank()) {
+                _state.update {
+                    it.copy(saveResult = SaveResult.Error("Transfer account name is required for transfer transactions"), mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Transfer account name is required for transfer transactions")))
+                }
+                return
+            }
+        }
+
+        val sharePercentageText = currentState.mySharePercentage.trim()
+        val shareAmountText = currentState.myShareAmount.trim()
+        val hasSharePercentage = sharePercentageText.isNotEmpty()
+        val hasShareAmount = shareAmountText.isNotEmpty()
+
+        // S5-011: Use shared OwnershipValidator
+        val ownershipResult = com.yourname.expensetracker.ui.util.OwnershipValidator.validate(
+            isNotMine = currentState.isNotMine,
+            isSharedExpense = currentState.isSharedExpense,
+            sharedWithName = currentState.sharedWithName,
+            sharePercentageText = sharePercentageText,
+            shareAmountText = shareAmountText
+        )
+        if (ownershipResult is com.yourname.expensetracker.ui.util.OwnershipValidator.ValidationResult.Invalid) {
+            _state.update {
+                it.copy(
+                    saveResult = SaveResult.Error(ownershipResult.message),
+                    mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(ownershipResult.message))
+                )
+            }
+            return
+        }
+
+        val sharePercentage: Int?
+        val shareAmount: Double?
+        if (currentState.isSharedExpense) {
+            if (hasSharePercentage) {
+                val parsedSharePercentage = sharePercentageText.toIntOrNull()!!
+                sharePercentage = parsedSharePercentage
+                shareAmount = null
+            } else {
+                val parsedShareAmount = AmountUtils.parseAmount(shareAmountText)!!
+                sharePercentage = null
+                shareAmount = parsedShareAmount
+            }
+        } else {
+            sharePercentage = null
+            shareAmount = null
         }
 
         // Normalize to 2 decimal places
@@ -251,73 +369,81 @@ class AddExpenseViewModel @Inject constructor(
             .setScale(2, java.math.RoundingMode.HALF_UP)
             .toDouble()
 
-        _state.update { it.copy(isSaving = true, saveResult = null) }
+        _state.update { it.copy(isSaving = true, saveResult = null, mutation = com.yourname.expensetracker.ui.model.MutationState.running("save")) }
 
         viewModelScope.launch {
             try {
-                val sharePercentage = currentState.mySharePercentage.toIntOrNull()
-                val shareAmount = currentState.myShareAmount.toDoubleOrNull()
-
                 // 1. Save the actual transaction
                 val result = manualExpenseRepository.addManualExpense(
                     merchant = merchantTrimmed,
                     amount = normalizedAmount,
-                    currency = "EUR",
+                    // S5-004: Use currency captured at save-tap, not live _state.value
+                    currency = currency,
                     categoryId = currentState.selectedCategoryId,
                     transactionType = currentState.transactionType,
                     paymentMethod = currentState.paymentMethod,
                     date = currentState.date,
                     notes = currentState.notes.takeIf { it.isNotBlank() },
-                    transferDirection = currentState.transferDirection,
-                    transferAccountName = currentState.transferAccountName.takeIf { it.isNotBlank() },
+                    transferDirection = currentState.transferDirection.takeIf {
+                        currentState.transactionType == TransactionType.TRANSFER
+                    },
+                    transferAccountName = transferAccountNameTrimmed.takeIf {
+                        currentState.transactionType == TransactionType.TRANSFER && it.isNotBlank()
+                    },
                     isNotMine = currentState.isNotMine,
                     ownerName = currentState.ownerName.takeIf { it.isNotBlank() },
                     isSharedExpense = currentState.isSharedExpense,
-                    sharedWithName = currentState.sharedWithName.takeIf { it.isNotBlank() },
+                    sharedWithName = currentState.sharedWithName.trim().takeIf {
+                        currentState.isSharedExpense && it.isNotBlank()
+                    },
                     mySharePercentage = sharePercentage,
-                    myShareAmount = shareAmount
+                    myShareAmount = shareAmount,
+                    recurrenceFrequency = currentState.recurrenceFrequency.takeIf { currentState.isRecurring }
                 )
 
                 when (result) {
                     is Result.Success -> {
-                        // 2. If recurring, save the rule
-                        if (currentState.isRecurring) {
-                            recurringExpenseRepository.addRecurringExpense(
-                                merchant = merchantTrimmed,
-                                amount = normalizedAmount,
-                                frequency = currentState.recurrenceFrequency,
-                                lastDate = currentState.date,
-                                currency = "EUR"
-                            )
-                        }
-                        
                         _state.update {
-                            it.copy(isSaving = false, saveResult = SaveResult.Success)
+                            it.copy(isSaving = false, saveResult = SaveResult.Success, mutation = com.yourname.expensetracker.ui.model.MutationState.success("save"))
                         }
                     }
                     is Result.Duplicate -> {
                         _state.update {
-                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
+                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate, mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString("Duplicate expense")))
                         }
                     }
                     is Result.Error -> {
+                        // S5-003: Update mutation so Save button re-enables
+                        val msg = result.message ?: "Failed to save expense"
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                saveResult = SaveResult.Error(result.message ?: "Failed to save expense")
+                                saveResult = SaveResult.Error(msg),
+                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
                             )
                         }
                     }
                     Result.Loading -> {
-                        _state.update { it.copy(isSaving = true) }
+                        // S5-003: Result.Loading is not a valid terminal state for one-shot save
+                        val msg = "Unexpected loading result"
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveResult.Error(msg),
+                                mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
+                            )
+                        }
                     }
                 }
 
             } catch (e: Exception) {
+                // S5-003: Update mutation so Save button re-enables after exception
+                val msg = e.message ?: "Unknown error"
                 _state.update {
                     it.copy(
                         isSaving = false,
-                        saveResult = SaveResult.Error(e.message ?: "Unknown error")
+                        saveResult = SaveResult.Error(msg),
+                        mutation = com.yourname.expensetracker.ui.model.MutationState.error("save", com.yourname.expensetracker.domain.model.UiText.DynamicString(msg))
                     )
                 }
             }
@@ -326,14 +452,33 @@ class AddExpenseViewModel @Inject constructor(
 
 
     fun reset() {
-        _state.value = AddExpenseState()
+        searchJob?.cancel()
+        searchJob = null
+        initialValuesApplied = false
+        // S5-002: Preserve loaded currency — do not reset to null sentinel
+        val loadedCurrency = _state.value.homeCurrency
+        _state.value = AddExpenseState(date = timeProvider.now(), homeCurrency = loadedCurrency)
     }
 
-    fun setInitialValues(amount: String? = null, merchant: String? = null) {
-        _state.update { 
-            it.copy(
-                amount = amount ?: it.amount,
-                merchant = merchant ?: it.merchant
+    fun setInitialValuesIfBlank(amount: String? = null, merchant: String? = null) {
+        if (initialValuesApplied) return
+
+        _state.update { current ->
+            val amountIsBlank = current.amount.isBlank()
+            val merchantIsBlank = current.merchant.isBlank()
+
+            if (!amountIsBlank || !merchantIsBlank) {
+                // S5-021R: Mark consumed even when skipped due to dirty form
+                // Prevents prefill applying later if user clears fields
+                initialValuesApplied = true
+                return@update current
+            }
+
+            initialValuesApplied = true
+            current.copy(
+                // S5-020: Sanitize prefilled amount — same path as manual input
+                amount = amount?.let { com.yourname.expensetracker.ui.util.AmountInputSanitizer.sanitize(it) } ?: current.amount,
+                merchant = merchant?.take(100)?.trim() ?: current.merchant
             )
         }
     }

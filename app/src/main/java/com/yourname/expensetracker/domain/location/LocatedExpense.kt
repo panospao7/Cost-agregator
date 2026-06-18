@@ -17,5 +17,6 @@ data class LocatedExpense(
     val merchant: String,
     val date: Long,
     val locationSource: String?,
-    val placeId: String?
+    val placeId: String?,
+    val currency: String? = null  // W29: currency for multi-currency awareness
 )

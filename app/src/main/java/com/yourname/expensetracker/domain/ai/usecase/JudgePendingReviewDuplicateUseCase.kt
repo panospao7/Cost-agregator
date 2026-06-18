@@ -1,22 +1,27 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.ai.provider.StrictAiJsonParsing
 import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 import javax.inject.Inject
@@ -39,7 +44,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
             return DedupeJudgeGenerationResult.Disabled("AI duplicate assist is disabled.")
         }
 
-        val buildResult = inputBuilder.build(item)
+        val buildResult = inputBuilder.build(item, settings)
         if (buildResult is DedupeJudgeBuildResult.NotNeeded) {
             return DedupeJudgeGenerationResult.NotNeeded(buildResult.reason)
         }
@@ -51,7 +56,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
         }
         val targetKey = "pending_review:${item.review.id}"
         val now = timeProvider.now()
-        val sourceHash = input.hashCode().toString()
+        val sourceHash = AiArtifactSourceHash.forDedupeJudge(input)
 
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DEDUPE_JUDGE)
         if (!force &&
@@ -67,7 +72,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
                 ?.let { return DedupeJudgeGenerationResult.Success(it, fromCache = true) }
         }
 
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType = AiTargetType.PENDING_REVIEW,
             targetId = item.review.id,
             targetKey = targetKey,
@@ -90,29 +95,33 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
         aiArtifactRepository.upsert(baseEntity)
 
         return try {
-            val suggestion = dedupeJudgeService.judge(input)
-            if (suggestion == null) {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.FAILED,
-                        errorMessage = failureMessage(routeDecision.reason, routeDecision),
-                        updatedAt = timeProvider.now()
+            when (val serviceResult = dedupeJudgeService.judge(input)) {
+                is AiServiceResult.Success -> {
+                    val suggestion = serviceResult.value.validatedAgainst(input)
+                    aiArtifactRepository.upsert(
+                        baseEntity.copy(
+                            status = AiArtifactStatus.READY,
+                            summaryText = "AI duplicate verdict: ${suggestion.verdict.name}",
+                            explanationText = suggestion.rationale
+                                ?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
+                                .withRouteDiagnostics(routeDecision),
+                            payloadJson = suggestion.toPayloadJson(),
+                            updatedAt = timeProvider.now()
+                        )
                     )
-                )
-                DedupeJudgeGenerationResult.Error("AI duplicate assist returned no verdict.")
-            } else {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.READY,
-                        summaryText = "AI duplicate verdict: ${suggestion.verdict.name}",
-                        explanationText = suggestion.rationale
-                            ?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
-                            .withRouteDiagnostics(routeDecision),
-                        payloadJson = suggestion.toPayloadJson(),
-                        updatedAt = timeProvider.now()
+                    DedupeJudgeGenerationResult.Success(suggestion, fromCache = false)
+                }
+                is AiServiceResult.Failure -> {
+                    val readableError = serviceResult.error.toReadableMessage()
+                    aiArtifactRepository.upsert(
+                        baseEntity.copy(
+                            status = AiArtifactStatus.FAILED,
+                            errorMessage = failureMessage(readableError, routeDecision),
+                            updatedAt = timeProvider.now()
+                        )
                     )
-                )
-                DedupeJudgeGenerationResult.Success(suggestion, fromCache = false)
+                    DedupeJudgeGenerationResult.Error(readableError)
+                }
             }
         } catch (e: Exception) {
             aiArtifactRepository.upsert(
@@ -129,6 +138,34 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
     }
 }
 
+private fun DedupeJudgeSuggestion.validatedAgainst(input: DedupeJudgeInput): DedupeJudgeSuggestion {
+    val matchedType = matchedTargetType
+    val matchedId = matchedTargetId
+    if (matchedType == null || matchedId == null) return this
+
+    val isValid = input.candidates.any { candidate ->
+        candidate.targetType == matchedType && candidate.targetId == matchedId
+    }
+    if (isValid) return this
+
+    return copy(
+        verdict = com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.UNCERTAIN,
+        matchedTargetType = null,
+        matchedTargetId = null
+    )
+}
+
+private fun AiServiceError.toReadableMessage(): String = when (this) {
+    AiServiceError.Timeout -> "Duplicate assist timed out"
+    AiServiceError.Offline -> "No network connection"
+    AiServiceError.SslError -> "Secure connection failed"
+    is AiServiceError.HttpError -> "HTTP $code"
+    is AiServiceError.ParseError -> message ?: "Response parse error"
+    is AiServiceError.Disabled -> reason
+    is AiServiceError.PrivacyDenied -> blocked.reason
+    is AiServiceError.Unknown -> message ?: "Unknown service error"
+}
+
 private fun DedupeJudgeSuggestion.toPayloadJson(): String {
     return JSONObject().apply {
         put("verdict", verdict.name)
@@ -142,13 +179,30 @@ private fun DedupeJudgeSuggestion.toPayloadJson(): String {
 private fun String.toDedupeJudgeSuggestionOrNull(): DedupeJudgeSuggestion? {
     return runCatching {
         val root = JSONObject(this)
+        val verdict = StrictAiJsonParsing.enumOrNull<com.yourname.expensetracker.domain.ai.model.DuplicateVerdict>(
+            root.optString("verdict")
+        ) ?: return null
+        val matchedTargetType = root.optString("matchedTargetType")
+            .takeIf { it.isNotBlank() }
+            ?.let { rawType ->
+                StrictAiJsonParsing.enumOrNull<AiTargetType>(rawType) ?: return null
+            }
+        val matchedTargetId = if (root.has("matchedTargetId") && !root.isNull("matchedTargetId")) {
+            StrictAiJsonParsing.run { root.nullableLongRejectingZeroOrNull("matchedTargetId") }
+                ?: return null
+        } else {
+            null
+        }
+        val confidence = if (root.has("confidence") && !root.isNull("confidence")) {
+            StrictAiJsonParsing.run { root.boundedConfidenceOrNull("confidence") } ?: return null
+        } else {
+            null
+        }
         DedupeJudgeSuggestion(
-            verdict = com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.valueOf(root.getString("verdict")),
-            matchedTargetType = root.optString("matchedTargetType")
-                .takeIf { it.isNotBlank() }
-                ?.let { AiTargetType.valueOf(it) },
-            matchedTargetId = if (root.has("matchedTargetId") && !root.isNull("matchedTargetId")) root.optLong("matchedTargetId") else null,
-            confidence = if (root.has("confidence") && !root.isNull("confidence")) root.optDouble("confidence").toFloat() else null,
+            verdict = verdict,
+            matchedTargetType = matchedTargetType,
+            matchedTargetId = matchedTargetId,
+            confidence = confidence,
             rationale = root.optString("rationale").takeIf { it.isNotBlank() }
         )
     }.getOrNull()

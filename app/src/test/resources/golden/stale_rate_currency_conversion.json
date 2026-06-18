@@ -1,0 +1,21 @@
+{
+  "displayTotal": 191,
+  "isPartial": false,
+  "totalTransactionCount": 3,
+  "sourceBuckets": [
+    {
+      "currency": "EUR",
+      "amount": 100
+    },
+    {
+      "currency": "GBP",
+      "amount": 40
+    },
+    {
+      "currency": "USD",
+      "amount": 50
+    }
+  ],
+  "conversionFailures": [],
+  "usdConvertedSuccessfully": true
+}

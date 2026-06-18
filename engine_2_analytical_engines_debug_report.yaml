@@ -1,0 +1,610 @@
+meta:
+  repo: "panospao7/Cost-agregator"
+  commit: "4113e38f0d838a29d2d13d82a483ba573280721c"
+  engine_group: "#2 - Analytical Engines"
+  review_mode: "static GitHub source/debugging session; no local Gradle/device execution"
+  verdict: "IMPROVED_BUT_NOT_CLEAN"
+  summary: >
+    Analytical engines are much improved: NormalizedAnalyticsInput, AnalyticsInputAssembler,
+    DailyBucketEngine, BudgetVsActualEngine, normalized SpendingPersonalityClassifier overload,
+    and many MoneyAggregate/dataQuality hooks exist. But the analytical stack is still not
+    clean. The biggest remaining issue is not missing infrastructure; it is inconsistent
+    adoption. Several public/production paths still bypass the canonical input, use
+    latest-rate or midpoint-rate aggregates, silently default to EUR, drop quality metadata,
+    self-fetch data in sub-engines, or preserve raw legacy overloads that can be misused.
+
+tracker_reconciliation:
+  A01_no_canonical_analytics_input_contract:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "NormalizedAnalyticsInput and AnalyticsInputAssembler exist."
+      - "Input has nullable period and default EUR homeCurrency."
+      - "isSharedExpense, ownershipMode, and source are still placeholders/null."
+      - "categoryNameSnapshot is derived from current CategoryRepository, not persisted historical category name."
+      - "Not all engines consume NormalizedAnalyticsInput."
+
+  A02_totals_aggregation_multicurrency:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "TotalsAggregationEngine weekly/daily now call MultiCurrencyRepository."
+      - "But those MCR weekly/daily paths use latest-rate MoneyAggregateBuilder, not transaction-date rates."
+      - "Reactive PeriodTotal outputs drop MoneyAggregate/isPartial/warnings."
+      - "Monthly totals are still type-agnostic through getAllMonthlyTotalsBetweenByCurrency."
+
+  A03_historical_analytics_current_rates:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "AnalyticsCurrencyNormalizer uses convertAsOf(expense.date)."
+      - "AnalyticsRepository headline historical total uses per-currency bucket at period midpoint."
+      - "That historical method silently falls back to latest-rate conversion."
+      - "Category/weekly/daily/monthly MCR paths still use latest rates."
+
+  A04_spending_personality_currency_safe:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "classify(input: NormalizedAnalyticsInput) exists and AnalyticsViewModel uses it."
+      - "Public classify() still queries raw ExpenseRepository snapshots and uses raw amounts."
+      - "Normalized path sets budgetAdherence to neutral 0.5, so budget behavior is degraded."
+
+  A05_analytics_repository_partial_state:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "SpendingSummary carries aggregate and isPartial."
+      - "It does not expose warningMessage/sourceBuckets/conversionFailures as structured top-level fields."
+      - "Previous-period partial state is not exposed."
+      - "Daily history uses normalizer but drops its warnings."
+
+  A06_multiple_analytics_paths_disagree:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "AnalyticsInputAssembler is used by AnalyticsViewModel."
+      - "AdvancedAnalyticsEngine still self-fetches and self-normalizes."
+      - "AnalyticsRepository still uses MultiCurrencyRepository separately."
+      - "Dashboard/forecast consumers still have their own normalization seams."
+
+  A07_insights_eur_default:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "InsightsEngine has NormalizedAnalyticsInput overload."
+      - "Legacy overloads still default displayCurrency/homeCurrency to EUR."
+      - "AnalyticsViewModel still calls legacy generateInsights(categories, allExpenseSnapshots, displayCurrency=homeCurrency), not the input overload."
+
+  A08_daily_chart_range:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED_WITH_LEGACY_FOOTGUN"
+    notes:
+      - "AnalyticsViewModel uses DailyBucketEngine.buildBuckets(currentInput, period)."
+      - "InsightsEngine.buildDailyTotals(expenses, days) still exists and anchors to timeProvider.now()."
+
+  A09_advanced_analytics_different_period:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "ViewModel uses CUSTOM range for month/quarter/year."
+      - "For WEEK, ViewModel still calls advancedAnalyticsEngine.getPeriodRange(AnalyticsPeriod.WEEK), which recalculates using engine now."
+      - "AdvancedAnalyticsEngine still queries its own data instead of consuming currentInput."
+
+  A10_category_analytics_budget_compare:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "BudgetVsActualEngine exists and ViewModel uses it for budget chart."
+      - "AdvancedAnalyticsEngine.getCategoryAnalytics() is deprecated but still called by ViewModel for enhanced categories."
+      - "ViewModel converts budgets with latest-rate currencyConverter.convert(), not period basis."
+      - "BudgetVsActualResult.dataQuality is dropped when mapped to BudgetVsActualItem."
+
+  A11_conversion_warnings_affect_confidence:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "AnalyticsDataQuality has confidencePenalty/confidenceMultiplier."
+      - "SpendingPersonality normalized path applies them."
+      - "Most analytics outputs still do not reduce severity/confidence from partial data."
+
+  A12_merchant_anomaly_history:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "Advanced merchant analytics uses a 12-month lookback."
+      - "InsightsEngine anomalies still receive allExpenseSnapshots from AnalyticsViewModel's fullWindowStart, which is usually start-of-current-year."
+      - "January/early-year anomaly baselines can still be thin."
+
+  A13_spending_pace_historical_period:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "SpendingPaceCalculator appears improved."
+      - "InsightsEngine legacy getSpendingPaceSuspend still builds current-month period from timeProvider.now()."
+      - "Raw public entry points can still compute current pace instead of selected historical period."
+
+  A14_location_analytics_raw_path:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "AnalyticsRepository location summary now uses per-currency MoneyAggregate."
+      - "ViewModel passes normalized located purchases to LocationInsightsEngine."
+      - "AreaSpendingEngine.compute() and TravelDetectionEngine.compute() raw-sum paths remain public/deprecated."
+      - "Normalized location outputs do not consistently carry partial/warning metadata to UI."
+
+  A15_category_deletion_history:
+    tracker_status: "FIXED"
+    actual_status: "OPEN"
+    notes:
+      - "Assembler populates categoryNameSnapshot from current category table."
+      - "If category is deleted, categoryNameById has no entry and historical name is lost."
+      - "No persisted expense category-name snapshot was verified."
+
+  A16_analytics_recomputes_too_much:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "ViewModel uses assembler, but still builds current/previous/all/yoy inputs separately."
+      - "AdvancedAnalyticsEngine re-fetches and re-normalizes in parallel."
+      - "No DB read snapshot ensures all reads see the same database state."
+
+  A17_calendar_to_javatime:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "DailyBucketEngine uses java.time."
+      - "AdvancedAnalyticsEngine still imports java.util.Calendar and maps Calendar day constants."
+      - "AnalyticsViewModel also uses java.util.Calendar constants."
+
+  A18_personality_javatime:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "Normalized personality helper methods use java.time."
+      - "Raw classify() path remains and file still imports java.util.Calendar."
+
+  A19_excluded_expense_warning_metadata:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "ExcludedExpense has warningType/message fields."
+      - "AnalyticsInputAssembler currently sets only id/originalAmount/originalCurrency/reason."
+      - "warningType/message are not populated."
+
+  A20_budget_vs_actual_data_quality:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "BudgetVsActualResult carries AnalyticsDataQuality."
+      - "AnalyticsViewModel maps result to BudgetVsActualItem and drops dataQuality."
+      - "Budget conversion warnings are merged separately, but actual-spend partial quality is not attached to budget items."
+
+positive_findings:
+  - "AnalyticsInputAssembler is injectable and builds NormalizedAnalyticsInput."
+  - "AnalyticsCurrencyNormalizer uses convertAsOf(expense.date)."
+  - "DailyBucketEngine builds exact period buckets from normalized input."
+  - "AnalyticsViewModel uses assembler for current, previous, all, and YOY inputs."
+  - "ViewModel current total/category/merchant/daily/hour/day-of-week paths use normalized snapshots."
+  - "SpendingPersonalityClassifier has a normalized input overload and ViewModel uses it."
+  - "BudgetVsActualEngine compares normalized actual spending against converted budgets."
+  - "TotalsAggregationEngine has computeFromNormalized() and summarize() safe entry points."
+  - "AnalyticsRepository category breakdown and location summary now carry partial/warning fields at least partially."
+  - "AdvancedAnalyticsEngine catches CancellationException correctly in async branches."
+
+issues:
+  - id: "E2-CURRENT-001"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Canonical NormalizedAnalyticsInput is not enforced"
+    evidence:
+      - "AdvancedAnalyticsEngine still fetches ExpenseRepository snapshots internally."
+      - "AnalyticsRepository still computes via MultiCurrencyRepository."
+      - "InsightsEngine and SpendingPersonalityClassifier still expose raw/legacy overloads."
+    impact:
+      - "Basic, advanced, repository, dashboard, and forecast analytics can still disagree."
+    fix:
+      - "Make NormalizedAnalyticsInput the only production input for analytics arithmetic."
+      - "Deprecate raw overloads with DeprecationLevel.ERROR or restrict them to tests."
+    tests:
+      - "no_production_analytics_engine_accepts_raw_expense_snapshots"
+      - "advanced_analytics_consumes_NormalizedAnalyticsInput"
+
+  - id: "E2-CURRENT-002"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Historical headline total is midpoint-bucket conversion, not transaction-date conversion"
+    evidence:
+      - "MultiCurrencyRepository.getHomeCurrencyPurchaseTotalHistorical() groups by currency."
+      - "It uses midpoint = startDate + (endDate - startDate) / 2."
+      - "AnalyticsRepository.getSpendingSummary() uses that method for current/previous totals."
+    impact:
+      - "Headline period total can disagree with dailyHistory, which is row-normalized by transaction date."
+    fix:
+      - "Build headline total from AnalyticsCurrencyNormalizer normalized rows or group by currency+rate-date."
+    tests:
+      - "spending_summary_total_equals_sum_of_daily_history"
+      - "historical_total_uses_each_expense_date_rate"
+
+  - id: "E2-CURRENT-003"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Historical total silently falls back to latest rate"
+    evidence:
+      - "If convertAsOf(midpoint) fails, getHomeCurrencyPurchaseTotalHistorical() calls currencyConverter.convert()."
+      - "Successful latest fallback adds to total without conversion warning."
+    impact:
+      - "A historical analytics total can be latest-rate-valued while UI says it is historical/clean."
+    fix:
+      - "Return partial MoneyAggregate or explicit RATE_BASIS_FALLBACK warning."
+    tests:
+      - "historical_total_latest_fallback_sets_partial_warning"
+
+  - id: "E2-CURRENT-004"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Category breakdown uses latest-rate basis while summary uses historical-ish basis"
+    evidence:
+      - "AnalyticsRepository.getCategoryBreakdown() calls getHomeCurrencyPurchaseCategoryTotals()."
+      - "MultiCurrencyRepository documents category/merchant breakdowns as latest-rate."
+    impact:
+      - "Category percentages may not reconcile with SpendingSummary.totalSpent."
+    fix:
+      - "Group currentInput.includedExpenses by category for category breakdown."
+    tests:
+      - "analytics_category_sum_matches_spending_summary_total"
+      - "category_breakdown_uses_transaction_date_rates"
+
+  - id: "E2-CURRENT-005"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "TotalsAggregationEngine reactive outputs drop MoneyAggregate/dataQuality"
+    evidence:
+      - "getWeeklyTotals/getDailyTotals/getMonthlyTotals return PeriodTotal(totalAmount, transactionCount)."
+      - "Only computeFromNormalized attaches input.dataQuality."
+    impact:
+      - "Drilldown charts can look clean despite partial conversion."
+    fix:
+      - "Extend PeriodTotal with MoneyAggregate/isPartial/warningMessage or route callers to computeFromNormalized."
+    tests:
+      - "weekly_period_total_preserves_conversion_warning"
+      - "daily_period_total_preserves_partial_state"
+
+  - id: "E2-CURRENT-006"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "MultiCurrency weekly/daily counts are likely wrong"
+    evidence:
+      - "getHomeCurrencyWeeklyTotals()/DailyTotals create buckets from individual expenses."
+      - "They call MoneyAggregateBuilder.fromBuckets without transactionCounts."
+    impact:
+      - "MoneyAggregate.totalTransactionCount and failure counts can be zero or bucket-count based incorrectly."
+    fix:
+      - "Pass transactionCounts = List(group.size) { 1 } or pre-aggregate by currency with counts."
+    tests:
+      - "weekly_total_transaction_count_matches_expense_count"
+      - "daily_conversion_failure_count_reports_affected_transactions"
+
+  - id: "E2-CURRENT-007"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Monthly totals are type-agnostic"
+    evidence:
+      - "getHomeCurrencyMonthlyTotals() uses getAllMonthlyTotalsBetweenByCurrency()."
+      - "TotalsAggregationEngine.getMonthlyTotals() uses it for spending totals."
+    impact:
+      - "Deposits/transfers can appear in monthly spending analytics."
+    fix:
+      - "Add purchase-only monthly totals and use them in spending analytics."
+    tests:
+      - "monthly_spending_excludes_deposits_and_transfers"
+
+  - id: "E2-CURRENT-008"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "AdvancedAnalyticsEngine is still a second data source"
+    evidence:
+      - "AnalyticsViewModel calls advancedAnalyticsEngine.getCategoryAnalytics/getMerchantAnalytics/getSpendingPatterns/getStatisticalInsights."
+      - "Those methods query ExpenseRepository again and normalize independently."
+    impact:
+      - "Advanced cards can differ from basic cards if DB/rates/categories change during computation."
+    fix:
+      - "Add advancedAnalyticsEngine.compute(input, categories, budgets) and stop internal DB reads."
+    tests:
+      - "advanced_and_basic_totals_match_same_NormalizedAnalyticsInput"
+
+  - id: "E2-CURRENT-009"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Deprecated getCategoryAnalytics is still used by ViewModel"
+    evidence:
+      - "AdvancedAnalyticsEngine.getCategoryAnalytics() is deprecated with budget warning."
+      - "AnalyticsViewModel still calls it for enhanced category analytics."
+    impact:
+      - "Enhanced category cards can still compare normalized spend with non-equivalent budget values."
+    fix:
+      - "Replace enhanced category budget fields with BudgetVsActualEngine output or remove budget context from deprecated path."
+    tests:
+      - "analytics_viewmodel_does_not_call_deprecated_getCategoryAnalytics"
+
+  - id: "E2-CURRENT-010"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Budget conversion uses latest rate and drops dataQuality"
+    evidence:
+      - "AnalyticsViewModel.convertBudgetAmountToHomeCurrency() uses currencyConverter.convert(), not convertAsOf()."
+      - "BudgetVsActualEngine returns dataQuality, but ViewModel maps only items."
+    impact:
+      - "Budget-vs-actual can compare transaction-date actuals to latest-rate budget limits and hide actual data partialness."
+    fix:
+      - "Use documented budget rate basis, preferably period-end or budget-period basis."
+      - "Carry engineResult.dataQuality into AnalyticsState/BudgetVsActualItem."
+    tests:
+      - "budget_vs_actual_preserves_data_quality"
+      - "budget_limit_conversion_basis_is_explicit"
+
+  - id: "E2-CURRENT-011"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "SpendingPersonalityClassifier raw classify() remains a production footgun"
+    evidence:
+      - "classify() queries raw ExpenseRepository snapshots and raw BudgetRepository snapshots."
+      - "File KDoc says raw path is not currency-safe."
+    impact:
+      - "Any caller using classify() instead of classify(input) gets mixed-currency features."
+    fix:
+      - "Make classify() private/test-only or implement it by calling AnalyticsInputAssembler."
+    tests:
+      - "no_production_call_to_spendingPersonality_raw_classify"
+
+  - id: "E2-CURRENT-012"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Normalized personality path loses budget adherence"
+    evidence:
+      - "classify(input) sets featureScores['budgetAdherence'] = 0.5."
+      - "It does not accept normalized budget statuses."
+    impact:
+      - "Personality classification is safer but less semantically correct."
+    fix:
+      - "Add budgets to NormalizedAnalyticsInput or pass BudgetVsActualResult into classifier."
+    tests:
+      - "normalized_personality_uses_budget_adherence"
+
+  - id: "E2-CURRENT-013"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "InsightsEngine legacy overloads still default to EUR and accept raw snapshots"
+    evidence:
+      - "generateInsights(periodRange,... displayCurrency='EUR') remains public."
+      - "generateInsights(categories,... displayCurrency='EUR') remains public."
+      - "getLegacyInsights(... homeCurrency='EUR') remains public."
+    impact:
+      - "New callers can accidentally emit EUR-labeled analytics for non-EUR users."
+    fix:
+      - "Remove defaults and require NormalizedAnalyticsInput or explicit CurrencyCode."
+    tests:
+      - "insights_legacy_overloads_not_used_by_production"
+
+  - id: "E2-CURRENT-014"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "InsightsEngine.buildDailyTotals still anchors to now"
+    evidence:
+      - "buildDailyTotals(expenses, days) initializes days from timeProvider.now()."
+      - "DailyBucketEngine exists but this legacy method remains public."
+    impact:
+      - "Historical/custom-period callers can get shifted daily charts."
+    fix:
+      - "DeprecationLevel.ERROR or rewrite to delegate to DailyBucketEngine."
+    tests:
+      - "legacy_buildDailyTotals_not_used_or_uses_explicit_period"
+
+  - id: "E2-CURRENT-015"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Category history is not stable after category deletion"
+    evidence:
+      - "AnalyticsInputAssembler builds categoryNameSnapshot from current categoryRepository.getAll()."
+      - "Deleted category IDs have no name snapshot."
+    impact:
+      - "Historical reports can change from real category name to null/Uncategorized/Unknown after deletion."
+    fix:
+      - "Persist categoryNameSnapshot/categoryColorSnapshot on Expense or soft-delete categories."
+    tests:
+      - "deleted_category_historical_analytics_keeps_old_name"
+
+  - id: "E2-CURRENT-016"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "ExcludedExpense warning metadata is defined but not populated"
+    evidence:
+      - "ExcludedExpense has warningType and message."
+      - "Assembler only sets reason."
+    impact:
+      - "Debug/UI cannot show precise exclusion reason per expense."
+    fix:
+      - "Map normalizer warnings back to expense IDs or return structured ExcludedExpense from normalizer."
+    tests:
+      - "excluded_expense_has_warningType_and_message"
+
+  - id: "E2-CURRENT-017"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Home currency failure silently defaults to EUR"
+    evidence:
+      - "AnalyticsInputAssembler.build() uses getOrDefault('EUR')."
+      - "AnalyticsRepository and ViewModel catch homeCurrency failures and emit EUR."
+    impact:
+      - "Settings/DataStore failure can relabel analytics as EUR with no visible error."
+    fix:
+      - "Use HomeCurrencyResolution: Resolved, FirstRunDefault, Failed."
+    tests:
+      - "home_currency_resolution_failure_surfaces_analytics_warning"
+
+  - id: "E2-CURRENT-018"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "No stable DB read snapshot for one analytics computation"
+    evidence:
+      - "AnalyticsViewModel fetches purchases, allExpenses, previousExpenses, yearOverYearExpenses, budgets, and advanced engine data separately."
+      - "AdvancedAnalyticsEngine runs independent repository queries."
+    impact:
+      - "A write/rate/category update during computation can produce internally inconsistent analytics."
+    fix:
+      - "Assembler should build all windows from one wider query/read transaction and split in memory."
+      - "Advanced engines should consume the same input."
+    tests:
+      - "concurrent_expense_write_does_not_make_analytics_internal_totals_disagree"
+
+  - id: "E2-CURRENT-019"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Calendar migration is not complete"
+    evidence:
+      - "AdvancedAnalyticsEngine imports java.util.Calendar."
+      - "AnalyticsViewModel uses java.util.Calendar constants for day-of-week mapping."
+      - "SpendingPersonalityClassifier still imports Calendar."
+    impact:
+      - "Tracker claims migration complete, but code still has Calendar-based logic/comments."
+    fix:
+      - "Switch remaining day-of-week logic to java.time.DayOfWeek."
+    tests:
+      - "static_grep_no_java_util_Calendar_in_analytics_package"
+
+  - id: "E2-CURRENT-020"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Deprecated raw location analytics remain callable"
+    evidence:
+      - "AreaSpendingEngine.compute(List<Expense>) raw-sums effectiveAmount."
+      - "TravelDetectionEngine.compute(List<Expense>) raw-sums home/local/travel spend."
+      - "Both are only @Deprecated, not ERROR."
+    impact:
+      - "Future callers can reintroduce raw mixed-currency location analytics."
+    fix:
+      - "DeprecationLevel.ERROR and static guard; expose only normalized APIs."
+    tests:
+      - "no_production_call_to_raw_area_or_travel_compute"
+
+recommended_fix_order:
+  - pr: "PR1"
+    title: "Enforce canonical analytics input"
+    include:
+      - "AdvancedAnalyticsEngine consumes NormalizedAnalyticsInput."
+      - "InsightsEngine production callers use input overload."
+      - "Raw analytics overloads become ERROR-deprecated or test-only."
+    closes:
+      - "E2-CURRENT-001"
+      - "E2-CURRENT-008"
+      - "E2-CURRENT-013"
+
+  - pr: "PR2"
+    title: "Fix rate-basis consistency"
+    include:
+      - "Replace midpoint historical aggregate with row/date aggregate."
+      - "Category/month/week/day analytics use same basis as summary."
+      - "No latest fallback without warning."
+    closes:
+      - "E2-CURRENT-002"
+      - "E2-CURRENT-003"
+      - "E2-CURRENT-004"
+      - "E2-CURRENT-007"
+
+  - pr: "PR3"
+    title: "Propagate MoneyAggregate/dataQuality"
+    include:
+      - "PeriodTotal carries aggregate/isPartial/warning."
+      - "BudgetVsActual UI carries dataQuality."
+      - "ExcludedExpense warning metadata populated."
+    closes:
+      - "E2-CURRENT-005"
+      - "E2-CURRENT-010"
+      - "E2-CURRENT-016"
+
+  - pr: "PR4"
+    title: "Personality and budget semantics"
+    include:
+      - "Remove raw classify() footgun."
+      - "Normalize budget adherence."
+      - "Replace deprecated AdvancedAnalyticsEngine category budget comparison."
+    closes:
+      - "E2-CURRENT-009"
+      - "E2-CURRENT-011"
+      - "E2-CURRENT-012"
+
+  - pr: "PR5"
+    title: "Historical identity and snapshot stability"
+    include:
+      - "Persist/soft-delete category history."
+      - "One assembler read snapshot for all windows."
+      - "HomeCurrencyResolution warnings."
+    closes:
+      - "E2-CURRENT-015"
+      - "E2-CURRENT-017"
+      - "E2-CURRENT-018"
+
+  - pr: "PR6"
+    title: "Legacy cleanup"
+    include:
+      - "Remove now-anchored buildDailyTotals."
+      - "Finish Calendar to java.time migration."
+      - "ERROR-deprecate raw location analytics."
+      - "Fix weekly/daily transaction counts."
+    closes:
+      - "E2-CURRENT-006"
+      - "E2-CURRENT-014"
+      - "E2-CURRENT-019"
+      - "E2-CURRENT-020"
+
+definition_of_done:
+  - "Every production analytical engine consumes NormalizedAnalyticsInput or typed normalized DTOs."
+  - "Summary, category, merchant, daily, weekly, monthly, advanced, and dashboard totals reconcile under one rate basis."
+  - "Historical analytics convert each transaction at expense.date or equivalent rate-date grouping."
+  - "No historical aggregate silently falls back to latest rate without warning."
+  - "No public production raw overload defaults to EUR."
+  - "Budget-vs-actual exposes actual and budget conversion quality."
+  - "SpendingPersonality uses normalized actuals and normalized budget adherence."
+  - "Category deletion/rename does not rewrite historical analytics."
+  - "One analytics screen computation reads one stable snapshot."
+  - "All partial conversion states are visible in UI/debug output."
+  - "No java.util.Calendar remains in analytics code."
+  - "Raw location compute methods cannot be called from production."
+
+sources:
+  engine_tracker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/ENGINE_ISSUES_MASTER_TRACKER.md"
+  prior_analytical_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/debugging/analytical-engines-debug-report.md"
+  analytics_input_assembler:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsInputAssembler.kt"
+  normalized_analytics_input:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/NormalizedAnalyticsInput.kt"
+  analytics_currency_normalizer:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsCurrencyNormalizer.kt"
+  analytics_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt"
+  multi_currency_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/MultiCurrencyRepository.kt"
+  totals_aggregation_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/TotalsAggregationEngine.kt"
+  analytics_viewmodel:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/ui/screens/analytics/AnalyticsViewModel.kt"
+  advanced_analytics_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsEngine.kt"
+  insights_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/InsightsEngine.kt"
+  daily_bucket_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/DailyBucketEngine.kt"
+  spending_personality_classifier:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/SpendingPersonalityClassifier.kt"
+  budget_vs_actual_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/BudgetVsActualEngine.kt"
+  data_quality_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/analytics/DataQualityReport.kt"
+  area_spending_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/location/AreaSpendingEngine.kt"
+  travel_detection_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/location/TravelDetectionEngine.kt"
+  location_insights_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/location/LocationInsightsEngine.kt"

@@ -1,14 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ExpenseTracker</string>
     
-    <!-- Add Expense -->
-    <string name="add_expense_title">Add Expense</string>
-    <string name="close_content_description">Close</string>
-    <string name="save_button">Save</string>
-    <string name="merchant_label">Merchant / Place</string>
-    <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
+    <!-- Common Actions -->
+    <string name="action_save">Save</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_close">Close</string>
+    <string name="action_back">Back</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_add">Add</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_create">Create</string>
+    <string name="action_update">Update</string>
+    <string name="action_retry">Try Again</string>
+    <string name="action_ok">OK</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_share">Share</string>
+    <string name="action_export">Export</string>
+    <string name="action_import">Import</string>
+    <string name="action_search">Search</string>
+    <string name="action_filter">Filter</string>
+    <string name="action_sort">Sort</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_done">Done</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_skip">Skip</string>
+    <string name="transactions_view_provenance">View Provenance</string>
+    <string name="action_next">Next</string>
+    <string name="action_previous">Previous</string>
+    <string name="action_undo">Undo</string>
+    
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_activity">Activity</string>
+    <string name="nav_review">Review</string>
+    <string name="nav_plan">Plan</string>
+    <string name="nav_analytics">Analytics</string>
+    <string name="nav_map">Map</string>
+    <string name="nav_more">More</string>
+    <string name="nav_features">Features</string>
+    <string name="nav_assistant">Assistant</string>
+    
+    <!-- Common Labels -->
+    <string name="label_total">Total</string>
+    <string name="label_amount">Amount</string>
+    <string name="label_date">Date</string>
+    <string name="label_merchant">Merchant</string>
+    <string name="label_category">Category</string>
+    <string name="label_description">Description</string>
+    <string name="label_notes">Notes</string>
+    <string name="label_currency">Currency</string>
+    <string name="label_frequency">Frequency</string>
+    <string name="label_period">Period</string>
+    <string name="label_status">Status</string>
+    <string name="label_type">Type</string>
+    <string name="label_name">Name</string>
+    <string name="label_email">Email</string>
+    <string name="label_optional">(Optional)</string>
+    <string name="label_required">Required</string>
+    <string name="label_from">From</string>
+    <string name="label_to">To</string>
+    <string name="label_start_date">Start Date</string>
+    <string name="label_end_date">End Date</string>
+    <string name="label_date_range">Date Range</string>
+    <string name="label_default">Default</string>
+    <string name="label_active">Active</string>
+    <string name="label_inactive">Inactive</string>
+    <string name="label_loading">Loading…</string>
+    <string name="label_error">Error</string>
+    <string name="label_success">Success</string>
+    <string name="label_warning">Warning</string>
+    <string name="label_info">Info</string>
+    <string name="label_new">New</string>
+    <string name="label_beta">Beta</string>
+    <string name="label_percent">%</string>
+    <string name="label_none">None</string>
+    <string name="unknown">Unknown</string>
+    <string name="label_retro">retro</string>
+    <string name="label_modern">modern</string>
+    <string name="day_monday">Monday</string>
+    <string name="day_tuesday">Tuesday</string>
+    <string name="day_wednesday">Wednesday</string>
+    <string name="day_thursday">Thursday</string>
+    <string name="day_friday">Friday</string>
+    <string name="day_saturday">Saturday</string>
+    <string name="day_sunday">Sunday</string>
+    
+    <!-- Legacy Names for Backward Compatibility -->
     <string name="amount_label">Amount (€)</string>
     <string name="amount_placeholder">0.00</string>
+    <string name="merchant_label">Merchant / Place</string>
+    <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
     <string name="payment_method_label">Payment Method</string>
     <string name="payment_method_card">💳 Card</string>
     <string name="payment_method_cash">💵 Cash</string>
@@ -16,33 +101,2401 @@
     <string name="category_label">Category</string>
     <string name="date_label">Date</string>
     <string name="transaction_type_prefix">Transaction Type: %1$s</string>
-    <string name="toggle_content_description">Toggle</string>
     <string name="notes_label">Notes</string>
     <string name="notes_placeholder">Optional notes</string>
     <string name="repeat_transaction_label">Repeat Transaction?</string>
     <string name="frequency_label">Frequency</string>
-    <string name="error_duplicate_transaction">⚠️ A similar transaction already exists</string>
-    <string name="avg_amount_format">~€%.2f</string>
     <string name="visits_suffix_format">%d visits</string>
+    <string name="avg_amount_format">~€%.2f</string>
     <string name="ok_button">OK</string>
     <string name="cancel_button">Cancel</string>
-    
-    <!-- Error Messages -->
+    <string name="save_button">Save</string>
+    <string name="close_content_description">Close</string>
+    <string name="toggle_content_description">Toggle</string>
     <string name="error_merchant_required">Merchant name is required</string>
-    <string name="error_invalid_amount">Enter a valid amount</string>
-    <string name="error_amount_too_large">Amount is too large</string>
     <string name="error_unknown">Unknown error</string>
+    <string name="error_amount_too_large">Amount is too large</string>
+    <string name="error_date_future">Date cannot be in the future</string>
+    <string name="error_loading_currency">Loading currency settings…</string>
+    <string name="error_transfer_direction_required">Transfer direction is required for transfer transactions</string>
+    <string name="error_transfer_account_required">Transfer account name is required for transfer transactions</string>
+    <string name="success_transaction_deleted">Transaction deleted</string>
+    <string name="success_category_updated">Category updated</string>
+    <string name="success_merchant_renamed">Merchant renamed</string>
+    <string name="success_type_changed_format">Type changed to %1$s</string>
+    <string name="success_ownership_updated">Ownership updated</string>
+    <string name="success_marked_not_mine">Marked as not mine</string>
+    <string name="success_marked_shared">Marked as shared expense</string>
     <string name="recurring_note_default">Created from manual entry</string>
+    
+    <!-- Common Placeholders -->
+    <string name="placeholder_amount">0.00</string>
+    <string name="placeholder_merchant">e.g. Store name</string>
+    <string name="placeholder_description">Enter description</string>
+    <string name="placeholder_notes">Optional notes</string>
+    <string name="placeholder_search">Search…</string>
+    <string name="placeholder_name">Enter name</string>
+    <string name="placeholder_email">email@example.com</string>
+    
+    <!-- Common Confirmations -->
+    <string name="confirm_delete_title">Delete?</string>
+    <string name="confirm_delete_message">Are you sure you want to delete %1$s?</string>
+    <string name="confirm_discard_title">Discard changes?</string>
+    <string name="confirm_discard_message">You have unsaved changes. Discard them?</string>
+    
+    <!-- Common Errors -->
+    <string name="error">Error</string>
+    <string name="error_generic">An error occurred</string>
+    <string name="dismiss_error">Dismiss error</string>
+    <string name="error_network">Network error. Please check your connection.</string>
+    <string name="error_invalid_input">Invalid input</string>
+    <string name="error_required_field">This field is required</string>
+    <string name="error_invalid_amount">Enter a valid positive amount</string>
+    <string name="error_invalid_date">Invalid date</string>
+    <string name="error_duplicate">Duplicate entry detected</string>
+    <string name="error_not_found">Not found</string>
+    <string name="error_unauthorized">Unauthorized access</string>
+    <string name="error_offline">You are offline</string>
+    <string name="error_load_failed">Failed to load data</string>
+    <string name="error_save_failed">Failed to save</string>
+    <string name="error_delete_failed">Failed to delete</string>
+    <string name="error_update_failed">Failed to update</string>
+    <string name="retry">Retry</string>
+    
+    <!-- Labels and Badges -->
+    <string name="label_close">Close</string>
+    <string name="label_approve_all">Approve All</string>
+    <string name="label_add_amount_format">Add €%s</string>
+    
+    <!-- Add Expense -->
+    <string name="add_expense_title">Add Expense</string>
+    <string name="add_expense_scan_receipt">Scan Receipt</string>
+    <string name="add_expense_manual">Add Manual</string>
+    <string name="merchant_label_full">Merchant / Place</string>
+    <string name="merchant_placeholder_full">e.g. Sklavenitis, Starbucks…</string>
+    <string name="amount_label_full">Amount (€)</string>
+    <string name="amount_placeholder_full">0.00</string>
+    <string name="payment_method_label_full">Payment Method</string>
+    <string name="payment_method_card_icon">💳 Card</string>
+    <string name="payment_method_cash_icon">💵 Cash</string>
+    <string name="payment_method_transfer_icon">🏦 Transfer</string>
+    <string name="category_label_full">Category</string>
+    <string name="date_label_full">Date</string>
+    <string name="transaction_type_prefix_full">Transaction Type: %1$s</string>
+    <string name="notes_label_full">Notes</string>
+    <string name="notes_placeholder_full">Optional notes</string>
+    <string name="repeat_transaction_label_full">Repeat Transaction?</string>
+    <string name="frequency_label_full">Frequency</string>
+    <string name="error_duplicate_transaction">⚠️ A similar transaction already exists</string>
+    <string name="avg_amount_format_full">~€%.2f</string>
+    <string name="visits_suffix_format_full">%d visits</string>
+    <string name="ok_button_full">OK</string>
+    <string name="cancel_button_full">Cancel</string>
 
     <!-- Transactions Screen -->
     <string name="select_frequency_title">Select Frequency</string>
     <string name="transactions_title">Transactions</string>
+    <string name="transactions_title_full">Transactions</string>
     <string name="no_transactions_title">No transactions found</string>
     <string name="no_transactions_subtitle">Parsed expenses in this period will appear here</string>
     <string name="delete_transaction_title">Delete Transaction</string>
     <string name="delete_transaction_confirmation">Are you sure you want to delete this transaction from %1$s?</string>
     <string name="delete_button">Delete</string>
     <string name="select_category_title">Select Category</string>
+    <string name="category_search_placeholder">Search categories…</string>
     <string name="uncategorized_label">Uncategorized</string>
     <string name="mark_recurring_content_description">Mark as Recurring</string>
+    
+    <!-- Transactions Screen - Search & Filter -->
+    <string name="transactions_search_placeholder">Search transactions…</string>
+    <string name="transactions_close_search_cd">Close search</string>
+    <string name="transactions_navigate_analytics_cd">Navigate to advanced analytics</string>
+    <string name="transactions_open_sort_menu_cd">Open sort menu, currently sorted by %1$s</string>
+    <string name="transactions_sort_by_cd">Sort by %1$s, %2$s</string>
+    <string name="transactions_sort_selected">selected</string>
+    <string name="transactions_sort_not_selected">not selected</string>
+    <string name="transactions_open_filters_cd">Open transaction filters</string>
+    <string name="transactions_open_search_cd">Open search</string>
+    <string name="transactions_clear_all_filters_cd">Clear all filters</string>
+    
+    <!-- Transactions Screen - Filter Banner -->
+    <string name="transactions_filtered_by_prefix">Filtered by:</string>
+    <string name="transactions_mixed_currencies">Mixed currencies</string>
+    <string name="transactions_filter_merchant_format">Merchant: %1$s</string>
+    <string name="transactions_filter_category_format">Category: %1$s</string>
+    <string name="transactions_filter_type_format">Type: %1$s</string>
+    <string name="transactions_filter_date_range">Date range</string>
+    <string name="transactions_filter_ownership_format">Ownership: %1$s</string>
+    <string name="transactions_filter_min_format">Min: %1$.2f</string>
+    <string name="transactions_filter_max_format">Max: %1$.2f</string>
+    <string name="transactions_ownership_mine">Mine</string>
+    <string name="transactions_ownership_not_mine">Not mine</string>
+    <string name="transactions_ownership_shared">Shared</string>
+    <string name="transactions_ownership_transfers">Transfers</string>
+    <string name="transactions_ownership_all">All</string>
+    
+    <!-- Transactions Screen - Tab Content Description -->
+    <string name="transactions_tab_cd_format">%1$s tab, %2$s, %3$d transactions</string>
+    <string name="transactions_tab_selected">selected</string>
+    <string name="transactions_tab_not_selected">not selected</string>
+    
+    <!-- Transactions Screen - Empty State -->
+    <string name="transactions_no_search_results_title">No results found</string>
+    <string name="transactions_no_search_results_subtitle">Try a different search term</string>
+    <string name="transactions_empty_search_cd">No search results found. Try a different search term.</string>
+    <string name="transactions_empty_no_transactions_cd">No transactions yet. Add your first expense to get started.</string>
+    <string name="transactions_add_first_expense_cd">Add your first expense</string>
+    <string name="transactions_add_expense_button">Add Expense</string>
+    
+    <!-- Transactions Screen - Date Header -->
+    <string name="transactions_date_header_count_format">%1$d transaction%2$s</string>
+    <string name="transactions_date_header_count_suffix_single"></string>
+    <string name="transactions_date_header_count_suffix_plural">s</string>
+    
+    <!-- Transactions Screen - Transaction Item -->
+    <string name="transactions_category_cd_format">%1$s category, double tap to change category</string>
+    <string name="transactions_category_icon_cd_format">%1$s icon</string>
+    <string name="transactions_merchant_rename_cd_format">%1$s, double tap to rename</string>
+    <string name="transactions_manual_entry_cd">Manual entry</string>
+    <string name="transactions_double_tap_to_edit_cd">Double tap merchant name to edit</string>
+    <string name="transactions_payment_method_cash">Cash</string>
+    <string name="transactions_payment_method_bank_transfer">Bank transfer</string>
+    <string name="transactions_payment_method_card">Card</string>
+    <string name="transactions_category_uncategorized_cd">Uncategorized, double tap to change category</string>
+    <string name="transactions_change_type_cd_format">Change transaction type, currently %1$s</string>
+    <string name="transactions_transaction_type_purchase">Purchase</string>
+    <string name="transactions_transaction_type_deposit">Deposit</string>
+    <string name="transactions_transaction_type_withdrawal">Withdrawal</string>
+    <string name="transactions_transaction_type_transfer">Transfer</string>
+    <string name="transactions_transaction_type_unknown">Unknown</string>
+    <string name="transactions_ownership_not_mine_icon">Not mine</string>
+    <string name="transactions_ownership_shared_icon">Shared</string>
+    <string name="transactions_ownership_transfer_icon">Transfer</string>
+    <string name="transactions_ownership_settings_icon">Settings</string>
+    <string name="transactions_edit_ownership_cd">Edit ownership</string>
+    <string name="transactions_mark_recurring_cd">Mark as recurring</string>
+    <string name="transactions_edit_location_cd">Edit location</string>
+    <string name="transactions_add_location_cd">Add location</string>
+    <string name="transactions_delete_transaction_cd">Delete transaction</string>
+    
+    <!-- Transactions Screen - Dialogs -->
+    <string name="transactions_rename_merchant_title">Rename Merchant</string>
+    <string name="transactions_rename_merchant_description">Assigning a brand name helps the app learn. Future transactions from this source will be auto-corrected.</string>
+    <string name="transactions_brand_name_label">Brand Name</string>
+    <string name="transactions_brand_name_empty_error">Name cannot be empty</string>
+    <string name="transactions_apply_to_all_past">Apply to all past transactions for %1$s</string>
+    <string name="transactions_apply_to_all_entries">Apply to all past and pending entries</string>
+    <string name="transactions_selected_cd">Selected</string>
+    
+    <!-- Transactions Screen - Change Type Dialog -->
+    <string name="transactions_change_type_title">Change Transaction Type</string>
+    <string name="transactions_change_type_description">Incorrectly categorized? Change the type here.</string>
+    <string name="transactions_type_purchase_description">Money spent on purchases</string>
+    <string name="transactions_type_deposit_description">Money received (salary, transfer in)</string>
+    <string name="transactions_type_withdrawal_description">Cash withdrawn from ATM</string>
+    <string name="transactions_type_transfer_description">Money transferred between accounts</string>
+    <string name="transactions_update_type_button">Update Type</string>
+    
+    <!-- Transactions Screen - Edit Ownership Dialog -->
+    <string name="transactions_edit_expense_details_title">Edit Expense Details</string>
+    <string name="transactions_ownership_section">Ownership</string>
+    <string name="transactions_not_mine_label">Not mine (belongs to someone else)</string>
+    <string name="transactions_owner_name_label">Owner name</string>
+    <string name="transactions_owner_name_placeholder">e.g., Partner, Roommate</string>
+    <string name="transactions_shared_expense_section">Shared Expense</string>
+    <string name="transactions_split_with_someone">Split with someone</string>
+    <string name="transactions_shared_with_label">Shared with</string>
+    <string name="transactions_my_percentage_label">My %</string>
+    <string name="transactions_or_amount_label">Or amount</string>
+    <string name="transactions_transfer_direction_section">Transfer Direction</string>
+    <string name="transactions_transfer_direction_hint">Transfer type can be changed in the type dialog</string>
+    <string name="transactions_save_button">Save</string>
+    
+    <!-- Transactions Screen - Edit Location Dialog -->
+    <string name="transactions_edit_location_title">Edit Location</string>
+    <string name="transactions_clear_location_title">Clear Location?</string>
+    <string name="transactions_clear_location_message">This will permanently remove the location from this transaction. The backfill worker may re-resolve it later.</string>
+    <string name="transactions_clear_button">Clear</string>
+    <string name="transactions_save_location_button">Save Location</string>
+    
+    <!-- G09: Receipt Scan Screen -->
+    <string name="receipt_scan_title">Scan Receipt</string>
+    <string name="receipt_processing_title">Processing…</string>
+    <string name="receipt_review_title">Review &amp; Save</string>
+    <string name="receipt_saved_title">Saved!</string>
+    <string name="receipt_error_title">Error</string>
+    <string name="receipt_close_scanner_cd">Close receipt scanner</string>
+    <string name="receipt_view_debug_cd">View debug information</string>
+    <string name="receipt_no_image_selected_cd">No receipt image selected. Take a photo or select from gallery to begin.</string>
+    <string name="receipt_preview_cd">Receipt preview</string>
+    <string name="receipt_image_cd">Receipt</string>
+    <string name="receipt_take_photo_cd">Take photo with camera</string>
+    <string name="receipt_select_gallery_cd">Select image from gallery</string>
+    <string name="receipt_capture_prompt">Take a photo or select from gallery</string>
+    <string name="receipt_camera_button">Camera</string>
+    <string name="receipt_gallery_button">Gallery</string>
+    <string name="receipt_tips_title">Tips for best results:</string>
+    <string name="receipt_tip_flat_surface">• Place receipt on a flat, dark surface</string>
+    <string name="receipt_tip_lighting">• Ensure good lighting with no shadows</string>
+    <string name="receipt_tip_frame">• Capture the entire receipt in frame</string>
+    <string name="receipt_tip_steady">• Keep the camera steady</string>
+    <string name="receipt_processing_cd">Processing receipt, please wait</string>
+    <string name="receipt_scanning_text">Scanning receipt…</string>
+    <string name="receipt_reading_text">Reading text and extracting details</string>
+    
+    <!-- Receipt Scan - Quick Save Dialog -->
+    <string name="receipt_quick_save_title">Quick save with AI?</string>
+    <string name="receipt_quick_save_description">This fills missing draft fields from AI suggestions and then uses the normal save path.</string>
+    <string name="receipt_ai_fill_format">AI will fill: %1$s</string>
+    <string name="receipt_save_now_button">Save now</string>
+    
+    <!-- Receipt Scan - AI Assist -->
+    <string name="receipt_assist_title">Need help filling missing fields?</string>
+    <string name="receipt_assist_description">AI can suggest merchant, total, and date from the OCR text.</string>
+    <string name="receipt_try_ai_button">Try AI assist</string>
+    <string name="receipt_ai_reviewing">AI is reviewing the OCR text for missing receipt fields.</string>
+    <string name="receipt_ai_failed">AI receipt assist failed</string>
+    <string name="receipt_retry_ai_button">Retry AI assist</string>
+    
+    <!-- Receipt Scan - Category Assist -->
+    <string name="receipt_category_assist_title">Need help choosing a category?</string>
+    <string name="receipt_category_assist_description">AI can suggest a category from the receipt text and parsed fields.</string>
+    <string name="receipt_suggest_category_button">Suggest category with AI</string>
+    <string name="receipt_ai_checking_category">AI is checking the best category for this receipt.</string>
+    <string name="receipt_category_ai_failed">AI category assist failed</string>
+    <string name="receipt_retry_category_button">Retry category assist</string>
+    <string name="receipt_ok_button">OK</string>
+    
+    <!-- Receipt Scan - Input Fields -->
+    <string name="receipt_merchant_label">Merchant</string>
+    <string name="receipt_merchant_placeholder">Store name</string>
+    <string name="receipt_merchant_input_cd">Merchant name input field</string>
+    <string name="receipt_total_amount_label">Total Amount</string>
+    <string name="receipt_total_amount_incl_tax_label">Total Amount (incl. tax)</string>
+    <string name="receipt_amount_input_cd">Total amount input field</string>
+    <string name="receipt_currency_label">Currency</string>
+    <string name="receipt_payment_method_label">Payment Method</string>
+    <string name="receipt_payment_card_cd">Card payment method, %1$s</string>
+    <string name="receipt_payment_cash_cd">Cash payment method, %1$s</string>
+    <string name="receipt_payment_selected">selected</string>
+    <string name="receipt_payment_not_selected">not selected</string>
+    <string name="receipt_category_label">Category</string>
+    
+    <!-- Receipt Scan - Items -->
+    <string name="receipt_detected_items_format">Detected Items (%1$d)</string>
+    <string name="receipt_analyze_items_cd">Analyze receipt items with AI</string>
+    <string name="receipt_analyze_button">Analyze</string>
+    <string name="receipt_item_analysis_retry_button">Retry</string>
+    <string name="receipt_tax_vat_label">Tax/VAT</string>
+    <string name="receipt_notes_label">Notes (optional)</string>
+    <string name="receipt_notes_input_cd">Optional notes input field</string>
+    <string name="receipt_raw_ocr_label">Raw OCR Text</string>
+    <string name="receipt_toggle_cd">Toggle</string>
+    <string name="receipt_no_text_detected">No text detected</string>
+    <string name="receipt_duplicate_transaction">A similar transaction already exists</string>
+    <string name="receipt_duplicate_receipt">This receipt has already been scanned</string>
+    <string name="receipt_partial_link_failure">Expense saved, but receipt could not be linked. You can retry from the transaction detail.</string>
+    <string name="receipt_item_categories_metadata_note">Item categories are for insights only and do not split the transaction.</string>
+    <string name="receipt_item_analysis_ai_disabled">AI item analysis is off</string>
+    <string name="receipt_quick_save_cd">Quick save expense using AI to fill missing fields</string>
+    <string name="receipt_quick_save_button">Quick Save With AI</string>
+    <string name="receipt_quick_save_standby">Quick save is standing by</string>
+    <string name="receipt_save_button">Save Expense</string>
+    <string name="receipt_save_cd">Save expense to database</string>
+    
+    <!-- Receipt Scan - Confidence -->
+    <string name="receipt_confidence_high">High confidence</string>
+    <string name="receipt_confidence_medium">Medium confidence</string>
+    <string name="receipt_confidence_low">Low confidence - please verify</string>
+    <string name="receipt_confidence_indicator_format">%1$s (%2$d%%)</string>
+    
+    <!-- Receipt Scan - Done/Error Steps -->
+    <string name="receipt_success_cd">Success</string>
+    <string name="receipt_saved_message">Expense saved!</string>
+    <string name="receipt_saved_description">Your receipt has been processed and saved.</string>
+    <string name="receipt_error_cd">Error</string>
+    <string name="receipt_error_message">Something went wrong</string>
+    <string name="receipt_retry_cd">Retry receipt processing</string>
+    <string name="receipt_try_again_button">Try Again</string>
+    <string name="receipt_camera_permission_denied_title">Camera permission denied</string>
+    <string name="receipt_camera_permission_denied_message">Enable camera permission in app settings to capture receipts.</string>
+    <string name="receipt_open_settings_button">Open Settings</string>
+    
+    <!-- G10: Review Screen -->
+    <string name="review_queue_title_format">REVIEW QUEUE (%1$d)</string>
+    <string name="review_view_debug_cd">View debug data</string>
+    <string name="review_debug_menu_cd">Debug options menu</string>
+    <string name="review_mass_insert">Mass Insert (Batch)</string>
+    <string name="review_mass_insert_cd">Mass insert batch processing</string>
+    <string name="review_import_bank_statement">Import Bank Statement</string>
+    <string name="review_import_statement_cd">Import bank statement</string>
+    <string name="review_export_parser_data">Export Parser Data</string>
+    <string name="review_export_parser_cd">Export parser data to clipboard</string>
+    <string name="review_clear_debug_data">Clear Debug Data</string>
+    <string name="review_clear_debug_cd">Clear debug data</string>
+    <string name="review_clear_scanned_data">Clear Scanned Data</string>
+    <string name="review_clear_scanned_cd">Clear scanned data</string>
+    <string name="review_clear_queue">Clear Review Queue</string>
+    <string name="review_approve_all_cd">Approve all pending reviews</string>
+    <string name="review_approve_all_title">Approve all reviews?</string>
+    <string name="review_approve_all_message">Approve all %1$d pending reviews now?</string>
+    <string name="review_approve_all_action">Approve all</string>
+    <string name="review_clear_debug_confirm_title">Clear debug data?</string>
+    <string name="review_clear_debug_confirm_message">This will permanently remove locally stored debug export data.</string>
+    <string name="review_clear_scanned_confirm_title">Clear scanned data?</string>
+    <string name="review_clear_scanned_confirm_message">This will remove all scanned receipts and parsed debug artifacts.</string>
+    <string name="review_clear_queue_confirm_title">Clear review queue?</string>
+    <string name="review_clear_queue_confirm_message">Reject and remove all %1$d pending reviews?</string>
+    <string name="review_empty_cd">All caught up! No transactions need your review.</string>
+    <string name="review_empty_title">All caught up!</string>
+    <string name="review_empty_subtitle">No transactions need your review</string>
+    <string name="review_swipe_hint">Swipe right to approve, left to reject</string>
+    <string name="review_system">SYSTEM</string>
+    <string name="review_confidence_format">%1$d%% CONFIDENCE</string>
+    <string name="review_receipt_thumbnail_cd">Receipt Thumbnail</string>
+    <string name="review_raw_evidence_label">RAW SOURCE EVIDENCE (TAP FOR DEBUG)</string>
+    <string name="review_no_raw_data">No raw data captured.</string>
+    <string name="review_edit_cd">Edit</string>
+    <string name="review_reject_button">Reject</string>
+    <string name="review_approve_button">Approve</string>
+    <string name="review_explain_ai_button">Explain with AI</string>
+    <string name="review_generating_explanation">Generating explanation…</string>
+    <string name="review_ai_explanation_title">AI EXPLANATION</string>
+    <string name="review_ai_explanation_unavailable">AI explanation unavailable</string>
+    <string name="review_retry_button">Retry</string>
+    <string name="review_try_receipt_assist">Try AI receipt assist</string>
+    <string name="review_reviewing_receipt">Reviewing receipt OCR and photo…</string>
+    <string name="review_suggest_category">Suggest category with AI</string>
+    <string name="review_checking_category">Checking category fallback…</string>
+    <string name="review_quick_approve_category">Quick approve with suggested category</string>
+    <string name="review_quick_approve_blocked">Quick approve is paused because this looks like a likely duplicate. Review it manually before approving.</string>
+    <string name="review_check_duplicates">Check duplicates with AI</string>
+    <string name="review_checking_duplicates">Checking possible duplicates…</string>
+    <string name="review_approve_suggested_category_title">Approve with suggested category?</string>
+    <string name="review_approve_suggested_category_description">This keeps the current merchant and amount, applies only the suggested category, and still goes through the normal approval path.</string>
+    <string name="review_merchant_label">Merchant:</string>
+    <string name="review_amount_label">Amount:</string>
+    <string name="review_category_label">Category:</string>
+    <string name="review_approve_review_button">Approve review</string>
+    <string name="review_receipt_debug_info_title">Receipt Debug Info</string>
+    <string name="review_copy_button">Copy</string>
+    <string name="review_close_button">Close</string>
+    <string name="review_copied_toast">Copied to clipboard</string>
+    <string name="review_processing_batch">PROCESSING BATCH…</string>
+    <string name="review_fix_extraction_title">Fix Extraction Details</string>
+    <string name="review_transaction_type_label">Transaction Type</string>
+    <string name="review_merchant_name_label">Merchant Name</string>
+    <string name="review_amount_euro_label">Amount (€)</string>
+    <string name="review_amount_label_generic">Amount</string>
+    <string name="review_raw_evidence_privacy_hidden">Raw notification text not available (privacy policy)</string>
+    <string name="review_assign_category">Assign Category</string>
+    <string name="review_apply_all_format">Apply to all past transactions for %1$s</string>
+    <string name="review_approve_all_identical">Approve all identical pending transactions</string>
+    <string name="review_location_label">Location</string>
+    <string name="review_hide_button">Hide</string>
+    <string name="review_edit_button">Edit</string>
+    <string name="review_add_button">Add</string>
+    <string name="review_clear_button">Clear</string>
+    <string name="review_transfer_metadata_label">Transfer Direction</string>
+    <string name="review_transfer_account_label">Account / Reference</string>
+    <string name="review_location_search_label">Search location</string>
+    <string name="review_confirm_fix_button">Confirm Fix</string>
+    <string name="review_ai_prefilled_format">AI prefilled %1$s from this receipt. Review before approving.</string>
+    <string name="review_receipt_assist_hint">This review has a linked scanned receipt, so AI receipt assist can help prefill edits.</string>
+    <string name="review_no_receipt_debug">No automated receipt info available. Showing categorization debug instead.</string>
+    
+    <!-- G11: Carbon Footprint Screen -->
+    <string name="carbon_title">Carbon Footprint</string>
+    <string name="carbon_back_cd">Back</string>
+    <string name="carbon_days_format">%1$d days</string>
+    <string name="carbon_sustainability_score">Sustainability Score</string>
+    <string name="carbon_score_excellent">Excellent! You\'re living sustainably</string>
+    <string name="carbon_score_good">Good progress, room for improvement</string>
+    <string name="carbon_score_high">Your footprint is higher than average</string>
+    <string name="carbon_total_emissions">Total Emissions</string>
+    <string name="carbon_co2_equivalent">CO₂ equivalent</string>
+    <string name="carbon_per_day">per day</string>
+    <string name="carbon_per_year">per year</string>
+    <string name="carbon_emissions_by_category">Emissions by Category</string>
+    <string name="carbon_transactions_format">%1$d transactions</string>
+    <string name="carbon_comparisons">Comparisons</string>
+    <string name="carbon_vs_greek_average">vs. Greek Average</string>
+    <string name="carbon_vs_global_average">vs. Global Average</string>
+    <string name="carbon_paris_target">Paris Agreement Target</string>
+    <string name="carbon_above_target_format">+%1$d%% above target</string>
+    <string name="carbon_below_target_format">%1$d%% below target</string>
+    <string name="carbon_paris_target_description">Target: 4 kg CO₂/day by 2030</string>
+    <string name="carbon_offset_emissions">Offset Your Emissions</string>
+    <string name="carbon_offset_format">%1$.1f kg CO₂ = %2$s</string>
+    <string name="carbon_offset_button">Offset</string>
+    <string name="carbon_sustainability_tips">💡 Sustainability Tips</string>
+    <string name="carbon_sustainable_alternatives">🌱 Sustainable Alternatives</string>
+    <string name="carbon_impact_format">Impact: %1$s</string>
+    <string name="carbon_save_format">Save %1$.1f kg CO₂</string>
+    <string name="carbon_instead_of_format">Instead of: %1$s</string>
+    <string name="carbon_try_format">→ Try: %1$s</string>
+    <string name="carbon_reduction_format">-%1$.1f kg CO₂</string>
+    <string name="carbon_savings_format">Save %1$s/mo</string>
+    <string name="carbon_no_data">No Data Available</string>
+    <string name="carbon_add_transactions_hint">Add transactions to calculate your carbon footprint</string>
+    <string name="carbon_calculate_button">Calculate Footprint</string>
+    
+    <!-- Features Menu -->
+    <string name="feature_savings_goals">Savings Goals</string>
+    <string name="feature_savings_goals_desc">Set and track savings goals</string>
+    <string name="feature_carbon_footprint">Carbon Footprint</string>
+    <string name="feature_carbon_footprint_desc">Track environmental impact</string>
+    <string name="feature_warranty_tracker">Warranty Tracker</string>
+    <string name="feature_warranty_tracker_desc">Manage product warranties</string>
+    <string name="feature_price_protection">Price Protection</string>
+    <string name="feature_price_protection_desc">Monitor price drops</string>
+    <string name="feature_bill_negotiation">Bill Negotiation</string>
+    <string name="feature_bill_negotiation_desc">Get better rates on bills</string>
+    <string name="feature_smart_search">Smart Search</string>
+    <string name="feature_smart_search_desc">Natural language search</string>
+    <string name="feature_receipt_matching">Receipt Matching</string>
+    <string name="feature_receipt_matching_desc">Match receipts to expenses</string>
+    <string name="feature_investment_portfolio">Investment Portfolio</string>
+    <string name="feature_investment_portfolio_desc">Track investments</string>
+    <string name="feature_bank_connections">Bank Connections</string>
+    <string name="feature_bank_connections_desc">Connect bank accounts</string>
+    <string name="feature_bill_reminders">Bill Reminders</string>
+    <string name="feature_bill_reminders_desc">Never miss a payment</string>
+    <string name="feature_spending_challenges">Spending Challenges</string>
+    <string name="feature_spending_challenges_desc">Gamify your savings</string>
+    <string name="feature_advanced_analytics">Advanced Analytics</string>
+    <string name="feature_advanced_analytics_desc">Deep spending insights</string>
+    <string name="feature_cashflow_calendar">Cash Flow Calendar</string>
+    <string name="feature_cashflow_calendar_desc">Visual cash flow view</string>
+    <string name="feature_lifestyle_inflation">Lifestyle Inflation</string>
+    <string name="feature_lifestyle_inflation_desc">Track spending increases</string>
+    <string name="feature_split_templates">Split Templates</string>
+    <string name="feature_split_templates_desc">Save split configurations</string>
+    <string name="feature_visual_split">Visual Split Editor</string>
+    <string name="feature_visual_split_desc">Drag &amp; drop expense splitting</string>
+    <string name="feature_currency_management">Currency Management</string>
+    <string name="feature_currency_management_desc">Manage exchange rates</string>
+    <string name="feature_subscription_management">Subscription Management</string>
+    <string name="feature_subscription_management_desc">Track all subscriptions</string>
+    <string name="feature_tax_configuration">Tax Configuration</string>
+    <string name="feature_tax_configuration_desc">Tax settings &amp; calculator</string>
+    <string name="feature_export_options">Export Options</string>
+    <string name="feature_export_options_desc">Export to CSV, Xero, QB</string>
+    <string name="feature_manual_recurring">Manual Recurring Expenses</string>
+    <string name="feature_manual_recurring_desc">Manage recurring bills</string>
+    <string name="feature_shared_groups">Shared Expense Groups</string>
+    <string name="feature_shared_groups_desc">Split expenses with others</string>
+    <string name="feature_backup_restore">Backup &amp; Restore</string>
+    <string name="feature_backup_restore_desc">Create and restore backups</string>
+    
+    <!-- Groups -->
+    <string name="groups_title">Shared Expense Groups</string>
+    <string name="groups_create_title">Create New Group</string>
+    <string name="groups_create_button">Create</string>
+    <string name="groups_add_member_title">Add Member</string>
+    <string name="groups_add_member_button">Add</string>
+    <string name="groups_add_expense_title">Add Group Expense</string>
+    <string name="groups_add_expense_button">Add</string>
+    <string name="groups_delete_title">Delete Group</string>
+    <string name="groups_name_label">Group Name</string>
+    <string name="groups_name_placeholder">e.g., Weekend Trip</string>
+    <string name="groups_description_label">Description (Optional)</string>
+    <string name="groups_description_placeholder">e.g., Paris trip with friends</string>
+    <string name="groups_member_name_label">Name</string>
+    <string name="groups_member_email_label">Email (Optional)</string>
+    <string name="groups_expense_description_label">Description</string>
+    <string name="groups_expense_amount_label">Amount</string>
+    <string name="groups_paid_by_label">Paid By</string>
+    <string name="groups_split_type_label">Split Type</string>
+    <string name="groups_settlement_plan_title">Settlement Plan</string>
+    <string name="groups_settle_action">Settle</string>
+    <string name="groups_member_fallback_format">Member #%1$d</string>
+    <string name="groups_split_hint_enter_percent">Enter each member\'s percentage</string>
+    <string name="groups_split_hint_enter_amount">Enter each member\'s amount</string>
+    <string name="groups_split_member_percent_label">%1$s %%</string>
+    <string name="groups_split_summary_percent">Total: %1$s%% (must be 100%%)</string>
+    <string name="groups_split_summary_amount">Split total: %1$s (amount: %2$s)</string>
+    <string name="groups_split_error_required">Required</string>
+    <string name="groups_split_error_invalid_number">Enter a valid number</string>
+    <string name="groups_split_error_non_negative">Must be 0 or greater</string>
+    <string name="groups_split_error_non_negative_amount">Amount must be 0 or greater</string>
+    <string name="groups_split_error_percent_range">Must be between 0 and 100</string>
+    <string name="groups_split_error_total_non_negative">Split total cannot be negative</string>
+    <string name="groups_split_error_percent_total">Total percentage must equal 100%%</string>
+    <string name="groups_split_error_amount_total">Split total must equal amount</string>
+    <string name="groups_error_load">Failed to load groups: %1$s</string>
+    <string name="groups_error_create">Failed to create group: %1$s</string>
+    <string name="groups_error_add_member">Failed to add member: %1$s</string>
+    <string name="groups_error_add_expense">Failed to add expense: %1$s</string>
+    <string name="groups_error_delete">Failed to delete group: %1$s</string>
+    
+    <!-- Currency -->
+    <string name="currency_title">Currency Management</string>
+    <string name="currency_home_currency_label">Home Currency</string>
+    <string name="currency_quick_conversion">Quick Conversion</string>
+    <string name="currency_from_label">From</string>
+    <string name="currency_to_label">To</string>
+    <string name="currency_convert_button">Convert</string>
+    <string name="currency_error_load">Failed to load currency data: %1$s</string>
+    <string name="currency_error_conversion">Conversion failed: %1$s</string>
+    <string name="currency_error_no_rate">No exchange rate available for %1$s to %2$s</string>
+    <string name="currency_offline_warning">You are offline. Rates may be outdated.</string>
+    <string name="currency_stale_warning">Exchange rates are stale. Last updated: %1$s</string>
+    
+    <!-- Subscriptions -->
+    <string name="subscriptions_title">Subscription Management</string>
+    <string name="subscriptions_add_title">Add Subscription</string>
+    <string name="subscriptions_merchant_label">Merchant/Service</string>
+    <string name="subscriptions_amount_label">Amount</string>
+    <string name="subscriptions_category_label">Category (Optional)</string>
+    <string name="subscriptions_record_usage">Record Usage</string>
+    <string name="subscriptions_delete_confirm_title">Delete Subscription?</string>
+    <string name="subscriptions_delete_confirm_message">Are you sure you want to delete %1$s?</string>
+    <string name="subscriptions_error_load">Failed to load subscriptions: %1$s</string>
+    <string name="subscriptions_error_record_usage">Failed to record usage: %1$s</string>
+    <string name="subscriptions_error_update">Failed to update subscription: %1$s</string>
+    <string name="subscriptions_error_delete">Failed to delete subscription: %1$s</string>
+    <string name="subscriptions_error_add">Failed to add subscription: %1$s</string>
+    
+    <!-- Recurring Expenses -->
+    <string name="recurring_title">Recurring Expenses</string>
+    <string name="recurring_add_title">Add Recurring Expense</string>
+    <string name="recurring_merchant_label">Merchant/Description</string>
+    <string name="recurring_amount_label">Amount</string>
+    <string name="recurring_next_date_label">Next Due Date</string>
+    <string name="recurring_note_label">Note (Optional)</string>
+    <string name="recurring_mark_paid">Mark as Paid</string>
+    <string name="recurring_delete_confirm_title">Delete Recurring Expense?</string>
+    <string name="recurring_delete_confirm_message">Are you sure you want to delete %1$s?</string>
+    <string name="recurring_error_load">Failed to load recurring expenses: %1$s</string>
+    <string name="recurring_error_add">Failed to add expense: %1$s</string>
+    <string name="recurring_error_update">Failed to update status: %1$s</string>
+    <string name="recurring_error_delete">Failed to delete: %1$s</string>
+    
+    <!-- Tax -->
+    <string name="tax_title">Tax Configuration</string>
+    <string name="tax_select_country">Select Country</string>
+    <string name="tax_annual_income_label">Annual Income (%1$s)</string>
+    <string name="tax_estimate_notes_format">Estimate using %1$s tax rates. Consult tax professional for accurate filing.</string>
+    <string name="tax_error_load">Failed to load tax configuration: %1$s</string>
+    <string name="tax_error_calculate">Failed to calculate estimate: %1$s</string>
+    
+    <!-- Export -->
+    <string name="export_title">Export Options</string>
+    <string name="export_generate_button">Generate Export</string>
+    <string name="export_success_title">Export Generated</string>
+    <string name="export_copy_button">Copy to Clipboard</string>
+    <string name="export_save_button">Save File</string>
+    <string name="export_copy_success">Export copied to clipboard</string>
+    <string name="export_save_success">Export saved successfully</string>
+    <string name="export_share_success">Share sheet opened</string>
+    <string name="export_save_failed">Couldn’t save export: %1$s</string>
+    <string name="export_how_to_title">How to Use</string>
+    <string name="export_tip_format">Tip: Paste the data into a text editor and save with the appropriate extension (%1$s)</string>
+    <string name="export_error_generate">Failed to generate export: %1$s</string>
+    
+    <!-- Split Editor -->
+    <string name="split_editor_title">Split Expense</string>
+    <string name="split_templates_button">Templates</string>
+    <string name="split_remaining_format">Remaining: %1$s</string>
+    <string name="split_equal">Equal</string>
+    <string name="split_percentage">Percentage</string>
+    <string name="split_custom">Custom</string>
+    <string name="split_save_template_title">Save as Template</string>
+    <string name="split_template_name_label">Template Name</string>
+    <string name="split_participant_label">Participant</string>
+    <string name="split_you">You</string>
+    
+    <!-- Visual Split Editor Screen -->
+    <string name="visual_split_back_cd">Back</string>
+    <string name="visual_split_templates_cd">Templates</string>
+    <string name="visual_split_save_template">Save Template</string>
+    <string name="visual_split_apply_split">Apply Split</string>
+    <string name="visual_split_total_amount">Total Amount</string>
+    <string name="visual_split_split_type">Split Type</string>
+    <string name="visual_split_type_equal">Equal</string>
+    <string name="visual_split_type_percentage">%</string>
+    <string name="visual_split_type_amount">Amount</string>
+    <string name="visual_split_type_custom">Custom</string>
+    <string name="visual_split_participants_format">Participants (%1$d)</string>
+    <string name="visual_split_add">Add</string>
+    <string name="visual_split_add_cd">Add</string>
+    <string name="visual_split_remaining_format">Remaining: %1$s</string>
+    <string name="visual_split_select_template">Select Template</string>
+    <string name="visual_split_template_people_type_format">%1$d people • %2$s</string>
+    <string name="visual_split_save_as_template">Save as Template</string>
+    <string name="visual_split_template_name_label">Template Name</string>
+    <string name="visual_split_template_name_placeholder">e.g., Dinner with Friends</string>
+    <string name="visual_split_action_save">Save</string>
+    <string name="visual_split_participant_name_label">Name</string>
+    <string name="visual_split_equal_split_format">Equal split: %1$s</string>
+    <string name="visual_split_percentage_label">Percentage</string>
+    <string name="visual_split_percentage_suffix">%</string>
+    <string name="visual_split_amount_label">Amount</string>
+    <string name="visual_split_remove_cd">Remove</string>
+    <string name="visual_split_person_format">Person %1$d</string>
+    <string name="visual_split_segment_format">%1$s: %2$s%%</string>
+    
+    <!-- Home Screen -->
+    <string name="home_dashboard_title">DASHBOARD</string>
+    <string name="home_edit_mode_exit">Exit edit mode</string>
+    <string name="home_edit_mode_enter">Enter edit mode to customize dashboard layout</string>
+    <string name="home_features">Features</string>
+    <string name="home_quick_settings_title">Quick Settings</string>
+    <string name="home_ai_settings">AI Settings</string>
+    <string name="home_categories">Categories</string>
+    <string name="home_debug_menu">Debug Menu</string>
+    <string name="home_add_to_forecast">ADD TO FORECAST</string>
+    <string name="home_cancel">CANCEL</string>
+    <string name="home_forecast_title">What are you planning?</string>
+    <string name="home_forecast_amount_label">Amount (€)</string>
+    <string name="home_no_budgets_title">No budgets set yet</string>
+    <string name="home_set_first_budget">Set Your First Budget</string>
+    <string name="home_budget_amount_label">Budget Amount (€)</string>
+    <string name="home_smart_suggestion">Smart Suggestion</string>
+    <string name="home_create_budget_button">Create Budget</string>
+    <string name="home_budget_category_label">Category</string>
+    <string name="home_budget_period_label">Period</string>
+    <string name="home_rollover_label">Rollover unspent amount</string>
+    
+    <!-- Dashboard Widget Titles -->
+    <string name="widget_safe_to_spend">SAFE TO SPEND</string>
+    <string name="widget_month_spent">SPENT THIS MONTH</string>
+    <string name="widget_set_budget_cta">Set a monthly budget to track safe-to-spend</string>
+    <string name="widget_pace">PACE</string>
+    <string name="widget_review">REVIEW</string>
+    <string name="widget_pending">PENDING</string>
+    <string name="widget_period_summary">PERIOD SUMMARY</string>
+    <string name="widget_today">TODAY</string>
+    <string name="widget_week">WEEK</string>
+    <string name="widget_month">MONTH</string>
+    <string name="widget_budget_health">BUDGET HEALTH</string>
+    <string name="widget_all_budgets_on_track">ALL BUDGETS ON TRACK</string>
+    <string name="widget_top_categories">TOP CATEGORIES</string>
+    <string name="widget_recent_activity">RECENT ACTIVITY</string>
+    <string name="widget_days_remaining_format">%1$d DAYS REMAINING</string>
+    
+    <!-- Add Planned Expense Dialog -->
+    <string name="dialog_plan_expense_title">PLAN AN EXPENSE</string>
+    <string name="dialog_plan_expense_description_label">What are you planning?</string>
+    <string name="dialog_plan_expense_amount_label">Amount (€)</string>
+    <string name="dialog_plan_expense_priority">PRIORITY</string>
+    <string name="dialog_plan_expense_category">CATEGORY</string>
+    <string name="dialog_plan_expense_none">None</string>
+    <string name="action_add_to_forecast">ADD TO FORECAST</string>
+    
+    <!-- Error Loading Dashboard -->
+    <string name="home_error_loading_dashboard">Error Loading Dashboard</string>
+    
+    <!-- Home ViewModel -->
+    <string name="home_ai_briefing_title">AI Briefing</string>
+    <string name="home_error_generation_failed">Generation failed</string>
+    <string name="home_ai_briefing_unavailable">AI briefing temporarily unavailable</string>
+    <string name="financial_weather_manage_recurring">MANAGE RECURRING</string>
+    <string name="financial_weather_today">Today</string>
+    <string name="financial_weather_tomorrow">Tomorrow</string>
+    <string name="financial_weather_recurring">Recurring</string>
+    <string name="financial_weather_planned">Planned</string>
+    <string name="dashboard_partial_currency_warning">Some amounts could not be converted — totals may be incomplete</string>
+    <string name="home_error_currency_unavailable">Currency settings unavailable</string>
+    <string name="widget_savings_sweep_title">End-of-month savings sweep</string>
+    <string name="widget_savings_sweep_safe_to_sweep">Safe to sweep %s</string>
+    <string name="widget_savings_sweep_detail">Underspend %1$s • Buffer %2$s</string>
+    <string name="widget_savings_sweep_top_allocation">Top allocation: %1$s (%2$s)</string>
+    <string name="widget_savings_sweep_cta">Review sweep</string>
+    <string name="widget_lifestyle_inflation_title">Lifestyle Inflation Detected</string>
+    <string name="widget_lifestyle_inflation_rate">Inflation rate: %s</string>
+    <string name="widget_lifestyle_suggested_boost">Suggested boost: +%s%%</string>
+    <string name="widget_lifestyle_adjust_goals">Adjust Goals</string>
+    <string name="widget_lifestyle_set_goals">Set Goals</string>
+    <!-- Privacy Settings -->
+    <string name="privacy_feature_disabled">Feature disabled</string>
+    <string name="privacy_section_disabled_features">Disabled Features</string>
+    <string name="privacy_settings_cta">Settings</string>
+    <string name="privacy_section_notification">Notification Capture</string>
+    <string name="privacy_section_cloud_ai">Cloud AI</string>
+    <string name="privacy_section_location">Location</string>
+    <string name="privacy_section_backup">Backup</string>
+    <string name="privacy_section_data_retention">Data Retention</string>
+    <string name="privacy_section_raw_storage">Raw Storage Modes</string>
+    <string name="privacy_section_debug">Debug</string>
+    <string name="privacy_toggle_notification_capture">Capture notifications</string>
+    <string name="privacy_toggle_cloud_ai">Enable cloud AI features</string>
+    <string name="privacy_toggle_redact_before_cloud">Redact data before cloud upload</string>
+    <string name="privacy_toggle_receipt_image_cloud">Upload receipt images to cloud</string>
+    <string name="privacy_toggle_bank_statement_ai">Bank statement AI validation</string>
+    <string name="privacy_toggle_external_geocoding">External geocoding (Nominatim/OSM)</string>
+    <string name="privacy_toggle_background_location">Background location backfill</string>
+    <string name="privacy_toggle_device_gps">Device GPS location</string>
+    <string name="privacy_toggle_encrypted_backup">Encrypted backups</string>
+    <string name="privacy_toggle_debug_persist">Persist debug data</string>
+    <string name="privacy_slider_notification_retention">Raw notification retention (days)</string>
+    <string name="privacy_slider_ocr_retention">Raw OCR retention (days)</string>
+    <string name="privacy_raw_storage_notification_label">Notification raw text storage</string>
+    <string name="privacy_raw_storage_ocr_label">OCR raw text storage</string>
+    <string name="privacy_raw_storage_email_label">Email receipt storage</string>
+    <string name="privacy_raw_storage_bank_statement_label">Bank statement/API storage</string>
+    <string name="privacy_raw_storage_store_raw">Store raw (full text)</string>
+    <string name="privacy_raw_storage_store_redacted">Store redacted</string>
+    <string name="privacy_raw_storage_metadata_only">Metadata only</string>
+    <string name="privacy_raw_storage_do_not_store">Do not store</string>
+    <string name="privacy_raw_storage_warning">Storing raw data increases privacy risk</string>
+    <string name="privacy_confirm_enable_cloud_ai_title">Enable Cloud AI?</string>
+    <string name="privacy_confirm_enable_cloud_ai_message">This will send data to a cloud AI provider. Ensure redaction is enabled to minimize data exposure.</string>
+    <string name="privacy_confirm_disable_redaction_title">Disable Redaction?</string>
+    <string name="privacy_confirm_disable_redaction_message">Disabling redaction means raw financial data may be sent to cloud AI. This increases privacy risk.</string>
+    <string name="privacy_confirm_proceed">Proceed</string>
+    <string name="privacy_confirm_cancel">Cancel</string>
+    <!-- Backup -->
+    <string name="backup_password_show">Show password</string>
+    <string name="backup_password_hide">Hide password</string>
+    <string name="backup_file_select">Select</string>
+    <string name="backup_file_change">Change</string>
+    <string name="receipt_auto_matching_running">Matching…</string>
+    <string name="receipt_amount_unavailable">Amount unavailable</string>
+    <string name="receipt_error_approve_failed">Failed to approve match. Please try again.</string>
+    <string name="receipt_error_manual_match_failed">Failed to link receipt. Please try again.</string>
+    <string name="receipt_error_reject_failed">Failed to reject suggestion. Please try again.</string>
+    <string name="receipt_error_skip_failed">Failed to skip receipt. Please try again.</string>
+    <string name="receipt_error_not_found">Receipt not found or has no suggestion.</string>
+    <string name="receipt_error_save_currency">Currency is not loaded yet. Please wait.</string>
+    <string name="receipt_error_already_linked">This receipt is already linked to a transaction. Use Receipt Matching to view it.</string>
+    <string name="receipt_duplicate_title">Receipt Already Scanned</string>
+    <string name="receipt_duplicate_message">This receipt was already scanned. Use Receipt Matching to link it to a transaction.</string>
+    <string name="receipt_duplicate_view_transaction">View Transaction</string>
+    <string name="receipt_duplicate_match_existing">Match to Existing</string>
+    <string name="receipt_duplicate_scan_new">Scan New Receipt</string>
+    <string name="review_amount_required">Amount required</string>
+    <string name="review_edit_required_button">Edit Required</string>
+    <string name="review_currency_label">Currency (e.g. USD)</string>
+    <string name="budget_partial_currency_warning">Budget data may be incomplete due to currency conversion issues</string>
+    <string name="budget_summary_partial">Incomplete</string>
+    <string name="budget_priority_critical">Critical</string>
+    <string name="budget_priority_high">High</string>
+    <string name="budget_priority_medium">Medium</string>
+    <string name="budget_priority_low">Low</string>
+    <string name="analytics_currency_unavailable">Currency settings unavailable. Please check your settings and retry.</string>
+    <string name="analytics_section_error_generic">This section could not be loaded. Data may be incomplete.</string>
+    <string name="home_error_unable_to_load_dashboard">Unable to load dashboard. Pull to refresh.</string>
+    <string name="home_error_unable_to_load_totals">Unable to load totals. Please try again.</string>
+    <string name="home_error_unable_to_load_breakdown">Unable to load breakdown. Please try again.</string>
+    <string name="home_error_unable_to_go_back">Unable to go back. Please try again.</string>
+    
+    <!-- Period Overview Labels -->
+    <string name="period_overview_year">Year Total</string>
+    <string name="period_overview_month">Monthly Overview</string>
+    <string name="period_overview_week">Weekly Overview</string>
+    <string name="period_overview_day">Daily Overview</string>
+    
+    <!-- Totals Dashboard -->
+    <string name="totals_spending_totals">SPENDING TOTALS</string>
+    <string name="totals_status_under_average">Under Average</string>
+    <string name="totals_status_over_average">Over Average</string>
+    <string name="totals_status_current">Current</string>
+    <string name="totals_status_no_data">No Data</string>
+    <string name="totals_legend_under">Under</string>
+    <string name="totals_legend_over">Over</string>
+    <string name="totals_legend_current">Current</string>
+    <string name="totals_legend_no_data">No Data</string>
+    <string name="totals_nav_title">SPENDING TOTALS</string>
+    <string name="totals_nav_back">← Back</string>
+    <string name="totals_empty_title">No spending data yet</string>
+    <string name="totals_empty_subtitle">Add some expenses to see your totals</string>
+    <string name="category_breakdown_title">CATEGORY BREAKDOWN</string>
+    <string name="category_breakdown_show_all_format">SHOW ALL (%1$d)</string>
+    
+    <!-- Retro Components -->
+    <string name="retro_star_icon">★</string>
+    <string name="retro_score_attack_title">SCORE ATTACK</string>
+    <string name="retro_year_label_format">[%1$s]</string>
+    <string name="retro_return_button">← RETURN</string>
+    <string name="retro_stage_label_format">► STAGE: %1$s</string>
+    <string name="retro_score_label_format">SCORE: €%1$.2f</string>
+    <string name="retro_stage_completion">◄ STAGE COMPLETION ►</string>
+    <string name="retro_percentage_format">%1$.0f%% OF AVG</string>
+    <string name="retro_enter_stage_button">▶ ENTER STAGE</string>
+    <string name="retro_view_analysis_button">[VIEW ANALYSIS]</string>
+    <string name="retro_loading_stages">LOADING STAGES...</string>
+    <string name="retro_insert_coin">INSERT COIN</string>
+    <string name="retro_stat_label_format">%1$s:</string>
+    
+    <!-- Retro Category Breakdown -->
+    <string name="retro_stage_analysis_title">STAGE ANALYSIS</string>
+    <string name="retro_period_label_format">[%1$s]</string>
+    <string name="retro_category_scores">◄ CATEGORY SCORES ►</string>
+    <string name="retro_view_all_categories_format">[VIEW ALL %1$d CATEGORIES]</string>
+    <string name="retro_category_name_format">[%1$s]</string>
+    <string name="retro_show_top_5">[SHOW TOP 5]</string>
+    <string name="retro_close_button">[CLOSE]</string>
+    
+    <!-- ComputeDashboardWidgetsUseCase -->
+    <string name="widget_budget_exceeded_format">%1$d budgets exceeded!</string>
+    <string name="widget_insight_spent_less_format">Spent %1$.0f less than last month so far.</string>
+    <string name="widget_insight_spent_higher_format">Spending is %1$.0f higher than last month.</string>
+    <string name="widget_insight_today_spent_format">Spent %1$.2f today across %2$d transactions.</string>
+    <string name="money_radar_reason_single_bill_due_format">1 bill due soon: %1$s</string>
+    <string name="money_radar_reason_multiple_bills_due_format">%1$d bills due in next %2$d days</string>
+    <string name="money_radar_reason_single_anomaly_format">Unusual charge detected: %1$s</string>
+    <string name="money_radar_reason_multiple_anomalies_format">%1$d unusual charges need review</string>
+    <string name="money_radar_reason_budget_risk_critical_format">Critical budget overrun risk (%1$d%%)</string>
+    <string name="money_radar_reason_budget_risk_high_format">High risk of exceeding budget (%1$d%%)</string>
+    <string name="money_radar_reason_budget_risk_medium_format">Possible budget overrun (%1$d%%)</string>
+    <string name="money_radar_reason_finances_healthy">Your finances look healthy</string>
+    <string name="money_radar_reason_monitor_spending">Monitor your spending closely</string>
+    <string name="money_radar_budget_impact_on_track">You are on track to stay within budget</string>
+    <string name="money_radar_budget_impact_maybe_overrun_format">You may exceed your budget by %1$s</string>
+    <string name="money_radar_budget_impact_high_overrun_format">High risk of exceeding budget by %1$s</string>
+    <string name="money_radar_budget_impact_critical_overrun_format">Very likely to exceed budget by %1$s</string>
+    <string name="money_radar_budget_impact_probability_warning">High probability of exceeding budget</string>
+    <string name="money_radar_budget_impact_probability_critical">Very high probability of budget overrun</string>
+
+    <!-- Budget Analytics -->
+    <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>
+    <string name="budget_target_breakdown">TARGET BREAKDOWN</string>
+    <string name="budget_base_allowance">Base Allowance</string>
+    <string name="budget_recurring_format">Recurring (%1$s)</string>
+    <string name="budget_planned_format">Planned (%1$s)</string>
+    <string name="budget_total_target">Total Target</string>
+    <string name="budget_what_happened">WHAT HAPPENED</string>
+    <string name="budget_total_spent">Total Spent</string>
+    <string name="budget_no_transactions_found">No specific transactions found.</string>
+    <string name="budget_no_spending_recorded">No spending recorded.</string>
+    <string name="budget_view_transactions">View Transactions</string>
+    <string name="analytics_view_category_breakdown">View Category Breakdown</string>
+    
+    <!-- Location -->
+    <string name="location_search_label">Search location</string>
+    <string name="location_google_label">Google</string>
+    <string name="location_latitude_label">Latitude</string>
+    <string name="location_longitude_label">Longitude</string>
+    <string name="location_set_coordinates">Set coordinates</string>
+    <string name="location_use_this_location">Use this location</string>
+    
+    <!-- Accessibility -->
+    <string name="a11y_open_assistant">Open assistant</string>
+    <string name="a11y_open_features_menu">Open features menu</string>
+    <string name="a11y_open_settings_menu">Open settings menu</string>
+    <string name="a11y_move_widget_up">Move widget up</string>
+    <string name="a11y_move_widget_down">Move widget down</string>
+    <string name="a11y_hide_widget">Hide widget</string>
+    <string name="a11y_toggle_widget_style_format">Toggle widget style to %1$s</string>
+    <string name="a11y_navigate_to_ai_settings">Navigate to AI settings</string>
+    <string name="a11y_navigate_to_categories">Navigate to categories management</string>
+    <string name="a11y_navigate_to_debug">Navigate to debug menu</string>
+    <string name="a11y_budget_status_format">%1$s budgets %2$s</string>
+    <string name="a11y_category_icon">%1$s category icon</string>
+    <string name="a11y_transaction_details_format">%1$s, %2$s %3$s, %4$s</string>
+    <string name="a11y_manual_entry">Manual entry</string>
+    <string name="a11y_add_expense">Add expense</string>
+    <string name="a11y_create_group">Create group</string>
+    <string name="a11y_you">You</string>
+    <string name="a11y_add_member">Add member</string>
+    <string name="a11y_add_expense_to_group">Add expense to group</string>
+    <string name="a11y_refresh">Refresh</string>
+    <string name="a11y_default_template">Default template</string>
+    <string name="a11y_close">Close</string>
+    <string name="a11y_clear">Clear</string>
+    <string name="a11y_selected">Selected</string>
+    <string name="a11y_not_selected">Not selected</string>
+    <string name="a11y_expand">Expand</string>
+    <string name="a11y_collapse">Collapse</string>
+    <string name="a11y_more_options">More options</string>
+    <string name="a11y_recurring_expenses">Recurring Expenses</string>
+    <string name="a11y_select_date">Select date</string>
+    <string name="a11y_clear_location">Clear location</string>
+    <string name="a11y_clear_search">Clear search</string>
+    <string name="a11y_error_format">Error: %1$s - %2$s</string>
+     <string name="a11y_empty_state_format">Empty state: %1$s - %2$s</string>
+    <string name="empty_state_suggested_actions">Suggested Actions</string>
+
+    <!-- Empty state action titles and descriptions -->
+    <string name="empty_action_scan_receipt_title">Scan Receipt</string>
+    <string name="empty_action_scan_receipt_desc">Scan receipt to detect warranties</string>
+    <string name="empty_action_add_manually_title">Add Manually</string>
+    <string name="empty_action_add_warranty_desc">Manually add a warranty</string>
+    <string name="empty_action_connect_notifications_title">Connect Notifications</string>
+    <string name="empty_action_connect_notifications_desc">Connect notifications to detect subscriptions</string>
+    <string name="empty_action_add_subscription_title">Add Subscription</string>
+    <string name="empty_action_add_subscription_desc">Add a subscription manually</string>
+    <string name="empty_action_scan_bank_title">Scan Bank Statements</string>
+    <string name="empty_action_scan_bank_desc">Scan bank statements for subscriptions</string>
+    <string name="empty_action_create_goal_title">Create First Goal</string>
+    <string name="empty_action_create_goal_desc">Create your first savings goal</string>
+    <string name="empty_action_view_recommendations_title">View Recommendations</string>
+    <string name="empty_action_view_recommendations_desc">See how much you can save</string>
+    <string name="empty_action_start_challenge_title">Start Challenge</string>
+    <string name="empty_action_start_challenge_desc">Start a spending challenge</string>
+    <string name="empty_action_no_spend_streak_title">No-Spend Streak</string>
+    <string name="empty_action_no_spend_streak_desc">View your no-spend streak progress</string>
+    <string name="empty_action_track_carbon_title">Track Footprint</string>
+    <string name="empty_action_track_carbon_desc">Track your carbon footprint</string>
+    <string name="empty_action_offset_options_title">Offset Options</string>
+    <string name="empty_action_offset_options_desc">View carbon offset options</string>
+    <string name="empty_action_add_transactions_title">Add Transactions</string>
+    <string name="empty_action_add_transactions_desc">Add transactions to calculate footprint</string>
+    <string name="empty_action_analyze_patterns_title">Analyze Patterns</string>
+    <string name="empty_action_analyze_patterns_desc">Analyze your lifestyle patterns</string>
+    <string name="empty_action_set_income_title">Set Income</string>
+    <string name="empty_action_set_income_desc">Set your income for tracking</string>
+    <string name="empty_action_add_expenses_title">Add Expenses</string>
+    <string name="empty_action_add_expenses_desc">Add expenses for analysis</string>
+    <string name="empty_action_add_expense_title">Add Expense</string>
+    <string name="empty_action_add_expense_desc">Add your first expense</string>
+    <string name="empty_action_scan_first_receipt_title">Scan Receipt</string>
+    <string name="empty_action_scan_first_receipt_desc">Scan your first receipt</string>
+    <string name="empty_action_add_for_analytics_title">Add Expenses</string>
+    <string name="empty_action_add_for_analytics_desc">Add expenses to see analytics</string>
+    <string name="empty_action_create_budget_title">Create Budget</string>
+    <string name="empty_action_create_budget_desc">Set up your first budget</string>
+    <string name="cd_dismiss_action">Dismiss action</string>
+    <string name="a11y_loading_content">Loading content</string>
+    <string name="a11y_priority_format">Priority %1$s, %2$s</string>
+    <string name="a11y_no_category_selected">No category selected</string>
+    <string name="a11y_category_icon_format">%1$s icon</string>
+    <string name="a11y_category_format">%1$s category, %2$s</string>
+    <string name="a11y_category_spending_format">%1$s: €%2$.2f, %3$.0f%% of budget</string>
+    <string name="a11y_expense_manual">manual entry</string>
+    <string name="a11y_expense_item_format">%1$s, %2$s €%3$.2f, %4$s</string>
+    <string name="recommendation_label">RECOMMENDATION</string>
+    
+    <!-- G05 Remaining Components -->
+    <string name="transfer_incoming">Incoming</string>
+    <string name="transfer_outgoing">Outgoing</string>
+    <string name="transfer_direction_unknown">Direction unknown</string>
+    <string name="transfer_set_direction">Set Direction</string>
+    <string name="a11y_transfer_incoming">Incoming</string>
+    <string name="a11y_transfer_outgoing">Outgoing</string>
+    <string name="a11y_transfer_unknown">Unknown</string>
+    <string name="notification_enable_title">Enable Notifications</string>
+    <string name="notification_enable_message">Enable notifications to receive budget alerts and expense reminders.</string>
+    <string name="notification_enable_button">Enable</string>
+    <string name="notification_not_now_button">Not now</string>
+    <string name="location_enable_title">Enable Location</string>
+    <string name="location_enable_message">To show your spending on the map and identify nearby merchants, the app needs access to your device location while it is in use. No background location is requested.</string>
+    <string name="location_allow_button">Allow</string>
+    <string name="location_not_now_button">Not now</string>
+    <string name="analytics_transaction_distribution">Transaction Distribution</string>
+    <string name="analytics_transactions_total">%d total</string>
+    <string name="analytics_peak_format">Peak: %1$d%% of transactions are %2$s-%3$s</string>
+    <string name="recommendation_high_priority">High priority</string>
+    <string name="recommendation_medium_priority">Medium priority</string>
+    <string name="recommendation_low_priority">Low priority</string>
+    <string name="a11y_recommendation_format">%1$s recommendation: %2$s. Double tap to view details.</string>
+    <string name="a11y_dismiss_recommendation">Dismiss recommendation</string>
+    <string name="forecast_no_data">No data available</string>
+    <string name="chart_no_data">No data</string>
+    <string name="a11y_transaction_histogram_format">Transaction distribution histogram showing %1$d total transactions across %2$d size ranges</string>
+    <string name="transaction_size_profile">Transaction Size Profile</string>
+    <string name="percentile_small">Small</string>
+    <string name="percentile_low">Low</string>
+    <string name="percentile_typical">Typical</string>
+    <string name="percentile_high">High</string>
+    <string name="percentile_large">Large</string>
+    <string name="a11y_percentile_range_format">Transaction size profile. Most transactions fall between %1$s and %2$s</string>
+    <string name="percentile_range_format">Most transactions fall between %1$s - %2$s</string>
+    <string name="health_day">DAY</string>
+    <string name="health_week">WEEK</string>
+    <string name="health_month">MONTH</string>
+    
+    <!-- Health Score Widget -->
+    <string name="health_financial_hp">FINANCIAL HP</string>
+    <string name="health_score_breakdown">◄ SCORE BREAKDOWN ►</string>
+    <string name="health_period_today">TODAY</string>
+    <string name="health_period_week">WEEK</string>
+    <string name="health_period_month">MONTH</string>
+    <string name="health_stat_budget">BUDGET</string>
+    <string name="health_stat_control">CONTROL</string>
+    <string name="health_stat_clean">CLEAN</string>
+    <string name="health_stat_bonus">BONUS</string>
+    <string name="health_status_excellent">★ EXCELLENT ★</string>
+    <string name="health_status_good">◆ GOOD ◆</string>
+    <string name="health_status_fair">● FAIR ●</string>
+    <string name="health_status_warning">▲ WARNING ▲</string>
+    <string name="health_status_critical">▼ CRITICAL ▼</string>
+    <string name="health_expand_hint">▼ PRESS TO OPEN ▼</string>
+    <string name="health_collapse_hint">▲ PRESS TO CLOSE ▲</string>
+    <string name="a11y_health_score_format">Health Score: %1$s, %2$d percent</string>
+    
+    <!-- Error State Types -->
+    <string name="error_title_network">Connection Error</string>
+    <string name="error_message_network">Unable to connect to the server. Please check your internet connection and try again.</string>
+    <string name="error_title_server">Server Error</string>
+    <string name="error_message_server">Something went wrong on our end. Please try again in a few moments.</string>
+    <string name="error_title_unknown">Something Went Wrong</string>
+    <string name="error_message_unknown">An unexpected error occurred. Please try again.</string>
+    <string name="error_title_timeout">Request Timeout</string>
+    <string name="error_message_timeout">The request took too long to complete. Please try again.</string>
+    <string name="error_title_not_found">Not Found</string>
+    <string name="error_message_not_found">The requested item could not be found.</string>
+    <string name="error_title_ai_processing">AI Processing Failed</string>
+    <string name="error_message_ai_processing">Unable to process with AI. Please check your settings and try again.</string>
+    <string name="error_retrying">Retrying…</string>
+    <string name="error_try_again">Try Again</string>
+    <string name="error_dismiss">Dismiss</string>
+    
+    <!-- Empty State Types -->
+    <string name="empty_title_transactions">No Transactions</string>
+    <string name="empty_message_transactions">You haven\'t recorded any expenses yet. Start tracking your spending!</string>
+    <string name="empty_title_receipts">No Receipts</string>
+    <string name="empty_message_receipts">No receipts have been scanned yet. Scan your first receipt to get started.</string>
+    <string name="empty_title_analytics">No Data Yet</string>
+    <string name="empty_message_analytics">Add some transactions to see your spending analytics and insights.</string>
+    <string name="empty_title_categories">No Categories</string>
+    <string name="empty_message_categories">No category data available. Transactions will be categorized automatically.</string>
+    <string name="empty_title_generic">Nothing Here</string>
+    <string name="empty_message_generic">There\'s nothing to display at the moment.</string>
+    
+    <!-- Monte Carlo Forecast -->
+    <string name="forecast_month_end_title">MONTH-END FORECAST</string>
+    <string name="forecast_likely_total">Likely total</string>
+    <string name="forecast_range_format">Range: €%1$.0f – €%2$.0f</string>
+    <string name="forecast_under_budget">Under budget</string>
+    <string name="forecast_no_budget_set">No budget set</string>
+    <string name="forecast_spent">Spent</string>
+    <string name="forecast_upcoming">Upcoming</string>
+    <string name="forecast_budget_label">Budget</string>
+    <string name="forecast_percentile_p10">P10</string>
+    <string name="forecast_percentile_p50">P50</string>
+    <string name="forecast_percentile_p90">P90</string>
+    <string name="forecast_timeline_summary_with_budget">Forecast timeline. Current spending %1$s, projected month-end %2$s, minimum %3$s, maximum %4$s, budget limit %5$s.</string>
+    <string name="forecast_timeline_summary_without_budget">Forecast timeline. Current spending %1$s, projected month-end %2$s, minimum %3$s, maximum %4$s. %5$s.</string>
+    
+    <!-- Forecast Timeline -->
+    <string name="forecast_trajectory_title">FORECAST TRAJECTORY</string>
+    
+    <!-- Spending Trend Chart -->
+    <string name="chart_trend_title">TREND</string>
+    <string name="chart_legend_actual">Actual</string>
+    <string name="chart_legend_projected">Projected</string>
+    <string name="chart_legend_budget_limit">Budget limit</string>
+    
+    <!-- Statistical Visualizations -->
+    <string name="analytics_merchant_visits_format">%1$d visits · Avg %2$s</string>
+    <string name="analytics_loyalty_label">Loyalty</string>
+    <string name="analytics_streak_format">%d months</string>
+    <string name="analytics_streak_label">streak</string>
+    <string name="analytics_predicted_label">predicted</string>
+    <string name="analytics_vs_last_quarter">vs last quarter</string>
+    <string name="analytics_velocity_accelerating">Accelerating</string>
+    <string name="analytics_velocity_slowing">Slowing</string>
+    <string name="analytics_velocity_steady">Steady</string>
+    <string name="analytics_percentile_p25_format">P25: %1$s</string>
+    <string name="analytics_percentile_p75_format">P75: %1$s</string>
+    <string name="analytics_percentile_p25_p75_format">P25: %1$s · P75: %2$s</string>
+    
+    <!-- Content Descriptions -->
+    <string name="cd_back">Back</string>
+    <string name="cd_refresh">Refresh</string>
+    <string name="cd_add">Add</string>
+    <string name="cd_clear">Clear</string>
+    <string name="cd_dismiss">Dismiss</string>
+    <string name="cd_selected">Selected</string>
+    <string name="cd_close">Close</string>
+    <string name="cd_home_currency">Home Currency</string>
+    <string name="cd_connected">Connected</string>
+    <string name="cd_sync_failed">Sync Failed</string>
+    <string name="cd_syncing">Syncing</string>
+    <string name="cd_disconnected">Disconnected</string>
+    
+    <!-- Section Headers -->
+    <string name="header_exchange_rates">Exchange Rates</string>
+    <string name="header_supported_currencies">Supported Currencies</string>
+    <string name="header_active_subscriptions">Active Subscriptions (%1$d)</string>
+    <string name="header_inactive_subscriptions">Inactive Subscriptions (%1$d)</string>
+    <string name="header_income_tax_brackets">Income Tax Brackets</string>
+    <string name="header_export_format">Export Format</string>
+    <string name="header_active_recurring">Active Recurring Expenses (%1$d)</string>
+    <string name="header_inactive_recurring">Inactive (%1$d)</string>
+    <string name="header_your_investments">Your Investments</string>
+    <string name="header_how_to_use">How to Use</string>
+    <string name="header_members_balances">Members &amp; Balances</string>
+    <string name="header_expenses">Expenses</string>
+    
+    <!-- Labels and Prefixes -->
+    <string name="label_updated_format">Updated: %1$s</string>
+    <string name="label_rate_format">Rate: 1 %1$s = %2$s %3$s</string>
+    <string name="label_home_currency">Home Currency</string>
+    <string name="label_change_home_currency">Change Home Currency</string>
+    <string name="label_total_subscription_cost">Total Subscription Cost</string>
+    <string name="label_per_month">per month</string>
+    <string name="label_per_year">per year</string>
+    <string name="label_uses_this_month_format">%1$d uses this month</string>
+    <string name="label_uses_in_billing_window_format">%1$d uses in billing window</string>
+    <string name="label_per_use_format">%1$s/use</string>
+    <string name="label_conversion_result">Conversion Result</string>
+    <string name="label_currency_conversion">Currency Conversion</string>
+    <string name="label_tax_calculator">Tax Calculator</string>
+    <string name="label_estimated_income">Estimated Income</string>
+    <string name="label_taxable_income">Taxable Income</string>
+    <string name="label_deductible_expenses">Deductible Expenses</string>
+    <string name="label_estimated_income_tax">Estimated Income Tax</string>
+    <string name="label_estimated_vat_paid">Estimated VAT Paid</string>
+    <string name="label_effective_tax_rate">Effective Tax Rate</string>
+    <string name="label_net_income">Net Income (Est.)</string>
+    <string name="label_total_portfolio_value">Total Portfolio Value</string>
+    <string name="label_invested">Invested</string>
+    <string name="label_gain_loss">Gain/Loss</string>
+    <string name="label_return_percent">Return</string>
+    <string name="label_last_synced_format">Last synced: %1$s</string>
+    <string name="label_error_prefix_format">Error: %1$s</string>
+    <string name="label_sync_now">Sync Now</string>
+    <string name="label_disconnect">Disconnect</string>
+    <string name="label_remove">Remove</string>
+    <string name="bank_disconnect_confirm_title">Disconnect bank?</string>
+    <string name="bank_remove_confirm_title">Remove bank connection?</string>
+    <string name="bank_disconnect_confirm_message">%1$s will stop syncing transactions and may require reconnecting later.</string>
+    <string name="bank_remove_confirm_message">This will remove %1$s from your saved connections list.</string>
+    <string name="bank_disconnect_snackbar_disconnected">Bank disconnected</string>
+    <string name="bank_disconnect_snackbar_removed">Connection removed</string>
+    <string name="label_connect_bank">Connect Bank</string>
+    <string name="label_quick_conversion">Quick Conversion</string>
+    <string name="label_unknown">Unknown</string>
+    <string name="label_total_group_spending">Total Group Spending</string>
+    <string name="label_members_count_format">%1$d members</string>
+    <string name="label_expenses_count_format">%1$d expenses</string>
+    <string name="label_total_spent">total spent</string>
+    <string name="label_you_format">%1$s (You)</string>
+    <string name="label_gets_back_format">gets back %1$s</string>
+    <string name="label_settled_up">settled up</string>
+    <string name="label_owes_format">owes %1$s</string>
+    <string name="label_paid_by_format">Paid by %1$s on %2$s</string>
+    <string name="label_split_format">Split: %1$s</string>
+    <string name="label_monthly_total">Monthly Total</string>
+    <string name="label_due_format">Due %1$s</string>
+    <string name="label_next_format">Next: %1$s</string>
+    <string name="label_expense_count_format">%1$d expenses in selected range</string>
+    <string name="label_tax_region">Tax Region</string>
+    <string name="label_vat_rate">VAT Rate</string>
+    <string name="label_due_soon">Due Soon</string>
+    
+    <!-- Status and Warning Messages -->
+    <string name="warning_offline_mode">Offline Mode</string>
+    <string name="warning_rates_outdated">Rates May Be Outdated</string>
+    <string name="warning_rates_outdated_message">Using last known rates. Connect to internet for latest rates.</string>
+    <string name="warning_rates_stale_message">Exchange rates are older than 24 hours. Tap refresh to update.</string>
+    
+    <!-- Empty States -->
+    <string name="empty_recurring_title">No recurring expenses</string>
+    <string name="empty_recurring_message">Tap + to add rent, utilities, or other recurring payments</string>
+    <string name="empty_groups_title">No Shared Expense Groups</string>
+    <string name="empty_groups_message">Create a group to split expenses with friends, family, or roommates</string>
+    <string name="empty_bank_connections_title">No Bank Connections</string>
+    <string name="empty_bank_connections_message">Connect your bank accounts to automatically import transactions</string>
+    
+    <!-- Instructions -->
+    <string name="export_instructions_1">1. Select your desired date range</string>
+    <string name="export_instructions_2">2. Choose the export format for your accounting software</string>
+    <string name="export_instructions_3">3. Click "Generate Export" to create the data</string>
+    <string name="export_instructions_4">4. Copy the data and save it as a file</string>
+    <string name="export_instructions_5">5. Import the file into your accounting software</string>
+    
+    <!-- Dialog Titles -->
+    <string name="dialog_delete_subscription_title">Delete Subscription?</string>
+    <string name="dialog_delete_recurring_title">Delete Recurring Expense?</string>
+    <string name="dialog_add_subscription_title">Add Subscription</string>
+    <string name="dialog_add_recurring_title">Add Recurring Expense</string>
+    
+    <!-- Category Options -->
+    <string name="category_streaming">Streaming</string>
+    <string name="category_software">Software</string>
+    <string name="category_fitness">Fitness</string>
+    <string name="category_news">News</string>
+    <string name="category_cloud_storage">Cloud Storage</string>
+    <string name="category_other">Other</string>
+    
+    <!-- G07: Debug & Diagnostics -->
+    <string name="debug_title_format">Debug: Notifications (%1$d)</string>
+    <string name="debug_title">Debug</string>
+    <string name="debug_disabled_in_release">Debug tools are disabled in release builds.</string>
+    <string name="debug_section_service_diagnostics">Service Diagnostics</string>
+    <string name="debug_section_ai_runtime">AI Runtime Diagnostics</string>
+    <string name="debug_section_mass_simulation">Mass Simulation</string>
+    <string name="debug_section_ml_classifier">ML Classifier</string>
+    <string name="debug_section_database_management">Database Management</string>
+    <string name="debug_section_source_trust">Source Trust Scores</string>
+    <string name="debug_open_notification_settings">Open Notification Access Settings</string>
+    <string name="debug_refresh">Refresh</string>
+    <string name="debug_reset">Reset</string>
+    <string name="debug_generate_transactions">Generate Transactions</string>
+    <string name="debug_simulate_purchase">Simulate Purchase</string>
+    <string name="debug_simulate_deposit">Simulate Deposit</string>
+    <string name="debug_sync_notifications">Sync Active Notifications</string>
+    <string name="debug_reset_expenses">Reset All Expenses</string>
+    <string name="debug_reset_budgets">Reset All Budgets</string>
+    <string name="debug_reset_trust_scores">Reset Trust Scores</string>
+    <string name="debug_confirm_clear_all_title">Clear all debug data?</string>
+    <string name="debug_confirm_clear_all_message">This will remove captured notifications and derived debug data.</string>
+    <string name="debug_confirm_reset_expenses_title">Reset all expenses?</string>
+    <string name="debug_confirm_reset_expenses_message">This will delete all expenses created for this app profile.</string>
+    <string name="debug_confirm_reset_budgets_title">Reset all budgets?</string>
+    <string name="debug_confirm_reset_budgets_message">This will remove all saved budget entries.</string>
+    <string name="debug_confirm_reset_trust_scores_title">Reset trust scores?</string>
+    <string name="debug_confirm_reset_trust_scores_message">This will clear source trust statistics and history.</string>
+    <string name="debug_action_clear_all_done">Debug data cleared</string>
+    <string name="debug_action_reset_expenses_done">Expenses reset</string>
+    <string name="debug_action_reset_budgets_done">Budgets reset</string>
+    <string name="debug_action_reset_trust_scores_done">Trust scores reset</string>
+    <string name="debug_action_no_data_to_clear">No debug data to clear</string>
+    <string name="debug_action_no_expenses_to_reset">No expenses to reset</string>
+    <string name="debug_action_no_budgets_to_reset">No budgets to reset</string>
+    <string name="debug_action_no_trust_scores_to_reset">No trust scores to reset</string>
+    <string name="debug_export">Export</string>
+    <string name="debug_import">Import</string>
+    <string name="debug_categorization_pipeline">Categorization Pipeline Debug</string>
+    <string name="debug_status_starts">Starts</string>
+    <string name="debug_status_disconnects">Disconnects</string>
+    <string name="debug_status_killed">Killed</string>
+    <string name="debug_status_active">Active</string>
+    <string name="debug_status_training">Training</string>
+    <string name="debug_label_positive_samples">Positive samples</string>
+    <string name="debug_label_negative_samples">Negative samples</string>
+    <string name="debug_label_vocabulary">Vocabulary</string>
+    <string name="debug_categories_count">Categories</string>
+    <string name="debug_merchants_count">Merchants</string>
+    <string name="debug_pending_reviews_count">Pending Reviews</string>
+    <string name="debug_network_available">available</string>
+    <string name="debug_network_offline">offline</string>
+    <string name="debug_network_connected">connected</string>
+    <string name="debug_network_not_connected">not connected</string>
+    <string name="debug_last_refreshed">Last refreshed</string>
+    <string name="debug_last_start">Last start</string>
+    <string name="debug_last_kill">Last kill</string>
+    <string name="debug_dialog_import_database_title">Import Database</string>
+    <string name="debug_dialog_reset_database_title">Reset Database?</string>
+    <string name="debug_dialog_reset_database_message">This will delete ALL your data. A safety backup will be created first. This action cannot be undone.</string>
+    <string name="debug_dialog_import_csv_title">Import from CSV</string>
+    <string name="debug_dialog_select_file">Select File</string>
+    <string name="debug_dialog_change_file">Change File</string>
+    <string name="debug_dialog_selected">Selected:</string>
+    <string name="debug_dialog_import_replace_data">This will replace all current data. A safety backup will be created first.</string>
+    <string name="debug_toast_export_success">Exported to: %1$s</string>
+    <string name="debug_toast_export_failed">Export failed: %1$s</string>
+    <string name="debug_toast_import_success">Import verified!</string>
+    <string name="debug_toast_import_empty">Import completed but no data found!</string>
+    <string name="debug_toast_reset_success">Database reset. Safety backup created. Restart app.</string>
+    <string name="debug_notification_unblock">Unblock</string>
+    <string name="debug_notification_no_notifications">No notifications captured yet</string>
+    <string name="debug_notification_access_required">Make sure notification access is enabled</string>
+    <string name="debug_notification_expense">Expense</string>
+    <string name="debug_notification_ignore">Ignore</string>
+    <string name="debug_notification_block_app">Block App</string>
+    <string name="debug_blocked_apps">Blocked Apps:</string>
+    <string name="debug_notification_package">Package:</string>
+    <string name="debug_notification_subtext">SubText:</string>
+    <string name="debug_notification_extras">Extras:</string>
+    <string name="debug_filter_all">All</string>
+    <string name="debug_captured_notifications_count">Captured Notifications: %1$d</string>
+    <string name="debug_status_format">%1$s: %2$s</string>
+    <string name="debug_retrain">Retrain</string>
+    <string name="debug_current_data">Current Data:</string>
+    <string name="debug_transactions_count">%1$d transactions</string>
+    <string name="debug_import_csv_button">📄 Import from CSV (Old Phone)</string>
+    <string name="debug_migrate_legacy_db">🗄️ Migrate Legacy DB</string>
+    <string name="debug_import_no_file">No file selected</string>
+    <string name="debug_import_csv_format_description">Format: date,amount,merchant,category,description</string>
+    <string name="debug_select_csv_file">Select CSV File</string>
+    <string name="debug_importing_progress">Importing… %1$d%%</string>
+    <string name="debug_import_csv">Import CSV</string>
+    <string name="debug_import_replace_warning">⚠️ This will add expenses to your current database. Existing data is preserved.</string>
+    <string name="debug_import_success_format">✅ Imported %1$d expenses (%2$d errors)</string>
+    <string name="debug_import_failed_format">❌ Import failed: %1$s</string>
+    
+    <!-- G08: Advanced Features -->
+    <!-- Price Protection -->
+    <string name="screen_price_protection">Price Protection</string>
+    <string name="price_tab_drops">Price Drops</string>
+    <string name="price_tab_protected">Protected Items</string>
+    <string name="price_tab_deals">Deals</string>
+    <string name="price_label_you_paid">You Paid</string>
+    <string name="price_label_current_price">Current Price</string>
+    <string name="price_label_refund">Refund</string>
+    <string name="price_label_save_percent">Save %1$d%%</string>
+    <string name="price_days_left">%1$d days left</string>
+    <string name="price_protection_active">Price protection active for 30 days</string>
+    <string name="price_empty_no_drops">No Price Drops Found</string>
+    <string name="price_empty_no_protected">No Protected Items</string>
+    <string name="price_empty_no_deals">No Active Deals</string>
+    <string name="price_action_file_claim">File Price Protection Claim</string>
+    <string name="price_action_check_now">Check Now</string>
+    <string name="price_eligible">Eligible</string>
+    <string name="price_available_refunds">Available Refunds</string>
+    <string name="price_items_with_drops">Items with Drops</string>
+    <string name="price_eligible_count">%1$d eligible</string>
+    <string name="price_better_deals_found">Better Deals Found</string>
+    <string name="price_available_coupons">Available Coupons</string>
+    <string name="price_credit_card_benefits">Credit Card Benefits</string>
+    <string name="price_save_at_merchant">Save at %1$s</string>
+    <string name="price_at_merchant">at %1$s</string>
+    <string name="price_purchased_label">Purchased: %1$s</string>
+    <string name="price_price_label">Price: %1$s</string>
+    <string name="price_return_label">Return: %1$d days</string>
+    <string name="price_current_label">Current: %1$s</string>
+    <string name="price_merchant_at_label">At: %1$s</string>
+    <string name="price_via_card">via %1$s</string>
+    <string name="price_plus_value_format">+%1$s</string>
+    <string name="price_snackbar_unable_open_claim_link">Unable to open claim link</string>
+    <string name="price_snackbar_item_added_back_tracking">Item added back to tracking</string>
+    <string name="price_snackbar_item_removed_tracking">Item removed from tracking</string>
+    <string name="price_remove_tracking_confirm_title">Remove from tracking?</string>
+    <string name="price_remove_tracking_confirm_message">You will stop receiving price-drop alerts for %1$s.</string>
+    <string name="price_remove_from_tracking_action">Remove from tracking</string>
+    <string name="price_track_item_action">Track item</string>
+    
+    <!-- Savings Goals -->
+    <string name="screen_savings_goals">Savings Goals</string>
+    <string name="savings_level_format">Level %1$d</string>
+    <string name="savings_fire_emoji">🔥</string>
+    <string name="savings_contributions_this_month">contributions this month</string>
+    <string name="savings_section_recommendations">Smart Recommendations</string>
+    <string name="savings_section_your_goals">Your Goals</string>
+    <string name="savings_progress_percent_complete">%1$d%% complete</string>
+    <string name="savings_label_total_saved">Total Saved %1$s</string>
+    <string name="savings_done">Done</string>
+    <string name="savings_action_add_goal">Add Goal</string>
+    <string name="savings_action_save">Save</string>
+    <string name="savings_action_add_amount">+%1$s</string>
+    <string name="savings_empty_title">No savings goals yet</string>
+    <string name="savings_empty_message">Create a goal and start saving!</string>
+    <string name="savings_target_date">Target: %1$s</string>
+    <string name="savings_amount_eur">%1$s</string>
+    <string name="savings_of_target">of %1$s</string>
+    <string name="savings_safe_to_save">Safe to save %1$s more</string>
+    <string name="savings_goal_created_message">Goal created</string>
+    <string name="savings_contribute_dialog_title_format">Contribute to %1$s?</string>
+    <string name="savings_contribute_dialog_message_format">Add %1$s to this goal now?</string>
+    <string name="savings_saved_amount_message_format">Saved %1$s</string>
+    <string name="savings_add_goal_dialog_title">Add savings goal</string>
+    <string name="savings_goal_name_label">Goal name</string>
+    <string name="savings_target_amount_label">Target amount</string>
+    <string name="savings_target_date_label_format">Target date: %1$s</string>
+    <string name="savings_set_date">Set date</string>
+    <string name="savings_change_date">Change date</string>
+    <string name="savings_action_clear_date">Clear</string>
+    <string name="savings_protection_level_label">Protection level</string>
+    <string name="savings_goal_protection_strict">Strict</string>
+    <string name="savings_goal_protection_warning">Warning</string>
+    <string name="savings_goal_protection_tracking">Tracking</string>
+    <string name="savings_lifestyle_alert_title">💡 Lifestyle Inflation Alert</string>
+    <string name="savings_lifestyle_boost_format">Suggested savings boost: +%1$s%% monthly</string>
+    <string name="savings_not_now">Not Now</string>
+    <string name="savings_boost_action">Boost Savings</string>
+    <string name="savings_end_of_month_sweep_title">End of Month Sweep</string>
+    <string name="savings_month_ends_format">Month ends %1$s</string>
+    <string name="savings_safe_to_save_sweep_format">Safe to Save: %1$s</string>
+    <string name="savings_underspend_buffer_format">Underspend: %1$s • Buffer: %2$s</string>
+    <string name="savings_confidence_high">High confidence</string>
+    <string name="savings_confidence_good">Good confidence</string>
+    <string name="savings_confidence_prefix_format">✓ %1$s</string>
+    <string name="savings_suggested_allocation">Suggested allocation:</string>
+    <string name="savings_sweep_to_goals">Sweep to Goals</string>
+    <string name="savings_progress_label_format">Progress: %1$s%%</string>
+    
+    <!-- Warranty Tracker -->
+    <string name="screen_warranty_tracker">Warranty Tracker</string>
+    <string name="warranty_summary_active">Active</string>
+    <string name="warranty_summary_expiring">Expiring Soon</string>
+    <string name="warranty_summary_protected_value">Protected Value</string>
+    <string name="warranty_protected_value">Protected Value: %1$s</string>
+    <string name="warranty_protected_value_format">€%1$.2f</string>
+    <string name="warranty_filter_all">All</string>
+    <string name="warranty_filter_active">Active</string>
+    <string name="warranty_filter_expired">Expired</string>
+    <string name="warranty_badge_expired">EXPIRED</string>
+    <string name="warranty_days_left_format">%1$d days left</string>
+    <string name="warranty_expires_date">Expires: %1$s</string>
+    <string name="warranty_action_mark_claimed">Mark Claimed</string>
+    <string name="warranty_action_delete">Delete</string>
+    <string name="warranty_support_phone">Support Phone</string>
+    <string name="warranty_empty_title">No warranties tracked</string>
+    <string name="warranty_empty_message">Scan receipts to automatically detect warranties</string>
+    
+    <!-- F1: Warranty Auto-Detection -->
+    <string name="warranty_auto_detected_count">%1$d auto-detected</string>
+    <string name="warranty_needs_review_count">%1$d needs review</string>
+    <string name="warranty_review_button">Review</string>
+    <string name="warranty_filter_auto">Auto</string>
+    <string name="warranty_badge_auto_detected">Auto-detected from receipt</string>
+    <string name="warranty_badge_needs_review">Needs Review</string>
+    <string name="warranty_confidence_format">Confidence: %1$d%%</string>
+    <string name="warranty_action_confirm">Confirm</string>
+    <string name="warranty_action_reject">Reject</string>
+    <string name="warranty_manual_add_title">Add Warranty Manually</string>
+    <string name="warranty_manual_product_name">Product name</string>
+    <string name="warranty_manual_merchant_name">Merchant</string>
+    <string name="warranty_manual_purchase_date">Purchase date</string>
+    <string name="warranty_manual_duration_months">Warranty duration (months)</string>
+    <string name="warranty_manual_support_phone_optional">Support phone (optional)</string>
+    
+    <!-- Receipt Matching -->
+    <string name="screen_receipt_matching">Receipt Matching</string>
+    <string name="receipt_stat_unmatched">Unmatched</string>
+    <string name="receipt_stat_suggestions">Suggestions</string>
+    <string name="receipt_stat_auto_matched">Auto-Matched</string>
+    <string name="receipt_action_auto_match">Auto-Match</string>
+    <string name="receipt_action_approve">Approve</string>
+    <string name="receipt_action_reject">Reject</string>
+    <string name="receipt_section_suggestions">Match Suggestions</string>
+    <string name="receipt_label_suggested_match">Suggested Match:</string>
+    <string name="receipt_label_unknown">Unknown</string>
+    <string name="receipt_confidence_format">%1$d%%</string>
+    <string name="receipt_receipt_total">Total: %1$s</string>
+    <string name="receipt_suggested_match_details">Match Details</string>
+    <string name="receipt_empty_title">No match suggestions</string>
+    <string name="receipt_empty_message">Scan receipts to see match suggestions here</string>
+    <string name="receipt_section_unmatched_queue">Unmatched Receipts</string>
+    <string name="receipt_action_manual_match">Manual Match</string>
+    <string name="receipt_action_skip">Skip</string>
+    <string name="receipt_action_rerun">Re-run</string>
+    <string name="receipt_manual_match_title">Manual Match Receipt</string>
+    <string name="receipt_manual_match_target">Receipt: %1$s • %2$s</string>
+    <string name="receipt_manual_match_no_candidates">No candidate expenses found nearby in time.</string>
+    
+    <!-- Split Templates -->
+    <string name="screen_split_templates">Split Templates</string>
+    <string name="split_action_new_template">New Template</string>
+    <string name="split_action_set_default">Set Default</string>
+    <string name="split_action_edit">Edit</string>
+    <string name="split_action_delete">Delete</string>
+    <string name="split_action_create_template">Create Template</string>
+    <string name="split_dialog_delete_title">Delete Template?</string>
+    <string name="split_dialog_delete_message_format">Are you sure you want to delete %1$s?</string>
+    <string name="split_dialog_cannot_undo">This cannot be undone</string>
+    <string name="split_label_participants">Participants:</string>
+    <string name="split_template_people_type">%1$d people</string>
+    <string name="split_label_default_template">Default template</string>
+    <string name="split_empty_title">No Split Templates</string>
+    <string name="split_empty_message">Create templates for quick splitting with your regular groups</string>
+    
+    <!-- Category Screen -->
+    <string name="screen_manage_categories">Manage Categories</string>
+    <string name="category_fab_add">Add new category</string>
+    <string name="category_dialog_new_title">New Category</string>
+    <string name="category_dialog_label_name">Name</string>
+    <string name="category_dialog_label_icon">Icon (Emoji)</string>
+    <string name="category_dialog_label_color">Color (Hex)</string>
+    <string name="category_error_name_empty">Name cannot be empty</string>
+    <string name="category_error_invalid_characters">Invalid characters</string>
+    <string name="category_error_invalid_color">Invalid color format</string>
+    <string name="category_error_hex_format">Use #RRGGBB format</string>
+    <string name="category_label_default">Default</string>
+    <string name="category_action_add">Add</string>
+    
+    <!-- Cash Flow Calendar -->
+    <string name="screen_cash_flow_calendar">Cash Flow Calendar</string>
+    <string name="calendar_nav_previous">Previous</string>
+    <string name="calendar_nav_next">Next</string>
+    <string name="calendar_nav_today">Today</string>
+    <string name="calendar_weekday_sun">Sun</string>
+    <string name="calendar_weekday_mon">Mon</string>
+    <string name="calendar_weekday_tue">Tue</string>
+    <string name="calendar_weekday_wed">Wed</string>
+    <string name="calendar_weekday_thu">Thu</string>
+    <string name="calendar_weekday_fri">Fri</string>
+    <string name="calendar_weekday_sat">Sat</string>
+    <string name="calendar_alert_bills_due">⚠️ %1$d bills due this month</string>
+    <string name="calendar_label_starting_balance">Starting Balance (€)</string>
+    <string name="debug_quantity_format">%1$d items</string>
+    <string name="debug_phase_">Phase: %1$s</string>
+    <string name="debug_recent_ai_events">Recent AI Events</string>
+    <string name="debug_filter_blocked_apps">Blocked Apps</string>
+    <string name="debug_phase_4a_rollout">Phase 4A Rollout</string>
+    <string name="debug_categorization_title">Categorization Debug</string>
+    <string name="debug_preprocessing">Pre-Processing</string>
+    <string name="debug_postprocessing">Post-Processing</string>
+    <string name="debug_ml_model">ML Model</string>
+    <string name="debug_rules_engine">Rules Engine</string>
+    <string name="debug_confidence">Confidence</string>
+    <string name="debug_category_predicted">Category Predicted</string>
+    <string name="debug_category_actual">Category Actual</string>
+    <string name="debug_match">Match</string>
+    <string name="debug_mismatch">Mismatch</string>
+    <string name="screen_bank_connections">Bank Connections</string>
+    <string name="price_empty_no_drops_message">No price drops found</string>
+    <string name="price_empty_no_protected_message">No items protected</string>
+    <string name="price_empty_no_deals_message">No active deals</string>
+    <string name="price_action_required">Action required: %1$s</string>
+    <string name="screen_investment_portfolio">Investment Portfolio</string>
+    
+    <!-- Lifestyle Inflation Screen -->
+    <string name="label_no_data">N/A</string>
+    <string name="lifestyle_title">Lifestyle Inflation</string>
+    <string name="lifestyle_period_format">%1$d months</string>
+    <string name="lifestyle_creep_alerts_title">⚠️ Lifestyle Creep Alerts</string>
+    <string name="lifestyle_recommendations_title">💡 Recommendations</string>
+    <string name="lifestyle_analysis_title">Lifestyle Inflation Analysis</string>
+    <string name="lifestyle_inflation_rate">inflation rate</string>
+    <string name="lifestyle_deflation_rate">deflation rate</string>
+    <string name="lifestyle_status_high_inflation">⚠️ Your lifestyle is inflating faster than your income</string>
+    <string name="lifestyle_status_moderate_inflation">⚡ Spending is growing slightly faster than income</string>
+    <string name="lifestyle_status_controlled">✅ Your lifestyle inflation is well controlled</string>
+    <string name="lifestyle_status_deflation">🎉 Great! You\'re spending less even with stable/increased income</string>
+    <string name="lifestyle_income_growth">Income Growth</string>
+    <string name="lifestyle_spending_growth">Spending Growth</string>
+    <string name="lifestyle_savings_rate">Savings Rate</string>
+    <string name="lifestyle_relationship_title">Income-Spending Relationship</string>
+    <string name="lifestyle_correlation">Correlation</string>
+    <string name="lifestyle_income_elasticity">Income Elasticity</string>
+    <string name="lifestyle_elasticity_high_format">⚠️ For every 1%% income ↑, spending ↑ %1$s%%</string>
+    <string name="lifestyle_elasticity_moderate">⚡ Spending grows faster than income</string>
+    <string name="lifestyle_elasticity_controlled">✅ Spending growth is under control</string>
+    <string name="lifestyle_income_format">Income: +%1$.1f%%</string>
+    <string name="lifestyle_spending_format">Spending: +%1$.1f%%</string>
+    <string name="lifestyle_discretionary_format">Discretionary: +%1$.1f%%</string>
+    <string name="lifestyle_monthly_breakdown">Monthly Breakdown</string>
+    <string name="lifestyle_legend_essential">Essential</string>
+    <string name="lifestyle_legend_discretionary">Discretionary</string>
+    <string name="lifestyle_legend_savings">Savings</string>
+    <string name="lifestyle_action_items">Action Items:</string>
+    <string name="lifestyle_hedonic_score">Hedonic Adaptation Score</string>
+    <string name="lifestyle_hedonic_high">High volatility in discretionary spending suggests hedonic treadmill - each purchase brings less satisfaction</string>
+    <string name="lifestyle_hedonic_moderate">Moderate spending variation - watch for lifestyle inflation patterns</string>
+    <string name="lifestyle_hedonic_controlled">Stable discretionary spending habits - good control over lifestyle inflation</string>
+    <string name="lifestyle_no_data_title">No Data Available</string>
+    <string name="lifestyle_no_data_subtitle">Add income and spending transactions to see lifestyle inflation analysis</string>
+    <string name="lifestyle_retry_button">Retry Analysis</string>
+    <string name="lifestyle_creep_severity_high">High</string>
+    <string name="lifestyle_creep_severity_medium">Medium</string>
+    <string name="lifestyle_creep_severity_low">Low</string>
+    <string name="lifestyle_recommendation_priority_high">High</string>
+    <string name="lifestyle_recommendation_priority_medium">Medium</string>
+    <string name="lifestyle_recommendation_priority_low">Low</string>
+    <string name="lifestyle_savings_prompt_title">Boost Your Savings</string>
+    <string name="lifestyle_savings_prompt_body_format">Lifestyle inflation detected at %1$s. Consider redirecting some of that spending growth toward your savings goals.</string>
+    <string name="lifestyle_savings_prompt_action">Increase Savings Rate</string>
+    
+    <!-- Bill Negotiation Screen -->
+    <string name="bill_negotiation_title">Bill Negotiation</string>
+    <string name="bill_negotiation_potential_savings">Potential Savings</string>
+    <string name="bill_negotiation_savings_subtitle_format">per year from %1$d negotiable bills</string>
+    <string name="bill_negotiation_current_label">Current</string>
+    <string name="bill_negotiation_target_label">Target</string>
+    <string name="bill_negotiation_save_label">Save</string>
+    <string name="bill_negotiation_per_month">/month</string>
+    <string name="bill_negotiation_success_probability_format">Success Probability: %1$d%%</string>
+    <string name="bill_negotiation_alternatives_format">Alternatives: %1$s</string>
+    <string name="bill_negotiation_view_script">View Script</string>
+    <string name="bill_negotiation_record_outcome">Record Outcome</string>
+    <string name="bill_negotiation_script_title">Negotiation Script</string>
+    <string name="bill_negotiation_opening">Opening</string>
+    <string name="bill_negotiation_key_talking_points">Key Talking Points</string>
+    <string name="bill_negotiation_mention_offers">Mention These Offers:</string>
+    <string name="bill_negotiation_closing_statement">Closing Statement</string>
+    <string name="bill_negotiation_fallback_ask">If They Say No</string>
+    <string name="bill_negotiation_record_outcome_title">Record Negotiation Outcome</string>
+    <string name="bill_negotiation_service_label_format">Service: %1$s</string>
+    <string name="bill_negotiation_outcome_label">Outcome</string>
+    <string name="bill_negotiation_actual_savings_label">Actual Monthly Savings</string>
+    <string name="bill_negotiation_savings_placeholder">e.g., 15.00</string>
+    <string name="bill_negotiation_notes_label">Notes (optional)</string>
+    <string name="bill_negotiation_notes_placeholder">e.g., Called provider, mentioned competitor offer…</string>
+    <string name="bill_negotiation_empty_title">No Negotiation Opportunities</string>
+    <string name="bill_negotiation_empty_subtitle">Your current bills are already at competitive rates. Great job managing your subscriptions!</string>
+    <string name="bill_negotiation_duration_format">Duration: %1$s</string>
+    <string name="bill_negotiation_discount_percent_format">%1$.0f%% off</string>
+    <string name="negotiation_outcome_success">Successful - Got discount</string>
+    <string name="negotiation_outcome_partial">Partial - Some improvement</string>
+    <string name="negotiation_outcome_failed">Failed - No change</string>
+    <string name="negotiation_outcome_cancelled">Cancelled service instead</string>
+    <string name="negotiation_outcome_pending">Still in progress</string>
+    
+    <!-- Budget Forecasting Screen -->
+    <string name="budget_forecast_title">Budget Forecast</string>
+    <string name="budget_forecast_refresh_cd">Refresh Forecast</string>
+    <string name="budget_forecast_ai_recommendations">AI Recommendations</string>
+    <string name="budget_forecast_risk_on_track">On Track</string>
+    <string name="budget_forecast_risk_caution">Caution</string>
+    <string name="budget_forecast_risk_high">High Risk</string>
+    <string name="budget_forecast_risk_critical">Critical</string>
+    <string name="budget_forecast_desc_on_track">You\'re predicted to stay well under budget</string>
+    <string name="budget_forecast_desc_caution">You might come close to your budget limit</string>
+    <string name="budget_forecast_desc_high">High risk of exceeding your budget</string>
+    <string name="budget_forecast_desc_critical">Very likely to exceed your budget</string>
+    <string name="budget_forecast_overspend_probability_format">Overspend Probability: %1$d%%</string>
+    <string name="budget_forecast_card_title">Budget Forecast</string>
+    <string name="budget_forecast_limit_label">Budget Limit</string>
+    <string name="budget_forecast_predicted_spending">Predicted Spending</string>
+    <string name="budget_forecast_predicted_remaining">Predicted Remaining</string>
+    <string name="budget_forecast_ai_confidence">AI Confidence</string>
+    <string name="budget_forecast_confidence_high">High Confidence</string>
+    <string name="budget_forecast_confidence_medium">Medium Confidence</string>
+    <string name="budget_forecast_confidence_low">Low Confidence</string>
+    <string name="budget_forecast_tracking_hint">Keep tracking expenses for more accurate predictions</string>
+    <string name="budget_forecast_potential_savings_format">Potential Savings: %1$s</string>
+    <string name="budget_forecast_suggested_actions">Suggested Actions:</string>
+    <string name="budget_forecast_empty_title">No forecast available</string>
+    
+    <!-- Natural Language Search Screen -->
+    <string name="nlp_search_title">Smart Search</string>
+    <string name="nlp_search_label">Ask about your spending…</string>
+    <string name="nlp_search_placeholder">e.g., "How much did I spend at restaurants last month?"</string>
+    <string name="nlp_search_voice_cd">Voice search (Coming soon)</string>
+    <string name="nlp_try_asking">Try asking:</string>
+    <string name="nlp_example_total_week">Total spent this week</string>
+    <string name="nlp_example_restaurants">Restaurants over €50</string>
+    <string name="nlp_example_groceries">Groceries in January</string>
+    <string name="nlp_example_gas">Gas stations last month</string>
+    <string name="nlp_understanding">Understanding your question…</string>
+    <string name="nlp_total_label">Total</string>
+    <string name="nlp_transactions_count_format">%1$d transactions</string>
+    <string name="nlp_understood_label">I understood:</string>
+    <string name="nlp_confidence_format">%1$d%% confidence</string>
+    <string name="nlp_amount_over_format">Over €%1$.0f</string>
+    <string name="nlp_amount_under_format">Under €%1$.0f</string>
+    <string name="nlp_amount_exactly_format">€%1$.0f</string>
+    <string name="nlp_amount_between_format">€%1$.0f+</string>
+    <string name="nlp_no_results">No transactions found</string>
+    <string name="nlp_initial_title">Ask about your spending</string>
+    <string name="nlp_initial_subtitle">Search using natural language\nlike "restaurants over €50 last month"</string>
+    
+    <!-- Spending Challenges Screen -->
+    <string name="challenges_title">Spending Challenges</string>
+    <string name="challenges_create_cd">Create Challenge</string>
+    <string name="challenges_active_section">Active Challenges</string>
+    <string name="challenges_streak_format">%1$d Day%2$s Streak</string>
+    <string name="challenges_streak_suffix_single"></string>
+    <string name="challenges_streak_suffix_plural">s</string>
+    <string name="challenges_no_spend_today">🔥 No spending today! Keep it up!</string>
+    <string name="challenges_saved_today_format">Saved today: %1$s</string>
+    <string name="challenges_7day_achievement">7-Day Streak Achievement!</string>
+    <string name="challenges_start_streak">Start a no-spend streak today!</string>
+    <string name="challenges_unavailable_title">Active challenges unavailable</string>
+    <string name="challenges_unavailable_message">This build does not have a persisted active-challenges source yet.</string>
+    <string name="challenges_target_reduce_with_baseline_format">Baseline %1$s, reduce by %2$s</string>
+    <string name="challenges_target_reduce_format">Reduce spend by %1$s</string>
+    <string name="challenges_target_generic_format">Target: %1$s</string>
+    <string name="challenges_progress_window_format">%1$d%% through challenge window</string>
+    <string name="challenges_form_name_label">Challenge name</string>
+    <string name="challenges_form_type_label">Challenge type</string>
+    <string name="challenges_form_duration_label">Duration (days)</string>
+    <string name="challenges_form_reduce_by_amount_label">Reduce by amount</string>
+    <string name="challenges_form_target_amount_label">Target amount</string>
+    <string name="challenges_form_category_label">Category</string>
+    <string name="challenges_type_no_spend">No Spend</string>
+    <string name="challenges_type_budget_limit">Budget Limit</string>
+    <string name="challenges_type_reduce_spending">Reduce Spending</string>
+    <string name="challenges_type_category_specific">Category Specific</string>
+    
+    <!-- Spending Map Screen -->
+    <string name="map_center_my_location_cd">Center map on my current location</string>
+    <string name="map_enable_location_cd">Enable location permission to center map on my location</string>
+    <string name="map_multiple_shops">Multiple shops found — pick the right one:</string>
+    <string name="map_close_button">Close</string>
+    <string name="map_reresolve_button">Re-resolve</string>
+    <string name="map_correct_pin_button">Correct pin</string>
+    <string name="map_stats_format">%1$d located · %2$d without location</string>
+    <string name="map_unlocated_expenses_format">%1$d unlocated expense%2$s</string>
+    <string name="map_unlocated_suffix_single"></string>
+    <string name="map_unlocated_suffix_plural">s</string>
+    <string name="map_no_address">No address</string>
+    <string name="map_pin_expense_cd">Pin this expense</string>
+    <string name="map_pin_expense_title">Pin expense</string>
+    <string name="map_source_format">Source: %1$s</string>
+    <string name="map_top_spending_places">Top spending places</string>
+    <string name="map_focused_location">Focused location</string>
+    <string name="map_filter_date_range">Date range</string>
+    <string name="map_filter_clear">Clear filters</string>
+    <string name="map_filter_all_dates">All</string>
+    <string name="map_filter_7_days">7d</string>
+    <string name="map_filter_30_days">30d</string>
+    <string name="map_filter_90_days">90d</string>
+    <string name="map_filter_categories">Categories</string>
+    <string name="map_filter_uncategorized">Uncategorized</string>
+    
+    <!-- Add Expense Sheet -->
+    <string name="add_expense_not_mine">Not mine (belongs to someone else)</string>
+    <string name="add_expense_owner_name_placeholder">Owner name (e.g., Partner, Roommate)</string>
+    <string name="add_expense_shared">Shared expense (split with someone)</string>
+    <string name="add_expense_shared_with_label">Shared with (name)</string>
+    <string name="add_expense_my_share_label">My share %</string>
+    <string name="add_expense_or_amount_label">Or amount</string>
+    <string name="add_expense_share_placeholder">e.g., 50</string>
+    <string name="add_expense_amount_placeholder_short">e.g., 25.00</string>
+    <string name="add_expense_transfer_direction">Transfer direction</string>
+    <string name="add_expense_incoming">Incoming (to me)</string>
+    <string name="add_expense_outgoing">Outgoing (from me)</string>
+    <string name="add_expense_account_name_label">Account/Person name</string>
+    <string name="add_expense_account_placeholder">e.g., Savings account, John, Bank transfer</string>
+    <string name="add_expense_error_format">❌ %1$s</string>
+    <string name="add_expense_amount_cd">Amount field, current value %1$s Euro</string>
+    <string name="add_expense_payment_method_cd_format">%1$s payment method, %2$s</string>
+    <string name="add_expense_category_cd_format">%1$s category, %2$s</string>
+    <string name="add_expense_category_icon_cd">%1$s icon</string>
+    <string name="add_expense_date_selector_cd_format">Date selector, current date %1$s, double tap to change</string>
+    <string name="add_expense_selected">selected</string>
+    <string name="add_expense_not_selected">not selected</string>
+    <string name="feature_quick_actions_title">Quick Actions</string>
+    <string name="feature_budget_tools_title">Budget Tools</string>
+    
+    <string name="analytics_screen_title">Financial Insights</string>
+    
+    <string name="ai_settings_title">AI Settings</string>
+    
+    <string name="budget_view_ai_forecast">View AI Forecast</string>
+    
+    <string name="recurring_screen_title">Manage Upcoming</string>
+    <string name="recurring_tab_recurring">Recurring</string>
+    <string name="recurring_tab_planned">Planned</string>
+    
+    <!-- Recurring Expenses Screen -->
+    <string name="recurring_back_cd">Back</string>
+    <string name="recurring_tab_cd_format">%1$s tab, %2$s</string>
+    <string name="recurring_tab_selected">selected</string>
+    <string name="recurring_tab_not_selected">not selected</string>
+    <string name="recurring_empty_recurring_cd">No recurring expenses found</string>
+    <string name="recurring_empty_recurring_title">No recurring expenses found.</string>
+    <string name="recurring_empty_planned_cd">No planned expenses found</string>
+    <string name="recurring_empty_planned_title">No planned expenses found.</string>
+    <string name="recurring_planned_item_cd_format">%1$s, €%2$.2f, %3$s priority</string>
+    <string name="recurring_date_label">Date: %1$s</string>
+    <string name="recurring_delete_planned_cd_format">Delete planned expense %1$s</string>
+    <string name="recurring_item_confirmed_cd">Confirmed recurring expense</string>
+    <string name="recurring_item_suggested_cd">Suggested pattern, tap to confirm</string>
+    <string name="recurring_next_label">Next: %1$s</string>
+    <string name="recurring_confirm_pattern">Confirm Pattern</string>
+    <string name="recurring_confirm_cd_format">Confirm recurring pattern for %1$s</string>
+    <string name="recurring_delete_rule_cd_format">Delete recurring rule for %1$s</string>
+    
+    <!-- AI Settings Screen -->
+    <string name="ai_back_cd">Back</string>
+    <string name="ai_refreshing_cd">Refreshing runtime status</string>
+    <string name="ai_refresh_button_cd">Refresh AI runtime status</string>
+    <string name="ai_refresh">Refresh</string>
+    <string name="ai_section_general">General</string>
+    <string name="ai_section_general_desc">Control whether AI is active at all and which providers may be used.</string>
+    <string name="ai_toggle_enable">Enable AI</string>
+    <string name="ai_toggle_cloud">Allow cloud AI</string>
+    <string name="ai_toggle_on_device">Allow on-device AI</string>
+    <string name="ai_section_preferred_mode">Preferred Mode</string>
+    <string name="ai_section_preferred_mode_desc">Choose how the app should prefer local and cloud AI when both are available.</string>
+    <string name="ai_section_provider">AI Provider &amp; API Key</string>
+    <string name="ai_section_provider_desc">Configure cloud provider credentials and verify connectivity before using cloud AI features.</string>
+    <string name="ai_provider_label">Provider: %1$s</string>
+    <string name="ai_api_key_label">API key</string>
+    <string name="ai_api_key_placeholder">Enter Gemini API key</string>
+    <string name="ai_api_key_saved_masked">Saved key: ••••••••••••••••••••</string>
+    <string name="ai_api_key_secure_note">Stored securely in encrypted device storage (Android Keystore).</string>
+    <string name="ai_show_api_key_cd">Show API key</string>
+    <string name="ai_hide_api_key_cd">Hide API key</string>
+    <string name="ai_save_api_key">Save key</string>
+    <string name="ai_test_connection">Test connection</string>
+    <string name="ai_testing_connection">Testing…</string>
+    <string name="ai_mode_auto">Automatic</string>
+    <string name="ai_mode_on_device">On-device</string>
+    <string name="ai_mode_cloud">Cloud</string>
+    <string name="ai_mode_cd_format">%1$s mode, %2$s</string>
+    <string name="ai_section_capability">Capability Matrix</string>
+    <string name="ai_section_capability_desc">See feature enablement and on-device readiness together for each AI capability.</string>
+    <string name="ai_capability_assistant">Assistant</string>
+    <string name="ai_capability_query">Query interpretation</string>
+    <string name="ai_capability_dashboard">Dashboard briefing</string>
+    <string name="ai_capability_review">Review explanation</string>
+    <string name="ai_capability_receipt">Receipt assist</string>
+    <string name="ai_capability_warranty_extraction">Warranty extraction</string>
+    <string name="ai_toggle_receipt_image">Allow receipt image for cloud assist</string>
+    <string name="ai_receipt_image_desc">When enabled, cloud receipt assist may inspect the saved receipt image in addition to OCR text for harder scans like Greek receipts. This stays suggestion-only and never saves automatically.</string>
+    <string name="ai_capability_categorization">Categorization fallback</string>
+    <string name="ai_capability_duplicate">Duplicate detection</string>
+    <string name="ai_capability_location_summary">Location summary</string>
+    <string name="ai_capability_notification_parse">Notification parsing</string>
+    <string name="ai_capability_review_prioritization">Review prioritization</string>
+    <string name="ai_capability_semantic_dedupe">Semantic duplicate detection</string>
+    <string name="ai_capability_receipt_item_cat">Receipt item categorization</string>
+    <string name="ai_capability_receipt_item_categorization">Receipt item categorization</string>
+    <string name="assistant_cancel_query">Cancel</string>
+    <string name="assistant_clear_history_title">Clear all history?</string>
+    <string name="assistant_clear_history_message">This will permanently delete all conversation history. This cannot be undone.</string>
+    
+    <!-- AI Settings Screen (continued) -->
+    <string name="ai_section_privacy">Privacy</string>
+    <string name="ai_section_privacy_desc">Control what can leave the device and how cloud calls are constrained.</string>
+    <string name="ai_toggle_redact">Redact before cloud</string>
+    <string name="ai_toggle_wifi_only">Wi-Fi only for cloud</string>
+    <string name="ai_toggle_store_history">Store conversation history</string>
+    <string name="ai_section_experimental">Phase 4A Experimental</string>
+    <string name="ai_section_experimental_desc">Turn on the first guarded automation features. These stay opt-in and keep final confirmation or read-only behavior.</string>
+    <string name="ai_toggle_proactive">Proactive AI briefings</string>
+    <string name="ai_toggle_quick_save">Receipt quick save</string>
+    <string name="ai_toggle_quick_approve">Review quick approve</string>
+    <string name="ai_experimental_desc">Receipt quick save and review quick approve stay behind confirmation and still use the existing validation and approval paths.</string>
+    <string name="ai_section_runtime">Runtime Status</string>
+    <string name="ai_section_runtime_desc">See whether on-device AI is ready, downloading, or unavailable per capability.</string>
+    <string name="ai_runtime_context_title">Runtime context</string>
+    <string name="ai_runtime_network_format">Network: %1$s</string>
+    <string name="ai_network_available">available</string>
+    <string name="ai_network_offline">offline</string>
+    <string name="ai_runtime_wifi_format">Wi-Fi: %1$s</string>
+    <string name="ai_wifi_connected">connected</string>
+    <string name="ai_wifi_not_connected">not connected</string>
+    <string name="ai_runtime_last_refreshed_format">Last refreshed: %1$s</string>
+    <string name="ai_status_ready">Ready</string>
+    <string name="ai_status_needs_attention">Needs attention</string>
+    <string name="ai_status_disabled">Disabled in settings</string>
+    <string name="ai_status_not_loaded">Runtime status not loaded</string>
+    <string name="ai_guidance_title">What to do next</string>
+    <string name="ai_guidance_cloud_with_message_format">%1$s Cloud routing can still handle advisory features when your mode and privacy settings allow it.</string>
+    <string name="ai_guidance_cloud_enabled">Cloud AI is enabled, so advisory features can still run even if on-device AI is unavailable on this device.</string>
+    <string name="ai_guidance_default">If a capability is marked Ready, on-device AI can be used immediately when allowed by settings and routing.</string>
+    <string name="ai_cloud_fallback_hint">Cloud fallback available</string>
+    <string name="ai_toggle_cd_format">%1$s, %2$s, double tap to toggle</string>
+    <string name="ai_toggle_enabled">enabled</string>
+    <string name="ai_toggle_disabled">disabled</string>
+    <string name="ai_capability_cd_format">%1$s, %2$s, Status: %3$s</string>
+    
+    <!-- Analytics Screen -->
+    <string name="analytics_insufficient_data">Insufficient data for visualization</string>
+    <string name="analytics_insufficient_data_short">Insufficient data</string>
+    <string name="analytics_section_spending_habits">Spending Habits</string>
+    <string name="analytics_section_spending_habits_subtitle">When &amp; how you spend</string>
+    <string name="analytics_section_category_breakdown">Category Breakdown</string>
+    <string name="analytics_section_category_breakdown_subtitle">Budget vs Actual &amp; Trends</string>
+    <string name="analytics_section_breakdown_category">Breakdown by Category</string>
+    <string name="analytics_section_budget_vs_actual">Budget vs Actual</string>
+    <string name="analytics_section_deep_insights">Deep Insights</string>
+    <string name="analytics_section_merchant_intelligence">Merchant Intelligence</string>
+    <string name="analytics_section_merchant_intelligence_subtitle">Top places &amp; loyalty stats</string>
+    <string name="analytics_section_top_merchants">Top Merchants</string>
+    <string name="analytics_section_top_places">Top Spending Places</string>
+    <string name="analytics_section_top_places_subtitle">Where you spend the most</string>
+    <string name="analytics_section_spending_by_area">Spending by Area</string>
+    <string name="analytics_section_spending_by_area_subtitle">Neighbourhood breakdown</string>
+    <string name="analytics_section_travel_vs_home">Travel vs Home Spending</string>
+    <string name="analytics_section_travel_vs_home_subtitle">How far your money goes</string>
+    <string name="analytics_section_velocity_anomalies">Spending Velocity Anomalies</string>
+    <string name="analytics_section_yoy_comparison">Year-over-Year Comparison</string>
+    <string name="analytics_section_post_salary">Post-Salary Spending Patterns</string>
+    <string name="analytics_section_suspect_duplicates">Possible Errors &amp; Duplicates</string>
+    <string name="analytics_section_personality_profile">Your Spending Personality</string>
+    <string name="analytics_section_subscription_detection">Subscription Detection</string>
+    <string name="analytics_stat_daily_average">DAILY AVERAGE</string>
+    <string name="analytics_stat_largest_spend">LARGEST SPEND</string>
+    <string name="analytics_stat_consistency">SPENDING CONSISTENCY</string>
+    <string name="analytics_consistency_very_consistent">Very Consistent</string>
+    <string name="analytics_consistency_normal">Normal Variable</string>
+    <string name="analytics_consistency_highly_volatile">Highly Volatile</string>
+    <string name="analytics_transactions_format">%1$d transactions</string>
+    <string name="analytics_budget_percent_format">%1$d%% of budget</string>
+    <string name="analytics_percent_used_format">%1$d%% used</string>
+    <string name="analytics_spending_weekend_format">You spend %1$.1fx more on weekends</string>
+    <string name="analytics_spending_distribution">Spending Distribution</string>
+    <string name="analytics_spending_by_hour">Spending by Hour of Day</string>
+    <string name="analytics_spending_by_dow">Spending by Day of Week</string>
+    <string name="analytics_peak_spending_format">Peak spending at %1$s (%2$s)</string>
+    <string name="analytics_peak_most_format">Most: %1$s (%2$s)</string>
+    <string name="analytics_peak_least_format">Least: %1$s (%2$s)</string>
+    <string name="analytics_hour_midnight">midnight</string>
+    <string name="analytics_hour_noon">noon</string>
+    <string name="analytics_budget_utilization">BUDGET UTILIZATION</string>
+    <string name="analytics_budget_range_format">%1$s / %2$s</string>
+    <string name="analytics_period_selector_cd_format">%1$s period, %2$s</string>
+    <string name="analytics_total_transactions_format">%1$d transactions recorded in this period.</string>
+    <string name="analytics_vs_last_period_format">vs. %1$s last period</string>
+    <string name="analytics_change_percent_format">%1$s%2$.1f%% vs last period</string>
+    <string name="analytics_change_increase">+</string>
+    <string name="analytics_change_decrease"></string>
+    <string name="analytics_visitor_type_format">%1$s visitor · %2$s spend</string>
+    <string name="analytics_merchant_prices_format">Prices: %1$s%2$.1f%%</string>
+    <string name="analytics_stat_micro_avg_visit">Avg Visit</string>
+    <string name="analytics_stat_micro_loyalty">Loyalty</string>
+    <string name="analytics_stat_micro_next_expected">Next Expected</string>
+    <string name="analytics_next_expected_soon">Soon</string>
+    <string name="analytics_next_expected_days_format">%1$d days</string>
+    <string name="analytics_chart_12am">12a</string>
+    <string name="analytics_chart_12pm">12p</string>
+    <string name="analytics_percent_of_total_format">%1$d%% of total spending  ·  %2$d transactions</string>
+    <string name="analytics_visits_avg_format">%1$d visits · avg %2$s/visit</string>
+    <string name="analytics_conversion_warning_title">Some analytics totals are partial</string>
+    <string name="analytics_conversion_warning_count_format">%1$d excluded transaction(s)</string>
+    
+    <!-- Feature Integration - Menu Items -->
+    <string name="menu_investment_portfolio">Investment Portfolio</string>
+    <string name="menu_bank_connections">Bank Connections</string>
+    <string name="menu_bill_reminders">Bill Reminders</string>
+    <string name="menu_spending_challenges">Spending Challenges</string>
+    <string name="menu_advanced_analytics">Advanced Analytics</string>
+    
+    <!-- Feature Integration - Supporting Text -->
+    <string name="desc_track_investments">Track your investments</string>
+    <string name="desc_connect_banks">Connect your banks</string>
+    <string name="desc_upcoming_payments">Upcoming payments</string>
+    <string name="desc_no_spend_streaks">No-spend streaks</string>
+    <string name="desc_track_recurring">Track recurring payments</string>
+    <string name="desc_complete_challenges">Complete challenges to save</string>
+    
+    <!-- Feature Integration - Button -->
+    <string name="button_open_advanced_analytics">Open Advanced Analytics Dashboard</string>
+    
+    <!-- Budget Screen -->
+    <string name="budget_title">Budgets</string>
+    <string name="budget_add_cd">Add Budget</string>
+    <string name="budget_summary_on_track">On Track</string>
+    <string name="budget_summary_warning">Warning</string>
+    <string name="budget_summary_exceeded">Exceeded</string>
+    <string name="budget_summary_cd_format">%1$d budgets %2$s</string>
+    <string name="budget_icon_cd">Budget icon</string>
+    <string name="budget_category_icon_cd">%1$s category icon</string>
+    <string name="budget_cd_format">%1$s budget, %2$s, €%3$.2f spent of €%4$.2f limit, %5$d%% used, Status: %6$s</string>
+    <string name="budget_status_active">active</string>
+    <string name="budget_status_inactive">inactive</string>
+    <string name="budget_period_date_format">%1$s • Starts %2$s</string>
+    <string name="budget_toggle_cd_format">Budget %1$s, double tap to toggle</string>
+    <string name="budget_toggle_enabled">enabled</string>
+    <string name="budget_toggle_disabled">disabled</string>
+    <string name="budget_spent_format">€%.2f spent</string>
+    <string name="budget_limit_format">€%.2f limit</string>
+    <string name="budget_over_format">€%.2f over budget</string>
+    <string name="budget_remaining_format">€%.2f remaining</string>
+    <string name="budget_suggestion_title">Smart Suggestion</string>
+    <string name="budget_suggestion_cd_format">Smart budget suggestion for %1$s: Suggested monthly budget of €%2$.0f</string>
+    <string name="budget_suggestion_icon_cd">Suggestion</string>
+    <string name="budget_suggestion_message_format">You spend a lot on %1$s. How about a monthly budget of €%2$.0f?</string>
+    <string name="budget_suggestion_skip_cd">Skip this suggestion</string>
+    <string name="budget_suggestion_skip">Skip</string>
+    <string name="budget_suggestion_create_cd_format">Create budget for %1$s</string>
+    <string name="budget_suggestion_create">Create Budget</string>
+    <string name="budget_empty_title">No budgets set yet</string>
+    <string name="budget_empty_subtitle">Track your spending by category to save more money.</string>
+    <string name="budget_empty_cd">No budgets set yet. Track your spending by category to save more money.</string>
+    <string name="budget_set_first_cd">Set your first budget</string>
+    <string name="budget_dialog_create_title">Create Budget</string>
+    <string name="budget_dialog_edit_title">Edit Budget</string>
+    <string name="budget_amount_label">Budget Amount (€)</string>
+    <string name="budget_error_invalid_amount">Enter a valid amount greater than 0</string>
+    <string name="budget_category_label">Category</string>
+    <string name="budget_period_label">Period</string>
+    <string name="budget_rollover_label">Rollover unspent amount</string>
+    <!-- F11: Shared Expenses Budget Offset -->
+    <string name="budget_adjusted_spent_format">€%.2f adjusted spent</string>
+    <string name="budget_pending_reimbursement_format">€%.2f pending reimbursement</string>
+    <string name="budget_shared_expense_breakdown">Shared Expense Breakdown</string>
+    <string name="budget_personal_spend">Personal Spend</string>
+    <string name="budget_shared_liability">Shared Liability</string>
+    <string name="budget_reimbursed_amount">Reimbursed</string>
+    <string name="budget_net_liability">Net Liability</string>
+    <string name="budget_effective_spend">Effective Spend</string>
+    <!-- Month Short Names -->
+    <string name="month_jan_short">Jan</string>
+    <string name="month_feb_short">Feb</string>
+    <string name="month_mar_short">Mar</string>
+    <string name="month_apr_short">Apr</string>
+    <string name="month_may_short">May</string>
+    <string name="month_jun_short">Jun</string>
+    <string name="month_jul_short">Jul</string>
+    <string name="month_aug_short">Aug</string>
+    <string name="month_sep_short">Sep</string>
+    <string name="month_oct_short">Oct</string>
+    <string name="month_nov_short">Nov</string>
+    <string name="month_dec_short">Dec</string>
+    
+    <!-- Split Type Enum Mappings -->
+    <string name="split_type_equal">Equal</string>
+    <string name="split_type_percentage">Percentage</string>
+    <string name="split_type_custom_amount">Amount</string>
+    <string name="split_type_custom">Custom</string>
+    
+    <!-- Bill Negotiation -->
+    <string name="negotiation_power_strong">Strong</string>
+    <string name="negotiation_power_moderate">Moderate</string>
+    <string name="negotiation_power_weak">Weak</string>
+    <string name="negotiation_power_poor">Poor</string>
+    
+    <!-- Budget Category Selector -->
+    <string name="budget_overall_category">Overall Budget</string>
+    
+    <!-- Receipt Item Breakdown -->
+    <string name="receipt_ai_breakdown_format">AI Breakdown (%1$d items)</string>
+    <string name="receipt_select_category">Select category</string>
+    <string name="receipt_why_this_category_cd">Why this category?</string>
+    <string name="confidence_high">High</string>
+    <string name="confidence_good">Good</string>
+    <string name="confidence_low">Low</string>
+    <string name="receipt_alternative_prefix">Or:</string>
+    <string name="receipt_select_category_dialog_title">Select Category</string>
+    
+    <!-- Transaction Type Enum Mappings -->
+    <string name="transaction_type_purchase">Purchase</string>
+    <string name="transaction_type_deposit">Deposit</string>
+    <string name="transaction_type_withdrawal">Withdrawal</string>
+    <string name="transaction_type_transfer">Transfer</string>
+    <string name="transaction_type_unknown">Unknown</string>
+    
+    <!-- Recurrence Frequency Enum Mappings -->
+    <string name="recurrence_weekly">Weekly</string>
+    <string name="recurrence_biweekly">Bi-weekly</string>
+    <string name="recurrence_monthly">Monthly</string>
+    <string name="recurrence_quarterly">Quarterly</string>
+    <string name="recurrence_semi_annually">Semi-annually</string>
+    <string name="recurrence_annually">Annually</string>
+    <string name="recurrence_irregular">Irregular</string>
+    
+    <!-- Assistant Sheet -->
+    <string name="assistant_title">Assistant</string>
+    <string name="assistant_clear_session_cd">Clear current conversation</string>
+    <string name="assistant_clear_history_cd">Clear all history</string>
+    <string name="assistant_unavailable">Assistant is unavailable</string>
+    <string name="assistant_thinking">Thinking…</string>
+    <string name="assistant_retry">Retry</string>
+    <string name="assistant_input_placeholder">Ask about your expenses</string>
+    <string name="assistant_send_cd">Send</string>
+    <string name="assistant_try_asking">Try asking:</string>
+    <string name="assistant_suggestion_this_month">This month total</string>
+    <string name="assistant_suggestion_top_merchants">Top merchants</string>
+    <string name="assistant_suggestion_largest">Largest purchase</string>
+    <string name="assistant_suggestion_groceries">Show groceries</string>
+    <string name="assistant_query_this_month">How much did I spend this month?</string>
+    <string name="assistant_query_top_merchants">Top merchants this month</string>
+    <string name="assistant_query_largest_purchase">Largest purchase this month</string>
+    <string name="assistant_query_groceries">Show groceries this month</string>
+    
+    <!-- Transaction Filter Sheet -->
+    <string name="filter_transactions_title">Filter Transactions</string>
+    <string name="filter_reset_all">Reset All</string>
+    <string name="filter_transaction_type_title">Transaction Type</string>
+    <string name="filter_all_types">All Types</string>
+    <string name="filter_ownership_title">Ownership</string>
+    <string name="filter_category_title">Category</string>
+    <string name="filter_all_categories">All Categories</string>
+    <string name="filter_year_title">Year</string>
+    <string name="filter_all_years">All Years</string>
+    <string name="filter_month_title">Month</string>
+    <string name="filter_apply">Apply Filters</string>
+    <string name="filter_selected_cd">Selected</string>
+    
+    <!-- Advanced Analytics -->
+    <string name="advanced_analytics_title">Advanced Analytics</string>
+    <string name="analytics_cashflow_overview">Cashflow Overview</string>
+    <string name="analytics_income">Income</string>
+    <string name="analytics_spent">Spent</string>
+    <string name="analytics_net">Net</string>
+    <string name="analytics_insights">Insights</string>
+    <string name="analytics_top_categories">Top Categories</string>
+    <string name="analytics_percent_of_total_simple_format">%1$s%% of total</string>
+    <string name="analytics_high_spending_description">You\'ve spent %1$.1f%% of your income this period</string>
+    <string name="analytics_weekend_spending_description">Your weekend spending is higher than average weekday spending</string>
+    <string name="analytics_great_savings_description">You\'re saving %1$.1f%% of your income!</string>
+    <string name="analytics_insight_spending_up_title_format">Spending up %1$d%%</string>
+    <string name="analytics_insight_spending_up_description_format">%1$s this month vs %2$s last month</string>
+    <string name="analytics_insight_spending_down_title_format">Good job! Spending down %1$d%%</string>
+    <string name="analytics_insight_spending_down_description_format">You saved %1$s compared to last month</string>
+    <string name="analytics_insight_pace_warning_title">Spending Pace Warning</string>
+    <string name="analytics_insight_pace_warning_description_format">You\'re at %1$d days but spent %2$d%% of typical month</string>
+    <string name="analytics_insight_category_up_title_format">%1$s up %2$d%%</string>
+    <string name="analytics_insight_category_up_description_format">%1$s vs %2$s</string>
+    <string name="analytics_insight_recurring_title_format">Recurring: %1$s</string>
+    <string name="analytics_insight_recurring_description_format">%1$s ~every %2$d days</string>
+    <string name="analytics_insight_largest_transaction_title_format">Largest: %1$s</string>
+    <string name="analytics_insight_largest_transaction_description_format">%1$s on %2$s</string>
+    <string name="visual_split_amount_prefix_format">= %1$s</string>
+    <string name="bill_reminders_title">Bill Reminders</string>
+    <string name="bill_reminders_expected_monthly">Expected Monthly Bills</string>
+    <string name="bill_reminders_upcoming">Upcoming Bills</string>
+    <string name="bill_reminders_overdue">⚠️ Overdue!</string>
+    <string name="bill_reminders_due_in_days_format">Due in %1$d days</string>
+    <string name="bill_reminders_due_format">Due: %1$s</string>
+    <string name="bill_reminders_mark_paid">Mark Paid</string>
+    <string name="bill_reminders_pay_now">Pay Now</string>
+    
+    <!-- Location Search -->
+    <string name="location_google_quota_hint">uses API quota</string>
+    <string name="location_map_interaction_hint">Tap a marker to select · Long-press to drop a pin</string>
+    <string name="location_resolving_address">Resolving address…</string>
+    <string name="location_pinned_location">Pinned location</string>
+    <string name="location_hide_map">Hide map</string>
+    <string name="location_show_map">Show map</string>
+    <string name="location_advanced_hide">Hide manual coordinates</string>
+    <string name="location_advanced_show">Enter coordinates manually</string>
+    
+    <!-- Streak Widget -->
+    <string name="streak_new_record">NEW RECORD!</string>
+    <string name="streak_day">day</string>
+    <string name="streak_days">days</string>
+    <string name="streak_without_spending">without spending</string>
+    <string name="streak_start_today">Start a no-spend streak today!</string>
+    <string name="streak_dry_days">dry days</string>
+    <string name="streak_of_month_saved">of month saved</string>
+    <string name="streak_best">best streak</string>
+    <string name="streak_new_record_message">You\'ve beaten your personal best!</string>
+    <string name="streak_almost_best">Almost at your personal best!</string>
+    <string name="streak_personal_best">Personal best: %1$d days</string>
+    <string name="streak_start_streak">Start a streak!</string>
+    <string name="streak_no_spend_format">%1$d day%2$s no spend</string>
+    <string name="streak_new_record_short">New record! 🏆</string>
+    <string name="streak_best_short">Best: %1$d days</string>
+    
+    <!-- Location -->
+    <string name="location_correct_title">Correct location</string>
+    
+    <!-- Retro Components -->
+    <string name="retro_high_scores">HIGH SCORES</string>
+    <string name="retro_count_format">[%1$d/%2$d]</string>
+    <string name="retro_category_format">[%1$s]</string>
+    <string name="retro_no_transactions">[NO TRANSACTIONS]</string>
+    <string name="retro_merchant_format">&gt; %1$s</string>
+    <string name="retro_date_format">[%1$s]</string>
+    <string name="retro_budget_blocks">BUDGET BLOCKS</string>
+    <string name="retro_target_breakdown">◄ TARGET BREAKDOWN ►</string>
+    <string name="retro_actual_spending">◄ ACTUAL SPENDING ►</string>
+    <string name="retro_more_format">… and %1$d more</string>
+    
+    <!-- Spending Pace -->
+    <string name="pace_day_format">Day %1$d/%2$d</string>
+    
+    <!-- Financial Cards -->
+    <string name="financial_weather_title">FINANCIAL WEATHER</string>
+    <string name="dashboard_briefing_overall">Overall</string>
+    <string name="financial_upcoming">UPCOMING (NEXT 30 DAYS)</string>
+    <string name="financial_runway_title">FINANCIAL RUNWAY</string>
+    <string name="financial_runway_days">days</string>
+    <string name="chart_total">Total</string>
+    <string name="chart_category_split_label">CATEGORY SPLIT</string>
+    <string name="chart_no_category_data_title">No category data yet</string>
+    <string name="chart_no_category_data_subtitle">Add a few categorized transactions to see your spending split.</string>
+    
+    <!-- Debug Screens -->
+    <string name="debug_error_review_not_found">Review not found</string>
+    <string name="debug_error_review_already_processed">Review already processed</string>
+    <string name="debug_error_amount_greater_than_zero">Amount must be greater than zero</string>
+    <string name="debug_error_amount_exceeds_limit">Amount exceeds limit</string>
+    <string name="debug_characters_lines_format">Characters: %1$d | Lines: %2$d</string>
+    <string name="debug_categorization_uncategorized">UNCATEGORIZED</string>
+    
+    <!-- AI Assist Cards -->
+    <string name="ai_receipt_assist_title">AI Receipt Assist</string>
+    <string name="ai_receipt_assist_subtitle">Review suggestions before saving. They only update the local draft.</string>
+    <string name="ai_receipt_assist_cloud_hint">Cloud receipt assist may also use the saved receipt image when that opt-in is enabled.</string>
+    <string name="ai_notes_label">AI notes</string>
+    <string name="ai_note_bullet_format">• %1$s</string>
+    <string name="ai_receipt_apply">Apply</string>
+    <string name="ai_receipt_apply_all">Apply all</string>
+    <string name="ai_receipt_tax_hint_format">Tax hint: %1$.2f</string>
+    
+    <!-- AI Dedupe Assist -->
+    <string name="ai_dedupe_title">AI Duplicate Check</string>
+    <string name="ai_dedupe_verdict_duplicate">AI thinks this may duplicate an existing record</string>
+    <string name="ai_dedupe_verdict_distinct">AI thinks this likely is a distinct transaction</string>
+    <string name="ai_dedupe_verdict_uncertain">AI is unsure whether this is a duplicate</string>
+    <string name="ai_dedupe_confidence_format">%1$d%% confidence</string>
+    
+    <!-- AI Category Assist -->
+    <string name="ai_category_title">AI Category Suggestion</string>
+    <string name="ai_category_apply_editor">Apply in editor</string>
+    <string name="ai_category_confidence_format">%1$d%%</string>
+    
+    <!-- Assistant Result Card -->
+    <string name="assistant_transactions_found_format">Found %1$d matching transactions.</string>
+    <string name="assistant_unsupported">Unsupported</string>
+    <string name="assistant_open_transactions">Open Transactions</string>
+    
+    <!-- Domain: Lifestyle Inflation -->
+    <string name="domain_lifestyle_spending_faster">Spending Growing Faster Than Income</string>
+    <string name="domain_lifestyle_creep">Lifestyle Creep Detected</string>
+    <string name="domain_lifestyle_outpacing">Spending Outpacing Income Growth</string>
+    <string name="domain_lifestyle_not_aligned">Income and Spending Not Aligned</string>
+    
+    <!-- Domain: Carbon Footprint -->
+    <string name="domain_carbon_reduce_fuel">Reduce Fuel Consumption</string>
+    <string name="domain_carbon_fly_less">Fly Less or Offset</string>
+    <string name="domain_carbon_sustainable_fashion">Sustainable Fashion</string>
+    <string name="domain_carbon_eat_plants">Eat More Plants</string>
+    <string name="domain_carbon_extend_device">Extend Device Life</string>
+    <string name="domain_carbon_track_improve">Track and Improve</string>
+    <string name="domain_carbon_purchase_offsets">Purchase Carbon Offsets</string>
+    
+    <!-- Domain: Advanced Analytics -->
+    <string name="domain_analytics_high_spending">High Spending Alert</string>
+    <string name="domain_analytics_weekend_high">Weekend Spending High</string>
+    <string name="domain_analytics_great_savings">Great Savings Rate</string>
+    
+    <!-- Domain: Budget Recommendations -->
+    <string name="domain_budget_reduce_urgent">Reduce Spending Urgently</string>
+    <string name="domain_budget_pause_non_essential">Pause Non-Essential Spending</string>
+    <string name="domain_budget_review_subscriptions">Review Your Subscriptions</string>
+    <string name="domain_budget_build_history">Build More Spending History</string>
+    <string name="domain_budget_early_warning">Early Warning: Pace Yourself</string>
+    <string name="domain_budget_increase">Consider Budget Increase</string>
+    
+    <!-- Domain: Subscription Management -->
+    <string name="domain_subscription_price_increased">Price Increased %1$.1f%%</string>
+    <string name="domain_subscription_underutilized">Underutilized - Only %1$d of %2$d uses</string>
+    <string name="domain_subscription_no_usage">No Usage Recorded</string>
+    <string name="domain_subscription_high_cost">High Cost Per Use</string>
+    
+    <!-- Domain: Savings Gamification -->
+    <string name="domain_savings_goal_setter">Goal Setter</string>
+    <string name="domain_savings_week_warrior">Week Warrior</string>
+    <string name="domain_savings_century_club">Century Club</string>
+    <string name="domain_savings_goal_crusher">Goal Crusher</string>
+    <string name="domain_savings_grand_saver">Grand Saver</string>
+    <string name="domain_savings_achievement_desc_first_goal">Create your first savings goal</string>
+    <string name="domain_savings_achievement_desc_streak">Save for 7 consecutive days</string>
+    <string name="domain_savings_achievement_desc_save_total_format">Save %1$s total</string>
+    <string name="domain_savings_achievement_desc_complete_first_goal">Complete your first savings goal</string>
+    <string name="domain_savings_achievement_req_create_goal">Create 1 goal</string>
+    <string name="domain_savings_achievement_req_streak">7 day streak</string>
+    <string name="domain_savings_achievement_req_saved_format">%1$s saved</string>
+    <string name="domain_savings_achievement_req_complete_goal">1 goal completed</string>
+    <string name="domain_savings_portfolio_recommendation_ready">Portfolio recommendation ready</string>
+    <string name="domain_savings_impact_goal_already_reached">Goal already reached</string>
+    <string name="domain_savings_impact_reach_in_days_format">You\'ll reach your goal in %1$d days!</string>
+    <string name="domain_savings_impact_on_track_months_format">On track to reach goal in %1$d months</string>
+    <string name="domain_savings_impact_steady_progress_format">Steady progress toward your %1$s goal</string>
+    
+    <!-- Domain: AI Financial Query -->
+    <string name="domain_ai_top_categories">Top categories</string>
+    <string name="domain_ai_top_merchants">Top merchants</string>
+    <string name="domain_ai_largest_purchase">Largest purchase</string>
+    <string name="domain_ai_total_spending">Total spending</string>
+    <string name="domain_ai_transaction_count">Transaction count</string>
+    <string name="domain_ai_average_spending">Average spending</string>
+    
+    <!-- Domain: Narrative Generator -->
+    <string name="domain_narrative_budget_alerts">Budget Alerts</string>
+    <string name="domain_narrative_budget_health">Budget Health</string>
+    <string name="domain_narrative_goal_reserves">Goal Reserves</string>
+    <string name="domain_narrative_committed_plans">Committed Plans</string>
+    <string name="domain_narrative_predicted_activity">Predicted Activity</string>
+    <string name="domain_weather_headline_stormy_weather">Stormy Weather</string>
+    <string name="domain_weather_summary_stormy_weather">⚠️ Immediate action required. Budgets exceeded and no discretionary buffer remains.</string>
+    <string name="domain_weather_headline_rainy_conditions">Rainy Conditions</string>
+    <string name="domain_weather_summary_rainy_conditions">Over pace on budgets and high committed costs. Caution is highly advised.</string>
+    <string name="domain_weather_headline_cloudy_forecast">Cloudy Forecast</string>
+    <string name="domain_weather_summary_cloudy_forecast_format">Spending is tight. You only have %1$s remaining for unpredicted expenses.</string>
+    <string name="domain_weather_headline_clear_skies">Clear Skies</string>
+    <string name="domain_weather_summary_clear_skies_format">You have a comfortable buffer of %1$s for the rest of the month.</string>
+    <string name="domain_weather_headline_partly_cloudy">Partly Cloudy</string>
+    <string name="domain_weather_summary_partly_cloudy_format">Everything is on track, though discretionary buffer is moderate (%1$s).</string>
+    <string name="domain_weather_headline_mixed_signals">Mixed Signals</string>
+    <string name="domain_weather_summary_mixed_signals">Not enough data to provide a clear outlook yet.</string>
+    <string name="domain_weather_headline_unavailable">Weather Unavailable</string>
+    <string name="domain_weather_summary_unavailable">We couldn’t calculate your financial outlook right now.</string>
+    <string name="domain_narrative_budget_exceeded_spent_format">%1$s is exceeded: %2$s spent</string>
+    <string name="domain_narrative_budget_critical_spent_format">%1$s is critical: %2$s spent</string>
+    <string name="domain_narrative_total_budget_exceeded_spent_format">Total Budget is exceeded: %1$s spent</string>
+    <string name="domain_narrative_total_budget_critical_spent_format">Total Budget is critical: %1$s spent</string>
+    <string name="domain_narrative_budget_warning_spent_format">%1$s is warning: %2$s spent</string>
+    <string name="domain_narrative_budget_on_track_spent_format">%1$s is on track: %2$s spent</string>
+    <string name="domain_narrative_all_budgets_on_track">All active budgets are currently on track</string>
+    <string name="domain_narrative_goal_reserves_locked_format">%1$s locked for high-priority savings</string>
+    <string name="domain_narrative_must_plan_format">%1$s: %2$s (Must)</string>
+    <string name="domain_narrative_likely_plan_format">%1$s: %2$s (Likely)</string>
+    <string name="domain_narrative_habit_forecast_format">Habit-based forecast: %1$s likely spending based on your typical month.</string>
+    <string name="domain_synthesis_spending_pace_higher">Spending pace is higher than usual.</string>
+    <string name="domain_synthesis_budgets_exceeded_format">%1$d budgets exceeded.</string>
+    <string name="domain_synthesis_strict_savings_goals_active_format">%1$d strict savings goals active.</string>
+    <string name="domain_synthesis_must_pay_planned_expenses_format">%1$d must-pay planned expenses this month.</string>
+    
+    <!-- AI Components - Currency Formats -->
+    <string name="amount_eur_format_long">%.2f EUR</string>
+    <string name="currency_eur_format">€%.2f</string>
+
+    <!-- AI Components - Placeholders -->
+    <string name="value_not_available">-</string>
+
+    <!-- Date Formats -->
+    <string name="receipt_date_format">dd MMM yyyy</string>
+
+    <string name="notification_briefing_ready_title">Your AI briefing is ready</string>
+
+    <!-- Receipt Matching Worker -->
+    <string name="receipt_matching_auto_matched_title">✅ Receipt Auto-Matched</string>
+    <string name="receipt_matching_auto_matched_message_format">Receipt from %1$s matched to transaction automatically</string>
+
+    <!-- Warranty Worker -->
+    <string name="warranty_expiring_soon_title">⚠️ Warranty Expiring Soon</string>
+    <string name="warranty_expiration_reminder_title">📅 Warranty Expiration Reminder</string>
+    <string name="warranty_expires_in_7_days_format">%1$s warranty expires in 7 days (%2$s)</string>
+    <string name="warranty_expires_in_30_days_format">%1$s warranty expires in 30 days</string>
+
+    <!-- Notification Seeder (Debug) -->
+    <string name="notification_deposit_received_title">Deposit Received</string>
+    <string name="notification_transaction_alert_title">Transaction Alert</string>
+    <string name="notification_recurring_payment_title">Recurring Payment</string>
+    <string name="notification_payment_title">Payment Notification</string>
+    <string name="notification_spent_at_format">Spent €%1$.2f at %2$s.</string>
+    <string name="notification_payment_unknown_merchant_format">Payment of €%1$.2f to Unknown Merchant.</string>
+
+    <!-- Debug Issue Detector -->
+    <string name="debug_issue_no_transactions">No transactions were parsed from the document</string>
+    <string name="debug_issue_missing_merchant_format">Transaction #%1$d: Missing merchant name</string>
+    <string name="debug_issue_invalid_amount_format">Transaction #%1$d: Invalid amount (%2$.2f)</string>
+    <string name="debug_issue_low_confidence_format">Transaction #%1$d: Low confidence (%2$d%%)</string>
+    <string name="debug_issue_missing_date_format">Transaction #%1$d: Missing transaction date</string>
+    <string name="debug_issue_unusual_amount_format">Transaction #%1$d: Unusually large amount (€%2$.2f)</string>
+    <string name="debug_suggestion_check_document_format">Check if the document format is supported or try re-scanning with better quality</string>
+    <string name="debug_suggestion_verify_ocr">Verify OCR quality or manually enter merchant name</string>
+    <string name="debug_suggestion_check_number_format">Check number format in source document</string>
+    <string name="debug_suggestion_verify_manually">Manually verify merchant name and amount</string>
+    <string name="debug_suggestion_date_will_default">Date will default to current time</string>
+    <string name="debug_suggestion_verify_decimal_format">Verify this is not a decimal separator error</string>
+    <string name="debug_ocr_short_output_format">Very short OCR output (%1$d lines)</string>
+    <string name="debug_ocr_little_text_format">Very little text extracted (%1$d characters)</string>
+    <string name="debug_ocr_document_not_fully_scanned">Document may not have been fully scanned</string>
+    <string name="debug_ocr_rescan_better_format">Try re-scanning with better lighting or higher resolution</string>
+    <string name="debug_ocr_unrecognized_chars">High number of unrecognized characters detected</string>
+    <string name="debug_ocr_poor_quality">OCR quality may be poor, consider re-scanning</string>
+    <string name="debug_performance_slow_format">Processing took %1$.1fs</string>
+    <string name="debug_performance_fast_format">Processing completed in %1$dms</string>
+    <string name="debug_suggestion_use_pdf">Consider using PDF format for faster processing</string>
+    <string name="debug_summary_parsed_format">Successfully parsed %1$d/%2$d transactions with good confidence</string>
+
+    <!-- Debug ViewModel -->
+    <string name="debug_purchase_alert_title">Purchase Alert</string>
+    <string name="debug_purchase_message_format">You paid €%1$.2f at %2$s</string>
+    <string name="debug_deposit_received_title">Deposit Received</string>
+
+    <!-- F10: Contextual Empty States -->
+    <string name="subscriptions_empty_title">No Subscriptions Found</string>
+    <string name="subscriptions_empty_message">Connect your notifications or add subscriptions manually to start tracking them</string>
+    <string name="challenges_empty_title">No Active Challenges</string>
+    <string name="challenges_empty_message">Start a spending challenge to gamify your savings journey</string>
+    <string name="challenges_action_start">Start Challenge</string>
+
+    <!-- F2: Notification → Subscription Detection -->
+    <string name="header_detected_subscriptions">Detected from Notifications (%1$d)</string>
+    <string name="subscription_candidate_details">%1$d transactions • %2$s • %3$s confidence</string>
+    <string name="label_estimated_annual">Est. %1$s/year</string>
+    <string name="action_add_subscription">Add</string>
+    <string name="action_reject">Not a Subscription</string>
+
+    <!-- F6: Smart Savings Sweeps -->
+    <string name="savings_sweep_title">End of Month Sweep</string>
+    <string name="savings_sweep_underspend">Underspend: €%1$.2f</string>
+    <string name="savings_sweep_risk_buffer">Risk buffer: €%1$.2f</string>
+    <string name="savings_sweep_safe_amount">Safe to save: €%1$.2f</string>
+    <string name="savings_sweep_goal_allocation">%1$s: +€%2$.2f</string>
+    <string name="savings_sweep_accept">Sweep to Goals</string>
+    <string name="savings_sweep_dismiss">Skip</string>
+    <string name="savings_sweep_confidence_high">High confidence</string>
+    <string name="savings_sweep_confidence_good">Good confidence</string>
+    <string name="savings_sweep_month_end">Month ends %1$s</string>
+    <string name="savings_sweep_suggested_allocation">Suggested allocation:</string>
+    <string name="savings_sweep_progress_format">Progress: %1$.0f%%</string>
+
+    <!-- F13: Spending Personality Profile -->
+    <string name="personality_profile_title">Your Spending Style</string>
+    <string name="personality_planner_name">The Planner</string>
+    <string name="personality_impulse_name">The Spontaneous</string>
+    <string name="personality_optimizer_name">The Optimizer</string>
+    <string name="personality_social_name">The Social Spender</string>
+    <string name="personality_minimalist_name">The Minimalist</string>
+    <string name="personality_balanced_name">The Balanced</string>
+
+    <!-- Backup & Restore -->
+    <string name="backup_restore_title">Backup &amp; Restore</string>
+    <string name="backup_restore_create_button">Create Backup</string>
+    <string name="backup_restore_password_label">Encryption Password</string>
+    <string name="backup_restore_password_placeholder">Enter password</string>
+    <string name="backup_restore_creating">Creating backup…</string>
+    <string name="backup_restore_restoring">Restoring backup…</string>
+    <string name="backup_restore_restore_button">Restore Backup</string>
+    <string name="backup_restore_select_file">Select backup file</string>
+    <string name="backup_restore_last_backup">Last backup: %1$s</string>
+    <string name="backup_restore_no_backup">No backup created yet</string>
+    <string name="backup_restore_success">Backup created successfully</string>
+    <string name="backup_restore_restore_success">Restore completed successfully</string>
+    <string name="backup_restore_restart_required">Restart required. Please restart the app to use the restored data.</string>
+    <string name="backup_restore_error_format">Error: %1$s</string>
+    <string name="backup_restore_wrong_password">Incorrect password or corrupt backup file</string>
+    <string name="backup_restore_dismiss">Dismiss</string>
+    <string name="backup_restore_restart_now">Restart Now</string>
+
 </resources>

@@ -1,0 +1,32 @@
+{
+  "canonicalKey": "sklavenitis",
+  "allVariantsProduceSameKey": true,
+  "variantCount": 5,
+  "merchantKeys": [
+    {
+      "input": "ΣΚΛΑΒΕΝΙΤΗΣ",
+      "key": "sklavenitis"
+    },
+    {
+      "input": "Σκλαβενίτης",
+      "key": "sklavenitis"
+    },
+    {
+      "input": "Sklavenitis",
+      "key": "sklavenitis"
+    },
+    {
+      "input": "SKLAVENITIS",
+      "key": "sklavenitis"
+    },
+    {
+      "input": "sklavenitis",
+      "key": "sklavenitis"
+    }
+  ],
+  "merchantGroupCount": 2,
+  "sklavenitisTotalAmount": 100,
+  "sklavenitsTransactionCount": 3,
+  "lidlTotalAmount": 60,
+  "dedupeWouldCatchVariant": true
+}

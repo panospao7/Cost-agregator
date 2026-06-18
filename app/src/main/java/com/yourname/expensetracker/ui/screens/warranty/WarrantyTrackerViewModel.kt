@@ -1,0 +1,239 @@
+package com.yourname.expensetracker.ui.screens.warranty
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.Warranty
+import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
+import javax.inject.Inject
+
+data class WarrantyTrackerState(
+    val warranties: List<Warranty> = emptyList(),
+    val allWarranties: List<Warranty> = emptyList(),
+    val isLoading: Boolean = false,
+    val activeCount: Int = 0,
+    val expiringSoonCount: Int = 0,
+    val totalProtectedValue: Double = 0.0,
+    val selectedFilter: WarrantyStatus? = null,
+    val needsReviewCount: Int = 0,
+    val autoDetectedWarranties: List<Warranty> = emptyList(),
+    val showAutoDetectedOnly: Boolean = false,
+    val showNeedsReviewOnly: Boolean = false,
+    val referenceNowMillis: Long = 0L,
+    /** S12-010: IDs of warranties currently being mutated */
+    val mutatingWarrantyIds: Set<Long> = emptySet(),
+    /** S12-010: non-null when a mutation failed */
+    val mutationError: String? = null,
+    /** S12-004: true when add-manual dialog should close (emitted on success) */
+    val addWarrantySuccess: Boolean = false
+) {
+    val loadableState: com.yourname.expensetracker.ui.model.LoadableUiState<List<Warranty>>
+        get() = when {
+            isLoading -> com.yourname.expensetracker.ui.model.LoadableUiState.Loading
+            warranties.isEmpty() -> com.yourname.expensetracker.ui.model.LoadableUiState.Empty(com.yourname.expensetracker.domain.model.UiText.DynamicString("No warranties tracked"))
+            else -> com.yourname.expensetracker.ui.model.LoadableUiState.Data(warranties)
+        }
+}
+
+@HiltViewModel
+class WarrantyTrackerViewModel @Inject constructor(
+    private val warrantyRepository: WarrantyTrackerRepository,
+    private val timeProvider: TimeProvider
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(WarrantyTrackerState())
+    val state: StateFlow<WarrantyTrackerState> = _state.asStateFlow()
+    private var warrantiesCollectorJob: Job? = null
+
+    init {
+        loadWarranties()
+        loadStats()
+    }
+
+    private fun loadWarranties() {
+        warrantiesCollectorJob?.cancel()
+        warrantiesCollectorJob = viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, referenceNowMillis = timeProvider.now()) }
+            
+            warrantyRepository.getAllWarranties()
+                .collect { warranties ->
+                    _state.update {
+                        val autoDetected = warranties.filter { warranty -> warranty.autoDetected }
+                        val needsReview = warranties.filter { warranty -> warranty.needsReview }
+                        val updated = it.copy(
+                            allWarranties = warranties,
+                            autoDetectedWarranties = autoDetected,
+                            needsReviewCount = needsReview.size,
+                            isLoading = false
+                        )
+                        updated.withDerivedWarranties()
+                    }
+                }
+        }
+    }
+
+    private fun loadStats() {
+        viewModelScope.launch {
+            _state.update { it.copy(referenceNowMillis = timeProvider.now()) }
+            val activeCount = warrantyRepository.getActiveWarrantyCount()
+            val expiringSoon = warrantyRepository.getWarrantiesExpiringSoon(30).size
+            // S12-006: Use currency-normalized aggregate instead of deprecated raw sum
+            val protectedValueAggregate = runCatching { warrantyRepository.getTotalProtectedValueAggregate() }.getOrNull()
+            val protectedValue = protectedValueAggregate?.displayAmount ?: 0.0
+            
+            _state.update {
+                it.copy(
+                    activeCount = activeCount,
+                    expiringSoonCount = expiringSoon,
+                    totalProtectedValue = protectedValue
+                )
+            }
+        }
+    }
+
+    fun filterByStatus(status: WarrantyStatus?) {
+        _state.update {
+            it.copy(
+                selectedFilter = status,
+                showAutoDetectedOnly = false,
+                showNeedsReviewOnly = false
+            ).withDerivedWarranties()
+        }
+    }
+    
+    // F1: Filter for auto-detected warranties
+    fun filterByAutoDetected() {
+        _state.update {
+            val enableAutoDetectedOnly = !it.showAutoDetectedOnly
+            it.copy(
+                showAutoDetectedOnly = enableAutoDetectedOnly,
+                showNeedsReviewOnly = false,
+                selectedFilter = null
+            ).withDerivedWarranties()
+        }
+    }
+    
+    // F1: Show warranties needing review
+    fun showNeedsReview() {
+        _state.update {
+            it.copy(
+                showNeedsReviewOnly = true,
+                showAutoDetectedOnly = false,
+                selectedFilter = null
+            ).withDerivedWarranties()
+        }
+    }
+
+    /**
+     * WRN-4: Manual warranties no longer create a placeholder receipt.
+     * Previously we called [WarrantyTrackerRepository.createManualPlaceholderReceipt]
+     * which generated a fake EUR receipt just to satisfy the FK constraint.
+     * Since [Warranty.receiptId] is now nullable, we skip the placeholder entirely
+     * and store a null receiptId, avoiding fake EUR records in the receipt table.
+     */
+    fun addManualWarranty(
+        productName: String,
+        merchantName: String,
+        purchaseDate: Long,
+        warrantyDurationMonths: Int,
+        supportPhone: String?
+    ) {
+        viewModelScope.launch {
+            val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
+            val endDateMidnight = TimePeriodUtils.addMonths(purchaseStart, warrantyDurationMonths)
+            // Use half-open end-of-day semantics so the warranty survives
+            // through its entire expiration day (matches WarrantyTrackerRepository).
+            val endDate = TimePeriodUtils.getEndOfDay(endDateMidnight)
+            // WRN-4: receiptId is null — no placeholder receipt is created.
+            val manualWarranty = Warranty(
+                receiptId = null,
+                expenseId = null,
+                productName = productName,
+                merchantName = merchantName,
+                purchaseDate = purchaseStart,
+                warrantyDurationMonths = warrantyDurationMonths,
+                warrantyEndDate = endDate,
+                supportPhone = supportPhone?.takeIf { it.isNotBlank() },
+                extractionSource = "manual"
+            )
+            warrantyRepository.addWarranty(manualWarranty)
+            // S12-004: Signal success so dialog can close
+            _state.update { it.copy(addWarrantySuccess = true, mutationError = null) }
+            loadStats()
+        }
+    }
+
+    fun clearAddWarrantySuccess() {
+        _state.update { it.copy(addWarrantySuccess = false) }
+    }
+
+    fun clearMutationError() {
+        _state.update { it.copy(mutationError = null) }
+    }
+    
+    // F1: Confirm a low-confidence auto-detected warranty
+    fun confirmWarranty(warranty: Warranty) {
+        // S12-010: Idempotency guard
+        if (_state.value.mutatingWarrantyIds.contains(warranty.id)) return
+        viewModelScope.launch {
+            _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds + warranty.id) }
+            try {
+                val updated = warranty.copy(
+                    status = WarrantyStatus.ACTIVE,
+                    needsReview = false,
+                    updatedAt = timeProvider.now()
+                )
+                warrantyRepository.updateWarranty(updated)
+                loadStats()
+            } catch (e: Exception) {
+                _state.update { it.copy(mutationError = "Failed to confirm warranty: ${e.message}") }
+            } finally {
+                _state.update { it.copy(mutatingWarrantyIds = it.mutatingWarrantyIds - warranty.id) }
+            }
+        }
+    }
+    
+    // F1: Reject/delete an auto-detected warranty that was incorrect
+    fun rejectAutoDetectedWarranty(warranty: Warranty) {
+        viewModelScope.launch {
+            // S12-009: Use atomic repository method — warranty + return window deleted together
+            warrantyRepository.rejectAutoDetectedWarranty(warranty)
+            loadStats()
+        }
+    }
+
+    fun markAsClaimed(warrantyId: Long) {
+        viewModelScope.launch {
+            warrantyRepository.markWarrantyAsClaimed(warrantyId)
+            loadStats()
+        }
+    }
+
+    fun deleteWarranty(warranty: Warranty) {
+        viewModelScope.launch {
+            warrantyRepository.deleteWarranty(warranty)
+            loadStats()
+        }
+    }
+
+    fun refresh() {
+        loadWarranties()
+        loadStats()
+    }
+
+    private fun WarrantyTrackerState.withDerivedWarranties(): WarrantyTrackerState {
+        val derived = when {
+            showNeedsReviewOnly -> allWarranties.filter { it.needsReview }
+            showAutoDetectedOnly -> allWarranties.filter { it.autoDetected }
+            selectedFilter != null -> allWarranties.filter { it.status == selectedFilter }
+            else -> allWarranties
+        }
+        return copy(warranties = derived)
+    }
+}

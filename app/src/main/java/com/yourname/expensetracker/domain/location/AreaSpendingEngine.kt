@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.location
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,6 +30,26 @@ data class AreaSpending(
 )
 
 /**
+ * Currency-safe version of [AreaSpending] using [MoneyAggregate] for multi-currency safety.
+ */
+data class NormalizedAreaSpending(
+    /** Human-readable area name (e.g. "Γλυφάδα" or "Glyfada"). */
+    val areaName: String,
+    /** Aggregate total for this area (multi-currency safe). */
+    val aggregate: MoneyAggregate,
+    /** Number of individual transactions in this area. */
+    val transactionCount: Int,
+    /** Average transaction amount derived from aggregate. */
+    val avgTransaction: Double,
+    /** Representative latitude of the area centroid. */
+    val latitude: Double,
+    /** Representative longitude of the area centroid. */
+    val longitude: Double,
+    /** Display currency for the aggregate. */
+    val displayCurrency: String
+)
+
+/**
  * Domain-layer engine that builds [AreaSpending]s from located expenses.
  *
  * Area naming strategy:
@@ -38,22 +62,41 @@ data class AreaSpending(
 @Singleton
 class AreaSpendingEngine @Inject constructor() {
 
+    private data class AreaNameStats(
+        var count: Int = 0,
+        var totalSpend: Double = 0.0
+    )
+
+    private data class GridCell(val latBucket: Long, val lonBucket: Long)
+
+    private data class Accumulator(
+        var totalSpend: Double = 0.0,
+        var count: Int = 0,
+        var latSum: Double = 0.0,
+        var lonSum: Double = 0.0,
+        val areaCandidates: MutableMap<String, AreaNameStats> = linkedMapOf()
+    )
+
+    /**
+     * PR8-GUARDRAIL: Raw-Double sums without MoneyAggregate safety.
+     * If [expenses] contains mixed currencies, area totals will be silently incorrect.
+     * Only safe when caller has pre-normalized all amounts to the same currency.
+     * Preferred: [computeNormalized] with [LocatedMoneyExpense] and a [CurrencyConverter].
+     */
+    @Deprecated(
+        message = "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
+        replaceWith = ReplaceWith(
+            "computeNormalized(expenses.map { it.toLocatedMoneyExpense(homeCurrency) }, homeCurrency, converter)",
+            "com.yourname.expensetracker.domain.location.LocatedMoneyExpense"
+        ),
+        level = DeprecationLevel.WARNING
+    )
     fun compute(expenses: List<Expense>): List<AreaSpending> {
         // Only consider expenses that have a lat/lon AND a resolved address
         val located = expenses.filter {
             it.latitude != null && it.longitude != null && !it.resolvedAddress.isNullOrBlank()
         }
         if (located.isEmpty()) return emptyList()
-
-        data class GridCell(val latBucket: Long, val lonBucket: Long)
-
-        data class Accumulator(
-            var areaName: String,
-            var totalSpend: Double = 0.0,
-            var count: Int = 0,
-            var latSum: Double = 0.0,
-            var lonSum: Double = 0.0
-        )
 
         val cells = HashMap<GridCell, Accumulator>()
 
@@ -66,20 +109,23 @@ class AreaSpendingEngine @Inject constructor() {
             val lonBucket = (lon / GRID_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)
 
-            val acc = cells.getOrPut(cell) { Accumulator(areaName) }
-            // Keep the most common area name — for now use the first one per cell
+            val acc = cells.getOrPut(cell) { Accumulator() }
             acc.totalSpend += expense.effectiveAmount
             acc.count += 1
             acc.latSum += lat
             acc.lonSum += lon
+            val stats = acc.areaCandidates.getOrPut(areaName) { AreaNameStats() }
+            stats.count += 1
+            stats.totalSpend += expense.effectiveAmount
         }
 
         // Merge cells that share the same area name (handles address spelling variations)
         val byArea = HashMap<String, Accumulator>()
         for ((_, acc) in cells) {
-            val existing = byArea[acc.areaName]
+            val resolvedAreaName = selectRepresentativeAreaName(acc.areaCandidates)
+            val existing = byArea[resolvedAreaName]
             if (existing == null) {
-                byArea[acc.areaName] = acc
+                byArea[resolvedAreaName] = acc
             } else {
                 existing.totalSpend += acc.totalSpend
                 existing.count += acc.count
@@ -89,10 +135,10 @@ class AreaSpendingEngine @Inject constructor() {
         }
 
         return byArea.values
-            .filter { it.count > 0 && it.areaName.isNotBlank() }
+            .filter { it.count > 0 && selectRepresentativeAreaName(it.areaCandidates).isNotBlank() }
             .map { acc ->
                 AreaSpending(
-                    areaName = acc.areaName,
+                    areaName = selectRepresentativeAreaName(acc.areaCandidates),
                     totalSpend = acc.totalSpend,
                     transactionCount = acc.count,
                     avgTransaction = acc.totalSpend / acc.count,
@@ -101,6 +147,95 @@ class AreaSpendingEngine @Inject constructor() {
                 )
             }
             .sortedByDescending { it.totalSpend }
+    }
+
+    /**
+     * Currency-safe area spending using [LocatedMoneyExpense].
+     *
+     * Groups expenses by grid cell (~1 km) and builds a [MoneyAggregate] per cell
+     * via [MoneyAggregateBuilder.fromBuckets]. Skips expenses with failed conversion.
+     * Cells sharing the same parsed area name are merged together.
+     * Results are sorted by aggregate display amount descending.
+     *
+     * @param expenses  Located expenses (caller must ensure they are pre-filtered
+     *                  to spending-only transaction types).
+     * @param homeCurrency  User's home currency code (e.g. "EUR").
+     * @param converter  CurrencyConverter for multi-currency aggregation.
+     * @return List of [NormalizedAreaSpending] sorted by total descending.
+     */
+    suspend fun computeNormalized(
+        expenses: List<LocatedMoneyExpense>,
+        homeCurrency: String,
+        converter: CurrencyConverter
+    ): List<NormalizedAreaSpending> {
+        val validExpenses = expenses.filter {
+            it.normalizedAmountOrNull != null
+        }
+        if (validExpenses.isEmpty()) return emptyList()
+
+        // ── 1. Group by grid cell, collecting area name candidates ──────────
+        val cells = HashMap<GridCell, Accumulator>()
+
+        for (expense in validExpenses) {
+            val areaName = parseAreaName(expense.resolvedAddress ?: "")
+            val latBucket = (expense.latitude / GRID_DEG).toLong()
+            val lonBucket = (expense.longitude / GRID_DEG).toLong()
+            val cell = GridCell(latBucket, lonBucket)
+
+            val acc = cells.getOrPut(cell) { Accumulator() }
+            acc.count += 1
+            acc.latSum += expense.latitude
+            acc.lonSum += expense.longitude
+            val stats = acc.areaCandidates.getOrPut(areaName) { AreaNameStats() }
+            stats.count += 1
+        }
+
+        // ── 2. Merge cells sharing the same area name ──────────────────────
+        // Also build MoneyAggregate per grouped area
+        data class AreaAccum(
+            val expenses: MutableList<LocatedMoneyExpense> = mutableListOf(),
+            var latSum: Double = 0.0,
+            var lonSum: Double = 0.0
+        )
+
+        val byArea = HashMap<String, AreaAccum>()
+        for ((cell, acc) in cells) {
+            val resolvedAreaName = selectRepresentativeAreaName(acc.areaCandidates)
+            val existing = byArea.getOrPut(resolvedAreaName) { AreaAccum() }
+            existing.latSum += acc.latSum
+            existing.lonSum += acc.lonSum
+            // Collect all expenses from this cell
+            val cellExpenses = validExpenses.filter { exp ->
+                val latBucket = (exp.latitude / GRID_DEG).toLong()
+                val lonBucket = (exp.longitude / GRID_DEG).toLong()
+                GridCell(latBucket, lonBucket) == cell
+            }
+            existing.expenses.addAll(cellExpenses)
+        }
+
+        // ── 3. Build NormalizedAreaSpending for each area ──────────────────
+        return byArea.entries.map { (areaName, areaAcc) ->
+            val aggregate = MoneyAggregateBuilder.fromBuckets(
+                areaAcc.expenses.map { exp ->
+                    Pair(exp.normalizedAmountOrNull!!, exp.normalizedCurrency)
+                },
+                homeCurrency,
+                converter
+            )
+            val transactionCount = areaAcc.expenses.size
+            val avgTransaction = if (transactionCount > 0) aggregate.displayAmount / transactionCount else 0.0
+            NormalizedAreaSpending(
+                areaName = areaName,
+                aggregate = aggregate,
+                transactionCount = transactionCount,
+                avgTransaction = avgTransaction,
+                latitude = areaAcc.latSum / transactionCount,
+                longitude = areaAcc.lonSum / transactionCount,
+                displayCurrency = homeCurrency
+            )
+        }
+            .filter { it.areaName.isNotBlank() }
+            .sortedByDescending { it.aggregate.displayAmount }
     }
 
     /**
@@ -118,6 +253,19 @@ class AreaSpendingEngine @Inject constructor() {
             parts.size == 1 -> parts[0]
             else -> resolvedAddress.trim()
         }
+    }
+
+    private fun selectRepresentativeAreaName(candidates: Map<String, AreaNameStats>): String {
+        return candidates.entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, AreaNameStats>> { it.value.count }
+                    .thenByDescending { it.value.totalSpend }
+                    .thenBy { it.key.lowercase() }
+                    .thenBy { it.key }
+            )
+            .firstOrNull()
+            ?.key
+            .orEmpty()
     }
 
     private companion object {

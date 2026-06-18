@@ -1,0 +1,721 @@
+package com.yourname.expensetracker.domain.forecasting
+
+import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseAccessType
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.toExpenseSnapshot
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import java.util.Calendar
+
+/**
+ * Tests for [FinancialStressForecastEngine].
+ *
+ * ## Test gaps (not yet covered):
+ * - Status filtering: verify that expense/budget status filters are correctly applied
+ *   when computing stress forecasts (e.g. only active budgets, only confirmed expenses).
+ * - Currency normalization: ensure multi-currency expenses are normalized to home
+ *   currency before aggregation, and that non-home-currency budgets are handled.
+ * - Generation failure fallback: test that when Monte Carlo simulation fails (throws),
+ *   the engine falls back to a safe degraded forecast with MODERATE risk level.
+ * - Exclusive end boundary: confirm that the end boundary of date ranges is treated
+ *   as exclusive (or inclusive) consistently, preventing off-by-one errors in
+ *   lookback windows.
+ */
+class FinancialStressForecastEngineTest {
+
+    private lateinit var synthesisEngine: SynthesisEngine
+    private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
+    private lateinit var mergedRecurringPatternsProvider: MergedRecurringPatternsProvider
+    private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var budgetRepository: BudgetRepository
+    private lateinit var timeProvider: TimeProvider
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
+    private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
+    private lateinit var databaseReadBarrier: DatabaseReadBarrier
+    private lateinit var currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter
+
+    private lateinit var engine: FinancialStressForecastEngine
+
+    private val now = millis(2026, Calendar.APRIL, 20)
+    private val dayMs = 24L * 60L * 60L * 1000L
+
+    private var allExpenses: List<Expense> = emptyList()
+    private var allDeposits: List<Expense> = emptyList()
+
+    @Before
+    fun setup() {
+        synthesisEngine = mockk(relaxed = true)
+        monteCarloSimulator = mockk(relaxed = true)
+        mergedRecurringPatternsProvider = mockk()
+        expenseRepository = mockk()
+        budgetRepository = mockk()
+        timeProvider = mockk()
+        currencySettingsRepository = mockk(relaxed = true)
+
+        every { timeProvider.now() } returns now
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            allExpenses.filter { it.date in start..end }
+        }
+
+        coEvery { expenseRepository.getDepositsBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            allDeposits.filter { it.date in start..end }
+        }
+
+        analyticsCurrencyNormalizer = mockk(relaxed = true)
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val expenses = firstArg<List<Expense>>()
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = expenses.map { it.toExpenseSnapshot() },
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = expenses.size
+            )
+        }
+
+        recurringLifecycleCoordinator = mockk(relaxed = true)
+        recurringOccurrenceDao = mockk(relaxed = true)
+        databaseReadBarrier = mockk(relaxed = true)
+        currencyConverter = mockk(relaxed = true)
+
+        engine = FinancialStressForecastEngine(
+            synthesisEngine = synthesisEngine,
+            monteCarloSimulator = monteCarloSimulator,
+            recurringPatternsProvider = mergedRecurringPatternsProvider,
+            expenseRepository = expenseRepository,
+            budgetRepository = budgetRepository,
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository,
+            multiCurrencyRepository = mockk(relaxed = true),
+            recurringLifecycleCoordinator = recurringLifecycleCoordinator,
+            recurringOccurrenceDao = recurringOccurrenceDao,
+            currencyConverter = currencyConverter,
+            accountBalanceProvider = mockk(relaxed = true),
+            databaseReadBarrier = databaseReadBarrier
+        )
+    }
+
+    @Test
+    fun `computeStressForecast empirical bootstrap is deterministic for same history`() = runTest {
+        val monthlySalary = expense(1L, 3000.0, TransactionType.DEPOSIT, now - 5 * dayMs)
+        val p1 = expense(2L, 20.0, TransactionType.PURCHASE, now - 10 * dayMs)
+        val p2 = expense(3L, 40.0, TransactionType.PURCHASE, now - 9 * dayMs)
+        val p3 = expense(4L, 60.0, TransactionType.PURCHASE, now - 8 * dayMs)
+        val p4 = expense(5L, 80.0, TransactionType.PURCHASE, now - 7 * dayMs)
+
+        allExpenses = listOf(monthlySalary, p1, p2, p3, p4)
+        allDeposits = listOf(monthlySalary)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1500.0, spent = 0.0)))
+
+        val first = engine.computeStressForecast()
+        val second = engine.computeStressForecast()
+
+        assertEquals(first.overallRiskLevel, second.overallRiskLevel)
+        assertEquals(first.earliestCrunchDate, second.earliestCrunchDate)
+
+        first.horizons.zip(second.horizons).forEach { (a, b) ->
+            assertEquals(a.daysAhead, b.daysAhead)
+            assertApproxEquals(a.projectedBalance, b.projectedBalance, 0.01)
+            assertApproxEquals(a.minProjectedBalance, b.minProjectedBalance, 0.01)
+            assertApproxEquals(a.probabilityOfCrunch, b.probabilityOfCrunch, 0.01)
+            assertEquals(a.riskLevel, b.riskLevel)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast no-data fallback keeps percentile ordering consistent`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(900.0, spent = 0.0)))
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(3, result.horizons.size)
+        result.horizons.forEach { horizon ->
+            // projectedBalance uses p50, minProjectedBalance uses p90.
+            assertTrue(horizon.minProjectedBalance <= horizon.projectedBalance)
+            assertTrue(horizon.probabilityOfCrunch in 0.0..1.0)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast when calculation fails returns degraded non-low fallback`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } throws IllegalStateException("boom")
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressRiskLevel.CRITICAL, result.overallRiskLevel)
+        assertNull(result.earliestCrunchDate)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.CRITICAL })
+        assertTrue(result.horizons.all { it.probabilityOfCrunch == 0.20 })
+        assertTrue(result.recommendations.any { it.contains("temporarily unavailable", ignoreCase = true) })
+        assertTrue(result.recommendations.any { it.contains("degraded", ignoreCase = true) })
+    }
+
+    @Test
+    fun `classifyRiskLevel maps probabilities to all five tiers`() {
+        assertEquals(StressRiskLevel.LOW, classifyRiskLevelViaReflection(0.00))
+        assertEquals(StressRiskLevel.MODERATE, classifyRiskLevelViaReflection(0.10))
+        assertEquals(StressRiskLevel.ELEVATED, classifyRiskLevelViaReflection(0.25))
+        assertEquals(StressRiskLevel.HIGH, classifyRiskLevelViaReflection(0.50))
+        assertEquals(StressRiskLevel.CRITICAL, classifyRiskLevelViaReflection(0.75))
+    }
+
+    @Test
+    fun `computeStressForecast empty history edge case returns valid horizons`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressRiskLevel.CRITICAL, result.overallRiskLevel)
+        assertNotNull(result.earliestCrunchDate)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        assertTrue(result.horizons.all { it.probabilityOfCrunch in 0.0..1.0 })
+    }
+
+    @Test
+    fun `computeStressForecast extreme positive balance drives low risk with no crunch date`() = runTest {
+        val hugeDeposit = expense(100L, 1_000_000.0, TransactionType.DEPOSIT, now - 1 * dayMs)
+        allExpenses = listOf(hugeDeposit)
+        allDeposits = listOf(hugeDeposit)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0, spent = 0.0)))
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressRiskLevel.LOW, result.overallRiskLevel)
+        assertNull(result.earliestCrunchDate)
+        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.LOW })
+    }
+
+    @Test
+    fun `computeStressForecast zero discretionary expenses still produces stable output`() = runTest {
+        val salary = expense(200L, 2500.0, TransactionType.DEPOSIT, now - 2 * dayMs)
+        allExpenses = listOf(salary)
+        allDeposits = listOf(salary)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1200.0, spent = 0.0)))
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(3, result.horizons.size)
+        result.horizons.forEach {
+            assertTrue(it.projectedBalance >= it.minProjectedBalance)
+            assertTrue(it.discretionaryBuffer >= 0.0)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast recurring-only purchase history keeps Monte Carlo discretionary at zero`() = runTest {
+        val salary = expense(300L, 3000.0, TransactionType.DEPOSIT, now - 2 * dayMs, merchant = "Employer")
+        val recurring1 = expense(301L, 45.0, TransactionType.PURCHASE, now - 20 * dayMs, merchant = "NETFLIX")
+        val recurring2 = expense(302L, 45.0, TransactionType.PURCHASE, now - 10 * dayMs, merchant = "Netflix")
+        val recurring3 = expense(303L, 45.0, TransactionType.PURCHASE, now - 3 * dayMs, merchant = "Netflix ")
+
+        allExpenses = listOf(salary, recurring1, recurring2, recurring3)
+        allDeposits = listOf(salary)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1200.0, spent = 0.0)))
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Netflix",
+                amount = 45.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 0.95f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        result.horizons.forEach { horizon ->
+            // When recurring purchases are excluded from discretionary empirical input,
+            // p50 and p90 discretionary spend collapse to the same value (0 in this fixture).
+            assertApproxEquals(horizon.projectedBalance, horizon.minProjectedBalance, 0.0001)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast uses merged recurring obligations so duplicate stale manual rows do not double count`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Netflix",
+                amount = 15.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(15.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    @Test
+    fun `computeStressForecast ignores unconfirmed detected recurring suggestions`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(0.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    @Test
+    fun `computeStressForecast includes confirmed recurring obligations`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Confirmed Rent",
+                amount = 800.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(800.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    // ── P6-CURRENT-024: read path projects, never materializes ─────────────
+
+    @Test
+    fun `computeStressForecast uses projectOccurrences and never generateOccurrences for manual rules`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        // Manual pattern (id != null) → exercises the coordinator occurrence path.
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + dayMs,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        engine.computeStressForecast()
+
+        coVerify(atLeast = 1) { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) }
+        coVerify(exactly = 0) {
+            recurringLifecycleCoordinator.generateOccurrences(any(), any(), any(), any())
+        }
+        verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
+    }
+
+    @Test
+    fun `computeStressForecast reads already-materialized occurrence path unchanged`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + dayMs,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        // Projection empty; materialized row must still be counted (read-only).
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            val due = now + dayMs
+            if (due in start until end) {
+                listOf(
+                    RecurringOccurrence(
+                        sourceType = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
+                        sourceId = 7L,
+                        occurrenceKey = "RECURRING_RULE|7|$due|MONTHLY",
+                        dueDate = due,
+                        status = "PLANNED",
+                        expectedAmount = 800.0,
+                        expectedCurrency = "EUR",
+                        frequency = "MONTHLY",
+                        merchant = "Rent",
+                        categoryId = null
+                    )
+                )
+            } else emptyList()
+        }
+
+        val result = engine.computeStressForecast()
+
+        // The materialized obligation is included for the 30-day horizon.
+        assertTrue(result.horizons.first { it.daysAhead == 30 }.recurringObligations >= 0.0)
+        verify(atLeast = 1) { databaseReadBarrier.checkReadAllowed(any<String>()) }
+    }
+
+    @Test
+    fun `computeStressForecast includes recurring obligation due earlier today`() = runTest {
+        val noonToday = millis(2026, Calendar.APRIL, 20, 12)
+        val earlierToday = millis(2026, Calendar.APRIL, 20, 8)
+        every { timeProvider.now() } returns noonToday
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Morning Bill",
+                amount = 25.0,
+                nextDate = earlierToday,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(50.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    @Test
+    fun `computeStressForecast missing income history does not fall back to budget as income`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(5_000.0, spent = 0.0)))
+
+        val result = engine.computeStressForecast()
+
+        result.horizons.forEach { horizon ->
+            assertApproxEquals(0.0, horizon.expectedIncome, 0.0001)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast includes zero spend days in discretionary samples`() = runTest {
+        val singlePurchase = expense(400L, 100.0, TransactionType.PURCHASE, now - 10 * dayMs)
+        allExpenses = listOf(singlePurchase)
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+        val horizon30 = result.horizons.first { it.daysAhead == 30 }
+
+        assertApproxEquals(0.0, horizon30.expectedIncome, 0.0001)
+        assertApproxEquals(0.0, horizon30.projectedBalance, 0.0001)
+        assertTrue(horizon30.minProjectedBalance >= -200.0)
+    }
+
+    @Test
+    fun `computeStressForecast does not treat current month net cashflow as account balance`() = runTest {
+        allExpenses = listOf(
+            expense(500L, 3_000.0, TransactionType.DEPOSIT, now - 2 * dayMs, merchant = "Employer"),
+            expense(501L, 200.0, TransactionType.PURCHASE, now - 1 * dayMs)
+        )
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        result.horizons.forEach { horizon ->
+            assertTrue(
+                "Projected balance should not be inflated by month-to-date net cashflow",
+                horizon.projectedBalance <= 0.0
+            )
+        }
+    }
+
+    // ── DBG-03: paused-rule materialized occurrence must not leak into obligations ──
+
+    @Test
+    fun `DBG-03 stress excludes paused rule materialized occurrence from obligations`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val due = now + dayMs
+        // Only the ACTIVE rule (id=7) is returned by getConfirmedPatterns (production yields
+        // active rules only), so the paused rule (id=8) is NOT in the derived ruleIds.
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = due,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        // DAO holds previously-materialized PLANNED rows for BOTH the active rule (id=7)
+        // and a PAUSED rule (id=8). Only id=7 must be counted.
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            if (due in start until end) {
+                listOf(
+                    occurrenceRow(ruleId = 7L, dueDate = due, amount = 800.0, merchant = "Rent"),
+                    occurrenceRow(ruleId = 8L, dueDate = due, amount = 50.0, merchant = "Paused Gym")
+                )
+            } else emptyList()
+        }
+        // EUR→EUR passthrough so amounts actually sum (relaxed mock returns null otherwise).
+        coEvery { currencyConverter.convert(any<Double>(), any<String>(), any<String>()) } answers {
+            com.yourname.expensetracker.domain.currency.ConversionResult(
+                originalAmount = firstArg(),
+                originalCurrency = secondArg(),
+                convertedAmount = firstArg(),
+                targetCurrency = thirdArg(),
+                rateUsed = 1.0,
+                timestamp = now
+            )
+        }
+
+        val result = engine.computeStressForecast()
+
+        // Obligations reflect ONLY the active rule (800.0); the paused rule's 50.0 is filtered.
+        assertApproxEquals(800.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    // ── DBG-06: barrier-blocked materialized read marks the horizon partial ──
+
+    @Test
+    fun `DBG-06 stress marks recurring partial when materialized read barrier-blocked`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val due = now + dayMs
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            RecurringPattern(
+                id = 7L,
+                merchantName = "Rent",
+                averageAmount = 800.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = due,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(7L, any(), any()) } returns emptyList()
+        // Restore barrier blocks the materialized read inside calculateRecurringOutflows.
+        // It is caught locally (does NOT trip the engine's outer degraded fallback).
+        every { databaseReadBarrier.checkReadAllowed(any<String>()) } throws DatabaseAccessBlockedException(
+            accessType = DatabaseAccessType.READ,
+            operation = DatabaseAccessOperation("FinancialStressForecastEngine.calculateRecurringOutflows"),
+            mode = RestoreMaintenanceMode.Mode.RESTORE_STAGING
+        )
+
+        val result = engine.computeStressForecast()
+
+        // Normal (not degraded-fallback) result, but the recurring section is flagged partial.
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        assertTrue(result.horizons.all { it.recurringObligationsPartial })
+    }
+
+    private fun occurrenceRow(
+        ruleId: Long,
+        dueDate: Long,
+        amount: Double,
+        merchant: String,
+        status: String = "PLANNED",
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY
+    ): RecurringOccurrence = RecurringOccurrence(
+        sourceType = RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE,
+        sourceId = ruleId,
+        occurrenceKey = "${RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE}|$ruleId|$dueDate|${frequency.name}",
+        dueDate = dueDate,
+        status = status,
+        expectedAmount = amount,
+        expectedCurrency = "EUR",
+        frequency = frequency.name,
+        merchant = merchant,
+        categoryId = null
+    )
+
+    private fun classifyRiskLevelViaReflection(probability: Double): StressRiskLevel {
+        val method = FinancialStressForecastEngine::class.java.getDeclaredMethod(
+            "classifyRiskLevel",
+            Double::class.javaPrimitiveType
+        )
+        method.isAccessible = true
+        return method.invoke(engine, probability) as StressRiskLevel
+    }
+
+    private fun overallBudgetStatus(amount: Double, spent: Double): BudgetStatus {
+        val budget = Budget(
+            id = 1L,
+            categoryId = null,
+            amount = amount,
+            period = BudgetPeriod.MONTHLY,
+            startDate = now - 20 * dayMs
+        )
+        return BudgetStatus(
+            budget = budget,
+            category = null,
+            spentAmount = spent,
+            remainingAmount = (amount - spent).coerceAtLeast(0.0),
+            percentUsed = if (amount > 0) (spent / amount).toFloat() else 0f,
+            healthStatus = BudgetHealthStatus.ON_TRACK,
+            periodStart = now - 20 * dayMs,
+            periodEnd = now + 10 * dayMs,
+            effectiveLimit = 0.0,
+        )
+    }
+
+    private fun expense(
+        id: Long,
+        amount: Double,
+        type: TransactionType,
+        date: Long,
+        merchant: String = "M$id",
+        isNotMine: Boolean = false
+    ): Expense {
+        return Expense(
+            id = id,
+            amount = amount,
+            merchant = merchant,
+            transactionType = type,
+            date = date,
+            categoryId = 1L,
+            isNotMine = isNotMine
+        )
+    }
+
+    private fun recurringPattern(
+        merchant: String,
+        amount: Double,
+        nextDate: Long,
+        frequency: RecurrenceFrequency,
+        confidence: Float
+    ): RecurringPattern {
+        return RecurringPattern(
+            merchantName = merchant,
+            averageAmount = amount,
+            currency = "EUR",
+            frequency = frequency,
+            periodVarianceDays = 0,
+            amountVariancePercent = 0.0,
+            nextExpectedDate = nextDate,
+            confidence = confidence,
+            previousDates = emptyList()
+        )
+    }
+
+    // ── U-TIME-02: DST-safe calendar arithmetic ──────────────────────────────
+
+    @Test
+    fun `computeStressForecast 90-day lookback uses calendar-aware arithmetic not raw millis`() = runTest {
+        // Set "now" to a date shortly after a DST spring-forward transition.
+        // If raw millis were used (90 * 86400000), the lookback would land on the
+        // wrong calendar date. With TimePeriodUtils.addDays() it lands correctly.
+        val marchAfterDst = millis(2026, Calendar.MARCH, 15, 14)
+        every { timeProvider.now() } returns marchAfterDst
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        // Engine must not crash and must produce valid horizons.
+        assertEquals(3, result.horizons.size)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        result.horizons.forEach { horizon ->
+            assertTrue(horizon.probabilityOfCrunch in 0.0..1.0)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast horizon end uses calendar days not raw millis multiplication`() = runTest {
+        // Verify that the 30-day horizon end is exactly 30 calendar days ahead,
+        // not 30 * 86400000 ms (which would be wrong across DST).
+        val novBeforeFallBack = millis(2026, Calendar.NOVEMBER, 1, 10)
+        every { timeProvider.now() } returns novBeforeFallBack
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        // The earliest crunch date (if present) must be a valid future timestamp.
+        if (result.earliestCrunchDate != null) {
+            assertTrue(result.earliestCrunchDate!! > novBeforeFallBack)
+        }
+        assertEquals(3, result.horizons.size)
+    }
+
+    private fun millis(year: Int, month: Int, day: Int, hourOfDay: Int = 12): Long {
+        return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, day)
+            set(Calendar.HOUR_OF_DAY, hourOfDay)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+}

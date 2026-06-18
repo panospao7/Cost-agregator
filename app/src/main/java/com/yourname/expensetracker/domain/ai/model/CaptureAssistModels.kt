@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.privacy.PrivacyBlocked
 
 enum class DuplicateVerdict {
     LIKELY_DUPLICATE,
@@ -16,7 +17,8 @@ data class SuggestedValue<T>(
 
 data class CategoryOption(
     val id: Long,
-    val name: String
+    val name: String,
+    val cloudLabel: String = name
 )
 
 data class ReceiptAssistInput(
@@ -24,6 +26,9 @@ data class ReceiptAssistInput(
     val rawOcrText: String,
     val imagePath: String?,
     val imageMimeType: String?,
+    // NEW: Flag to indicate AI should use vision/image analysis mode
+    val isImageAnalysisMode: Boolean = false,
+    val redactBeforeCloud: Boolean = false,
     val parsedMerchant: String?,
     val parsedTotal: Double?,
     val parsedDate: Long?,
@@ -38,8 +43,34 @@ data class ReceiptAssistSuggestion(
     val total: SuggestedValue<Double>? = null,
     val date: SuggestedValue<Long>? = null,
     val taxAmount: SuggestedValue<Double>? = null,
-    val notes: List<String> = emptyList()
+    val notes: List<String> = emptyList(),
+    val usedImageInput: Boolean = false,
+    val attemptDetails: List<ReceiptAssistAttemptDetail> = emptyList()
 )
+
+data class ReceiptAssistAttemptDetail(
+    val attemptNumber: Int,
+    val method: String,
+    val success: Boolean,
+    val confidence: Float? = null,
+    val errorMessage: String? = null
+)
+
+sealed interface AiServiceResult<out T> {
+    data class Success<T>(val value: T) : AiServiceResult<T>
+    data class Failure(val error: AiServiceError) : AiServiceResult<Nothing>
+}
+
+sealed interface AiServiceError {
+    data object Timeout : AiServiceError
+    data object Offline : AiServiceError
+    data class HttpError(val code: Int, val message: String? = null) : AiServiceError
+    data object SslError : AiServiceError
+    data class ParseError(val message: String? = null) : AiServiceError
+    data class Disabled(val reason: String) : AiServiceError
+    data class PrivacyDenied(val blocked: PrivacyBlocked) : AiServiceError
+    data class Unknown(val message: String? = null) : AiServiceError
+}
 
 sealed interface ReceiptAssistGenerationResult {
     data class Success(
@@ -55,20 +86,34 @@ sealed interface ReceiptAssistGenerationResult {
     data class Error(val reason: String) : ReceiptAssistGenerationResult
 }
 
+data class MerchantTransactionHint(
+    val merchant: String,
+    val categoryName: String,
+    val cloudMerchant: String = merchant,
+    val cloudCategoryName: String = categoryName
+)
+
 data class CategorizationAssistInput(
     val targetType: AiTargetType,
     val targetId: Long,
     val merchant: String,
-    val amount: Double,
+    val amount: Double?,
     val currency: String,
-    val transactionType: TransactionType,
+    val transactionType: DomainTransactionType,
     val date: Long?,
     val currentCategoryId: Long?,
     val deterministicMatchType: String?,
     val deterministicExplanation: String?,
     val candidateCategories: List<CategoryOption>,
-    val supportingText: String? = null
-)
+    val supportingText: String? = null,
+    val recentTransactionsWithSameMerchant: List<MerchantTransactionHint> = emptyList()
+) {
+    init {
+        require(amount == null || (amount.isFinite() && amount > 0.0)) {
+            "CategorizationAssistInput.amount must be finite and > 0 when provided"
+        }
+    }
+}
 
 data class CategoryAssistSuggestion(
     val categoryId: Long,
@@ -99,7 +144,8 @@ data class DedupeCandidateSummary(
     val currency: String,
     val date: Long,
     val sourceLabel: String,
-    val textPreview: String? = null
+    val textPreview: String? = null,
+    val transactionType: String? = null
 )
 
 data class DedupeJudgeInput(
@@ -135,8 +181,17 @@ sealed interface DedupeJudgeGenerationResult {
 }
 
 data class ReviewCaptureAssistState(
+    val receiptSuggestion: AiLoadState<ReceiptAssistSuggestion> = AiLoadState.Idle,
+    val receiptDiagnostics: String? = null,
+    val receiptMessage: String? = null,
     val categorySuggestion: AiLoadState<CategoryAssistSuggestion> = AiLoadState.Idle,
     val categoryDiagnostics: String? = null,
     val dedupeSuggestion: AiLoadState<DedupeJudgeSuggestion> = AiLoadState.Idle,
     val dedupeDiagnostics: String? = null
+)
+
+data class ReviewReceiptPrefill(
+    val merchant: String? = null,
+    val amount: Double? = null,
+    val date: Long? = null
 )

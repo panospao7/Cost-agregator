@@ -1,19 +1,21 @@
 package com.yourname.expensetracker.domain.location
 
 import android.util.Log
-import com.yourname.expensetracker.data.database.entity.MerchantLocation
-import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
-import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.categorization.CanonicalResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -25,12 +27,14 @@ class LocationResolverStressTest {
     private lateinit var geocodingService: GeocodingService
     private lateinit var nearbyPoiService: NearbyPoiService
     private lateinit var locationProvider: ForegroundLocationProvider
-    private lateinit var locationRepository: MerchantLocationRepository
-    private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var locationCachePort: LocationCachePort
+    private lateinit var merchantClusterPort: MerchantClusterPort
     private lateinit var merchantCleaner: MerchantCleaner
     private lateinit var canonicalizer: MerchantCanonicalizer
     private lateinit var greeklishNormalizer: GreeklishNormalizer
+    private lateinit var timeProvider: TimeProvider
     private lateinit var locationResolver: LocationResolver
+    private lateinit var privacyGate: com.yourname.expensetracker.domain.privacy.PrivacyGate
 
     @Before
     fun setup() {
@@ -42,39 +46,57 @@ class LocationResolverStressTest {
         geocodingService = mockk(relaxed = true)
         nearbyPoiService = mockk(relaxed = true)
         locationProvider = mockk(relaxed = true)
-        locationRepository = mockk(relaxed = true)
-        expenseRepository = mockk(relaxed = true)
+        locationCachePort = mockk(relaxed = true)
+        merchantClusterPort = mockk(relaxed = true)
         merchantCleaner = mockk(relaxed = true)
         canonicalizer = mockk(relaxed = true)
         greeklishNormalizer = mockk(relaxed = true)
+        timeProvider = mockk()
+        privacyGate = mockk()
+
+        // All privacy checks allowed by default
+        coEvery { privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION, any()) } returns PrivacyDecision.Allowed
+        coEvery { privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING, any()) } returns PrivacyDecision.Allowed
+        coEvery { privacyGate.check(PrivacyCapability.OVERPASS_API, any()) } returns PrivacyDecision.Allowed
 
         every { merchantCleaner.clean(any()) } answers { firstArg() }
         every { canonicalizer.canonicalize(any()) } answers { CanonicalResult(firstArg(), emptyList(), 0.0) }
         every { greeklishNormalizer.normalize(any()) } answers { firstArg() }
+        every { timeProvider.now() } returns 1_000_000_000_000L
 
         coEvery { locationProvider.getLastKnownLocation() } returns null
-        coEvery { locationRepository.getCorrection(any(), any(), any()) } returns null
-        coEvery { locationRepository.getCachedLocation(any()) } returns null
-        coEvery { locationRepository.getCachedLocationForArea(any(), any()) } returns null
-        coEvery { expenseRepository.getMerchantLocationClusters(any()) } returns emptyList()
-        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns null
-        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns emptyList()
+        coEvery { locationCachePort.getCorrection(any(), any(), any()) } returns null
+        coEvery { locationCachePort.getCachedLocation(any()) } returns null
+        coEvery { locationCachePort.getCachedLocationForArea(any(), any()) } returns null
+        coEvery { merchantClusterPort.getMerchantLocationClusters(any()) } returns emptyList()
+        every { locationCachePort.getMostLikelyArea(any(), any(), any()) } answers {
+            val merchantName = firstArg<String>()
+            val lat = secondArg<Double?>()
+            val lon = thirdArg<Double?>()
+            if (lat != null && lon != null) "$merchantName|$lat|$lon" else "global"
+        }
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Success(null)
+        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns
+            NearbyPoiResult.Success(emptyList())
 
         locationResolver = LocationResolver(
             geocodingService = geocodingService,
             nearbyPoiService = nearbyPoiService,
             locationProvider = locationProvider,
-            locationRepository = locationRepository,
-            expenseRepository = expenseRepository,
+            locationCachePort = locationCachePort,
+            merchantClusterPort = merchantClusterPort,
             merchantCleaner = merchantCleaner,
             canonicalizer = canonicalizer,
-            greeklishNormalizer = greeklishNormalizer
+            greeklishNormalizer = greeklishNormalizer,
+            timeProvider = timeProvider,
+            privacyGate = privacyGate,
         )
     }
 
     @Test
     fun `correction has highest priority`() = runBlocking {
-        coEvery { locationRepository.getCorrection(any(), any(), any()) } returns correction(40.7, -74.0)
+        coEvery { locationCachePort.getCorrection(any(), any(), any()) } returns correction(40.7, -74.0)
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -85,7 +107,7 @@ class LocationResolverStressTest {
 
     @Test
     fun `cache hit skips geocoding`() = runBlocking {
-        coEvery { locationRepository.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
+        coEvery { locationCachePort.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -94,8 +116,9 @@ class LocationResolverStressTest {
 
     @Test
     fun `force refresh bypasses cache`() = runBlocking {
-        coEvery { locationRepository.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
-        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns geocoded(41.0, -73.0)
+        coEvery { locationCachePort.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(41.0, -73.0))
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis(), forceRefresh = true)
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -105,16 +128,55 @@ class LocationResolverStressTest {
     @Test
     fun `recent transaction with device location uses gps bias`() = runBlocking {
         coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
-        coEvery { geocodingService.search(any(), 40.71, -74.01, any(), any()) } returns geocoded(40.72, -74.02)
+        coEvery { geocodingService.search(any(), 40.71, -74.01, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(40.72, -74.02))
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis() - 60_000)
         assertTrue(result is LocationResolutionResult.Resolved)
     }
 
     @Test
+    fun `device coordinates trigger second correction lookup before geocoding`() = runBlocking {
+        coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
+        coEvery { locationCachePort.getCorrection("Shop", null, null) } returns null
+        coEvery { locationCachePort.getCorrection("Shop", 40.71, -74.01) } returns correction(40.72, -74.02)
+
+        val result = locationResolver.resolve("Shop", System.currentTimeMillis() - 60_000, merchantKey = "Shop")
+
+        assertTrue(result is LocationResolutionResult.Resolved)
+        val resolved = result as LocationResolutionResult.Resolved
+        assertEquals(40.72, resolved.latitude, 0.0001)
+        coVerifyOrder {
+            locationCachePort.getCorrection("Shop", null, null)
+            locationProvider.getLastKnownLocation()
+            locationCachePort.getCorrection("Shop", 40.71, -74.01)
+        }
+        coVerify(exactly = 0) { geocodingService.search(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `gps biased geocode saves under derived non global area key`() = runBlocking {
+        val rawMerchantName = "Shop"
+        val merchantKey = MerchantKeyGenerator.generate(rawMerchantName)
+        val expectedAreaKey = "$merchantKey|40.72|-74.02"
+
+        coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
+        coEvery { geocodingService.search(any(), 40.71, -74.01, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(40.72, -74.02))
+
+        val result = locationResolver.resolve(rawMerchantName, System.currentTimeMillis() - 60_000)
+
+        assertTrue(result is LocationResolutionResult.Resolved)
+        verify(exactly = 1) { locationCachePort.getMostLikelyArea(merchantKey, 40.72, -74.02) }
+        coVerify(exactly = 1) { locationCachePort.saveLocation(merchantKey, any(), expectedAreaKey) }
+        coVerify(exactly = 0) { locationCachePort.saveLocation(merchantKey, any(), "global") }
+    }
+
+    @Test
     fun `old transaction does not use gps bias`() = runBlocking {
         coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
-        coEvery { geocodingService.search(any(), null, null, any(), any()) } returns geocoded(40.72, -74.02)
+        coEvery { geocodingService.search(any(), null, null, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(40.72, -74.02))
 
         val result = locationResolver.resolve("Shop", 0L)
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -122,20 +184,53 @@ class LocationResolverStressTest {
     }
 
     @Test
+    fun `name only geocode saves under derived non global area key`() = runBlocking {
+        val rawMerchantName = "Shop"
+        val merchantKey = MerchantKeyGenerator.generate(rawMerchantName)
+        val expectedAreaKey = "$merchantKey|41.0|-73.0"
+
+        coEvery { geocodingService.search(any(), null, null, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(41.0, -73.0))
+
+        val result = locationResolver.resolve(rawMerchantName, 0L)
+
+        assertTrue(result is LocationResolutionResult.Resolved)
+        verify(exactly = 1) { locationCachePort.getMostLikelyArea(merchantKey, 41.0, -73.0) }
+        coVerify(exactly = 1) { locationCachePort.saveLocation(merchantKey, any(), expectedAreaKey) }
+        coVerify(exactly = 0) { locationCachePort.saveLocation(merchantKey, any(), "global") }
+    }
+
+    @Test
     fun `null island result is rejected`() = runBlocking {
-        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns geocoded(0.0, 0.0)
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(0.0, 0.0))
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.Unresolved)
     }
 
     @Test
+    fun `transient geocoder failure surfaces as retryable`() = runBlocking {
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Failure(GeocodingError.RateLimited)
+
+        val result = locationResolver.resolve("Shop", System.currentTimeMillis())
+
+        assertTrue(result is LocationResolutionResult.Retryable)
+        assertEquals(GeocodingError.RateLimited, (result as LocationResolutionResult.Retryable).error)
+        coVerify(exactly = 1) { geocodingService.search(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
     fun `multiple nearby pois require user selection`() = runBlocking {
         coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
-        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns listOf(
-            poi("P1", 40.70, -74.00, "A"),
-            poi("P2", 40.71, -74.01, "B")
-        )
+        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns
+            NearbyPoiResult.Success(
+                listOf(
+                    poi("P1", 40.70, -74.00, "A"),
+                    poi("P2", 40.71, -74.01, "B")
+                )
+            )
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.NeedsUserSelection)
@@ -143,11 +238,11 @@ class LocationResolverStressTest {
 
     @Test
     fun `provided merchant key is used for cache lookup`() = runBlocking {
-        coEvery { locationRepository.getCachedLocation("key123") } returns cached(40.70, -74.00, "cache")
+        coEvery { locationCachePort.getCachedLocation("key123") } returns cached(40.70, -74.00, "cache")
 
         val result = locationResolver.resolve("Raw Name", System.currentTimeMillis(), merchantKey = "key123")
         assertTrue(result is LocationResolutionResult.Resolved)
-        coVerify(exactly = 1) { locationRepository.getCachedLocation("key123") }
+        coVerify(exactly = 1) { locationCachePort.getCachedLocation("key123") }
     }
 
     private fun geocoded(lat: Double, lon: Double) = GeocodingResult(
@@ -160,33 +255,20 @@ class LocationResolverStressTest {
         source = "nominatim"
     )
 
-    private fun cached(lat: Double, lon: Double, source: String) = MerchantLocation(
-        id = 1,
-        normalizedMerchantName = "shop",
-        areaKey = "global",
-        displayName = "Shop",
+    private fun cached(lat: Double, lon: Double, source: String) = CachedMerchantLocation(
         latitude = lat,
         longitude = lon,
         source = source,
         osmId = "N1",
         displayAddress = "Cached",
-        confidence = 0.8f,
-        lastResolvedAt = System.currentTimeMillis(),
-        hitCount = 1
+        confidence = 0.8f
     )
 
-    private fun correction(lat: Double, lon: Double) = MerchantLocationCorrection(
-        id = 1,
-        normalizedMerchantName = "shop",
+    private fun correction(lat: Double, lon: Double) = LocationCorrection(
         correctedLatitude = lat,
         correctedLongitude = lon,
-        areaLatitude = null,
-        areaLongitude = null,
-        areaKey = "shop|global",
-        areaRadiusKm = 5.0f,
         osmId = "C1",
-        displayAddress = "Corrected",
-        createdAt = System.currentTimeMillis()
+        displayAddress = "Corrected"
     )
 
     private fun poi(id: String, lat: Double, lon: Double, name: String) = NearbyPoi(

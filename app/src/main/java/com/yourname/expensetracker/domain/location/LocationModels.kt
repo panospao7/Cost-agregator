@@ -24,7 +24,7 @@ interface GeocodingService {
         biasLon: Double? = null,
         cityHint: String? = null,
         bounded: Boolean = false
-    ): GeocodingResult?
+    ): GeocodingLookupResult
 
     /**
      * Search for [query] and return **all** matching results (up to [limit]).
@@ -42,9 +42,14 @@ interface GeocodingService {
         biasLon: Double? = null,
         limit: Int = 5,
         useGoogle: Boolean = false
-    ): List<GeocodingResult> {
+    ): GeocodingBatchResult {
         val result = search(query, biasLat, biasLon)
-        return if (result != null) listOf(result) else emptyList()
+        return when (result) {
+            is GeocodingLookupResult.Success -> GeocodingBatchResult.Success(
+                listOfNotNull(result.result)
+            )
+            is GeocodingLookupResult.Failure -> GeocodingBatchResult.Failure(result.error)
+        }
     }
 
     /**
@@ -55,7 +60,8 @@ interface GeocodingService {
      *
      * @return The best match for the given coordinate, or null on failure.
      */
-    suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingResult? = null
+    suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult =
+        GeocodingLookupResult.Failure(GeocodingError.ServiceDown)
 }
 
 /**
@@ -73,7 +79,34 @@ interface NearbyPoiService {
         lon: Double,
         merchantName: String,
         radiusMetres: Int
-    ): List<NearbyPoi>
+    ): NearbyPoiResult
+}
+
+sealed interface GeocodingLookupResult {
+    data class Success(val result: GeocodingResult?) : GeocodingLookupResult
+    data class Failure(val error: GeocodingError) : GeocodingLookupResult
+}
+
+sealed interface GeocodingBatchResult {
+    data class Success(val results: List<GeocodingResult>) : GeocodingBatchResult
+    data class Failure(val error: GeocodingError) : GeocodingBatchResult
+}
+
+sealed interface NearbyPoiResult {
+    data class Success(val pois: List<NearbyPoi>) : NearbyPoiResult
+    data class Failure(val error: GeocodingError) : NearbyPoiResult
+}
+
+sealed interface GeocodingError {
+    data object NoResults : GeocodingError
+    data object ServiceDown : GeocodingError
+    data object RateLimited : GeocodingError
+    data object NetworkError : GeocodingError
+    data object Timeout : GeocodingError
+    data object ParseError : GeocodingError
+    data object Disabled : GeocodingError
+    data class HttpError(val code: Int) : GeocodingError
+    data class Unknown(val message: String? = null) : GeocodingError
 }
 
 /**
@@ -90,7 +123,7 @@ interface ForegroundLocationProvider {
 /**
  * Sealed result type for the full resolution pipeline.
  */
-sealed class LocationResolutionResult {
+abstract class LocationResolutionResult {
     /** Successfully resolved to a single coordinate. */
     data class Resolved(
         val latitude: Double,
@@ -106,6 +139,9 @@ sealed class LocationResolutionResult {
      * to the user for manual selection.
      */
     data class NeedsUserSelection(val candidates: List<NearbyPoi>) : LocationResolutionResult()
+
+    /** Resolver hit a transient provider failure; caller may retry later. */
+    data class Retryable(val error: GeocodingError) : LocationResolutionResult()
 
     /** Could not resolve — expense latitude remains null. */
     object Unresolved : LocationResolutionResult()

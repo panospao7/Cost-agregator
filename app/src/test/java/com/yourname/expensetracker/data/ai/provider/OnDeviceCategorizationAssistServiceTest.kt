@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
@@ -20,7 +20,7 @@ class OnDeviceCategorizationAssistServiceTest {
         merchant = "Lidl",
         amount = 24.5,
         currency = "EUR",
-        transactionType = TransactionType.PURCHASE,
+        transactionType = DomainTransactionType.PURCHASE,
         date = null,
         currentCategoryId = null,
         deterministicMatchType = "FALLBACK",
@@ -166,6 +166,24 @@ class OnDeviceCategorizationAssistServiceTest {
     }
 
     @Test
+    fun `parseResponse returns null when categoryId is zero`() {
+        val json = """{"categoryId":0,"categoryName":"Groceries","confidence":0.9}"""
+        assertNull(service.parseResponse(json))
+    }
+
+    @Test
+    fun `parseResponse returns null when confidence is not finite`() {
+        val json = """{"categoryId":1,"categoryName":"Groceries","confidence":"NaN"}"""
+        assertNull(service.parseResponse(json))
+    }
+
+    @Test
+    fun `parseResponse returns null when confidence is out of bounds`() {
+        val json = """{"categoryId":1,"categoryName":"Groceries","confidence":1.2}"""
+        assertNull(service.parseResponse(json))
+    }
+
+    @Test
     fun `parseResponse returns null for malformed JSON`() {
         assertNull(service.parseResponse("{categoryId: 1, broken"))
     }
@@ -186,5 +204,14 @@ class OnDeviceCategorizationAssistServiceTest {
         val result = service.parseResponse(json)
         assertNotNull(result)
         assertEquals(emptyList<Long>(), result!!.alternativeCategoryIds)
+    }
+
+    @Test
+    fun `parseResponse filters invalid alternative category ids`() {
+        val json = """{"categoryId":1,"categoryName":"Groceries","alternativeCategoryIds":[2,0,-1,"abc",3]}"""
+
+        val result = service.parseResponse(json)
+        assertNotNull(result)
+        assertEquals(listOf(2L, 3L), result!!.alternativeCategoryIds)
     }
 }

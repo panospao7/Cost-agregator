@@ -5,6 +5,8 @@ import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.TextPart
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
@@ -29,19 +31,22 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
         }
     }
 
-    override suspend fun judge(input: DedupeJudgeInput): DedupeJudgeSuggestion? {
+    override suspend fun judge(input: DedupeJudgeInput): AiServiceResult<DedupeJudgeSuggestion> {
         return try {
             val model = getOrCreateModel()
             val request = buildRequest(input)
             val response = model.generateContent(request)
-            val text = response.candidates.firstOrNull()?.text ?: return null
-            parseResponse(text)
+            val text = response.candidates.firstOrNull()?.text
+                ?: return AiServiceResult.Failure(AiServiceError.ParseError("Empty response"))
+            val parsed = parseResponse(text)
+                ?: return AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
+            AiServiceResult.Success(parsed)
         } catch (e: GenAiException) {
             Timber.w(e, "OnDeviceDedupeJudgeService: GenAI error (code=%d)", e.errorCode)
-            null
+            AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
         } catch (e: Exception) {
             Timber.w(e, "OnDeviceDedupeJudgeService: unexpected error")
-            null
+            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
         }
     }
 
@@ -55,12 +60,13 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
 
     internal fun buildPrompt(input: DedupeJudgeInput): String {
         val candidates = input.candidates.joinToString("\n") { candidate ->
-            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
+            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
         }
 
         return buildString {
             appendLine("Judge whether this pending review is likely a duplicate of one bounded candidate set.")
             appendLine("Stay conservative and prefer UNCERTAIN when evidence is weak.")
+            appendLine("Note: Transactions of different types (e.g. PURCHASE vs DEPOSIT) are never duplicates.")
             appendLine("Return ONLY one JSON object.")
             appendLine()
             appendLine("JSON schema: {\"verdict\":\"LIKELY_DUPLICATE|LIKELY_DISTINCT|UNCERTAIN\",\"matchedTargetType\":\"PENDING_REVIEW|EXPENSE|null\",\"matchedTargetId\":0,\"confidence\":0.0,\"rationale\":\"short explanation\"}")
@@ -71,6 +77,7 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
             appendLine("- merchant=${input.subject.merchant}")
             appendLine("- amount=${input.subject.amount} ${input.subject.currency}")
             appendLine("- date=${input.subject.date}")
+            appendLine("- txType=${input.subject.transactionType ?: "UNKNOWN"}")
             appendLine("- source=${input.subject.sourceLabel}")
             appendLine("- preview=${input.subject.textPreview ?: "none"}")
             appendLine()
@@ -83,13 +90,27 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
         val jsonText = extractFirstJsonObject(text.trim()) ?: return null
         return try {
             val suggestion = JSONObject(jsonText)
+            val verdict = StrictAiJsonParsing.enumOrNull<DuplicateVerdict>(suggestion.optString("verdict"))
+                ?: return null
             DedupeJudgeSuggestion(
-                verdict = DuplicateVerdict.valueOf(suggestion.optString("verdict")),
+                verdict = verdict,
                 matchedTargetType = suggestion.optString("matchedTargetType").trim()
                     .takeIf { it.isNotBlank() && it != "null" }
-                    ?.let { AiTargetType.valueOf(it) },
-                matchedTargetId = if (suggestion.has("matchedTargetId") && !suggestion.isNull("matchedTargetId")) suggestion.optLong("matchedTargetId") else null,
-                confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) suggestion.optDouble("confidence").toFloat() else null,
+                    ?.let { StrictAiJsonParsing.enumOrNull<AiTargetType>(it) },
+                matchedTargetId = if (suggestion.has("matchedTargetId") && !suggestion.isNull("matchedTargetId")) {
+                    StrictAiJsonParsing.run {
+                        suggestion.nullableLongRejectingZeroOrNull("matchedTargetId")
+                    }
+                } else {
+                    null
+                },
+                confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) {
+                    StrictAiJsonParsing.run {
+                        suggestion.boundedConfidenceOrNull("confidence")
+                    } ?: return null
+                } else {
+                    null
+                },
                 rationale = suggestion.optString("rationale").trim().ifBlank { null }
             )
         } catch (e: Exception) {

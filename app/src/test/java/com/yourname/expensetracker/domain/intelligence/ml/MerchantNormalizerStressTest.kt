@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import com.yourname.expensetracker.domain.categorization.AliasLinkResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -16,6 +17,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -30,7 +32,7 @@ class MerchantNormalizerStressTest {
 
     @Before
     fun setup() {
-        every { timeProvider.now() } returns System.currentTimeMillis()
+        every { timeProvider.now() } returns 1_700_000_000_000L
         normalizer = MerchantNormalizer(repository, merchantRules, greeklishNormalizer, context, timeProvider)
     }
 
@@ -55,7 +57,7 @@ class MerchantNormalizerStressTest {
         coEvery { repository.getCanonicalBySearchKey(any()) } returns null
         coEvery { repository.getTopMerchants(any()) } returns emptyList()
         coEvery { repository.insertCanonical(any()) } returns 1L
-        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns Unit
+        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns AliasLinkResult.Created(1L)
 
         val result = normalizer.normalize(longName)
         assertNotNull(result)
@@ -108,7 +110,7 @@ class MerchantNormalizerStressTest {
         coEvery { repository.getCanonicalBySearchKey(any()) } returns null
         coEvery { repository.getTopMerchants(any()) } returns emptyList()
         coEvery { repository.insertCanonical(any()) } returns 99L
-        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns Unit
+        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns AliasLinkResult.Created(1L)
 
         val result = normalizer.normalize("New Coffee Shop", autoCreate = true)
         assertEquals(MatchType.NEW_MERCHANT, result.matchType)
@@ -137,12 +139,12 @@ class MerchantNormalizerStressTest {
         coEvery { repository.getCanonicalBySearchKey("starbucks") } returns canonical
         coEvery { repository.getCanonicalBySearchKey("starbuks") } returns null
         coEvery { repository.getTopMerchants(1000) } returns listOf(canonical)
-        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns Unit
+        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns AliasLinkResult.Created(1L)
 
         val result = normalizer.normalize("Starbuks")
         assertNotNull(result)
         assertEquals("Starbucks", result.canonical.normalizedName)
-        assert(result.matchType == MatchType.FUZZY_MATCH || result.matchType == MatchType.EXACT_MATCH)
+        assertEquals(MatchType.FUZZY_MATCH, result.matchType)
     }
 
     @Test
@@ -151,7 +153,7 @@ class MerchantNormalizerStressTest {
         coEvery { repository.getCanonicalBySearchKey(any()) } returns null
         coEvery { repository.getTopMerchants(any()) } returns emptyList()
         coEvery { repository.insertCanonical(any()) } answers { (args[0] as MerchantCanonical).searchKey.hashCode().toLong().and(0x7FFFFFFF) }
-        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns Unit
+        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns AliasLinkResult.Created(1L)
 
         val results = (1..100).map { i ->
             async { normalizer.normalize("Merchant$i") }
@@ -167,7 +169,7 @@ class MerchantNormalizerStressTest {
         coEvery { repository.getCanonicalBySearchKey(any()) } returns null
         coEvery { repository.getTopMerchants(any()) } returns emptyList()
         coEvery { repository.insertCanonical(any()) } returns 1L
-        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns Unit
+        coEvery { repository.linkAliasToCanonical(any(), any(), any(), any(), any()) } returns AliasLinkResult.Created(1L)
 
         val result = normalizer.normalize("Σκλαβενίτης")
         assertNotNull(result)
@@ -178,6 +180,7 @@ class MerchantNormalizerStressTest {
     @Test
     fun `stress - cleanMerchantName delegates to merchantRules`() {
         val cleaned = normalizer.cleanMerchantName("  COFFEE SHOP #123  ")
-        assert(cleaned.contains("COFFEE") || cleaned.contains("coffee"))
+        assertTrue("Expected cleaned name to contain 'COFFEE' or 'coffee', got: $cleaned",
+            cleaned.contains("COFFEE") || cleaned.contains("coffee"))
     }
 }

@@ -84,8 +84,26 @@ object AmountUtils {
                 val lastComma = cleaned.lastIndexOf(",")
                 val lastDot = cleaned.lastIndexOf(".")
                 if (lastComma > lastDot) {
+                    val decimalParts = cleaned.split(",")
+                    if (decimalParts.size != 2 || decimalParts[1].isEmpty()) {
+                        Timber.w("Ambiguous amount format: $amountStr")
+                        return@parseAmount null
+                    }
+                    if (!hasStrictThousandsGrouping(decimalParts[0], separator = '.')) {
+                        Timber.w("Ambiguous amount format (inconsistent grouping): $amountStr")
+                        return@parseAmount null
+                    }
                     cleaned.replace(".", "").replace(",", ".")
                 } else {
+                    val decimalParts = cleaned.split(".")
+                    if (decimalParts.size != 2 || decimalParts[1].isEmpty()) {
+                        Timber.w("Ambiguous amount format: $amountStr")
+                        return@parseAmount null
+                    }
+                    if (!hasStrictThousandsGrouping(decimalParts[0], separator = ',')) {
+                        Timber.w("Ambiguous amount format (inconsistent grouping): $amountStr")
+                        return@parseAmount null
+                    }
                     cleaned.replace(",", "")
                 }
             }
@@ -96,9 +114,14 @@ object AmountUtils {
                         cleaned.replace(",", ".")
                     }
                     parts.size >= 2 && parts.drop(1).all { it.isNotEmpty() && it.all { c -> c.isDigit() } } -> {
-                        // Check for inconsistent grouping (e.g., "1,23,456" has 1, 23, 456 - mixed 1-digit and 3-digit groups)
-                        val groupSizes = parts.drop(1).map { it.length }
-                        if (groupSizes.toSet().size > 1) {
+                        val firstGroup = parts.first()
+                        val groupingParts = parts.drop(1)
+                        if (
+                            firstGroup.isEmpty() ||
+                            firstGroup.length !in 1..3 ||
+                            !firstGroup.all { it.isDigit() } ||
+                            groupingParts.any { it.length != 3 }
+                        ) {
                             Timber.w("Ambiguous amount format (inconsistent grouping): $amountStr")
                             return@parseAmount null
                         }
@@ -131,5 +154,16 @@ object AmountUtils {
 
     fun formatAmount(amount: Double, currency: String = "€"): String {
         return String.format(Locale.US, "%s%.2f", currency, amount)
+    }
+
+    private fun hasStrictThousandsGrouping(rawIntegerPart: String, separator: Char): Boolean {
+        val groups = rawIntegerPart.split(separator)
+        if (groups.size < 2) return false
+        val firstGroup = groups.first()
+        val remainingGroups = groups.drop(1)
+        if (firstGroup.isEmpty() || firstGroup.length !in 1..3 || !firstGroup.all { it.isDigit() }) {
+            return false
+        }
+        return remainingGroups.all { group -> group.length == 3 && group.all { it.isDigit() } }
     }
 }

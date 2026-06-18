@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
@@ -11,6 +12,13 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// AID-4: This service can be simplified by using HybridRouter:
+// val router = HybridRouter(aiSettingsRepository, router, AiCapability.REVIEW_EXPLANATION,
+//     cloudFn = { cloudReviewExplanationService.generate(it) },
+//     onDeviceFn = { onDeviceReviewExplanationService.generate(it) },
+//     fallbackFn = { noOpReviewExplanationService.generate(it) }
+// )
+// override suspend fun generate(input: ReviewExplanationInput): AiServiceResult<ReviewExplanation> = router.execute(input)
 @Singleton
 class HybridReviewExplanationService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
@@ -20,7 +28,7 @@ class HybridReviewExplanationService @Inject constructor(
     private val noOpReviewExplanationService: NoOpReviewExplanationService
 ) : ReviewExplanationService {
 
-    override suspend fun generate(input: ReviewExplanationInput): ReviewExplanation? {
+    override suspend fun generate(input: ReviewExplanationInput): AiServiceResult<ReviewExplanation> {
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.REVIEW_EXPLANATION, settings).route) {
             AiRoute.CLOUD -> cloudReviewExplanationService.generate(input)

@@ -21,18 +21,25 @@ import com.patrykandpatrick.vico.core.entry.FloatEntry
 import com.patrykandpatrick.vico.core.entry.ChartEntryModel
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
 fun ForecastTimeline(
-    pastPoints: List<Double>,
-    projectedPoints: List<Double>,
-    budgetLimit: Double,
-    modifier: Modifier = Modifier
+ pastPoints: List<Double>,
+ projectedPoints: List<Double>,
+ budgetLimit: Double,
+ modifier: Modifier = Modifier,
+ /** Placeholder default. Production callers should pass explicit currency. */
+ currency: String = "EUR"
 ) {
     Column(modifier = modifier) {
         Text(
-            text = "FORECAST TRAJECTORY",
+            text = stringResource(R.string.forecast_trajectory_title),
             style = MaterialTheme.typography.labelSmall,
             color = SemanticColors.TextMuted,
             letterSpacing = 0.5.sp
@@ -42,16 +49,16 @@ fun ForecastTimeline(
 
         if (pastPoints.isEmpty() && projectedPoints.isEmpty()) {
             Box(modifier = Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
-                Text("No data available", style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(R.string.forecast_no_data), style = MaterialTheme.typography.labelSmall)
             }
             return
         }
 
-        // Guard against invalid budget limit
-        val safeBudgetLimit = if (budgetLimit <= 0) 1.0 else budgetLimit
+        val hasValidBudget = budgetLimit > 0.0
+        val noBudgetSetText = stringResource(R.string.forecast_no_budget_set)
 
         // Vico model creation - Connect past to projected (no gap)
-        val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit) {
+        val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit, hasValidBudget) {
             val pastEntries = pastPoints.mapIndexed { index, value -> 
                 FloatEntry(index.toFloat(), value.toFloat()) 
             }
@@ -72,25 +79,68 @@ fun ForecastTimeline(
                 }
             }
             
-            val budgetLimitEntries = listOf(
-                FloatEntry(0f, safeBudgetLimit.toFloat()),
-                FloatEntry((pastPoints.size + projectionEntries.size).toFloat(), safeBudgetLimit.toFloat())
-            )
-            entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
+            if (hasValidBudget) {
+                val budgetLimitEntries = listOf(
+                    FloatEntry(0f, budgetLimit.toFloat()),
+                    FloatEntry(
+                        listOfNotNull(
+                            pastEntries.maxOfOrNull { it.x },
+                            projectionEntries.maxOfOrNull { it.x }
+                        ).maxOrNull() ?: 0f,
+                        budgetLimit.toFloat()
+                    )
+                )
+                entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
+            } else {
+                entryModelOf(pastEntries, projectionEntries)
+            }
         }
 
-        val lineSpecs = remember {
-            listOf(
-                LineChart.LineSpec(
-                    lineColor = SemanticColors.PrimaryIndigo.toArgb(),
-                ),
-                LineChart.LineSpec(
-                    lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
-                ),
-                LineChart.LineSpec(
-                    lineColor = SemanticColors.WarningOrange.copy(alpha = 0.5f).toArgb(),
-                    lineThicknessDp = 1f
+        val lineSpecs = remember(hasValidBudget) {
+            buildList {
+                add(
+                    LineChart.LineSpec(
+                        lineColor = SemanticColors.PrimaryIndigo.toArgb(),
+                    )
                 )
+                add(
+                    LineChart.LineSpec(
+                        lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
+                    )
+                )
+                if (hasValidBudget) {
+                    add(
+                        LineChart.LineSpec(
+                            lineColor = SemanticColors.WarningOrange.copy(alpha = 0.5f).toArgb(),
+                            lineThicknessDp = 1f
+                        )
+                    )
+                }
+            }
+        }
+
+        val allPoints = remember(pastPoints, projectedPoints) { pastPoints + projectedPoints }
+        val minPoint = allPoints.minOrNull() ?: 0.0
+        val maxPoint = allPoints.maxOrNull() ?: 0.0
+        val currentPoint = pastPoints.lastOrNull() ?: 0.0
+        val projectedEnd = projectedPoints.lastOrNull() ?: currentPoint
+        val chartSummary = if (hasValidBudget) {
+ stringResource(
+ R.string.forecast_timeline_summary_with_budget,
+ CurrencyFormatter.formatMoney(currentPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(projectedEnd, currency, showCents = false),
+ CurrencyFormatter.formatMoney(minPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(maxPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(budgetLimit, currency, showCents = false)
+ )
+ } else {
+ stringResource(
+ R.string.forecast_timeline_summary_without_budget,
+ CurrencyFormatter.formatMoney(currentPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(projectedEnd, currency, showCents = false),
+ CurrencyFormatter.formatMoney(minPoint, currency, showCents = false),
+ CurrencyFormatter.formatMoney(maxPoint, currency, showCents = false),
+                noBudgetSetText
             )
         }
 
@@ -104,6 +154,7 @@ fun ForecastTimeline(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(180.dp)
+                .semantics { contentDescription = chartSummary }
         )
         
         Spacer(modifier = Modifier.height(8.dp))
@@ -113,9 +164,13 @@ fun ForecastTimeline(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-             LegendItem("Actual", SemanticColors.PrimaryIndigo)
-             Spacer(modifier = Modifier.width(16.dp))
-             LegendItem("Projected", SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
+              LegendItem(stringResource(R.string.chart_legend_actual), SemanticColors.PrimaryIndigo)
+              Spacer(modifier = Modifier.width(16.dp))
+              LegendItem(stringResource(R.string.chart_legend_projected), SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
+              if (hasValidBudget) {
+                  Spacer(modifier = Modifier.width(16.dp))
+                  LegendItem(stringResource(R.string.chart_legend_budget_limit), SemanticColors.WarningOrange.copy(alpha = 0.5f))
+              }
         }
     }
 }

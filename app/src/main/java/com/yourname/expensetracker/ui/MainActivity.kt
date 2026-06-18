@@ -1,10 +1,13 @@
 package com.yourname.expensetracker.ui
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,33 +19,74 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
+import com.google.gson.Gson
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.backup.AppOperationalState
+import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
+import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.database.entity.SplitShare
+import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
-import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
+import com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen
+import com.yourname.expensetracker.ui.screens.bank.BankConnectionsScreen
+import com.yourname.expensetracker.ui.screens.budget.BudgetForecastingScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
-import com.yourname.expensetracker.ui.screens.home.HomeScreen
+import com.yourname.expensetracker.ui.screens.carbon.CarbonFootprintScreen
+import com.yourname.expensetracker.ui.screens.cashflow.CashFlowCalendarScreen
+import com.yourname.expensetracker.ui.screens.challenge.SpendingChallengesScreen
+import com.yourname.expensetracker.ui.screens.home.HomeRoute
+import com.yourname.expensetracker.ui.screens.investment.InvestmentPortfolioScreen
+import com.yourname.expensetracker.ui.screens.lifestyle.LifestyleInflationScreen
 import com.yourname.expensetracker.ui.screens.map.SpendingMapScreen
+import com.yourname.expensetracker.ui.screens.negotiation.BillNegotiationScreen
+import com.yourname.expensetracker.ui.screens.naturallanguage.NaturalLanguageSearchScreen
+import com.yourname.expensetracker.ui.screens.price.PriceProtectionScreen
+import com.yourname.expensetracker.ui.screens.receiptmatching.ReceiptMatchingRoute
+import com.yourname.expensetracker.ui.screens.reminder.BillRemindersScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
+import com.yourname.expensetracker.ui.screens.savings.SavingsGoalsScreen
+import com.yourname.expensetracker.ui.screens.split.SplitTemplatesScreen
+import com.yourname.expensetracker.ui.screens.split.VisualSplitEditorScreen
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
+import com.yourname.expensetracker.ui.screens.warranty.WarrantyTrackerScreen
+import com.yourname.expensetracker.ui.screens.currency.CurrencyManagementScreen
+import com.yourname.expensetracker.ui.screens.backup.BackupRestoreScreen
+import com.yourname.expensetracker.ui.screens.export.ExportOptionsScreen
+import com.yourname.expensetracker.ui.screens.groups.SharedExpenseGroupsScreen
+import com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen
+import com.yourname.expensetracker.ui.screens.recurringmanual.ManualRecurringExpenseScreen
+import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagementScreen
+import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
+import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.navigation.NavigationDestination
+import com.yourname.expensetracker.ui.navigation.NavigationResult
+import com.yourname.expensetracker.ui.navigation.ProvideNavigationController
+import com.yourname.expensetracker.ui.navigation.LocalNavigationController
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -54,58 +98,248 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var aiEngagementRepository: AiEngagementRepository
 
+    @Inject
+    lateinit var actionRegistry: ContextualActionRegistry
+
+    @Inject
+    lateinit var expenseRepository: ExpenseRepository
+
+    @Inject
+    lateinit var gson: Gson
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handleIntent(intent)
+        if (savedInstanceState == null) {
+            val consumed = handleIntent(intent)
+            if (consumed) {
+                // One-shot consume so this deep link is not re-applied on future recreations.
+                intent.data = null
+                setIntent(intent)
+            }
+        }
         setContent {
             ExpenseTrackerTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                ProvideNavigationController(
+                    initialDestination = NavigationDestination.Home
                 ) {
-                    MainScreen(mainViewModel)
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        MainScreen(
+                            mainViewModel = mainViewModel,
+                            actionRegistry = actionRegistry,
+                            expenseRepository = expenseRepository,
+                            gson = gson
+                        )
+                    }
                 }
             }
         }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleIntent(intent)
+        setIntent(intent)
+        val consumed = handleIntent(intent)
+        if (consumed) {
+            // One-shot consume so this deep link is not re-applied on future recreations.
+            intent.data = null
+            setIntent(intent)
+        }
     }
 
-    private fun handleIntent(intent: android.content.Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme == "expensetracker") {
-            when (data.host) {
-                "dashboard" -> {
-                    mainViewModel.navigateToTab(0)
-                    data.getQueryParameter("briefingKey")?.let { briefingKey ->
-                        lifecycleScope.launch {
-                            aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
+    /**
+     * PRV-16: Deep links exported without auth.
+     *
+     * TODO: Add authentication confirmation prompt before processing deep links.
+     * Currently deep links are processed without any auth gate, which could allow
+     * other apps on the device to trigger navigation without user consent.
+     * Consider showing a confirmation dialog for sensitive deep link actions
+     * (e.g. navigating to specific expense IDs, triggering bulk navigation).
+     *
+     * Security recommendation: Integrate with BiometricPrompt or
+     * DevicePolicyManager to verify user identity before handling deep links
+     * that expose personal financial data.
+     */
+    private fun handleIntent(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
+        if (data.scheme != "expensetracker") return false
+
+        when (data.host) {
+            "home", "dashboard" -> {
+                mainViewModel.navigateTo(NavigationDestination.Home)
+                data.getQueryParameter("briefingKey")?.let { briefingKey ->
+                    lifecycleScope.launch {
+                        aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
+                    }
+                }
+                aiRuntimeDiagnostics.recordInteraction(
+                    type = "phase4_open",
+                    message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
+                )
+            }
+            "activity" -> {
+                val expenseId = data.getQueryParameter("expenseId")?.toLongOrNull()
+                if (expenseId != null) {
+                    lifecycleScope.launch {
+                        val expense = expenseRepository.getExpenseById(expenseId)
+                        if (expense != null) {
+                            val calendar = java.util.Calendar.getInstance().apply {
+                                timeInMillis = expense.date
+                                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                set(java.util.Calendar.MINUTE, 0)
+                                set(java.util.Calendar.SECOND, 0)
+                                set(java.util.Calendar.MILLISECOND, 0)
+                            }
+                            val startOfDay = calendar.timeInMillis
+                            calendar.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                            mainViewModel.navigateToTransactions(
+                                TransactionFilter(dateRange = startOfDay to calendar.timeInMillis)
+                            )
+                        } else {
+                            mainViewModel.navigateTo(NavigationDestination.Transactions(initialExpenseId = expenseId))
                         }
                     }
-                    aiRuntimeDiagnostics.recordInteraction(
-                        type = "phase4_open",
-                        message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
-                    )
+                } else {
+                    mainViewModel.navigateTo(NavigationDestination.Transactions())
                 }
-                "activity" -> mainViewModel.navigateToTab(1)
-                "review" -> mainViewModel.navigateToTab(2)
-                "plan" -> mainViewModel.navigateToTab(3)
-                "add" -> mainViewModel.navigateToTab(0)
-                "analytics" -> mainViewModel.navigateToTab(4)
-                "map" -> mainViewModel.navigateToTab(5)
+            }
+            "review" -> mainViewModel.navigateTo(NavigationDestination.Review)
+            "plan" -> mainViewModel.navigateTo(NavigationDestination.Budget)
+            "add" -> {
+                mainViewModel.triggerAddExpense()
+            }
+            "analytics" -> {
+                mainViewModel.navigateTo(
+                    NavigationDestination.Analytics(
+                        initialPeriod = data.getQueryParameter("period")
+                    )
+                )
+            }
+            "map" -> {
+                mainViewModel.navigateTo(
+                    NavigationDestination.SpendingMap(
+                        initialLocationQuery = data.getQueryParameter("location")
+                    )
+                )
+            }
+            else -> {
+                Timber.w("Ignoring unsupported deep link host: ${data.host}")
+                mainViewModel.navigateTo(NavigationDestination.Home)
             }
         }
+
+        return true
     }
+}
+
+private data class PersistedVisualSplit(
+    val splitType: SplitTemplate.SplitType,
+    val shares: List<SplitShare>
+)
+
+private suspend fun applyVisualSplitToExpense(
+    expenseRepository: ExpenseRepository,
+    gson: Gson,
+    expenseId: Long,
+    shares: List<SplitShare>,
+    splitType: SplitTemplate.SplitType,
+    templateId: Long?
+): Boolean {
+    val expense = expenseRepository.getExpenseById(expenseId) ?: return false
+    val sanitizedShares = shares
+        .map { it.copy(participantName = it.participantName.trim()) }
+        .sortedBy { it.participantIndex }
+
+    if (sanitizedShares.isEmpty()) return false
+
+    val myShare = sanitizedShares.first()
+    val sharedWithName = sanitizedShares
+        .drop(1)
+        .joinToString(", ") { it.participantName }
+        .takeIf { it.isNotBlank() }
+
+    // G02-FIXED: Route shared ownership writes through normalizeOwnership()
+    // to enforce mutual exclusivity (isNotMine vs isSharedExpense).
+    val updatedExpense = expense.copy(
+        isNotMine = false,
+        ownerName = null,
+        isSharedExpense = sanitizedShares.size > 1,
+        sharedWithName = sharedWithName,
+        mySharePercentage = myShare.percentage
+            ?.takeIf { it.isFinite() }
+            ?.roundToInt()
+            ?.coerceIn(0, 100),
+        myShareAmount = myShare.amount?.takeIf { it.isFinite() },
+        splitTemplateId = templateId,
+        splitVisualization = gson.toJson(
+            PersistedVisualSplit(
+                splitType = splitType,
+                shares = sanitizedShares
+            )
+        )
+    ).normalizeOwnership()  // G02: enforce ownership invariants before persistence
+
+    expenseRepository.updateExpense(updatedExpense)
+    return true
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(mainViewModel: MainViewModel) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+fun MainScreen(
+    mainViewModel: MainViewModel,
+    actionRegistry: ContextualActionRegistry,
+    expenseRepository: ExpenseRepository,
+    gson: Gson
+) {
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    val transactionFilterSaver = remember {
+        listSaver<TransactionFilter?, Any?>(
+            save = { filter ->
+                if (filter == null) {
+                    emptyList<Any?>()
+                } else {
+                    listOf(
+                        filter.categoryId,
+                        filter.merchantName,
+                        filter.transactionType?.name,
+                        filter.dateRange?.first,
+                        filter.dateRange?.second,
+                        filter.ownership?.name,
+                        filter.minAmount,
+                        filter.maxAmount,
+                        filter.correlationId
+                    )
+                }
+            },
+            restore = { saved ->
+                if (saved.isEmpty()) {
+                    null
+                } else {
+                    val transactionType = (saved.getOrNull(2) as? String)
+                        ?.let { runCatching { com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(it) }.getOrNull() }
+                    val rangeStart = saved.getOrNull(3) as? Long
+                    val rangeEnd = saved.getOrNull(4) as? Long
+                    val ownership = (saved.getOrNull(5) as? String)
+                        ?.let { runCatching { com.yourname.expensetracker.data.repository.OwnershipFilter.valueOf(it) }.getOrNull() }
+
+                    TransactionFilter(
+                        categoryId = saved.getOrNull(0) as? Long,
+                        merchantName = saved.getOrNull(1) as? String,
+                        transactionType = transactionType,
+                        dateRange = if (rangeStart != null && rangeEnd != null) rangeStart to rangeEnd else null,
+                        ownership = ownership,
+                        minAmount = saved.getOrNull(6) as? Double,
+                        maxAmount = saved.getOrNull(7) as? Double,
+                        correlationId = (saved.getOrNull(8) as? Long) ?: 0L
+                    )
+                }
+            }
+        )
+    }
     
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
@@ -114,24 +348,89 @@ fun MainScreen(mainViewModel: MainViewModel) {
     val reviewViewModel: com.yourname.expensetracker.ui.screens.review.ReviewViewModel = hiltViewModel()
     
     var showNotificationPermissionDialog by rememberSaveable { mutableStateOf(false) }
-    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
+    var activeTransactionFilter by rememberSaveable(stateSaver = transactionFilterSaver) {
+        mutableStateOf<TransactionFilter?>(null)
+    }
     
+    // Navigation Controller - Single source of truth for ALL navigation
+    val navigation = LocalNavigationController.current
+    val currentDestination = navigation.destination
+
+    BackHandler(enabled = navigation.canNavigateBack()) {
+        navigation.navigateBack()
+    }
+    
+    var isFabExpanded by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         mainViewModel.navigationRequest.collect { request ->
             when (request) {
                 is MainNavigationRequest.Tab -> {
-                    selectedTab = request.index
+                    navigation.navigateToTab(request.index)
                 }
                 is MainNavigationRequest.Transactions -> {
                     activeTransactionFilter = request.filter
-                    selectedTab = 1
+                    navigation.navigateToTab(1)
+                }
+                is MainNavigationRequest.Destination -> {
+                    // All navigation now goes through NavigationDestination sealed class
+                    navigation.navigateTo(request.destination)
                 }
             }
         }
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(navigation) {
+        navigation.navigationResults.collect { result ->
+            when (result) {
+                is NavigationResult.VisualSplitApplied -> {
+                    snackbarHostState.showSnackbar("Split applied")
+                }
+            }
+        }
+    }
     
+    // ── Global operational lock (restore / critical recovery) ───────
+    val operationalState by mainViewModel.operationalState.collectAsState()
+    when (val state = operationalState) {
+        is AppOperationalState.RestartRequiredAfterRestore -> {
+            AppOperationalLockScreen(
+                title = "Restart Required",
+                message = "A database restore completed. The app must restart to load the restored data.",
+                actionLabel = "Restart Now",
+                onAction = { Runtime.getRuntime().exit(0) }
+            )
+            return
+        }
+        is AppOperationalState.CriticalRecoveryRequired -> {
+            val msg = buildString {
+                append("The database is in an unrecoverable state.")
+                if (state.reason != null) append("\n\nReason: ${state.reason}")
+                append("\n\nPlease restart the app. If the problem persists, contact support.")
+            }
+            AppOperationalLockScreen(
+                title = "Critical Recovery Required",
+                message = msg,
+                actionLabel = "OK",
+                onAction = { /* no-op: user must intervene */ }
+            )
+            return
+        }
+        is AppOperationalState.RestoreInProgress -> {
+            AppOperationalLockScreen(
+                title = "Restore In Progress",
+                message = "A database restore is in progress (${state.mode.label}). Please wait…",
+                actionLabel = "Please Wait",
+                onAction = { /* non-dismissable */ }
+            )
+            return
+        }
+        else -> { /* Normal / BackupExporting — app continues */ }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -151,11 +450,14 @@ fun MainScreen(mainViewModel: MainViewModel) {
 
     val haptic = rememberHapticFeedback()
 
-    var showAddExpense by rememberSaveable { mutableStateOf(false) }
-    var showScanReceipt by rememberSaveable { mutableStateOf(false) }
-    var showRecurringExpenses by rememberSaveable { mutableStateOf(false) }
-    var showAssistant by rememberSaveable { mutableStateOf(false) }
-    var isFabExpanded by rememberSaveable { mutableStateOf(false) }
+    // Sync: Keep selectedTab in sync with NavigationController
+    LaunchedEffect(currentDestination) {
+        navigation.getCurrentTabIndex()?.let { tabIndex ->
+            if (selectedTab != tabIndex) {
+                selectedTab = tabIndex
+            }
+        }
+    }
 
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
@@ -166,29 +468,32 @@ fun MainScreen(mainViewModel: MainViewModel) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            AppNavigationBar(
-                selectedTab = selectedTab,
-                onTabSelected = { index ->
-                    if (selectedTab != index) haptic(HapticType.Standard)
-                    if (index == 1) activeTransactionFilter = null
-                    selectedTab = index
-                },
-                pendingReviewCount = pendingCount
-            )
+            // Only show bottom bar when on main tabs (not feature screens)
+            if (navigation.isOnMainTab()) {
+                AppNavigationBar(
+                    selectedTab = selectedTab,
+                    onTabSelected = { index ->
+                        if (selectedTab != index) haptic(HapticType.Standard)
+                        if (index == 1) activeTransactionFilter = null
+                        navigation.navigateToTab(index)
+                    },
+                    pendingReviewCount = pendingCount
+                )
+            }
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
                 SmallFloatingActionButton(
                     onClick = {
                         haptic(HapticType.Standard)
-                        showAssistant = true
+                        navigation.navigateTo(NavigationDestination.Assistant)
                         isFabExpanded = false
                     },
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                     modifier = Modifier.padding(bottom = 12.dp)
                 ) {
-                    Icon(Icons.Rounded.AutoAwesome, contentDescription = "Open assistant")
+                    Icon(Icons.Rounded.AutoAwesome, contentDescription = stringResource(R.string.a11y_open_assistant))
                 }
 
                 SmartFAB(
@@ -196,11 +501,11 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     isExpanded = isFabExpanded,
                     onToggleExpand = { isFabExpanded = !isFabExpanded },
                     onAddExpense = {
-                        showAddExpense = true
+                        navigation.navigateTo(NavigationDestination.AddExpense)
                         isFabExpanded = false
                     },
                     onScanReceipt = {
-                        showScanReceipt = true
+                        navigation.navigateTo(NavigationDestination.ScanReceipt)
                         isFabExpanded = false
                     },
                     onApproveAll = { reviewViewModel.approveAll() }
@@ -219,71 +524,342 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 label = "TabTransition"
             ) { targetTab ->
                 when (targetTab) {
-                    0 -> HomeScreen(
-                        onNavigateToReview = { selectedTab = 2 },
-                        onNavigateToRecurring = { showRecurringExpenses = true },
+                    0 -> HomeRoute(
+                        onNavigateToReview = { navigation.navigateToTab(2) },
+                        onNavigateToRecurring = { navigation.navigateTo(NavigationDestination.RecurringExpenses) },
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
-                            selectedTab = 1
-                        }
+                            navigation.navigateTo(NavigationDestination.Transactions())
+                        },
+                        onNavigateToAnalytics = { period ->
+                            navigation.navigateTo(NavigationDestination.Analytics(initialPeriod = period))
+                        },
+                        onNavigateToMap = { location ->
+                            navigation.navigateTo(NavigationDestination.SpendingMap(initialLocationQuery = location))
+                        },
+                        onNavigateToBudgetDetail = { category ->
+                            navigation.navigateTo(
+                                NavigationDestination.BudgetDetail(
+                                    categoryId = category.toLongOrNull(),
+                                    categoryName = category.takeIf { it.isNotBlank() }
+                                )
+                            )
+                        },
+                        // Config-driven feature navigation - handles all 22 features
+                        onNavigateToFeature = { destination -> navigation.navigateTo(destination) }
                     )
                     1 -> TransactionsScreen(
-                        onNavigateToAnalytics = { selectedTab = 4 },
+                        onNavigateToAnalytics = { navigation.navigateTo(NavigationDestination.Analytics()) },
+                        onAddExpense = { navigation.navigateTo(NavigationDestination.AddExpense) },
+                        onOpenVisualSplit = { expense ->
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor.forExpense(expense))
+                        },
+                        highlightedExpenseId = (currentDestination as? NavigationDestination.Transactions)?.initialExpenseId,
                         initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
-                    3 -> BudgetScreen()
-                    4 -> com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen(
-                        onNavigateToTransactions = { filter ->
-                            activeTransactionFilter = filter
-                            selectedTab = 1
+                    3 -> BudgetScreen(
+                        initialCategoryId = (currentDestination as? NavigationDestination.BudgetDetail)?.categoryId,
+                        initialCategoryName = (currentDestination as? NavigationDestination.BudgetDetail)?.categoryName,
+                        // S8-007: BudgetCreate opens the add dialog immediately
+                        initialOpenCreateDialog = currentDestination is NavigationDestination.BudgetCreate,
+                        onNavigateToForecast = { budget: BudgetEntity ->
+                            navigation.navigateTo(NavigationDestination.BudgetForecasting(budget))
                         }
                     )
-                    5 -> SpendingMapScreen()
+                    4 -> com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen(
+                        initialPeriod = (currentDestination as? NavigationDestination.Analytics)?.initialPeriod,
+                        onNavigateToTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            navigation.navigateTo(NavigationDestination.Transactions())
+                        }
+                    )
+                    5 -> SpendingMapScreen(
+                        initialLocationQuery = (currentDestination as? NavigationDestination.SpendingMap)?.initialLocationQuery
+                    )
                 }
             }
 
-            if (showAddExpense) {
-                var initialAmount by remember { mutableStateOf<String?>(null) }
+            // All screens rendered via NavigationDestination sealed class
+            when (currentDestination) {
+                // Overlays that were previously boolean flags
+                is NavigationDestination.AddExpense -> {
+                    var initialAmount by remember { mutableStateOf<String?>(null) }
+                    
+                    LaunchedEffect(Unit) {
+                        val clipboardManager = ClipboardAmountParser.getClipboardManager(context)
+                        initialAmount = ClipboardAmountParser.parseAmountFromClipboard(clipboardManager)
+                    }
+
+                    com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
+                        onDismiss = { navigation.navigateBack() },
+                        initialAmount = initialAmount
+                    )
+                }
+                is NavigationDestination.ScanReceipt -> {
+                    com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanRoute(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.RecurringExpenses -> {
+                    RecurringExpensesScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onNavigateToTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            navigation.navigateToTab(1)
+                        }
+                    )
+                }
+                is NavigationDestination.ManualRecurringExpense -> {
+                    ManualRecurringExpenseScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.Assistant -> {
+                    AssistantSheet(
+                        onDismiss = { navigation.navigateBack() },
+                        onOpenTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            // Just navigate to transactions - assistant overlay will be closed naturally
+                            // when the user interacts with the transactions screen
+                            navigation.navigateToTab(1)
+                        }
+                    )
+                }
+                is NavigationDestination.BudgetForecasting -> {
+                    currentDestination.budget?.let { budget: BudgetEntity ->
+                        BudgetForecastingScreen(
+                            budget = budget,
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    } ?: run {
+                        // No budget provided, go back
+                        LaunchedEffect(Unit) { navigation.navigateBack() }
+                    }
+                }
                 
-                LaunchedEffect(Unit) {
-                    val clipboardManager = ClipboardAmountParser.getClipboardManager(context)
-                    initialAmount = ClipboardAmountParser.parseAmountFromClipboard(clipboardManager)
+                // Settings / Management Screens (previously orphaned, now in Features Menu)
+                is NavigationDestination.AiSettings -> {
+                    com.yourname.expensetracker.ui.screens.aisettings.AiSettingsScreen(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.PrivacySettings -> {
+                    com.yourname.expensetracker.ui.screens.privacysettings.PrivacySettingsScreen(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.CategoryManagement -> {
+                    com.yourname.expensetracker.ui.screens.categories.CategoryScreen(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
+                
+                // Feature Screens
+                is NavigationDestination.SavingsGoals -> {
+                    SavingsGoalsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.CarbonFootprint -> {
+                    CarbonFootprintScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
+                    )
+                }
+                is NavigationDestination.WarrantyTracker -> {
+                    WarrantyTrackerScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
+                    )
+                }
+                is NavigationDestination.PriceProtection -> {
+                    PriceProtectionScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.BillNegotiation -> {
+                    BillNegotiationScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SmartSearch -> {
+                    NaturalLanguageSearchScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onViewTransaction = { transactionId ->
+                            // Navigate to Transactions tab (transaction detail view coming soon)
+                            navigation.navigateToTab(1)
+                        }
+                    )
+                }
+                is NavigationDestination.ReceiptMatching -> {
+                    ReceiptMatchingRoute(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.InvestmentPortfolio -> {
+                    InvestmentPortfolioScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onAddInvestment = { 
+                            // Show "Coming soon" since add investment flow not implemented
+                            navigation.navigateBack()
+                        }
+                    )
+                }
+                is NavigationDestination.BankConnections -> {
+                    BankConnectionsScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onAddConnection = { 
+                            // Show "Coming soon" since add bank connection flow not implemented
+                            navigation.navigateBack()
+                        }
+                    )
+                }
+                is NavigationDestination.BillReminders -> {
+                    BillRemindersScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SpendingChallenges -> {
+                    SpendingChallengesScreen(
+                        initialShowCreateDialog = currentDestination.showCreateDialog,
+                        onNavigateBack = { navigation.navigateBack() },
+                        onCreateChallenge = { 
+                            navigation.navigateTo(NavigationDestination.SpendingChallenges(showCreateDialog = true))
+                        },
+                        actionRegistry = actionRegistry
+                    )
+                }
+                is NavigationDestination.AdvancedAnalytics -> {
+                    AdvancedAnalyticsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.CashFlowCalendar -> {
+                    CashFlowCalendarScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.LifestyleInflation -> {
+                    LifestyleInflationScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
+                    )
+                }
+                is NavigationDestination.SplitTemplates -> {
+                    SplitTemplatesScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onCreateTemplate = {
+                            // Navigate to split editor to create template
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor.forTemplateCreation())
+                        },
+                        onEditTemplate = { template ->
+                            // Navigate to editor with template ID for editing
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor.forTemplateEdit(template.id))
+                        }
+                    )
+                }
+                is NavigationDestination.VisualSplitEditor -> {
+                    VisualSplitEditorScreen(
+                        totalAmount = currentDestination.resolvedExpenseAmount ?: 0.0,
+                        currencyCode = currentDestination.resolvedExpenseCurrency ?: "EUR",
+                        expenseId = currentDestination.resolvedExpenseId,
+                        templateId = currentDestination.templateId,
+                        onSplitComplete = { shares, splitType ->
+                            val targetExpenseId = currentDestination.resolvedExpenseId
+                            coroutineScope.launch {
+                                val applied = if (targetExpenseId == null) {
+                                    true
+                                } else {
+                                runCatching {
+                                        applyVisualSplitToExpense(
+                                            expenseRepository = expenseRepository,
+                                            gson = gson,
+                                            expenseId = targetExpenseId,
+                                            shares = shares,
+                                            splitType = splitType,
+                                            templateId = currentDestination.templateId
+                                        )
+                                    }.onFailure { error ->
+                                        Timber.e(error, "Failed to apply visual split for expenseId=%s", targetExpenseId)
+                                    }.getOrDefault(false)
+                                }
+
+                                if (!applied) {
+                                    snackbarHostState.showSnackbar("Unable to apply split")
+                                    return@launch
+                                }
+
+                                navigation.deliverResult(
+                                    NavigationResult.VisualSplitApplied(
+                                        expenseId = targetExpenseId,
+                                        shares = shares,
+                                        splitType = splitType
+                                    )
+                                )
+                                navigation.navigateBack()
+                            }
+                        },
+                        onSaveAsTemplate = { name, shares, splitType ->
+                            // Handle save as template
+                            navigation.navigateBack()
+                        },
+                        onNavigateBack = { 
+                            navigation.navigateBack()
+                        }
+                    )
+                }
+                is NavigationDestination.CurrencyManagement -> {
+                    CurrencyManagementScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SubscriptionManagement -> {
+                    SubscriptionManagementScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
+                    )
+                }
+                is NavigationDestination.TaxConfiguration -> {
+                    TaxConfigurationScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.ExportOptions -> {
+                    ExportOptionsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.BackupRestore -> {
+                    BackupRestoreScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SharedExpenseGroups -> {
+                    SharedExpenseGroupsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
                 }
 
-                com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
-                    onDismiss = { showAddExpense = false },
-                    initialAmount = initialAmount
-                )
-            }
-
-            if (showScanReceipt) {
-                com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
-                    onDismiss = { showScanReceipt = false }
-                )
-            }
-
-            if (showRecurringExpenses) {
-                com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen(
-                    onNavigateBack = { showRecurringExpenses = false },
-                    onNavigateToTransactions = { filter ->
-                        activeTransactionFilter = filter
-                        // Close recurring screen since it's an overlay
-                        showRecurringExpenses = false
-                        selectedTab = 1
+                is NavigationDestination.Debug -> {
+                    if (com.yourname.expensetracker.BuildConfig.DEBUG) {
+                        com.yourname.expensetracker.ui.screens.debug.DebugScreen(
+                            onDismiss = { navigation.navigateBack() }
+                        )
+                    } else {
+                        androidx.compose.runtime.LaunchedEffect(Unit) { navigation.navigateBack() }
                     }
-                )
-            }
-
-            if (showAssistant) {
-                AssistantSheet(
-                    onDismiss = { showAssistant = false },
-                    onOpenTransactions = { filter ->
-                        activeTransactionFilter = filter
-                        selectedTab = 1
-                        showAssistant = false
-                    }
-                )
+                }
+                
+                // Main tabs handled by AnimatedContent above
+                is NavigationDestination.Home,
+                is NavigationDestination.Transactions,
+                is NavigationDestination.Review,
+                is NavigationDestination.Budget,
+                is NavigationDestination.BudgetCreate,
+                is NavigationDestination.BudgetDetail,
+                is NavigationDestination.Analytics,
+                is NavigationDestination.SpendingMap -> { /* Handled by AnimatedContent */ }
             }
         }
     }
@@ -321,6 +897,12 @@ fun SmartFAB(
         }
     }
     
+    // WRK-13: The DisposableEffect key ensures the observer is added once
+    // per lifecycleOwner instance. Compose guarantees DisposableEffect's
+    // onDispose runs when the effect leaves composition or the key changes,
+    // so the observer is properly cleaned up. No additional initialized guard
+    // is needed because DisposableEffect itself is idempotent — re-running
+    // with the same key is a no-op in the Compose runtime.
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -334,13 +916,13 @@ fun SmartFAB(
         }
     }
     
-    val (icon, label) = when (selectedTab) {
-        2 -> Pair(Icons.Rounded.CheckCircle, "Approve All")
+    val (icon, labelRes) = when (selectedTab) {
+        2 -> Pair(Icons.Rounded.CheckCircle, R.string.label_approve_all)
         else -> {
             if (clipboardAmount != null) {
-                Pair(Icons.Rounded.ContentPaste, "Add €$clipboardAmount")
+                Pair(Icons.Rounded.ContentPaste, R.string.label_add_amount_format)
             } else {
-                Pair(Icons.Rounded.Add, "Add Expense")
+                Pair(Icons.Rounded.Add, R.string.add_expense_title)
             }
         }
     }
@@ -371,7 +953,7 @@ fun SmartFAB(
                     ) {
                         Icon(Icons.Rounded.ReceiptLong, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Scan Receipt")
+                        Text(stringResource(R.string.add_expense_scan_receipt))
                     }
                 }
                 
@@ -389,7 +971,7 @@ fun SmartFAB(
                     ) {
                         Icon(Icons.Rounded.Edit, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Add Manual")
+                        Text(stringResource(R.string.add_expense_manual))
                     }
                 }
             }
@@ -407,12 +989,45 @@ fun SmartFAB(
             icon = { 
                 Icon(
                     if (isExpanded && selectedTab != 2) Icons.Rounded.Close else icon, 
-                    contentDescription = label
+                    contentDescription = if (isExpanded && selectedTab != 2) stringResource(R.string.label_close) else stringResource(labelRes)
                 ) 
             },
-            text = { Text(if (isExpanded && selectedTab != 2) "Close" else label) },
+            text = { 
+                val amount = clipboardAmount
+                Text(
+                    if (isExpanded && selectedTab != 2) {
+                        stringResource(R.string.label_close)
+                    } else if (amount != null && selectedTab != 2) {
+                        stringResource(R.string.label_add_amount_format, amount)
+                    } else {
+                        stringResource(labelRes)
+                    }
+                ) 
+            },
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+    }
+}
+
+@Composable
+private fun AppOperationalLockScreen(
+    title: String,
+    message: String,
+    actionLabel: String,
+    onAction: () -> Unit
+) {
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        AlertDialog(
+            onDismissRequest = { /* intentionally non-dismissable */ },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = onAction) { Text(actionLabel) }
+            }
         )
     }
 }

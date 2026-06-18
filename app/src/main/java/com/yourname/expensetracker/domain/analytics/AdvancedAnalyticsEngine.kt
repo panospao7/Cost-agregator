@@ -1,21 +1,27 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.BuildConfig
 import timber.log.Timber
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.di.DefaultDispatcher
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,35 +31,55 @@ import kotlin.math.sqrt
 /**
  * Advanced analytics engine for detailed spending analysis.
  * Provides temporal category breakdowns, merchant intelligence, and statistical insights.
+ *
+ * ## CURRENCY NORMALIZATION: SAFE — fully normalized
+ * This engine injects [AnalyticsCurrencyNormalizer] and normalizes every data
+ * path before performing any arithmetic:
+ * - [getCategoryAnalytics] — normalizes current and previous expenses (lines 163-166)
+ * - [getMerchantAnalytics] — normalizes current and historical expenses (lines 270-273)
+ * - [getSpendingPatterns] — normalizes expenses (lines 364-365)
+ * - [getStatisticalInsights] — normalizes expenses (lines 472-473)
+ *
+ * All `sumOf { it.effectiveAmount }`, `amounts.sum()`, and other raw-Double
+ * arithmetic operate on normalized values. No gap exists.
+ *
+ * TODO (PR-E11): Accept NormalizedAnalyticsInput instead of querying raw expenses.
+ * Engine should not call CurrencyConverter itself unless explicitly responsible.
  */
 @Singleton
 class AdvancedAnalyticsEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
-    private val timeProvider: TimeProvider
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val timeProvider: TimeProvider,
+    @DefaultDispatcher private val defaultDispatcher: CoroutineDispatcher,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     companion object {
         private const val TAG = "AdvancedAnalytics"
         private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-        private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000L
     }
     
     // ============================================================
     // PERIOD CALCULATIONS
     // ============================================================
     
+    // A09: Accept explicit AnalyticsPeriodRange from ViewModel, don't recalculate internally.
+    // This method duplicates period logic that the ViewModel already computes, risking
+    // inconsistent boundaries between the engine and the UI.
     /**
      * Calculates the period range for the given analytics period type.
      * @param period The period type to calculate
      * @param referenceDate Reference timestamp (defaults to now)
-     * @return PeriodRange with start/end timestamps and comparison period
+     * @return AnalyticsPeriodRange with start/end timestamps and comparison period
      */
     fun getPeriodRange(
         period: AnalyticsPeriod,
         referenceDate: Long = timeProvider.now(),
         computeComparison: Boolean = true
-    ): PeriodRange {
+    ): AnalyticsPeriodRange {
         val (startMs, endMs, label) = when (period) {
             AnalyticsPeriod.WEEK -> calculateWeekRange(referenceDate)
             AnalyticsPeriod.MONTH -> calculateMonthRange(referenceDate)
@@ -64,7 +90,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             )
         }
         
-        return PeriodRange(
+        return AnalyticsPeriodRange(
             period = period,
             startMs = startMs,
             endMs = endMs,
@@ -75,52 +101,52 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun calculateWeekRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfWeek(referenceDate)
-        val end = start + (7 * MILLIS_PER_DAY)
+        val end = TimePeriodUtils.getEndOfWeek(referenceDate)
         
-        return Triple(start, end, "${DateFormatterUtils.monthDayShort().format(Date(start))} - ${DateFormatterUtils.monthDayShort().format(Date(end - 1))}")
+        return Triple(
+            start,
+            end,
+            "${DateFormatterUtils.formatTimestampJavaTime(start, "MMM d")} - ${DateFormatterUtils.formatTimestampJavaTime(end - 1, "MMM d")}"
+        )
     }
     
     private fun calculateMonthRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfMonth(referenceDate)
-        val end = TimePeriodUtils.getEndOfMonth(start) + 1
+        val end = TimePeriodUtils.getEndOfMonth(start)
         
-        return Triple(start, end, DateFormatterUtils.monthYear().format(Date(start)))
+        return Triple(start, end, DateFormatterUtils.formatTimestampJavaTime(start, "MMMM yyyy"))
     }
     
     private fun calculateQuarterRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfQuarter(referenceDate)
-        val end = TimePeriodUtils.getEndOfQuarter(start) + 1
+        val end = TimePeriodUtils.getEndOfQuarter(start)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = start }
-        val quarterNum = (cal.get(Calendar.MONTH) / 3) + 1
-        val year = cal.get(Calendar.YEAR)
+        val quarterNum = (TimePeriodUtils.getMonth(start) / 3) + 1
+        val year = TimePeriodUtils.getYear(start)
         
         return Triple(start, end, "Q$quarterNum $year")
     }
     
     private fun calculateYearRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfYear(referenceDate)
-        val end = TimePeriodUtils.getEndOfYear(start) + 1
+        val end = TimePeriodUtils.getEndOfYear(start)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = start }
-        val year = cal.get(Calendar.YEAR)
+        val year = TimePeriodUtils.getYear(start)
         
         return Triple(start, end, year.toString())
     }
     
-    private fun getPreviousPeriodRange(period: AnalyticsPeriod, currentStartMs: Long): PeriodRange? {
+    private fun getPreviousPeriodRange(period: AnalyticsPeriod, currentStartMs: Long): AnalyticsPeriodRange? {
         return try {
-            val cal = Calendar.getInstance().apply { timeInMillis = currentStartMs }
-            
-            when (period) {
-                AnalyticsPeriod.WEEK -> cal.add(Calendar.DAY_OF_MONTH, -7)
-                AnalyticsPeriod.MONTH -> cal.add(Calendar.MONTH, -1)
-                AnalyticsPeriod.QUARTER -> cal.add(Calendar.MONTH, -3)
-                AnalyticsPeriod.YEAR -> cal.add(Calendar.YEAR, -1)
+            val previousRef = when (period) {
+                AnalyticsPeriod.WEEK -> TimePeriodUtils.addDays(currentStartMs, -7)
+                AnalyticsPeriod.MONTH -> TimePeriodUtils.addMonths(currentStartMs, -1)
+                AnalyticsPeriod.QUARTER -> TimePeriodUtils.addMonths(currentStartMs, -3)
+                AnalyticsPeriod.YEAR -> TimePeriodUtils.addYears(currentStartMs, -1)
                 AnalyticsPeriod.CUSTOM -> return null
             }
             
-            getPeriodRange(period, cal.timeInMillis, computeComparison = false)
+            getPeriodRange(period, previousRef, computeComparison = false)
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Failed to calculate previous period")
             null
@@ -130,33 +156,102 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // ============================================================
     // CATEGORY ANALYTICS
     // ============================================================
-    
+
+    /**
+     * New canonical overload: accepts pre-normalized [NormalizedAnalyticsInput].
+     * Normalization is done by the caller (ViewModel), ensuring all analytics cards
+     * share the same normalized data.
+     */
+    suspend fun getCategoryAnalytics(
+        input: NormalizedAnalyticsInput,
+        previousInput: NormalizedAnalyticsInput?,
+        categories: List<Category>,
+        budgets: List<BudgetSnapshot>
+    ): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = previousInput?.period?.let {
+                AnalyticsPeriodRange(
+                    period = AnalyticsPeriod.CUSTOM,
+                    startMs = it.startInclusiveMillis,
+                    endMs = it.endExclusiveMillis,
+                    label = it.label,
+                    comparisonRange = null
+                )
+            }
+        )
+        val currentPurchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        val previousPurchases = previousInput?.includedExpenses
+            ?.filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            ?.map { it.toExpenseSnapshot() }
+            ?: emptyList()
+        val allWarnings = (input.dataQuality.warnings +
+            (previousInput?.dataQuality?.warnings ?: emptyList())).distinct()
+        computeCategoryAnalyticsCore(
+            currentPurchases, previousPurchases, categories, budgets, period, input.homeCurrency, allWarnings
+        )
+    }
+
     /**
      * Generates enhanced analytics for all categories within the specified period.
+     *
+     * PR8-GUARDRAIL: Self-fetches from [ExpenseRepository], creating a second DB query
+     * that may diverge from the ViewModel's normalization pipeline. Safe for isolated
+     * use (e.g., HomeViewModel category trends) but should be migrated to the
+     * [NormalizedAnalyticsInput] overload for consistency with the main analytics screen.
      */
-    suspend fun getCategoryAnalytics(period: PeriodRange): List<EnhancedCategoryAnalytics> = withContext(Dispatchers.Default) {
+    @Deprecated(
+        "Use getCategoryAnalytics(input, previousInput, categories, budgets)",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun getCategoryAnalytics(period: AnalyticsPeriodRange, displayCurrency: String): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
         // Fetch all required data in parallel
-        val currentExpensesDeferred = async { 
-            expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
+        val currentExpensesDeferred = async(ioDispatcher) { 
+            expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) 
         }
-        val previousExpensesDeferred = async { 
+        val previousExpensesDeferred = async(ioDispatcher) { 
             period.comparisonRange?.let { 
-                expenseRepository.getExpensesBetween(it.startMs, it.endMs) 
+                expenseRepository.getExpenseSnapshotsBetween(it.startMs, it.endMs) 
             } ?: emptyList()
         }
-        val categoriesDeferred = async { categoryRepository.getAll() }
-        val budgetsDeferred = async { budgetRepository.getActiveBudgets() }
+        val categoriesDeferred = async(ioDispatcher) { categoryRepository.getAll() }
+        val budgetsDeferred = async(ioDispatcher) { getBudgetSnapshots() }
         
         val currentExpenses = currentExpensesDeferred.await()
         val previousExpenses = previousExpensesDeferred.await()
         val categories = categoriesDeferred.await()
         val budgets = budgetsDeferred.await()
-        
-        // Filter to purchases only, excluding "not mine" expenses
-        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
-        val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
-        
+        val currentNorm = analyticsCurrencyNormalizer
+            .normalizeSnapshots(currentExpenses, displayCurrency)
+        val previousNorm = analyticsCurrencyNormalizer
+            .normalizeSnapshots(previousExpenses, displayCurrency)
+        val allWarnings = (currentNorm.warnings + previousNorm.warnings).distinct()
+        val currentPurchases = currentNorm.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+        val previousPurchases = previousNorm.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+
+        computeCategoryAnalyticsCore(
+            currentPurchases, previousPurchases, categories, budgets, period, displayCurrency, allWarnings
+        )
+    }
+}
+
+    private fun computeCategoryAnalyticsCore(
+        currentPurchases: List<ExpenseSnapshot>,
+        previousPurchases: List<ExpenseSnapshot>,
+        categories: List<Category>,
+        budgets: List<BudgetSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> {
         // Build lookup maps
         val categoryMap = categories.associateBy { it.id }
         val budgetMap = budgets.associateBy { it.categoryId }
@@ -169,7 +264,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val sparklineData = buildSparklineDataByCategory(currentPurchases, period)
         
         // Build analytics for each category with spending
-        currentByCategory.mapNotNull { (categoryId, expenses) ->
+        return currentByCategory.mapNotNull { (categoryId, expenses) ->
             val category = categoryMap[categoryId] ?: return@mapNotNull null
             
             val amounts = expenses.map { it.effectiveAmount }
@@ -195,8 +290,14 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val velocity = calculateVelocity(expenses)
             
             EnhancedCategoryAnalytics(
-                category = category,
+                category = AnalyticsCategoryRef(
+                    id = category.id,
+                    name = category.name,
+                    icon = category.icon,
+                    color = category.color
+                ),
                 period = period,
+                displayCurrency = displayCurrency,
                 totalSpent = total,
                 transactionCount = expenses.size,
                 averagePerTransaction = if (amounts.isNotEmpty()) amounts.average() else 0.0,
@@ -216,47 +317,113 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 velocity = velocity
             )
         }.sortedByDescending { it.totalSpent }
+            .let { Pair(it, allWarnings) }
     }
-}
     
     // ============================================================
     // MERCHANT ANALYTICS
     // ============================================================
-    
+
+    /**
+     * New canonical overload: accepts pre-normalized [NormalizedAnalyticsInput].
+     * The [historicalInput] should cover 12 months back for price trend analysis.
+     */
+    suspend fun getMerchantAnalytics(
+        input: NormalizedAnalyticsInput,
+        historicalInput: NormalizedAnalyticsInput,
+        limit: Int = 20
+    ): Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = null
+        )
+        val currentPurchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        val historicalPurchases = historicalInput.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        val allWarnings = (input.dataQuality.warnings + historicalInput.dataQuality.warnings).distinct()
+        computeMerchantAnalyticsCore(
+            currentPurchases, historicalPurchases, period, input.homeCurrency, limit, allWarnings
+        )
+    }
+
     /**
      * Generates enhanced analytics for top merchants within the specified period.
      * @param limit Maximum number of merchants to return
+     *
+     * PR8-GUARDRAIL: Self-fetches from [ExpenseRepository]. No production callers remain;
+     * exists only for legacy test coverage. Prefer [getMerchantAnalytics] with
+     * [NormalizedAnalyticsInput] so the caller controls the data source.
      */
+    @Deprecated(
+        "Use getMerchantAnalytics(input, historicalInput, limit)",
+        level = DeprecationLevel.ERROR
+    )
     suspend fun getMerchantAnalytics(
-        period: PeriodRange,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
         limit: Int = 20
-    ): List<EnhancedMerchantAnalytics> = withContext(Dispatchers.Default) {
+    ): Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
-        val currentExpensesDeferred = async { 
-            expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
+        val currentExpensesDeferred = async(ioDispatcher) { 
+            expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) 
         }
         
-        // Get historical data for price trends (6 months back)
-        val historicalStart = period.startMs - (180L * MILLIS_PER_DAY)
-        val historicalExpensesDeferred = async { 
-            expenseRepository.getExpensesSince(historicalStart) 
+        // A12-FIXED: 12-month merchant lookback for anomaly baseline
+        // Get historical data for price trends (12 calendar months back)
+        val historicalStart = TimePeriodUtils.addMonths(period.startMs, -12)
+        val historicalExpensesDeferred = async(ioDispatcher) { 
+            expenseRepository.getExpenseSnapshotsBetween(historicalStart, period.endMs)
         }
         
         val currentExpenses = currentExpensesDeferred.await()
         val historicalExpenses = historicalExpensesDeferred.await()
         
-        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+        val currentNorm = analyticsCurrencyNormalizer
+            .normalizeSnapshots(currentExpenses, displayCurrency)
+        val historicalNorm = analyticsCurrencyNormalizer
+            .normalizeSnapshots(historicalExpenses, displayCurrency)
+        val allWarnings = (currentNorm.warnings + historicalNorm.warnings).distinct()
+        val currentPurchases = currentNorm.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+        val historicalPurchases = historicalNorm.includedExpenses
+            .filter {
+            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine
+        }
+        val historicalByMerchantKey = historicalPurchases.groupBy { it.canonicalMerchantKey() }
         
-        currentPurchases
-            .groupBy { it.merchant }
-            .map { (merchant, transactions) ->
+        computeMerchantAnalyticsCore(
+            currentPurchases, historicalPurchases, period, displayCurrency, limit, allWarnings
+        )
+    }
+}
+
+    private fun computeMerchantAnalyticsCore(
+        currentPurchases: List<ExpenseSnapshot>,
+        historicalPurchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        limit: Int,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> {
+        val historicalByMerchantKey = historicalPurchases.groupBy { it.canonicalMerchantKey() }
+
+        return currentPurchases
+            .groupBy { it.canonicalMerchantKey() }
+            .map { (merchantKey, transactions) ->
                 val amounts = transactions.map { it.effectiveAmount }
                 val sortedAmounts = amounts.sorted()
                 val dates = transactions.map { it.date }.sorted()
+                val displayName = resolveMerchantDisplayName(transactions)
                 
                 // Historical context for price trends
-                val historicalForMerchant = historicalExpenses
-                    .filter { it.merchant.equals(merchant, ignoreCase = true) }
+                val historicalForMerchant = historicalByMerchantKey[merchantKey]
+                    .orEmpty()
                     .sortedBy { it.date }
                 
                 // Visit frequency analysis
@@ -282,8 +449,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 val predictedNext = predictNextVisit(dates, avgDaysBetween)
                 
                 EnhancedMerchantAnalytics(
-                    merchant = merchant,
+                    merchant = displayName,
                     period = period,
+                    displayCurrency = displayCurrency,
                     totalSpent = amounts.sum(),
                     transactionCount = transactions.size,
                     averagePerVisit = if (amounts.isNotEmpty()) amounts.average() else 0.0,
@@ -299,13 +467,16 @@ class AdvancedAnalyticsEngine @Inject constructor(
                     consistencyRating = consistencyRating,
                     consecutiveMonthsVisited = streakCount,
                     spendingByDayOfWeek = spendingByDay,
-                    recentTransactions = transactions.take(5)
+                    recentTransactions = transactions
+                        .take(5)
+                        .map { it.toAnalyticsTransactionSummary() }
                 )
             }
-            .sortedByDescending { it.totalSpent }
+            .sortedWith(compareByDescending<EnhancedMerchantAnalytics> { it.transactionCount }
+                .thenByDescending { it.totalSpent })
             .take(limit)
+            .let { Pair(it, allWarnings) }
     }
-}
     
     // ============================================================
     // SPENDING PATTERNS
@@ -313,36 +484,74 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     /**
      * Analyzes spending patterns including day-of-week distribution and detected behaviors.
+     *
+     * TODO (E2-008): Migrate to accept NormalizedAnalyticsInput instead of fetching
+     * expenses internally. This method still queries ExpenseRepository directly,
+     * creating a second data source that may diverge from the ViewModel's normalized input.
+     *
+     * PR8-GUARDRAIL: No production callers remain; exists only for legacy test coverage.
      */
-    suspend fun getSpendingPatterns(period: PeriodRange): SpendingPatternAnalysis = withContext(Dispatchers.Default) {
+    @Deprecated(
+        "Use getSpendingPatterns(input: NormalizedAnalyticsInput)",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun getSpendingPatterns(period: AnalyticsPeriodRange, displayCurrency: String): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
-            val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
-            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
-        
-        if (purchases.isEmpty()) {
-            return@coroutineScope createEmptyPatternAnalysis(period)
+            val expenses = withContext(ioDispatcher) {
+                expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs)
+            }
+            val normResult = analyticsCurrencyNormalizer
+                .normalizeSnapshots(expenses, displayCurrency)
+            val allWarnings = normResult.warnings
+            val purchases = normResult.includedExpenses
+                .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+            computeSpendingPatternsCore(purchases, period, displayCurrency, allWarnings)
         }
-        
-        val cal = Calendar.getInstance()
+    }
+
+    suspend fun getSpendingPatterns(
+        input: NormalizedAnalyticsInput
+    ): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = null
+        )
+        val purchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        computeSpendingPatternsCore(purchases, period, input.homeCurrency, input.dataQuality.warnings)
+    }
+
+    private fun computeSpendingPatternsCore(
+        purchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> {
+        if (purchases.isEmpty()) {
+            return Pair(createEmptyPatternAnalysis(period), allWarnings)
+        }
+
         val totalSpent = purchases.sumOf { it.effectiveAmount }
-        
-        // Use arrays for better performance
+
         val dayTotals = DoubleArray(7)
         val dayCounts = IntArray(7)
         val timeSlotStats = mutableMapOf<TimeSlot, Double>()
-        
+
         for (purchase in purchases) {
-            val dayIndex = calendarDayToIndex(purchase.date, cal)
-            val hour = cal.get(Calendar.HOUR_OF_DAY)
-            
+            val dayIndex = calendarDayToIndex(purchase.date)
+            val hour = TimePeriodUtils.getHourOfDay(purchase.date)
+
             dayTotals[dayIndex] += purchase.effectiveAmount
             dayCounts[dayIndex]++
-            
+
             val slot = hourToTimeSlot(hour)
             timeSlotStats[slot] = (timeSlotStats[slot] ?: 0.0) + purchase.effectiveAmount
         }
-        
-        // Build day of week stats map
+
         val dayOfWeekStats = (0..6).associateWith { index ->
             DayOfWeekStats(
                 dayName = DAY_NAMES[index],
@@ -350,16 +559,16 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 totalSpent = dayTotals[index],
                 transactionCount = dayCounts[index],
                 averagePerDay = if (dayCounts[index] > 0) dayTotals[index] / dayCounts[index] else 0.0,
-                percentageOfWeek = if (totalSpent > 0) (dayTotals[index] / totalSpent * 100).toFloat() else 0f
+                percentageOfWeek = if (totalSpent > 0) (dayTotals[index] / totalSpent * 100).toFloat() else 0f,
+                displayCurrency = displayCurrency
             )
         }
-        
-        // Weekend vs Weekday
+
         val weekdayTotal = (0..4).sumOf { dayTotals[it] }
         val weekendTotal = (5..6).sumOf { dayTotals[it] }
         val weekdayCount = (0..4).sumOf { dayCounts[it] }
         val weekendCount = (5..6).sumOf { dayCounts[it] }
-        
+
         val weekendWeekdayComparison = WeekendWeekdayComparison(
             weekdayTotal = weekdayTotal,
             weekdayCount = weekdayCount,
@@ -367,15 +576,15 @@ class AdvancedAnalyticsEngine @Inject constructor(
             weekendCount = weekendCount,
             weekdayAveragePerTransaction = if (weekdayCount > 0) weekdayTotal / weekdayCount else 0.0,
             weekendAveragePerTransaction = if (weekendCount > 0) weekendTotal / weekendCount else 0.0,
-            weekendToWeekdayRatio = if (weekdayTotal > 0) (weekendTotal / weekdayTotal).toFloat() else 0f
+            weekendToWeekdayRatio = if (weekdayTotal > 0) (weekendTotal / weekdayTotal).toFloat() else 0f,
+            displayCurrency = displayCurrency
         )
-        
-        // Detect patterns
+
         val detectedPatterns = detectSpendingPatterns(
             purchases, dayTotals, timeSlotStats, totalSpent
         )
-        
-        SpendingPatternAnalysis(
+
+        return Pair(SpendingPatternAnalysis(
             period = period,
             dayOfWeekStats = dayOfWeekStats,
             mostActiveDayIndex = dayTotals.indices.maxByOrNull { dayTotals[it] } ?: 0,
@@ -383,11 +592,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
             weekendVsWeekday = weekendWeekdayComparison,
             timeOfDayDistribution = timeSlotStats,
             detectedPatterns = detectedPatterns
-        )
+        ), allWarnings)
     }
-}
-    
-    private fun createEmptyPatternAnalysis(period: PeriodRange): SpendingPatternAnalysis {
+
+    private fun createEmptyPatternAnalysis(period: AnalyticsPeriodRange): SpendingPatternAnalysis {
+        val displayCurrency = defaultDisplayCurrency()
         return SpendingPatternAnalysis(
             period = period,
             dayOfWeekStats = emptyMap(),
@@ -398,7 +607,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 weekendTotal = 0.0, weekendCount = 0,
                 weekdayAveragePerTransaction = 0.0,
                 weekendAveragePerTransaction = 0.0,
-                weekendToWeekdayRatio = 0f
+                weekendToWeekdayRatio = 0f,
+                displayCurrency = displayCurrency
             ),
             timeOfDayDistribution = emptyMap(),
             detectedPatterns = emptyList()
@@ -411,31 +621,69 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     /**
      * Calculates statistical insights for the specified period.
+     *
+     * TODO (E2-008): Migrate to accept NormalizedAnalyticsInput instead of fetching
+     * expenses internally. This method still queries ExpenseRepository directly,
+     * creating a second data source that may diverge from the ViewModel's normalized input.
+     *
+     * PR8-GUARDRAIL: No production callers remain; exists only for legacy test coverage.
      */
-    suspend fun getStatisticalInsights(period: PeriodRange): StatisticalInsights = withContext(Dispatchers.Default) {
+    @Deprecated(
+        "Use getStatisticalInsights(input: NormalizedAnalyticsInput)",
+        level = DeprecationLevel.WARNING
+    )
+    suspend fun getStatisticalInsights(period: AnalyticsPeriodRange, displayCurrency: String): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
-            val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
-            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
-        
-        if (purchases.isEmpty()) {
-            return@coroutineScope createEmptyStatisticalInsights(period)
+            val expenses = withContext(ioDispatcher) {
+                expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs)
+            }
+            val normResult = analyticsCurrencyNormalizer
+                .normalizeSnapshots(expenses, displayCurrency)
+            val allWarnings = normResult.warnings
+            val purchases = normResult.includedExpenses
+                .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+            computeStatisticalInsightsCore(purchases, period, displayCurrency, allWarnings)
         }
-        
-        val amounts = purchases.map { it.amount }
+    }
+
+    suspend fun getStatisticalInsights(
+        input: NormalizedAnalyticsInput
+    ): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = null
+        )
+        val purchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        computeStatisticalInsightsCore(purchases, period, input.homeCurrency, input.dataQuality.warnings)
+    }
+
+    private fun computeStatisticalInsightsCore(
+        purchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> {
+        if (purchases.isEmpty()) {
+            return Pair(createEmptyStatisticalInsights(period), allWarnings)
+        }
+
+        val amounts = purchases.map { it.effectiveAmount }
         val sortedAmounts = amounts.sorted()
-        
+
         val mean = amounts.average()
-        // Use sample variance (N-1) for stdDev; single value => 0 (LOW bug fix)
         val variance = if (amounts.size > 1) {
             amounts.sumOf { (it - mean) * (it - mean) } / (amounts.size - 1)
         } else 0.0
         val stdDev = sqrt(variance)
         val cv = if (mean > 0) (stdDev / mean).toFloat() else 0f
-        
-        // Build histogram (O(n) single pass)
-        val histogram = buildHistogram(amounts, 10)
-        
-        // Calculate percentiles
+
+        val histogram = buildHistogram(amounts, 10, displayCurrency)
+
         val percentiles = TransactionPercentiles(
             p10 = getPercentile(sortedAmounts, 0.10),
             p25 = getPercentile(sortedAmounts, 0.25),
@@ -443,20 +691,23 @@ class AdvancedAnalyticsEngine @Inject constructor(
             p75 = getPercentile(sortedAmounts, 0.75),
             p90 = getPercentile(sortedAmounts, 0.90),
             p95 = getPercentile(sortedAmounts, 0.95),
-            p99 = getPercentile(sortedAmounts, 0.99)
+            p99 = getPercentile(sortedAmounts, 0.99),
+            displayCurrency = displayCurrency
         )
-        
-        // Daily spending analysis
-        val cal = Calendar.getInstance()
+
         val dailyTotals = purchases.groupBy { expense ->
-            cal.timeInMillis = expense.date
-            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH) + 1}-${cal.get(Calendar.DAY_OF_MONTH)}"
+            val dayStart = TimePeriodUtils.getStartOfDay(expense.date)
+            "${TimePeriodUtils.getYear(dayStart)}-${TimePeriodUtils.getMonth(dayStart) + 1}-${TimePeriodUtils.getDayOfMonth(dayStart)}"
         }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
-        
-        val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt().coerceAtLeast(1)
-        
-        StatisticalInsights(
+
+        val periodDays = TimePeriodUtils.daysBetween(period.startMs, period.endMs).coerceAtLeast(1)
+
+        val totalAmount = purchases.sumOf { it.effectiveAmount }
+        val averageDailySpend = totalAmount / periodDays
+
+        return Pair(StatisticalInsights(
             period = period,
+            displayCurrency = displayCurrency,
             histogramBins = histogram,
             percentiles = percentiles,
             volatilityIndex = (cv * 100).coerceIn(0f, 100f),
@@ -465,21 +716,26 @@ class AdvancedAnalyticsEngine @Inject constructor(
             meanTransaction = mean,
             medianTransaction = percentiles.p50,
             modeTransaction = findMode(amounts),
-            largestTransaction = purchases.maxByOrNull { it.amount },
-            smallestTransaction = purchases.minByOrNull { it.amount },
-            averageDailySpend = if (dailyTotals.isNotEmpty()) dailyTotals.values.average() else 0.0,
+            largestTransaction = purchases
+                .maxByOrNull { it.effectiveAmount }
+                ?.toAnalyticsTransactionSummary(),
+            smallestTransaction = purchases
+                .minByOrNull { it.effectiveAmount }
+                ?.toAnalyticsTransactionSummary(),
+            averageDailySpend = averageDailySpend,
             maxDailySpend = dailyTotals.values.maxOrNull() ?: 0.0,
             daysWithSpending = dailyTotals.size,
             daysWithoutSpending = (periodDays - dailyTotals.size).coerceAtLeast(0)
-        )
+        ), allWarnings)
     }
-}
-    
-    private fun createEmptyStatisticalInsights(period: PeriodRange): StatisticalInsights {
+
+    private fun createEmptyStatisticalInsights(period: AnalyticsPeriodRange): StatisticalInsights {
+        val displayCurrency = defaultDisplayCurrency()
         return StatisticalInsights(
             period = period,
+            displayCurrency = displayCurrency,
             histogramBins = emptyList(),
-            percentiles = TransactionPercentiles(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            percentiles = TransactionPercentiles(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, displayCurrency),
             volatilityIndex = 0f,
             coefficientOfVariation = 0f,
             standardDeviation = 0.0,
@@ -499,9 +755,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // PRIVATE HELPER METHODS
     // ============================================================
     
-    private fun calendarDayToIndex(timestamp: Long, cal: Calendar): Int {
-        cal.timeInMillis = timestamp
-        return when (cal.get(Calendar.DAY_OF_WEEK)) {
+    private fun calendarDayToIndex(timestamp: Long): Int {
+        // A18: Replace Calendar constants with java.time.DayOfWeek
+        return when (TimePeriodUtils.getDayOfWeek(timestamp)) {
             Calendar.MONDAY -> 0
             Calendar.TUESDAY -> 1
             Calendar.WEDNESDAY -> 2
@@ -571,27 +827,42 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun buildSparklineDataByCategory(
-        purchases: List<Expense>,
-        period: PeriodRange
+        purchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange
     ): Map<Long?, List<Double>> {
-        val periodDuration = period.endMs - period.startMs
-        val periodDays = (periodDuration / MILLIS_PER_DAY).toInt()
+        val periodStartDay = TimePeriodUtils.getStartOfDay(period.startMs)
+        val now = timeProvider.now()
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+        val todayEnd = TimePeriodUtils.getEndOfDay(now)
+
+        // If the requested range overlaps today's calendar window, include today's
+        // day bucket even when period.endMs is earlier than today's end (e.g. custom
+        // ranges that end at "now").
+        val periodContainsToday = period.startMs < todayEnd && period.endMs > todayStart
+        val sparklineEndExclusive = if (periodContainsToday) {
+            maxOf(period.endMs, todayEnd)
+        } else {
+            period.endMs
+        }
+
+        val periodDays = TimePeriodUtils.daysBetween(periodStartDay, sparklineEndExclusive)
         if (periodDays <= 0) return emptyMap()
-        
+
         // Determine how many days to actually show
         // If the period is current, we only show up to today to avoid a long "future" flat line
-        val now = timeProvider.now()
-        val daysPassed = if (now in period.startMs until period.endMs) {
-            ((now - period.startMs) / MILLIS_PER_DAY).toInt()
+        val daysPassed = if (periodContainsToday) {
+            TimePeriodUtils.daysBetween(periodStartDay, todayEnd)
+                .coerceIn(0, periodDays)
         } else {
             periodDays
         }
-        
+
         val dailyByCategory = mutableMapOf<Long?, DoubleArray>()
-        
+
         for (purchase in purchases) {
-            val dayIndex = ((purchase.date - period.startMs) / MILLIS_PER_DAY).toInt()
-            
+            val purchaseDay = TimePeriodUtils.getStartOfDay(purchase.date)
+            val dayIndex = TimePeriodUtils.daysBetween(periodStartDay, purchaseDay)
+
             if (dayIndex in 0 until periodDays) {
                 val catArray = dailyByCategory.getOrPut(purchase.categoryId) { 
                     DoubleArray(periodDays) 
@@ -612,7 +883,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
     }
     
-    private fun calculateVelocity(expenses: List<Expense>): Double {
+    private fun calculateVelocity(expenses: List<ExpenseSnapshot>): Double {
         if (expenses.size < 2) return 0.0
         
         val sorted = expenses.sortedBy { it.date }
@@ -621,7 +892,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val firstHalf = sorted.subList(0, midpoint)
         val secondHalf = sorted.subList(midpoint, sorted.size)
         
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val firstHalfTotal = firstHalf.sumOf { it.effectiveAmount }
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val secondHalfTotal = secondHalf.sumOf { it.effectiveAmount }
         
         return secondHalfTotal - firstHalfTotal
@@ -634,7 +907,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         var totalDays = 0L
         
         for (i in 1 until sorted.size) {
-            val diff = (sorted[i] - sorted[i-1]) / MILLIS_PER_DAY
+            val diff = TimePeriodUtils.daysBetween(sorted[i-1], sorted[i])
             totalDays += diff.coerceAtLeast(0)
         }
         
@@ -643,10 +916,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun determineVisitFrequency(
         count: Int,
-        period: PeriodRange,
+        period: AnalyticsPeriodRange,
         avgDaysBetween: Double?
     ): MerchantVisitFrequency {
-        val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt()
+        val periodDays = TimePeriodUtils.daysBetween(period.startMs, period.endMs)
         
         return when {
             periodDays <= 0 -> MerchantVisitFrequency.RARE
@@ -661,19 +934,19 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun analyzePriceTrend(
-        historicalExpenses: List<Expense>
+        historicalExpenses: List<ExpenseSnapshot>
     ): PriceTrendResult {
         if (historicalExpenses.size < 2) {
             return PriceTrendResult(MerchantPriceTrend.INSUFFICIENT_DATA, null, null, null)
         }
         
         val sorted = historicalExpenses.sortedBy { it.date }
-        val first = sorted.first().amount
-        val last = sorted.last().amount
+        val first = sorted.first().effectiveAmount
+        val last = sorted.last().effectiveAmount
         val change = if (first > 0) ((last - first) / first * 100).toFloat() else null
         
         // Collinear points (all same amount): treat as STABLE (LOW bug fix)
-        val allSame = sorted.all { kotlin.math.abs(it.amount - first) < 0.001 }
+        val allSame = sorted.all { kotlin.math.abs(it.effectiveAmount - first) < 0.001 }
         val trend = when {
             change == null -> MerchantPriceTrend.INSUFFICIENT_DATA
             allSame -> MerchantPriceTrend.STABLE
@@ -693,6 +966,30 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val last: Double?,
         val change: Float?
     )
+
+    private suspend fun getBudgetSnapshots(): List<BudgetSnapshot> =
+        budgetRepository.getActiveBudgetSnapshots()
+
+    private fun ExpenseSnapshot.toAnalyticsTransactionSummary(): AnalyticsTransactionSummary {
+        return AnalyticsTransactionSummary(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            date = date,
+            categoryId = categoryId
+        )
+    }
+
+    private suspend fun resolveHomeCurrency(): String {
+        return runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault(defaultDisplayCurrency())
+    }
+
+    private fun defaultDisplayCurrency(): String =
+        runCatching { java.util.Currency.getInstance(Locale.getDefault()).currencyCode }
+            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
     
     private fun calculateLoyaltyScore(amounts: List<Double>, historicalCount: Int): Float {
         if (amounts.isEmpty()) return 0f
@@ -700,6 +997,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // Amount consistency (lower variance = higher score)
         val avg = amounts.average()
         val stdDev = if (amounts.size > 1) {
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             sqrt(amounts.sumOf { (it - avg) * (it - avg) } / amounts.size)
         } else 0.0  // Single element has zero variance
         
@@ -741,14 +1039,25 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
     }
     
-    private fun calculateStreakCount(historicalExpenses: List<Expense>): Int {
+    /**
+     * Calculates the longest streak of consecutive months the merchant was visited.
+     *
+     * ## Limitation: bounded by oldest available purchase data
+     * The streak is computed purely from the [historicalExpenses] list passed in.
+     * If the caller only provides expenses from, say, the last 6 months, the
+     * streak cannot extend further back even if the merchant was visited for
+     * 12 consecutive months prior. The result is therefore relative to the
+     * analysis window, not the user's entire history with the merchant.
+     *
+     * Callers wanting an absolute (unbounded) streak should fetch expense data
+     * from the user's earliest recorded purchase.
+     */
+    private fun calculateStreakCount(historicalExpenses: List<ExpenseSnapshot>): Int {
         if (historicalExpenses.isEmpty()) return 0
         
-        val cal = Calendar.getInstance()
         // Use zero-padded months for proper string sorting: "2024-01", "2024-02", etc.
         val months = historicalExpenses.map { expense ->
-            cal.timeInMillis = expense.date
-            "%d-%02d".format(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
+            "%d-%02d".format(TimePeriodUtils.getYear(expense.date), TimePeriodUtils.getMonth(expense.date))
         }.distinct().sorted()
         
         if (months.size < 2) return 1
@@ -774,12 +1083,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
         return maxStreak
     }
     
-    private fun calculateSpendingByDayOfWeek(transactions: List<Expense>): Map<Int, Double> {
-        val cal = Calendar.getInstance()
+    private fun calculateSpendingByDayOfWeek(transactions: List<ExpenseSnapshot>): Map<Int, Double> {
         val result = mutableMapOf<Int, Double>()
         
         for (tx in transactions) {
-            result[calendarDayToIndex(tx.date, cal)] = (result[calendarDayToIndex(tx.date, cal)] ?: 0.0) + tx.effectiveAmount
+            val dayIndex = calendarDayToIndex(tx.date)
+            result[dayIndex] = (result[dayIndex] ?: 0.0) + tx.effectiveAmount
         }
         
         return result
@@ -789,11 +1098,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
         if (dates.isEmpty() || avgDaysBetween == null || avgDaysBetween <= 0) return null
         
         val lastVisit = dates.max()
-        return lastVisit + (avgDaysBetween * MILLIS_PER_DAY).toLong()
+        return lastVisit + (avgDaysBetween * TimePeriodUtils.DAY_IN_MILLIS).toLong()
     }
     
     private fun detectSpendingPatterns(
-        purchases: List<Expense>,
+        purchases: List<ExpenseSnapshot>,
         dayTotals: DoubleArray,
         timeSlotStats: Map<TimeSlot, Double>,
         totalSpent: Double
@@ -805,10 +1114,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // Weekend Warrior pattern
         val weekendTotal = dayTotals[5] + dayTotals[6]
         if (weekendTotal / totalSpent > 0.5) {
-            val cal = Calendar.getInstance()
             val weekendMerchants = purchases.filter { tx ->
-                cal.timeInMillis = tx.date
-                val dow = cal.get(Calendar.DAY_OF_WEEK)
+                val dow = TimePeriodUtils.getDayOfWeek(tx.date)
+                // A18: Replace Calendar constants with java.time.DayOfWeek
                 dow == Calendar.SATURDAY || dow == Calendar.SUNDAY
             }.map { it.merchant }.distinct()
             
@@ -836,6 +1144,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val amounts = purchases.map { it.effectiveAmount }
         val avg = amounts.average()
         val stdDev = if (amounts.size > 1) {
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             sqrt(amounts.sumOf { (it - avg) * (it - avg) } / amounts.size)
         } else 0.0
         val cv = if (avg > 0) stdDev / avg else 0.0
@@ -856,7 +1165,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
      * Builds a histogram from a list of values.
      * O(n) complexity.
      */
-    private fun buildHistogram(values: List<Double>, binCount: Int = 10): List<HistogramBin> {
+    private fun buildHistogram(
+        values: List<Double>,
+        binCount: Int = 10,
+        displayCurrency: String = defaultDisplayCurrency()
+    ): List<HistogramBin> {
         if (values.isEmpty()) return emptyList()
         
         val min = values.minOrNull() ?: 0.0
@@ -869,7 +1182,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 rangeEnd = max, 
                 count = values.size, 
                 total = sum,
-                percentage = 100f
+                percentage = 100f,
+                displayCurrency = displayCurrency
             ))
         }
         
@@ -898,7 +1212,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 rangeEnd = binEnd,
                 count = count,
                 total = totals[index],
-                percentage = if (totalCount > 0) (count / totalCount) * 100f else 0f
+                percentage = if (totalCount > 0) (count / totalCount) * 100f else 0f,
+                displayCurrency = displayCurrency
             )
         }
     }
@@ -912,4 +1227,5 @@ class AdvancedAnalyticsEngine @Inject constructor(
             .maxByOrNull { it.value.size }
             ?.key
     }
+
 }

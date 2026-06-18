@@ -24,7 +24,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -53,7 +56,7 @@ fun AssistantResultCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Assistant",
+                    text = stringResource(R.string.assistant_title),
                     style = MaterialTheme.typography.labelLarge,
                     color = SemanticColors.PrimaryIndigo
                 )
@@ -61,7 +64,7 @@ fun AssistantResultCard(
 
             when (result) {
                 is FinancialQueryResult.Summary -> {
-                    Text(result.title, style = MaterialTheme.typography.titleMedium)
+                    Text(result.title.asString(), style = MaterialTheme.typography.titleMedium)
                     Text(result.primaryText, style = MaterialTheme.typography.headlineSmall)
                     result.supportingText?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium)
@@ -69,25 +72,26 @@ fun AssistantResultCard(
                 }
 
                 is FinancialQueryResult.Breakdown -> {
-                    Text(result.title, style = MaterialTheme.typography.titleMedium)
+                    Text(result.title.asString(), style = MaterialTheme.typography.titleMedium)
                     result.rows.forEach { row ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(row.label, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                row.valueText ?: row.amount?.let { "%.2f EUR".format(it) } ?: (row.count?.toString() ?: "-"),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
+                                Text(
+                                    // S11-015: No EUR fallback — show value_not_available if no explicit text
+                                    row.valueText ?: stringResource(R.string.value_not_available),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
                         }
                     }
                 }
 
                 is FinancialQueryResult.TransactionList -> {
-                    Text(result.title, style = MaterialTheme.typography.titleMedium)
+                    Text(result.title.asString(), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Found ${result.previewCount} matching transactions.",
+                        stringResource(R.string.assistant_transactions_found_format, result.previewCount),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -107,7 +111,7 @@ fun AssistantResultCard(
                 }
 
                 is FinancialQueryResult.Unsupported -> {
-                    Text("Unsupported", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.assistant_unsupported), style = MaterialTheme.typography.titleMedium)
                     Text(result.reason, style = MaterialTheme.typography.bodyMedium)
                 }
             }
@@ -117,7 +121,7 @@ fun AssistantResultCard(
                 Button(onClick = onOpenTransactions) {
                     Icon(Icons.Rounded.OpenInNew, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Open Transactions")
+                    Text(stringResource(R.string.assistant_open_transactions))
                 }
             }
         }

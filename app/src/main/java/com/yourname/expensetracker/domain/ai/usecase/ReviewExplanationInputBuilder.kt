@@ -5,7 +5,9 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import javax.inject.Inject
 
 /**
@@ -14,18 +16,21 @@ import javax.inject.Inject
  *
  * Responsibilities:
  * 1. Field mapping — copies the deterministic fields from [PendingReview].
- * 2. Redaction — when [AiPolicy.shouldRedact] is true, strips the raw
- *    notification text (replaces with null) before it can reach a cloud
- *    provider.
+ * 2. Redaction — when [AiPolicy.shouldRedact] is true, pseudonymizes merchant
+ *    and package name, and strips potentially sensitive free-form fields
+ *    (notification title/text and deterministic explanation) before they can
+ *    reach a cloud provider.
  * 3. Clamping — even when redaction is off, the notification text is clamped
  *    to [AppConfig.Ai.MAX_REVIEW_TEXT_CHARS_FOR_CLOUD] characters to cap the
  *    payload size sent to any cloud endpoint.
  */
 class ReviewExplanationInputBuilder @Inject constructor(
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
-    fun build(review: PendingReview, settings: AiSettings): ReviewExplanationInput {
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.REVIEW_EXPLANATION)
+    suspend fun build(review: PendingReview, settings: AiSettings): ReviewExplanationInput {
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.REVIEW_EXPLANATION) ||
+            privacySettingsRepository.getSettings().redactBeforeCloud
 
         val safeNotificationText = when {
             shouldRedact -> null
@@ -35,15 +40,23 @@ class ReviewExplanationInputBuilder @Inject constructor(
 
         return ReviewExplanationInput(
             reviewId              = review.id,
-            merchant              = review.suggestedMerchant,
-            amount                = review.suggestedAmount,
+            merchant              = if (shouldRedact) {
+                "merchant_${review.suggestedMerchant.sha256Prefix()}"
+            } else {
+                review.suggestedMerchant
+            },
+            amount                = review.suggestedAmount ?: 0.0,
             currency              = review.suggestedCurrency,
             suggestedType         = review.suggestedType,
             suggestedCategoryId   = review.suggestedCategoryId,
             confidence            = review.confidence,
             matchType             = review.matchType,
-            explanation           = review.explanation,
-            packageName           = review.packageName,
+            explanation           = if (shouldRedact) null else review.explanation,
+            packageName           = if (shouldRedact) {
+                "app_${review.packageName.sha256Prefix()}"
+            } else {
+                review.packageName
+            },
             notificationTitle     = if (shouldRedact) null else review.notificationTitle,
             notificationText      = safeNotificationText
         )

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.budget
 
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
@@ -10,7 +11,10 @@ import io.mockk.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -36,7 +40,7 @@ class BudgetMonitorStressTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         every { timeProvider.now() } returns System.currentTimeMillis()
-        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher)
+        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher, diagnosticEventWriter = mockk(relaxed = true), writeBarrier = mockk(relaxed = true), diagnosticSink = mockk(relaxed = true))
     }
 
     @After
@@ -58,7 +62,8 @@ class BudgetMonitorStressTest {
                 else -> BudgetHealthStatus.ON_TRACK
             },
             periodStart = periodStart,
-            periodEnd = periodEnd
+            periodEnd = periodEnd,
+            effectiveLimit = budget.amount,
         )
 
     // ============================================================================
@@ -137,7 +142,8 @@ class BudgetMonitorStressTest {
             percentUsed = 0.6f,
             healthStatus = BudgetHealthStatus.WARNING,
             periodStart = now - 86400000L,
-            periodEnd = now + 86400000L
+            periodEnd = now + 86400000L,
+            effectiveLimit = 0.0,
         )
         coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(statusWithZeroSpent))
         monitor.checkBudgets()
@@ -198,12 +204,13 @@ class BudgetMonitorStressTest {
     }
 
     // ============================================================================
-    // SECTION 5: CLEANUP
+    // SECTION 5: LIFECYCLE + CONCURRENCY REGRESSIONS
     // ============================================================================
 
     @Test
-    fun `stress - cleanup cancels serviceJob`() = runTest(testDispatcher) {
-        monitor.cleanup()
+    fun `stress - concurrent checks preserve throttle coherence and read repository once`() = runTest(testDispatcher) {
+        val now = System.currentTimeMillis()
+        every { timeProvider.now() } returns now
         val budget = Budget(
             id = 6,
             amount = 100.0,
@@ -216,8 +223,80 @@ class BudgetMonitorStressTest {
         coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(status(budget, 0.6f, 0L, Long.MAX_VALUE))
         )
+
+        repeat(10) {
+            launch { monitor.checkBudgets() }
+        }
+
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { budgetRepository.getBudgetStatuses() }
+        coVerify(exactly = 1) { budgetRepository.updateWarningNotification(6L, any()) }
+        verify(exactly = 1) { notificationService.sendBudgetAlert(6, "Budget Warning", any()) }
+    }
+
+    @Test
+    fun `stress - onBackground cancels in flight work and next foreground check fetches fresh state`() = runTest(testDispatcher) {
+        val firstNow = System.currentTimeMillis()
+        val secondNow = firstNow + 5_000L
+        every { timeProvider.now() } returnsMany listOf(firstNow, secondNow)
+
+        val budget = Budget(
+            id = 61,
+            amount = 100.0,
+            categoryId = 1L,
+            period = BudgetPeriod.MONTHLY,
+            startDate = firstNow,
+            notifyAtWarning = 0.5f,
+            notifyAtCritical = 0.9f
+        )
+
+        coEvery { budgetRepository.getBudgetStatuses() } returnsMany listOf(
+            flow {
+                delay(1_000L)
+                emit(listOf(status(budget, 0.6f, 0L, Long.MAX_VALUE)))
+            },
+            flowOf(emptyList())
+        )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.runCurrent()
+
+        monitor.onBackground()
+        monitor.checkBudgets()
+
+        advanceUntilIdle()
+
+        coVerify(exactly = 2) { budgetRepository.getBudgetStatuses() }
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
+    }
+
+    @Test
+    fun `stress - destroy permanently cancels monitor scope`() = runTest(testDispatcher) {
+        monitor.destroy()
+
+        every { timeProvider.now() } returns System.currentTimeMillis()
+
+        val budget = Budget(
+            id = 62,
+            amount = 100.0,
+            categoryId = 1L,
+            period = BudgetPeriod.MONTHLY,
+            startDate = System.currentTimeMillis(),
+            notifyAtWarning = 0.5f,
+            notifyAtCritical = 0.9f
+        )
+        coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(status(budget, 0.6f, 0L, Long.MAX_VALUE))
+        )
+
         monitor.checkBudgets()
         advanceUntilIdle()
+
+        coVerify(exactly = 0) { budgetRepository.getBudgetStatuses() }
     }
 
     // ============================================================================

@@ -14,7 +14,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.usecase.dashboard.CurrencyQualityUi
 
 @Composable
 fun FinancialRunwayCard(
@@ -25,7 +29,11 @@ fun FinancialRunwayCard(
     committedExpenses: Double,
     likelyExpenses: Double,
     status: DashboardWidget.RunwayStatus,
-    modifier: Modifier = Modifier
+    isUnavailable: Boolean = false,
+    currencyQuality: CurrencyQualityUi? = null,
+    modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
+    currency: String = "EUR"
 ) {
     // Guard negative days
     val safeDays = daysRemaining.coerceAtLeast(0)
@@ -52,6 +60,37 @@ fun FinancialRunwayCard(
         DashboardWidget.RunwayStatus.NO_INCOME -> "No Income Data"
     }
 
+    if (isUnavailable) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.financial_runway_title),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = currencyQuality?.warningMessage ?: "Runway data unavailable",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SemanticColors.TextSecondary
+                )
+                if (currencyQuality?.isPartial == true) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    DataQualityWarningChip()
+                }
+            }
+        }
+        return
+    }
+
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -66,7 +105,7 @@ fun FinancialRunwayCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "FINANCIAL RUNWAY",
+                    text = stringResource(R.string.financial_runway_title),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = accentColor,
@@ -105,7 +144,7 @@ fun FinancialRunwayCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "days",
+                    text = stringResource(R.string.financial_runway_days),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Medium,
                     color = SemanticColors.TextSecondary,
@@ -148,7 +187,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", discretionaryRemaining)}",
+                        CurrencyFormatter.formatMoney(discretionaryRemaining, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -161,7 +200,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.1f", averageDailyDiscretionarySpend)}",
+                        CurrencyFormatter.formatMoney(averageDailyDiscretionarySpend, currency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -174,7 +213,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", monthlyIncome)}",
+                        CurrencyFormatter.formatMoney(monthlyIncome, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.SuccessGreen
@@ -194,7 +233,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.WarningOrange.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "€${String.format("%.0f", committedExpenses)} committed",
+                                "${CurrencyFormatter.formatMoney(committedExpenses, currency, showCents = false)} committed",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.WarningOrange,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -207,7 +246,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "€${String.format("%.0f", likelyExpenses)} planned",
+                                "${CurrencyFormatter.formatMoney(likelyExpenses, currency, showCents = false)} planned",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.PrimaryIndigo,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

@@ -1,10 +1,22 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
+/**
+ * Planned expense entity.
+ *
+ * Materialized-key CHECK constraint (applied via migration 106→107):
+ *  - Non-PLANNED status               → openSourceOccurrenceKey IS NULL
+ *  - PLANNED with sourceOccurrenceKey → openSourceOccurrenceKey = sourceOccurrenceKey (non-null)
+ *  - PLANNED without sourceOccurrenceKey → openSourceOccurrenceKey IS NULL
+ */
 @Entity(
     tableName = "planned_expenses",
     foreignKeys = [
@@ -17,7 +29,8 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["date"]),
-        Index(value = ["categoryId"])
+        Index(value = ["categoryId"]),
+        Index(value = ["openSourceOccurrenceKey"], unique = true)
     ]
 )
 data class PlannedExpense(
@@ -25,12 +38,32 @@ data class PlannedExpense(
     val id: Long = 0,
     val description: String,
     val amount: Double,
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'LEGACY_DEFAULT'") val currencyAssumption: String = "LEGACY_DEFAULT",
     val date: Long, // Planned date
     val categoryId: Long? = null,
-    val isRecurring: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isRecurring: Boolean = false,
     val priority: PlannedExpensePriority = PlannedExpensePriority.LIKELY,
-    val createdAt: Long = System.currentTimeMillis()
-)
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
+    /** Key linking this planned expense to a recurring occurrence (occurrenceKey). */
+    val sourceOccurrenceKey: String? = null,
+    /** ID of the recurring rule that generated this planned expense. */
+    val sourceRecurringRuleId: Long? = null,
+    /** Status: PLANNED, FULFILLED, SKIPPED, CANCELLED */
+    @ColumnInfo(defaultValue = "'PLANNED'") val status: String = "PLANNED",
+    /** ID of the actual expense that fulfilled this planned expense (if any). */
+    val linkedActualExpenseId: Long? = null,
+    /** Unified merchant key (for matching with actual expenses). */
+    val merchantKey: String? = null,
+    /** Last update timestamp (must be set on every mutation). */
+    val updatedAt: Long = 0L,
+    /** Materialized invariant key: set to sourceOccurrenceKey when status='PLANNED', else NULL. */
+    val openSourceOccurrenceKey: String? = null
+) {
+    @get:Ignore
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+}
 
 enum class PlannedExpensePriority {
     MUST,

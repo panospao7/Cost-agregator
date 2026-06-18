@@ -1,0 +1,19 @@
+package com.yourname.expensetracker.domain.sideeffect
+
+enum class SideEffectCategory {
+    BUDGET,
+    ANALYTICS,
+    ANOMALY,
+    MERCHANT_LEARNING,
+    RECURRING,
+    RECEIPT_MATCHING,
+    RECEIPT_ITEM_CATEGORIZATION,
+    WARRANTY,
+    PRICE_PROTECTION,
+    NOTIFICATION_DELIVERY,
+    AI_RECOMMENDATION,
+    CACHE_INVALIDATION,
+    WORKER_SCHEDULING,
+    EXPORT_IMPORT,
+    BANK_SYNC
+}

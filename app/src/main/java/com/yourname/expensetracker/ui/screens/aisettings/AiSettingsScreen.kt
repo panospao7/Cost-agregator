@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.aisettings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -11,9 +12,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -23,26 +26,39 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.util.Date
+import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,23 +70,42 @@ fun AiSettingsScreen(
     val settings = uiState.settings
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(
-                title = { Text("AI Settings") },
+                title = { 
+                    Text(
+                        stringResource(R.string.ai_settings_title),
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.ai_back_cd))
                     }
                 },
                 actions = {
                     if (uiState.isRefreshingRuntime) {
-                        CircularProgressIndicator(modifier = Modifier.padding(end = 16.dp))
+                        val refreshingCd = stringResource(R.string.ai_refreshing_cd)
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .padding(end = 16.dp)
+                                .semantics { contentDescription = refreshingCd }
+                        )
                     } else {
-                        TextButton(onClick = viewModel::refreshRuntimeStatus) {
-                            Text("Refresh")
+                        val refreshButtonCd = stringResource(R.string.ai_refresh_button_cd)
+                        TextButton(
+                            onClick = viewModel::refreshRuntimeStatus,
+                            modifier = Modifier.semantics { contentDescription = refreshButtonCd }
+                        ) {
+                            Text(stringResource(R.string.ai_refresh))
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->
@@ -83,26 +118,63 @@ fun AiSettingsScreen(
         ) {
             item {
                 SettingsSection(
-                    title = "General",
-                    description = "Control whether AI is active at all and which providers may be used."
+                    title = stringResource(R.string.ai_section_general),
+                    description = stringResource(R.string.ai_section_general_desc)
                 ) {
-                    ToggleRow("Enable AI", settings.aiEnabled, viewModel::setAiEnabled)
-                    ToggleRow("Allow cloud AI", settings.allowCloudAi, viewModel::setAllowCloudAi)
-                    ToggleRow("Allow on-device AI", settings.allowOnDeviceAi, viewModel::setAllowOnDeviceAi)
+                    ToggleRow(stringResource(R.string.ai_toggle_enable), settings.aiEnabled, viewModel::setAiEnabled)
+                    ToggleRow(stringResource(R.string.ai_toggle_cloud), settings.allowCloudAi, viewModel::setAllowCloudAi)
+                    // S11-002: Show effective cloud policy status
+                    uiState.effectiveCloudBlocked?.let { reason ->
+                        Text(
+                            text = "⚠ Cloud AI blocked: $reason",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    if (uiState.effectiveCloudBlocked == null && settings.allowCloudAi && settings.aiEnabled) {
+                        Text(
+                            text = "✓ Cloud AI is active",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = androidx.compose.ui.Modifier.padding(start = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    // S11-007: Show settings write error
+                    uiState.settingsWriteError?.let { err ->
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = androidx.compose.ui.Modifier
+                                .padding(start = 16.dp, bottom = 4.dp)
+                                .clickable { viewModel.clearSettingsWriteError() }
+                        )
+                    }
+                    ToggleRow(stringResource(R.string.ai_toggle_on_device), settings.allowOnDeviceAi, viewModel::setAllowOnDeviceAi)
                 }
             }
 
             item {
                 SettingsSection(
-                    title = "Preferred Mode",
-                    description = "Choose how the app should prefer local and cloud AI when both are available."
+                    title = stringResource(R.string.ai_section_preferred_mode),
+                    description = stringResource(R.string.ai_section_preferred_mode_desc)
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         AiMode.entries.forEach { mode ->
+                            val isSelected = settings.preferredMode == mode
+                            val modeStatus = if (isSelected) 
+                                stringResource(R.string.recurring_tab_selected) 
+                            else 
+                                stringResource(R.string.recurring_tab_not_selected)
+                            val modeCd = stringResource(R.string.ai_mode_cd_format, mode.displayLabel(), modeStatus)
                             FilterChip(
-                                selected = settings.preferredMode == mode,
+                                selected = isSelected,
                                 onClick = { viewModel.setPreferredMode(mode) },
-                                label = { Text(mode.displayLabel()) }
+                                label = { Text(mode.displayLabel()) },
+                                modifier = Modifier.semantics {
+                                    contentDescription = modeCd
+                                }
                             )
                         }
                     }
@@ -111,66 +183,101 @@ fun AiSettingsScreen(
 
             item {
                 SettingsSection(
-                    title = "Capability Matrix",
-                    description = "See feature enablement and on-device readiness together for each AI capability."
+                    title = stringResource(R.string.ai_section_provider),
+                    description = stringResource(R.string.ai_section_provider_desc)
+                ) {
+                    ProviderAndApiKeySection(
+                        providerName = uiState.providerName,
+                        apiKeyInput = uiState.apiKeyInput,
+                        hasStoredApiKey = uiState.hasStoredApiKey,
+                        apiKeyValidationMessage = uiState.apiKeyValidationMessage,
+                        isTestingConnection = uiState.isTestingConnection,
+                        connectionTestMessage = uiState.connectionTestMessage,
+                        isConnectionTestSuccess = uiState.isConnectionTestSuccess,
+                        onApiKeyChange = viewModel::updateApiKeyInput,
+                        onSaveApiKey = viewModel::saveApiKey,
+                        onTestConnection = viewModel::testConnection
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(
+                    title = stringResource(R.string.ai_section_capability),
+                    description = stringResource(R.string.ai_section_capability_desc)
                 ) {
                     CapabilityMatrixRow(
-                        label = "Assistant",
+                        label = stringResource(R.string.ai_capability_assistant),
                         enabled = settings.assistantEnabled,
                         onEnabledChange = viewModel::setAssistantEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
-                        label = "Query interpretation",
+                        label = stringResource(R.string.ai_capability_query),
                         enabled = settings.queryInterpretationEnabled,
                         onEnabledChange = viewModel::setQueryInterpretationEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
-                        label = "Dashboard briefing",
+                        label = stringResource(R.string.ai_capability_dashboard),
                         enabled = settings.dashboardBriefingEnabled,
                         onEnabledChange = viewModel::setDashboardBriefingEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DASHBOARD_BRIEFING },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
-                        label = "Review explanation",
+                        label = stringResource(R.string.ai_capability_review),
                         enabled = settings.reviewExplanationEnabled,
                         onEnabledChange = viewModel::setReviewExplanationEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.REVIEW_EXPLANATION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
-                        label = "Receipt assist",
+                        label = stringResource(R.string.ai_capability_receipt),
                         enabled = settings.receiptAssistEnabled,
                         onEnabledChange = viewModel::setReceiptAssistEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
+                    CapabilityMatrixRow(
+                        label = stringResource(R.string.ai_capability_warranty_extraction),
+                        enabled = settings.warrantyExtractionEnabled,
+                        onEnabledChange = viewModel::setWarrantyExtractionEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.WARRANTY_EXTRACTION },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
+                    )
                     ToggleRow(
-                        "Allow receipt image for cloud assist",
+                        stringResource(R.string.ai_toggle_receipt_image),
                         settings.receiptImageCloudEnabled,
                         viewModel::setReceiptImageCloudEnabled
                     )
                     Text(
-                        text = "When enabled, cloud receipt assist may inspect the saved receipt image in addition to OCR text for harder scans like Greek receipts. This stays suggestion-only and never saves automatically.",
+                        text = stringResource(R.string.ai_receipt_image_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     CapabilityMatrixRow(
-                        label = "Categorization fallback",
+                        label = stringResource(R.string.ai_capability_categorization),
                         enabled = settings.categorizationFallbackEnabled,
                         onEnabledChange = viewModel::setCategorizationFallbackEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.CATEGORIZATION_FALLBACK },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
-                        label = "Duplicate detection",
+                        label = stringResource(R.string.ai_capability_duplicate),
                         enabled = settings.dedupeJudgeEnabled,
                         onEnabledChange = viewModel::setDedupeJudgeEnabled,
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DEDUPE_JUDGE },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
+                    )
+                    // S11-008: Receipt item categorization toggle
+                    CapabilityMatrixRow(
+                        label = stringResource(R.string.ai_capability_receipt_item_categorization),
+                        enabled = settings.receiptItemCategorizationEnabled,
+                        onEnabledChange = viewModel::setReceiptItemCategorizationEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_ITEM_CATEGORIZATION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                 }
@@ -178,37 +285,37 @@ fun AiSettingsScreen(
 
             item {
                 SettingsSection(
-                    title = "Privacy",
-                    description = "Control what can leave the device and how cloud calls are constrained."
+                    title = stringResource(R.string.ai_section_privacy),
+                    description = stringResource(R.string.ai_section_privacy_desc)
                 ) {
-                    ToggleRow("Redact before cloud", settings.redactBeforeCloud, viewModel::setRedactBeforeCloud)
-                    ToggleRow("Wi-Fi only for cloud", settings.wifiOnlyForCloud, viewModel::setWifiOnlyForCloud)
-                    ToggleRow("Store conversation history", settings.storeConversationHistory, viewModel::setStoreConversationHistory)
+                    ToggleRow(stringResource(R.string.ai_toggle_redact), settings.redactBeforeCloud, viewModel::setRedactBeforeCloud)
+                    ToggleRow(stringResource(R.string.ai_toggle_wifi_only), settings.wifiOnlyForCloud, viewModel::setWifiOnlyForCloud)
+                    ToggleRow(stringResource(R.string.ai_toggle_store_history), settings.storeConversationHistory, viewModel::setStoreConversationHistory)
                 }
             }
 
             item {
                 SettingsSection(
-                    title = "Phase 4A Experimental",
-                    description = "Turn on the first guarded automation features. These stay opt-in and keep final confirmation or read-only behavior."
+                    title = stringResource(R.string.ai_section_experimental),
+                    description = stringResource(R.string.ai_section_experimental_desc)
                 ) {
                     ToggleRow(
-                        "Proactive AI briefings",
+                        stringResource(R.string.ai_toggle_proactive),
                         settings.proactiveBriefingsEnabled,
                         viewModel::setProactiveBriefingsEnabled
                     )
                     ToggleRow(
-                        "Receipt quick save",
+                        stringResource(R.string.ai_toggle_quick_save),
                         settings.receiptQuickSaveEnabled,
                         viewModel::setReceiptQuickSaveEnabled
                     )
                     ToggleRow(
-                        "Review quick approve",
+                        stringResource(R.string.ai_toggle_quick_approve),
                         settings.reviewQuickApproveEnabled,
                         viewModel::setReviewQuickApproveEnabled
                     )
                     Text(
-                        text = "Receipt quick save and review quick approve stay behind confirmation and still use the existing validation and approval paths.",
+                        text = stringResource(R.string.ai_experimental_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -217,8 +324,8 @@ fun AiSettingsScreen(
 
             item {
                 SettingsSection(
-                    title = "Runtime Status",
-                    description = "See whether on-device AI is ready, downloading, or unavailable per capability."
+                    title = stringResource(R.string.ai_section_runtime),
+                    description = stringResource(R.string.ai_section_runtime_desc)
                 ) {
                     RuntimeGuidanceCard(
                         settings = settings,
@@ -243,12 +350,15 @@ fun AiSettingsScreen(
                     }
 
                     uiState.runtimeSummary.capabilities.forEach { runtime ->
+                        val runtimeLabel = runtime.capability.label()
+                        val isReady = runtime.message == null
+                        val runtimeStatusText = runtime.message ?: stringResource(R.string.ai_status_ready)
                         ListItem(
-                            headlineContent = { Text(runtime.capability.label()) },
-                            overlineContent = { RuntimeBadge(runtime.message == null) },
+                            headlineContent = { Text(runtimeLabel) },
+                            overlineContent = { RuntimeBadge(isReady) },
                             supportingContent = {
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(runtime.message ?: "Ready")
+                                    Text(runtimeStatusText)
                                     runtime.routeDisplayText()?.let {
                                         Text(
                                             text = it,
@@ -285,20 +395,29 @@ private fun RuntimeMetaCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text("Runtime context", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.ai_runtime_context_title), style = MaterialTheme.typography.titleSmall)
             Text(
-                "Network: ${if (networkAvailable) "available" else "offline"}",
+                text = stringResource(
+                    R.string.ai_runtime_network_format,
+                    if (networkAvailable) stringResource(R.string.ai_network_available) else stringResource(R.string.ai_network_offline)
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "Wi-Fi: ${if (wifiConnected) "connected" else "not connected"}",
+                text = stringResource(
+                    R.string.ai_runtime_wifi_format,
+                    if (wifiConnected) stringResource(R.string.ai_wifi_connected) else stringResource(R.string.ai_wifi_not_connected)
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (lastRefreshedAt > 0L) {
                 Text(
-                    "Last refreshed: ${DateFormatterUtils.timeWithSecondsAndDate().format(Date(lastRefreshedAt))}",
+                    text = stringResource(
+                        R.string.ai_runtime_last_refreshed_format,
+                        DateFormatterUtils.formatTimestampJavaTime(lastRefreshedAt, "HH:mm:ss dd/MM")
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -306,6 +425,117 @@ private fun RuntimeMetaCard(
         }
     }
     Spacer(modifier = Modifier.height(8.dp))
+}
+
+@Composable
+private fun ProviderAndApiKeySection(
+    providerName: String,
+    apiKeyInput: String,
+    hasStoredApiKey: Boolean,
+    apiKeyValidationMessage: String?,
+    isTestingConnection: Boolean,
+    connectionTestMessage: String?,
+    isConnectionTestSuccess: Boolean?,
+    onApiKeyChange: (String) -> Unit,
+    onSaveApiKey: () -> Unit,
+    onTestConnection: () -> Unit
+) {
+    var revealApiKey by rememberSaveable { mutableStateOf(false) }
+
+    ElevatedCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.ai_provider_label, providerName),
+                style = MaterialTheme.typography.bodyLarge
+            )
+
+            if (hasStoredApiKey && apiKeyInput.isBlank()) {
+                Text(
+                    text = stringResource(R.string.ai_api_key_saved_masked),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            OutlinedTextField(
+                value = apiKeyInput,
+                onValueChange = onApiKeyChange,
+                label = { Text(stringResource(R.string.ai_api_key_label)) },
+                placeholder = { Text(stringResource(R.string.ai_api_key_placeholder)) },
+                singleLine = true,
+                isError = apiKeyValidationMessage != null,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    autoCorrect = false
+                ),
+                visualTransformation = if (revealApiKey) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                trailingIcon = {
+                    IconButton(onClick = { revealApiKey = !revealApiKey }) {
+                        Icon(
+                            imageVector = if (revealApiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            contentDescription = if (revealApiKey) {
+                                stringResource(R.string.ai_hide_api_key_cd)
+                            } else {
+                                stringResource(R.string.ai_show_api_key_cd)
+                            }
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                text = stringResource(R.string.ai_api_key_secure_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            apiKeyValidationMessage?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onSaveApiKey) {
+                    Text(stringResource(R.string.ai_save_api_key))
+                }
+                Button(onClick = onTestConnection, enabled = !isTestingConnection) {
+                    Text(
+                        if (isTestingConnection) {
+                            stringResource(R.string.ai_testing_connection)
+                        } else {
+                            stringResource(R.string.ai_test_connection)
+                        }
+                    )
+                }
+            }
+
+            connectionTestMessage?.let { message ->
+                val feedbackColor = when (isConnectionTestSuccess) {
+                    true -> MaterialTheme.colorScheme.primary
+                    false -> MaterialTheme.colorScheme.error
+                    null -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = feedbackColor
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -331,13 +561,22 @@ private fun ToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    val statusText = if (checked) stringResource(R.string.ai_toggle_enabled) else stringResource(R.string.ai_toggle_disabled)
+    val toggleCd = stringResource(R.string.ai_toggle_cd_format, label, statusText)
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = toggleCd
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, style = MaterialTheme.typography.bodyLarge)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
     }
 }
 
@@ -349,11 +588,29 @@ private fun CapabilityMatrixRow(
     runtime: AiCapabilityRuntimeStatus?,
     cloudFallbackAvailable: Boolean
 ) {
+    val enabledText = stringResource(if (enabled) R.string.ai_toggle_enabled else R.string.ai_toggle_disabled)
+    val runtimeText = when {
+        !enabled -> stringResource(R.string.ai_status_disabled)
+        runtime == null -> stringResource(R.string.ai_status_not_loaded)
+        runtime.message == null -> stringResource(R.string.ai_status_ready)
+        else -> runtime.message
+    }
+    
+    val accessibilityDescription = stringResource(
+        R.string.ai_capability_cd_format,
+        label,
+        enabledText,
+        runtimeText
+    )
+
     ElevatedCard {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(12.dp)
+                .semantics {
+                    contentDescription = accessibilityDescription
+                },
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
@@ -368,13 +625,6 @@ private fun CapabilityMatrixRow(
                     }
                 }
                 Switch(checked = enabled, onCheckedChange = onEnabledChange)
-            }
-
-            val runtimeText = when {
-                !enabled -> "Disabled in settings"
-                runtime == null -> "Runtime status not loaded"
-                runtime.message == null -> "Ready"
-                else -> runtime.message
             }
 
             Text(
@@ -423,7 +673,7 @@ private fun RuntimeBadge(isReady: Boolean) {
         shape = MaterialTheme.shapes.small
     ) {
         Text(
-            text = if (isReady) "Ready" else "Needs attention",
+            text = if (isReady) stringResource(R.string.ai_status_ready) else stringResource(R.string.ai_status_needs_attention),
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
@@ -432,14 +682,15 @@ private fun RuntimeBadge(isReady: Boolean) {
 
 @Composable
 private fun RuntimeGuidanceCard(settings: AiSettings, highestPriorityMessage: String?) {
+    val guidanceText = runtimeGuidanceText(settings, highestPriorityMessage)
     ElevatedCard {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text("What to do next", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.ai_guidance_title), style = MaterialTheme.typography.titleSmall)
             Text(
-                text = runtimeGuidanceText(settings, highestPriorityMessage),
+                text = guidanceText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -448,17 +699,19 @@ private fun RuntimeGuidanceCard(settings: AiSettings, highestPriorityMessage: St
     Spacer(modifier = Modifier.height(8.dp))
 }
 
+@Composable
 internal fun runtimeGuidanceText(settings: AiSettings, highestPriorityMessage: String?): String = when {
     settings.aiEnabled && settings.allowCloudAi && highestPriorityMessage != null -> {
-        "$highestPriorityMessage Cloud routing can still handle advisory features when your mode and privacy settings allow it."
+        stringResource(R.string.ai_guidance_cloud_with_message_format, highestPriorityMessage)
     }
     settings.aiEnabled && settings.allowCloudAi -> {
-        "Cloud AI is enabled, so advisory features can still run even if on-device AI is unavailable on this device."
+        stringResource(R.string.ai_guidance_cloud_enabled)
     }
     highestPriorityMessage != null -> highestPriorityMessage
-    else -> "If a capability is marked Ready, on-device AI can be used immediately when allowed by settings and routing."
+    else -> stringResource(R.string.ai_guidance_default)
 }
 
+@Composable
 internal fun cloudFallbackHint(
     enabled: Boolean,
     runtime: AiCapabilityRuntimeStatus?,
@@ -470,21 +723,28 @@ internal fun cloudFallbackHint(
     if (runtime.route == com.yourname.expensetracker.domain.ai.model.AiRoute.CLOUD) {
         return null
     }
-    return "Cloud fallback available"
+    return stringResource(R.string.ai_cloud_fallback_hint)
 }
 
+@Composable
 private fun AiMode.displayLabel(): String = when (this) {
-    AiMode.AUTO -> "Automatic"
-    AiMode.ON_DEVICE -> "On-device"
-    AiMode.CLOUD -> "Cloud"
+    AiMode.AUTO -> stringResource(R.string.ai_mode_auto)
+    AiMode.ON_DEVICE -> stringResource(R.string.ai_mode_on_device)
+    AiMode.CLOUD -> stringResource(R.string.ai_mode_cloud)
 }
 
+@Composable
 private fun AiCapability.label(): String = when (this) {
-    AiCapability.DASHBOARD_BRIEFING -> "Dashboard briefing"
-    AiCapability.REVIEW_EXPLANATION -> "Review explanation"
-    AiCapability.QUERY_INTERPRETATION -> "Query interpretation"
-    AiCapability.RECEIPT_EXTRACTION -> "Receipt assist"
-    AiCapability.CATEGORIZATION_FALLBACK -> "Categorization"
-    AiCapability.DEDUPE_JUDGE -> "Duplicate detection"
-    AiCapability.LOCATION_SUMMARY -> "Location summary"
+    AiCapability.DASHBOARD_BRIEFING -> stringResource(R.string.ai_capability_dashboard)
+    AiCapability.REVIEW_EXPLANATION -> stringResource(R.string.ai_capability_review)
+    AiCapability.QUERY_INTERPRETATION -> stringResource(R.string.ai_capability_query)
+    AiCapability.RECEIPT_EXTRACTION -> stringResource(R.string.ai_capability_receipt)
+    AiCapability.WARRANTY_EXTRACTION -> stringResource(R.string.ai_capability_warranty_extraction)
+    AiCapability.CATEGORIZATION_FALLBACK -> stringResource(R.string.ai_capability_categorization)
+    AiCapability.DEDUPE_JUDGE -> stringResource(R.string.ai_capability_duplicate)
+    AiCapability.LOCATION_SUMMARY -> stringResource(R.string.ai_capability_location_summary)
+    AiCapability.NOTIFICATION_PARSE -> stringResource(R.string.ai_capability_notification_parse)
+    AiCapability.REVIEW_PRIORITIZATION -> stringResource(R.string.ai_capability_review_prioritization)
+    AiCapability.SEMANTIC_DEDUPE -> stringResource(R.string.ai_capability_semantic_dedupe)
+    AiCapability.RECEIPT_ITEM_CATEGORIZATION -> stringResource(R.string.ai_capability_receipt_item_cat)
 }

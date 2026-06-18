@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -10,6 +11,13 @@ import androidx.room.PrimaryKey
  * many raw notification strings all share one cache entry.
  *
  * Added in DB v28.
+ *
+ * ## DB-8: CASCADE audit — MerchantLocation
+ * This entity has **no foreign key declarations**. No cascade-delete risk exists.
+ * Cleanup is handled by application-level cache eviction (staleness checks on
+ * [lastResolvedAt]). If a future FK is added to link to a merchant or receipt,
+ * it should use `onDelete = ForeignKey.SET_NULL` to avoid silently erasing
+ * geolocation history.
  */
 @Entity(
     tableName = "merchant_locations",
@@ -27,10 +35,10 @@ data class MerchantLocation(
     /**
      * Area key scoping this cache entry to a geographic grid cell (v30).
      * Format: "${normalizedName}|${floor(lat/0.045).toLong()}|${floor(lon/0.045).toLong()}" for area-scoped,
-     * or "${normalizedName}|global" for global/fallback entries.
-     * New code always sets a non-null value; legacy NULL rows are treated as global by queries.
+     * or plain "global" for global/fallback entries.
+     * Non-null since v73; legacy NULL rows were backfilled to "global" by MIGRATION_72_73.
      */
-    val areaKey: String? = "global",
+    @ColumnInfo(defaultValue = "global") val areaKey: String = "global",
 
     /** Raw merchant name as it appears in the notification/statement (for display). */
     val displayName: String,
@@ -50,11 +58,12 @@ data class MerchantLocation(
     val displayAddress: String? = null,
 
     /** Confidence score 0.0–1.0 assigned by the resolver. */
-    val confidence: Float = 1.0f,
+    @ColumnInfo(defaultValue = "1.0") val confidence: Float = 1.0f,
 
     /** Epoch ms of the last successful resolution. Used for cache-staleness checks. */
-    val lastResolvedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val lastResolvedAt: Long = 0L,
 
     /** How many expense rows share this cache entry (informational). */
-    val hitCount: Int = 1
+    @ColumnInfo(defaultValue = "1") val hitCount: Int = 1
 )

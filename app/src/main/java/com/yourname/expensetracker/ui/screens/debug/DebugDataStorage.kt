@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.ui.screens.debug
 
 import android.content.Context
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -16,7 +18,8 @@ import timber.log.Timber
  */
 @Singleton
 class DebugDataStorage @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) {
     private val file = File(context.filesDir, "last_debug_data.json")
     
@@ -26,7 +29,7 @@ class DebugDataStorage @Inject constructor(
     suspend fun save(debugData: DebugData) {
         withContext(Dispatchers.IO) {
             try {
-                file.writeText(debugData.toJson())
+                file.writeText(debugData.toJson(timeProvider.now()))
                 Timber.d("Saved debug data to ${file.absolutePath}")
             } catch (e: Exception) {
                 Timber.e(e, "Failed to save debug data: ${e.message}")
@@ -81,18 +84,25 @@ class DebugDataStorage @Inject constructor(
             // Extract transactions
             val transactionsArray = root.optJSONArray("transactions") ?: org.json.JSONArray()
             val transactions = mutableListOf<com.yourname.expensetracker.domain.parser.ParsedTransaction>()
+            val validationSources = mutableMapOf<Int, String>()
             for (i in 0 until transactionsArray.length()) {
                 val txObj = transactionsArray.getJSONObject(i)
                 transactions.add(com.yourname.expensetracker.domain.parser.ParsedTransaction(
                     amount = txObj.optDouble("amount", 0.0),
+                    // Fallback "EUR" used when stored data has no currency field; ideally should use home currency
                     currency = txObj.optString("currency", "EUR"),
                     merchant = txObj.optString("merchant", ""),
-                    type = com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(
+                    type = ParsedTransactionType.valueOf(
                         txObj.optString("type", "PURCHASE")
                     ),
                     confidence = txObj.optDouble("confidence", 0.0).toFloat(),
                     date = if (txObj.isNull("date")) null else txObj.optLong("date")
                 ))
+                // Restore per-transaction validation source (M3 fix)
+                val vs = txObj.optString("validationSource", "PARSER_ONLY")
+                if (vs != "PARSER_ONLY") {
+                    validationSources[i] = vs
+                }
             }
             
             // Extract issues
@@ -128,7 +138,8 @@ class DebugDataStorage @Inject constructor(
                 parsingLogs = logs,
                 processingTimeMs = processingTimeMs,
                 parserUsed = parserUsed,
-                issues = issues
+                issues = issues,
+                validationSources = validationSources
             )
         } catch (e: Exception) {
             Timber.e(e, "Failed to parse JSON: ${e.message}")

@@ -1,8 +1,5 @@
 package com.yourname.expensetracker.domain.location
 
-import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
-import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.categorization.CanonicalResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
@@ -31,6 +28,21 @@ import org.junit.Test
  * Test 2 – when [merchantKey] is null, the cacheKey is derived via
  *           [MerchantKeyGenerator.generate] from the raw merchant name.
  */
+/**
+ * Tests for [LocationResolver].
+ *
+ * ## Test gaps (not yet covered):
+ * - GPS-based merchant bias: test that when a transaction is very recent (within
+ *   the recency threshold), the resolver prefers the device GPS location over
+ *   cached corrections.
+ * - Multi-merchant cluster resolution: verify that when multiple merchants share
+ *   the same location, the correct merchant match is returned based on transaction
+ *   merchant name.
+ * - Location cache eviction: test that stale cache entries are evicted and the
+ *   resolver falls back to geocoding/NearbyPoi when the cache is empty.
+ * - Error propagation: test that failures in [GeocodingService] or
+ *   [NearbyPoiService] are handled gracefully without crashing the caller.
+ */
 class LocationResolverTest {
 
     private lateinit var resolver: LocationResolver
@@ -38,8 +50,8 @@ class LocationResolverTest {
     private val geocodingService   = mockk<GeocodingService>(relaxed = true)
     private val nearbyPoiService   = mockk<NearbyPoiService>(relaxed = true)
     private val locationProvider   = mockk<ForegroundLocationProvider>(relaxed = true)
-    private val locationRepository = mockk<MerchantLocationRepository>(relaxed = true)
-    private val expenseRepository  = mockk<ExpenseRepository>(relaxed = true)
+    private val locationCachePort  = mockk<LocationCachePort>(relaxed = true)
+    private val merchantClusterPort = mockk<MerchantClusterPort>(relaxed = true)
     private val merchantCleaner    = mockk<MerchantCleaner>(relaxed = true)
     private val canonicalizer      = mockk<MerchantCanonicalizer>(relaxed = true)
     private val greeklishNormalizer= mockk<GreeklishNormalizer>(relaxed = true)
@@ -71,30 +83,32 @@ class LocationResolverTest {
         coEvery { locationProvider.getLastKnownLocation() } returns null
 
         // Cluster query returns empty → no history-biased branch.
-        coEvery { expenseRepository.getMerchantLocationClusters(any()) } returns emptyList()
+        coEvery { merchantClusterPort.getMerchantLocationClusters(any()) } returns emptyList()
 
         // Global cache miss → resolver falls through to Unresolved.
-        coEvery { locationRepository.getCachedLocation(any()) } returns null
+        coEvery { locationCachePort.getCachedLocation(any()) } returns null
 
         resolver = LocationResolver(
             geocodingService    = geocodingService,
             nearbyPoiService    = nearbyPoiService,
             locationProvider    = locationProvider,
-            locationRepository  = locationRepository,
-            expenseRepository   = expenseRepository,
+            locationCachePort   = locationCachePort,
+            merchantClusterPort = merchantClusterPort,
             merchantCleaner     = merchantCleaner,
             canonicalizer       = canonicalizer,
-            greeklishNormalizer = greeklishNormalizer
+            greeklishNormalizer = greeklishNormalizer,
+            timeProvider = mockk(relaxed = true),
+            privacyGate = mockk(),
         )
     }
 
     // ── Helper ────────────────────────────────────────────────────────────────
 
-    private fun correctionFor(key: String) = MerchantLocationCorrection(
-        normalizedMerchantName = key,
-        correctedLatitude      = 37.97,
-        correctedLongitude     = 23.73,
-        displayAddress         = "Athens, GR"
+    private fun correctionFor(key: String) = LocationCorrection(
+        correctedLatitude = 37.97,
+        correctedLongitude = 23.73,
+        osmId = key,
+        displayAddress = "Athens, GR"
     )
 
     // ── Test 1: provided merchantKey is used as cacheKey ─────────────────────
@@ -111,7 +125,7 @@ class LocationResolverTest {
 
         // Stub: correction exists for the provided key.
         coEvery {
-            locationRepository.getCorrection(
+            locationCachePort.getCorrection(
                 merchantName = providedKey,
                 deviceLat    = null,
                 deviceLon    = null
@@ -133,7 +147,7 @@ class LocationResolverTest {
 
         // The correction lookup must have been invoked with the provided key.
         coVerify(exactly = 1) {
-            locationRepository.getCorrection(
+            locationCachePort.getCorrection(
                 merchantName = providedKey,
                 deviceLat    = null,
                 deviceLon    = null
@@ -155,7 +169,7 @@ class LocationResolverTest {
 
         // Stub: correction exists only for the expected derived key.
         coEvery {
-            locationRepository.getCorrection(
+            locationCachePort.getCorrection(
                 merchantName = expectedKey,
                 deviceLat    = null,
                 deviceLon    = null
@@ -177,7 +191,7 @@ class LocationResolverTest {
 
         // The correction lookup must have been invoked with the MerchantKeyGenerator result.
         coVerify(exactly = 1) {
-            locationRepository.getCorrection(
+            locationCachePort.getCorrection(
                 merchantName = expectedKey,
                 deviceLat    = null,
                 deviceLon    = null

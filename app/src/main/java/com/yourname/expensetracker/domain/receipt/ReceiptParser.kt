@@ -2,21 +2,42 @@ package com.yourname.expensetracker.domain.receipt
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Calendar
 import java.util.Locale
 import java.util.regex.Pattern
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
 import javax.inject.Inject
 import javax.inject.Singleton
 
-import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 
+/**
+ * Parses raw OCR text from receipt images into structured data.
+ *
+ * ## N5: Tax amount duplicated (line item total + receipt total)
+ * The [parse] method extracts `tax` independently from OCR text patterns
+ * (via [extractTax]) and also computes a cross-validated `finalTotal`. If a
+ * receipt includes the tax amount as a separate line item AND also as a
+ * receipt total tax field, there is a risk that the tax value is counted
+ * twice: once in the sum of line items and once in the explicit tax field.
+ *
+ * ## RCP-4 fix
+ * The parser now sets [ParsedReceipt.taxInclusive] when it detects that the
+ * sum of line items is within 5% of the receipt total AND a separate tax
+ * value was also extracted. Downstream consumers should check this flag to
+ * decide whether the total already includes the tax amount, avoiding
+ * double-counting when computing subtotal = total - tax.
+ */
 @Singleton
 class ReceiptParser @Inject constructor(
-    private val merchantRules: MerchantRulesRepository
+    private val merchantRules: MerchantRulesPolicy,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         // Pre-compiled regex patterns for performance (Issue 2.13)
@@ -34,6 +55,41 @@ class ReceiptParser @Inject constructor(
         private val ANY_NONSPACE = Regex("""\S+""")
         private val TIME_PATTERN = Regex("""\b\d{1,2}:\d{2}(:\d{2})?\b""")
         private val CHANGE_PATTERN = Regex("""(CHANGE|ΡΕΣΤΑ|RESTA|ΑΛΛΑΓΗ)""")
+        private val QUANTITY_PREFIX_PATTERN = Regex("""^\d+\s*[xX*]\s*.+""")
+
+        /**
+         * RCP-14: Shared 5%-threshold detection for tax-inclusive receipts.
+         * Returns `true` when the sum of line item totals is within 5% of the
+         * receipt total AND a separate tax amount was extracted, indicating
+         * that tax is already embedded in both the line items and the total.
+         */
+        fun isTaxInclusive(
+            parsedTotal: Double?,
+            parsedTaxAmount: Double?,
+            lineItems: List<LineItem>?
+        ): Boolean {
+            if (parsedTotal == null || parsedTaxAmount == null || lineItems.isNullOrEmpty()) return false
+            val lineItemsSum = lineItems.sumOf { it.totalPrice }
+            return kotlin.math.abs(lineItemsSum - parsedTotal) < (parsedTotal * 0.05)
+        }
+    }
+
+    /**
+     * Source of the receipt total amount — tracks provenance so downstream
+     * consumers can assess reliability.
+     *
+     * RCP-18: Added to provide source tracking for the receipt total,
+     * enabling the UI and validation logic to distinguish between totals
+     * derived from line-item sums, directly OCR-extracted values, and
+     * user-entered manual values.
+     */
+    enum class TotalSource {
+        /** Total was computed by summing parsed line item prices. */
+        LINE_ITEMS,
+        /** Total was directly extracted from OCR text (e.g. "TOTAL: €12.50"). */
+        OCR_TOTAL,
+        /** Total was manually entered by the user. */
+        MANUAL
     }
 
     data class ParsedReceipt(
@@ -44,14 +100,48 @@ class ReceiptParser @Inject constructor(
         val date: Long?,
         val currency: String,
         val lineItems: List<LineItem>,
-        val confidence: Float
+        val confidence: Float,
+        /**
+         * RCP-4 / RCP-14: Set to `true` when we detect that tax is already included
+         * in both line item totals and the receipt total. Downstream consumers
+         * should check this flag to avoid double-counting tax (e.g. when
+         * computing subtotal = total - tax, if the total is tax-inclusive
+         * and the line items already sum to the total including tax, the
+         * subtraction would be incorrect for tax-exclusive calculations).
+         *
+         * ## When `taxInclusive == true`:
+         * - **Do NOT** add tax to item-level totals — each [LineItem.totalPrice]
+         *   already contains the proportional tax.
+         * - **Do NOT** subtract tax from the receipt total when saving as expense amount.
+         * - If a tax-exclusive subtotal is needed: `subtotal = total - tax`.
+         * - The sum of line items approximates `total` (within 5%) — both include tax.
+         *
+         * ## When `taxInclusive == false` (default):
+         * - The receipt total may be tax-exclusive; tax is a separate surcharge.
+         * - Line items likely do not include tax either.
+         * - `subtotal = total - tax` is the correct tax-exclusive amount.
+         */
+        val taxInclusive: Boolean = false,
+        /**
+         * RCP-18: Indicates how the [total] was derived. `null` means the
+         * provenance was not tracked (legacy parsing path). Set appropriately
+         * in [parse] based on whether an OCR-extracted total was found or the
+         * total was computed from line-item sums.
+         */
+        val totalSource: TotalSource? = null
     )
 
+    /**
+     * @property itemIndex Sequential index within the receipt (0-based).
+     *                      RCP-16: Provides stable identity for fingerprint computation
+     *                      and stable keys in Compose lists.
+     */
     data class LineItem(
         val description: String,
         val quantity: Double?,
         val unitPrice: Double?,
-        val totalPrice: Double
+        val totalPrice: Double,
+        val itemIndex: Int = 0
     )
 
     // Total amount patterns (Greek + English receipts)
@@ -83,6 +173,10 @@ class ReceiptParser @Inject constructor(
     )
 
     // Line item pattern: "description  price" with at least 2 spaces or tab
+    // RCP-17: Removed unused @-based patterns [2] and [3]. These patterns
+    // matched "Description @ UnitPrice   Sum" and "Qty x Desc @ UnitPrice   Sum"
+    // formats but were never referenced in extractLineItems. The two active
+    // patterns below cover the common receipt formats seen in OCR output.
     private val lineItemPatterns = listOf(
         // "Item description    12.50" (fuzzy spaces in amount)
         Pattern.compile(
@@ -92,16 +186,6 @@ class ReceiptParser @Inject constructor(
         // "Quantity x Description   Sum"
         Pattern.compile(
             """^(\d+)\s*[xX*]\s*(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
-            Pattern.MULTILINE
-        ),
-        // "Description @ UnitPrice   Sum"
-        Pattern.compile(
-            """^(.{3,40}?)\s*@\s*(\d+[\s.,]\d{2})\s{2,}(\d+[\s.,]\d{2})\s*$""",
-            Pattern.MULTILINE
-        ),
-        // "Qty x Desc @ UnitPrice   Sum"
-        Pattern.compile(
-            """^(\d+)\s*[xX*]\s*(.{3,40}?)\s*@\s*(\d+[\s.,]\d{2})\s{2,}(\d+[\s.,]\d{2})\s*$""",
             Pattern.MULTILINE
         )
     )
@@ -122,7 +206,7 @@ class ReceiptParser @Inject constructor(
         )
     )
 
-    fun parse(rawText: String): ParsedReceipt {
+    fun parse(rawText: String, homeCurrency: String = "EUR"): ParsedReceipt {
         // 1. Pre-process text to fix OCR spacing issues and Greek characters
         val cleanedText = normalizeGreekOcr(rawText)
         val lines = cleanedText.lines().filter { it.isNotBlank() }
@@ -148,11 +232,39 @@ class ReceiptParser @Inject constructor(
         // 8. Cross-validate
         val finalTotal = total ?: lineItems.sumOf { it.totalPrice }.takeIf { it > 0 }
 
-        // 9. Calculate subtotal
+        // RCP-18: Track how the total was derived — from OCR extraction,
+        // from line-item summation, or not available.
+        val resolvedTotalSource = when {
+            total != null -> TotalSource.OCR_TOTAL
+            finalTotal != null && lineItems.isNotEmpty() -> TotalSource.LINE_ITEMS
+            else -> TotalSource.MANUAL
+        }
+
+        // 9. Detect tax-inclusive: if tax was found separately AND line items
+        //    sum is close to the total (within 5%), the tax is already embedded
+        //    in both the line items and the receipt total. Mark as inclusive so
+        //    downstream consumers avoid double-counting.
+        //
+        // RCP-14: When `taxInclusive == true`, the receipt total already contains
+        // the tax amount and so do the item totals. Downstream consumers MUST
+        // NOT subtract tax from line-item totals or add it to the subtotal;
+        // doing so would count the tax twice.  The correct approach is:
+        //   - Use `total` as-is for the expense amount.
+        //   - If item-level amounts are needed, each LineItem.totalPrice already
+        //     includes the proportional tax — do not add tax on top.
+        //   - For a tax-exclusive subtotal, compute: subtotal = total - tax.
+        //     The line items sum already approximates `total` (within 5%).
+        val taxInclusive = if (finalTotal != null && tax != null && lineItems.isNotEmpty()) {
+            val itemsSum = lineItems.sumOf { it.totalPrice }
+            val diff = kotlin.math.abs(finalTotal - itemsSum)
+            diff < finalTotal * 0.05
+        } else false
+
+        // 10. Calculate subtotal
         val finalSubtotal = subtotal
             ?: if (finalTotal != null && tax != null) finalTotal - tax else null
 
-        // 10. Confidence - set to 0 if critical fields are missing
+        // 11. Confidence - set to 0 if critical fields are missing
         val hasCriticalData = merchant != null || finalTotal != null || date != null
         val confidence = if (!hasCriticalData) {
             0f
@@ -166,9 +278,12 @@ class ReceiptParser @Inject constructor(
             subtotal = finalSubtotal,
             tax = tax,
             date = date,
-            currency = detectCurrency(cleanedText),
+            // Fallback chain: detected currency → explicit homeCurrency → "EUR" last resort
+            currency = detectCurrency(cleanedText) ?: homeCurrency,
             lineItems = lineItems,
-            confidence = confidence
+            confidence = confidence,
+            taxInclusive = taxInclusive,
+            totalSource = resolvedTotalSource
         )
     }
 
@@ -585,23 +700,45 @@ class ReceiptParser @Inject constructor(
             Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(\d{2})\b""")
         )
 
-        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
-        sdf.isLenient = false
+        // SRH-17: Locale-aware date disambiguation.
+        // Determine whether to try DD/MM or MM/DD first based on the device locale.
+        // Countries using DD/MM (most of world): Greece, UK, Australia, etc.
+        // Countries using MM/DD: US, Philippines, etc.
+        // NOTE: Use 'uuuu' (proleptic year) instead of 'yyyy' (year-of-era) because
+        //       ResolverStyle.STRICT + 'yyyy' produces YEAR_OF_ERA without ERA, which
+        //       cannot be converted to YEAR by LocalDate.from(). Using 'uuuu' avoids
+        //       this issue entirely and is unambiguous for positive years.
+        val locale = Locale.getDefault()
+        val isMonthFirst = locale.country == "US" || locale.country == "PH"
+        val firstFormat = if (isMonthFirst) "MM/dd/uuuu" else "dd/MM/uuuu"
+        val secondFormat = if (isMonthFirst) "dd/MM/uuuu" else "MM/dd/uuuu"
+
+        val firstFormatter = DateTimeFormatter.ofPattern(firstFormat, Locale.US)
+            .withResolverStyle(ResolverStyle.STRICT)
+        val secondFormatter = DateTimeFormatter.ofPattern(secondFormat, Locale.US)
+            .withResolverStyle(ResolverStyle.STRICT)
 
         for (pattern in datePatterns) {
             pattern.find(text)?.let { match ->
-                val (d, m, y) = match.destructured
+                val (group1, group2, y) = match.destructured
                 val year = if (y.length == 2) "20$y" else y
-                
+
                 // SANITY CHECK: Year must be reasonable (Dynamic range)
                 val yearInt = year.toIntOrNull() ?: 0
-                val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                if (yearInt in (currentYear - 10)..(currentYear + 1)) { 
-                    try {
-                        return sdf.parse("$d/$m/$year")?.time
-                    } catch (e: Exception) {
-                        Timber.d("Failed to parse date: $d/$m/$year")
+                val now = timeProvider.now()
+                val currentYear = TimePeriodUtils.getYear(now)
+                if (yearInt in (currentYear - 10)..(currentYear + 1)) {
+                    // Try locale-preferred order first, then fall back to alternate order
+                    for (formatter in listOf(firstFormatter, secondFormatter)) {
+                        try {
+                            val dateStr = "${group1.padStart(2, '0')}/${group2.padStart(2, '0')}/$year"
+                            val parsed = LocalDate.parse(dateStr, formatter)
+                            return parsed.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        } catch (_: Exception) {
+                            // Try next order
+                        }
                     }
+                    Timber.d("Failed to parse date in any order: $group1/$group2/$year")
                 }
             }
         }
@@ -610,6 +747,7 @@ class ReceiptParser @Inject constructor(
 
     private fun extractLineItems(text: String): List<LineItem> {
         val items = mutableListOf<LineItem>()
+        var nextIndex = 0
 
         // Skip lines that look like totals/subtotals
         val skipLinePattern = Regex(
@@ -622,6 +760,7 @@ class ReceiptParser @Inject constructor(
             val desc = matcher1.group(1)?.trim() ?: continue
             val price = matcher1.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
             if (skipLinePattern.containsMatchIn(desc)) continue
+            if (desc.matches(QUANTITY_PREFIX_PATTERN)) continue
             if (price <= 0 || price > 10000) continue
 
             items.add(
@@ -629,7 +768,8 @@ class ReceiptParser @Inject constructor(
                     description = desc,
                     quantity = null,
                     unitPrice = null,
-                    totalPrice = price
+                    totalPrice = price,
+                    itemIndex = nextIndex++
                 )
             )
         }
@@ -648,15 +788,45 @@ class ReceiptParser @Inject constructor(
                     description = desc,
                     quantity = qty,
                     unitPrice = if (qty > 0) price / qty else null,
-                    totalPrice = price
+                    totalPrice = price,
+                    itemIndex = nextIndex++
                 )
             )
         }
 
-        return items
+        return deduplicateLineItems(items)
     }
 
-    private fun detectCurrency(text: String): String {
+    private fun deduplicateLineItems(items: List<LineItem>): List<LineItem> {
+        if (items.size < 2) return items
+
+        val uniqueItems = LinkedHashMap<String, LineItem>()
+        for (item in items) {
+            uniqueItems.putIfAbsent(item.deduplicationKey(), item)
+        }
+        return uniqueItems.values.toList()
+    }
+
+    private fun LineItem.deduplicationKey(): String {
+        val normalizedDescription = description
+            .uppercase(Locale.ROOT)
+            .replace(Regex("""[^\p{L}\p{N}]+"""), " ")
+            .trim()
+            .replace(Regex("""\s+"""), " ")
+
+        return listOf(
+            normalizedDescription,
+            quantity.normalizedNumberKey(),
+            totalPrice.normalizedNumberKey()
+        ).joinToString("|")
+    }
+
+    private fun Double?.normalizedNumberKey(): String {
+        val value = this ?: return "-"
+        return java.lang.String.format(Locale.US, "%.4f", value)
+    }
+
+    private fun detectCurrency(text: String): String? {
         return when {
             text.contains("€") || 
             text.contains("EUR", ignoreCase = true) ||
@@ -669,7 +839,7 @@ class ReceiptParser @Inject constructor(
             text.contains("£") || 
             (text.contains("GBP", ignoreCase = true) && !text.contains("OYP") && !text.contains("OYR")) -> "GBP"
             
-            else -> "EUR" // Default for Greek receipts
+            else -> null // Currency not detected
         }
     }
 
@@ -700,7 +870,7 @@ class ReceiptParser @Inject constructor(
         if (date != null) {
             score += 0.15f
             // Bonus if date is recent
-            val daysDiff = (System.currentTimeMillis() - date) / (1000 * 60 * 60 * 24)
+            val daysDiff = TimePeriodUtils.daysBetween(date, timeProvider.now())
             if (daysDiff in 0..365) score += 0.05f
         }
         
@@ -732,6 +902,7 @@ class ReceiptParser @Inject constructor(
             val obj = JSONObject().apply {
                 put("description", item.description)
                 put("totalPrice", item.totalPrice)
+                put("itemIndex", item.itemIndex)
                 item.quantity?.let { put("quantity", it) }
                 item.unitPrice?.let { put("unitPrice", it) }
             }
@@ -751,7 +922,8 @@ class ReceiptParser @Inject constructor(
                     description = obj.getString("description"),
                     totalPrice = obj.getDouble("totalPrice"),
                     quantity = if (obj.has("quantity")) obj.getDouble("quantity") else null,
-                    unitPrice = if (obj.has("unitPrice")) obj.getDouble("unitPrice") else null
+                    unitPrice = if (obj.has("unitPrice")) obj.getDouble("unitPrice") else null,
+                    itemIndex = if (obj.has("itemIndex")) obj.getInt("itemIndex") else i
                 )
             }
         } catch (e: Exception) {

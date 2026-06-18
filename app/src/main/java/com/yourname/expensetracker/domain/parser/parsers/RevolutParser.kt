@@ -1,10 +1,11 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.CommonPatterns
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
@@ -34,23 +35,26 @@ class RevolutParser @Inject constructor(
     // Also: "ATM withdrawal: €50.00"
     // Ignore: "Your exchange rate...", "Weekly report", "Special offer"
 
+    // Shared grouped-amount fragment supports thousands-separated amounts (e.g. 1,234.56 / 1.234,56)
+    private val AMT = CommonPatterns.GROUPED_AMOUNT_TOKEN
+
     private val PAID_AT_PATTERN = Pattern.compile(
-        """(?:paid|sent|💳)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*at\s+(.+)""",
+        """(?:paid|sent|💳)\s*([€$£]|EUR|USD|GBP)?\s*($AMT)\s*at\s+(.+)""",
         Pattern.CASE_INSENSITIVE
     )
     
     private val PAID_TO_PATTERN = Pattern.compile(
-        """(?:you\s+)?(?:paid|sent)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*to\s+(.+)""",
+        """(?:you\s+)?(?:paid|sent)\s*([€$£]|EUR|USD|GBP)?\s*($AMT)\s*to\s+(.+)""",
         Pattern.CASE_INSENSITIVE
     )
 
     private val RECEIVED_PATTERN = Pattern.compile(
-        """(?:received|added)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:from\s+(.+))?""",
+        """(?:received|added)\s*([€$£]|EUR|USD|GBP)?\s*($AMT)\s*(?:from\s+(.+))?""",
         Pattern.CASE_INSENSITIVE
     )
 
     private val ATM_PATTERN = Pattern.compile(
-        """(?:atm|withdrawal)[:\s]*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})""",
+        """(?:atm|withdrawal)[:\s]*([€$£]|EUR|USD|GBP)?\s*($AMT)""",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -74,7 +78,7 @@ class RevolutParser @Inject constructor(
 
         for (content in candidates) {
             val lower = content.lowercase()
-            if (REJECT_PATTERNS.any { lower.contains(it) }) return null
+            if (REJECT_PATTERNS.any { lower.contains(it) }) continue
 
             // Try patterns in order of specificity
             val paidAtMatcher = PAID_AT_PATTERN.matcher(content)
@@ -93,7 +97,7 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = merchant, 
-                        type = TransactionType.PURCHASE, 
+                        type = ParsedTransactionType.PURCHASE, 
                         confidence = 0.95f
                     )
                 }
@@ -108,9 +112,9 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = recipient, 
-                        type = TransactionType.TRANSFER, 
+                        type = ParsedTransactionType.TRANSFER, 
                         confidence = 0.92f,
-                        transferDirection = TransferDirection.OUTGOING,
+                        transferDirection = ParsedTransferDirection.OUTGOING,
                         transferAccountName = "To: $recipient"
                     )
                 }
@@ -128,9 +132,9 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = sender ?: "Revolut", 
-                        type = if (isFromPerson) TransactionType.TRANSFER else TransactionType.DEPOSIT, 
+                        type = if (isFromPerson) ParsedTransactionType.TRANSFER else ParsedTransactionType.DEPOSIT, 
                         confidence = if (isFromPerson) 0.92f else 0.88f,
-                        transferDirection = TransferDirection.INCOMING,
+                        transferDirection = ParsedTransferDirection.INCOMING,
                         transferAccountName = sender?.let { "From: $it" }
                     )
                 }
@@ -143,7 +147,7 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = "ATM Withdrawal", 
-                        type = TransactionType.WITHDRAWAL, 
+                        type = ParsedTransactionType.WITHDRAWAL, 
                         confidence = 0.95f
                     )
                 }

@@ -1,14 +1,17 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.model.ReceiptAssistAttemptDetail
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -20,7 +23,10 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
+import java.security.MessageDigest
+import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestReceiptExtractionUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
@@ -50,11 +56,9 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
             )
         }
 
-        if (!force && !needsAssist(receipt)) {
-            return ReceiptAssistGenerationResult.NotNeeded(
-                "Receipt fields already look complete, so AI assist is not needed right now."
-            )
-        }
+        // REMOVED: Blocking "needsAssist" check that prevented AI from running
+        // when receipt fields looked "complete". Now AI always attempts to assist
+        // for better accuracy and to catch OCR errors, even if fields exist.
 
         val input = inputBuilder.build(receipt, settings)
         val routeDecision = aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings)
@@ -63,7 +67,7 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         }
         val targetKey = "scanned_receipt:$receiptId"
         val now = timeProvider.now()
-        val sourceHash = input.hashCode().toString()
+        val sourceHash = stableSourceHash(input)
 
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.RECEIPT_EXTRACTION)
         if (existing != null &&
@@ -79,12 +83,13 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
                     return ReceiptAssistGenerationResult.Success(
                         suggestion = it,
                         fromCache = true,
-                        usedImageInput = existing.explanationText?.contains("Image-aware cloud assist") == true
+                        usedImageInput = it.usedImageInput ||
+                            (existing.explanationText?.contains("Image-aware cloud assist") == true)
                     )
                 }
         }
 
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = receiptId,
             targetKey = targetKey,
@@ -107,36 +112,53 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         aiArtifactRepository.upsert(baseEntity)
 
         return try {
-            val suggestion = receiptAssistService.suggest(input)
-            val usedImageInput = receiptAssistService.usedImageInput(input)
-            if (suggestion == null || suggestion.isEmpty()) {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.FAILED,
-                        errorMessage = failureMessage(routeDecision.reason, routeDecision),
-                        updatedAt = timeProvider.now()
+            val serviceResult = receiptAssistService.suggest(input)
+            when (serviceResult) {
+                is AiServiceResult.Success -> {
+                    val suggestion = serviceResult.value
+                    val usedImageInput = suggestion.usedImageInput
+                    if (suggestion.isEmpty()) {
+                        aiArtifactRepository.upsert(
+                            baseEntity.copy(
+                                status = AiArtifactStatus.FAILED,
+                                errorMessage = failureMessage("No usable suggestions", routeDecision),
+                                updatedAt = timeProvider.now()
+                            )
+                        )
+                        ReceiptAssistGenerationResult.Error("AI receipt assist returned no usable suggestions.")
+                    } else {
+                        aiArtifactRepository.upsert(
+                            baseEntity.copy(
+                                status = AiArtifactStatus.READY,
+                                summaryText = suggestion.toSummaryText(),
+                                explanationText = suggestion.toExplanationText(usedImageInput).withRouteDiagnostics(routeDecision),
+                                payloadJson = suggestion.toPayloadJson(),
+                                updatedAt = timeProvider.now()
+                            )
+                        )
+                        ReceiptAssistGenerationResult.Success(
+                            suggestion = suggestion,
+                            fromCache = false,
+                            usedImageInput = usedImageInput
+                        )
+                    }
+                }
+                is AiServiceResult.Failure -> {
+                    val readableError = serviceResult.error.toReadableMessage()
+                    aiArtifactRepository.upsert(
+                        baseEntity.copy(
+                            status = AiArtifactStatus.FAILED,
+                            errorMessage = failureMessage(readableError, routeDecision),
+                            updatedAt = timeProvider.now()
+                        )
                     )
-                )
-                ReceiptAssistGenerationResult.Error(
-                    "AI receipt assist returned no usable suggestions."
-                )
-            } else {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.READY,
-                        summaryText = suggestion.toSummaryText(),
-                        explanationText = suggestion.toExplanationText(usedImageInput).withRouteDiagnostics(routeDecision),
-                        payloadJson = suggestion.toPayloadJson(),
-                        updatedAt = timeProvider.now()
-                    )
-                )
-                ReceiptAssistGenerationResult.Success(
-                    suggestion = suggestion,
-                    fromCache = false,
-                    usedImageInput = usedImageInput
-                )
+                    ReceiptAssistGenerationResult.Error(readableError)
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            Timber.e(e, "SuggestReceiptExtractionUseCase: provider call failed for receipt $receiptId")
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,
@@ -150,15 +172,6 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         }
     }
 
-    private fun needsAssist(receipt: ScannedReceipt): Boolean {
-        val missingCriticalFields = receipt.parsedMerchant.isNullOrBlank() ||
-            receipt.parsedTotal == null ||
-            receipt.parsedDate == null
-
-        return missingCriticalFields ||
-            receipt.confidence < AppConfig.Ai.MIN_RECEIPT_CONFIDENCE_FOR_AI_FALLBACK
-    }
-
     private fun hasUsableOcrText(receipt: ScannedReceipt): Boolean {
         val rawText = receipt.rawOcrText.trim()
         if (rawText.isBlank()) return false
@@ -166,7 +179,40 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         if (rawText.startsWith("Scan Failed:", ignoreCase = true)) return false
         return true
     }
+
+    private fun stableSourceHash(input: com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput): String {
+        val normalized = listOf(
+            input.receiptId.toString(),
+            input.rawOcrText.trim(),
+            input.imagePath.orEmpty().trim(),
+            input.imageMimeType.orEmpty().trim(),
+            input.isImageAnalysisMode.toString(),
+            input.redactBeforeCloud.toString(),
+            input.parsedMerchant.orEmpty().trim(),
+            input.parsedTotal?.toString().orEmpty(),
+            input.parsedDate?.toString().orEmpty(),
+            input.parsedTaxAmount?.toString().orEmpty(),
+            input.currency.trim(),
+            input.lineItemsJson.orEmpty().trim()
+        ).joinToString("\u001F")
+
+        val digest = MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(Charsets.UTF_8))
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
 }
+
+private fun AiServiceError.toReadableMessage(): String = when (this) {
+    AiServiceError.Timeout -> "AI receipt assist timed out. Please retry."
+    AiServiceError.Offline -> "Network unavailable. Check connection and retry."
+    AiServiceError.SslError -> "Secure connection failed. Please retry later."
+    is AiServiceError.HttpError -> "AI service returned HTTP $code."
+    is AiServiceError.ParseError -> message ?: "AI response could not be parsed."
+    is AiServiceError.Disabled -> reason
+    is AiServiceError.PrivacyDenied -> blocked.reason
+    is AiServiceError.Unknown -> message ?: "AI receipt assist failed."
+}
+
+// REMOVED: needsAssist() function - no longer blocking AI from running
 
 private fun ReceiptAssistSuggestion.isEmpty(): Boolean =
     merchant == null && total == null && date == null && taxAmount == null && notes.isEmpty()
@@ -226,6 +272,8 @@ private fun ReceiptAssistSuggestion.toPayloadJson(): String {
         date?.let { put("date", it.toJson()) }
         taxAmount?.let { put("taxAmount", it.toJson()) }
         put("notes", JSONArray(notes))
+        put("usedImageInput", usedImageInput)
+        put("attemptDetails", JSONArray(attemptDetails.map { it.toJson() }))
     }.toString()
 }
 
@@ -245,9 +293,21 @@ private fun String.toReceiptAssistSuggestionOrNull(): ReceiptAssistSuggestion? {
             total = root.optJSONObject("total")?.toSuggestedDouble(),
             date = root.optJSONObject("date")?.toSuggestedLong(),
             taxAmount = root.optJSONObject("taxAmount")?.toSuggestedDouble(),
-            notes = root.optJSONArray("notes").toStringList()
+            notes = root.optJSONArray("notes").toStringList(),
+            usedImageInput = root.optBoolean("usedImageInput", false),
+            attemptDetails = root.optJSONArray("attemptDetails").toAttemptDetailsList()
         )
     }.getOrNull()
+}
+
+private fun ReceiptAssistAttemptDetail.toJson(): JSONObject {
+    return JSONObject().apply {
+        put("attemptNumber", attemptNumber)
+        put("method", method)
+        put("success", success)
+        confidence?.let { put("confidence", it) }
+        errorMessage?.let { put("errorMessage", it) }
+    }
 }
 
 private fun JSONObject.toSuggestedString() = com.yourname.expensetracker.domain.ai.model.SuggestedValue(
@@ -278,6 +338,24 @@ private fun JSONArray?.toStringList(): List<String> {
             optString(index)
                 .takeIf { it.isNotBlank() }
                 ?.let(::add)
+        }
+    }
+}
+
+private fun JSONArray?.toAttemptDetailsList(): List<ReceiptAssistAttemptDetail> {
+    if (this == null) return emptyList()
+    return buildList(length()) {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                ReceiptAssistAttemptDetail(
+                    attemptNumber = item.optInt("attemptNumber", index + 1),
+                    method = item.optString("method", "UNKNOWN"),
+                    success = item.optBoolean("success", false),
+                    confidence = if (item.has("confidence") && !item.isNull("confidence")) item.optDouble("confidence").toFloat() else null,
+                    errorMessage = item.optString("errorMessage").takeIf { it.isNotBlank() }
+                )
+            )
         }
     }
 }

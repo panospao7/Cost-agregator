@@ -1,0 +1,367 @@
+{
+  "workflow_id": "wf-20260401-1200-complete-string-externalization",
+  "title": "Complete string externalization - externalize 150+ remaining hardcoded strings across 26 files",
+  "mode": "standard",
+  "status": "active",
+  "current_phase": "review",
+  "timestamps": {
+    "created_at": "2026-04-01T12:00:00Z",
+    "updated_at": "2026-04-01T19:27:37.988Z"
+  },
+  "phases": {
+    "routing": "done",
+    "planning": "done",
+    "coding": "pending",
+    "review": "pending",
+    "testing": "pending",
+    "debugging": "pending",
+    "documentation": "pending",
+    "completion": "pending"
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "description": "Externalize 72 strings in ReceiptScanScreen.kt",
+      "status": "pending",
+      "file": "ReceiptScanScreen.kt",
+      "count": 72
+    },
+    {
+      "id": "task-2",
+      "description": "Externalize 38 strings in BillNegotiationScreen.kt",
+      "status": "pending",
+      "file": "BillNegotiationScreen.kt",
+      "count": 38
+    },
+    {
+      "id": "task-3",
+      "description": "Externalize 36 strings in BudgetScreen.kt",
+      "status": "pending",
+      "file": "BudgetScreen.kt",
+      "count": 36
+    },
+    {
+      "id": "task-4",
+      "description": "Externalize 32 strings in VisualSplitEditorScreen.kt",
+      "status": "pending",
+      "file": "VisualSplitEditorScreen.kt",
+      "count": 32
+    },
+    {
+      "id": "task-5",
+      "description": "Externalize 31 strings in ReviewScreen.kt",
+      "status": "pending",
+      "file": "ReviewScreen.kt",
+      "count": 31
+    },
+    {
+      "id": "task-6",
+      "description": "Externalize 28 strings in AnalyticsScreen.kt",
+      "status": "pending",
+      "file": "AnalyticsScreen.kt",
+      "count": 28
+    },
+    {
+      "id": "task-7",
+      "description": "Externalize 26 strings in FeatureIntegration.kt",
+      "status": "pending",
+      "file": "FeatureIntegration.kt",
+      "count": 26
+    },
+    {
+      "id": "task-8",
+      "description": "Externalize 24 strings in AiSettingsScreen.kt",
+      "status": "pending",
+      "file": "AiSettingsScreen.kt",
+      "count": 24
+    },
+    {
+      "id": "task-9",
+      "description": "Externalize 24 strings in TransactionsScreen.kt (remaining)",
+      "status": "pending",
+      "file": "TransactionsScreen.kt",
+      "count": 24
+    },
+    {
+      "id": "task-10",
+      "description": "Externalize 22 strings in NaturalLanguageSearchScreen.kt",
+      "status": "pending",
+      "file": "NaturalLanguageSearchScreen.kt",
+      "count": 22
+    },
+    {
+      "id": "task-11",
+      "description": "Externalize 16 strings in AssistantSheet.kt",
+      "status": "pending",
+      "file": "AssistantSheet.kt",
+      "count": 16
+    },
+    {
+      "id": "task-12",
+      "description": "Externalize 15 strings in LifestyleInflationScreen.kt",
+      "status": "pending",
+      "file": "LifestyleInflationScreen.kt",
+      "count": 15
+    },
+    {
+      "id": "task-13",
+      "description": "Externalize 14 strings in CarbonFootprintScreen.kt",
+      "status": "pending",
+      "file": "CarbonFootprintScreen.kt",
+      "count": 14
+    },
+    {
+      "id": "task-14",
+      "description": "Externalize 14 strings in BudgetForecastingScreen.kt",
+      "status": "pending",
+      "file": "BudgetForecastingScreen.kt",
+      "count": 14
+    },
+    {
+      "id": "task-15",
+      "description": "Externalize 14 strings in SpendingMapScreen.kt",
+      "status": "pending",
+      "file": "SpendingMapScreen.kt",
+      "count": 14
+    },
+    {
+      "id": "task-16",
+      "description": "Externalize 10 strings in SpendingChallengesScreen.kt",
+      "status": "pending",
+      "file": "SpendingChallengesScreen.kt",
+      "count": 10
+    },
+    {
+      "id": "task-17",
+      "description": "Externalize 10 strings in RecurringExpensesScreen.kt",
+      "status": "pending",
+      "file": "RecurringExpensesScreen.kt",
+      "count": 10
+    },
+    {
+      "id": "task-18",
+      "description": "Externalize 9 strings in LocationSearchPicker.kt",
+      "status": "pending",
+      "file": "LocationSearchPicker.kt",
+      "count": 9
+    },
+    {
+      "id": "task-19",
+      "description": "Externalize 9 strings in FinancialWeatherCard.kt",
+      "status": "pending",
+      "file": "FinancialWeatherCard.kt",
+      "count": 9
+    },
+    {
+      "id": "task-20",
+      "description": "Externalize 8 strings in FinancialRunwayCard.kt",
+      "status": "pending",
+      "file": "FinancialRunwayCard.kt",
+      "count": 8
+    },
+    {
+      "id": "task-21",
+      "description": "Externalize 8 strings in RetroBudgetBlockPartyCard.kt",
+      "status": "pending",
+      "file": "RetroBudgetBlockPartyCard.kt",
+      "count": 8
+    },
+    {
+      "id": "task-22",
+      "description": "Externalize 8 strings in RetroTopCategoriesCard.kt",
+      "status": "pending",
+      "file": "RetroTopCategoriesCard.kt",
+      "count": 8
+    },
+    {
+      "id": "task-23",
+      "description": "Externalize 7 strings in AddExpenseSheet.kt",
+      "status": "pending",
+      "file": "AddExpenseSheet.kt",
+      "count": 7
+    },
+    {
+      "id": "task-24",
+      "description": "Externalize 7 strings in RetroTotalsDashboardCard.kt",
+      "status": "pending",
+      "file": "RetroTotalsDashboardCard.kt",
+      "count": 7
+    },
+    {
+      "id": "task-25",
+      "description": "Externalize 6 strings in AdvancedAnalyticsScreen.kt",
+      "status": "pending",
+      "file": "AdvancedAnalyticsScreen.kt",
+      "count": 6
+    },
+    {
+      "id": "task-26",
+      "description": "Externalize 6 strings in BillRemindersScreen.kt",
+      "status": "pending",
+      "file": "BillRemindersScreen.kt",
+      "count": 6
+    },
+    {
+      "id": "task-27",
+      "description": "Externalize 6 strings in MainActivity.kt",
+      "status": "pending",
+      "file": "MainActivity.kt",
+      "count": 6
+    },
+    {
+      "id": "task-28",
+      "description": "Externalize 4 strings in SpendingPaceGauge.kt",
+      "status": "pending",
+      "file": "SpendingPaceGauge.kt",
+      "count": 4
+    },
+    {
+      "id": "task-29",
+      "description": "Externalize 3 strings in CategoryDonutChart.kt",
+      "status": "pending",
+      "file": "CategoryDonutChart.kt",
+      "count": 3
+    },
+    {
+      "id": "task-30",
+      "description": "Externalize 3 strings in CsvExpenseImporter.kt",
+      "status": "pending",
+      "file": "CsvExpenseImporter.kt",
+      "count": 3
+    },
+    {
+      "id": "task-31",
+      "description": "Externalize 1 string in LocationCorrectionSheet.kt",
+      "status": "pending",
+      "file": "LocationCorrectionSheet.kt",
+      "count": 1
+    },
+    {
+      "id": "task-32",
+      "description": "Externalize 1 string in NearbyShopSuggestionCard.kt",
+      "status": "pending",
+      "file": "NearbyShopSuggestionCard.kt",
+      "count": 1
+    },
+    {
+      "id": "task-33",
+      "description": "Externalize 1 string in PlaceInsightCard.kt",
+      "status": "pending",
+      "file": "PlaceInsightCard.kt",
+      "count": 1
+    }
+  ],
+  "metadata": {
+    "feature_description": "Complete string externalization - externalize 150+ remaining hardcoded strings across 26 files",
+    "review_gate": "required",
+    "test_gate": "required",
+    "security_gate": "optional",
+    "audit_findings": {
+      "total_hardcoded_strings": "480+",
+      "files_affected": 33,
+      "already_externalized_files": 17,
+      "missing_categories": [
+        "Screen titles (TopAppBar)",
+        "Dialog titles and messages",
+        "Button labels",
+        "Placeholder text",
+        "Content descriptions (accessibility)",
+        "Toast/snackbar messages",
+        "Empty state messages",
+        "Section headers",
+        "Status texts",
+        "Toggle/switch labels",
+        "Dropdown/chip labels"
+      ],
+      "implementation_plan": {
+        "phase_1_critical": {
+          "files": [
+            "ReceiptScanScreen.kt",
+            "BillNegotiationScreen.kt",
+            "BudgetScreen.kt",
+            "VisualSplitEditorScreen.kt"
+          ],
+          "description": "High-impact screens with most hardcoded strings"
+        },
+        "phase_2_high": {
+          "files": [
+            "ReviewScreen.kt",
+            "AnalyticsScreen.kt",
+            "FeatureIntegration.kt",
+            "AiSettingsScreen.kt",
+            "TransactionsScreen.kt",
+            "NaturalLanguageSearchScreen.kt"
+          ],
+          "description": "Core user-facing screens"
+        },
+        "phase_3_medium": {
+          "files": [
+            "AssistantSheet.kt",
+            "LifestyleInflationScreen.kt",
+            "CarbonFootprintScreen.kt",
+            "BudgetForecastingScreen.kt",
+            "SpendingMapScreen.kt",
+            "SpendingChallengesScreen.kt",
+            "RecurringExpensesScreen.kt"
+          ],
+          "description": "Secondary screens and components"
+        },
+        "phase_4_low": {
+          "files": [
+            "LocationSearchPicker.kt",
+            "FinancialWeatherCard.kt",
+            "FinancialRunwayCard.kt",
+            "RetroBudgetBlockPartyCard.kt",
+            "RetroTopCategoriesCard.kt",
+            "AddExpenseSheet.kt",
+            "RetroTotalsDashboardCard.kt",
+            "AdvancedAnalyticsScreen.kt",
+            "BillRemindersScreen.kt",
+            "MainActivity.kt",
+            "SpendingPaceGauge.kt",
+            "CategoryDonutChart.kt",
+            "CsvExpenseImporter.kt",
+            "LocationCorrectionSheet.kt",
+            "NearbyShopSuggestionCard.kt",
+            "PlaceInsightCard.kt"
+          ],
+          "description": "Remaining components and utilities"
+        }
+      },
+      "string_resource_sections_needed": [
+        "Receipt Scan",
+        "Bill Negotiation",
+        "Budget Screen",
+        "Visual Split Editor",
+        "Review Queue",
+        "Analytics",
+        "AI Settings",
+        "Natural Language Search",
+        "Assistant",
+        "Lifestyle Inflation",
+        "Carbon Footprint",
+        "Budget Forecasting",
+        "Spending Map",
+        "Spending Challenges",
+        "Recurring Expenses",
+        "Location Search",
+        "Financial Weather",
+        "Financial Runway",
+        "Retro Components",
+        "Add Expense Sheet",
+        "Advanced Analytics",
+        "Bill Reminders",
+        "Spending Pace"
+      ]
+    }
+  },
+  "retries": {
+    "review": 0,
+    "debug": 0
+  },
+  "artifacts": {
+    "plan": "",
+    "notes": ""
+  },
+  "last_error": ""
+}

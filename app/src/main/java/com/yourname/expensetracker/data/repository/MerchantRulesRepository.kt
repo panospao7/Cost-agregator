@@ -1,10 +1,11 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.domain.receipt.MerchantRulesPolicy
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class MerchantRulesRepository @Inject constructor() {
+class MerchantRulesRepository @Inject constructor() : MerchantRulesPolicy {
 
     // Keywords that should never be considered as merchant names
     private val invalidMerchants = listOf(
@@ -81,21 +82,21 @@ class MerchantRulesRepository @Inject constructor() {
     /**
      * Checks if a line contains any header markers (indicating end of merchant section).
      */
-    fun containsHeaderMarker(line: String): Boolean {
+    override fun containsHeaderMarker(line: String): Boolean {
         return headerMarkers.any { line.contains(it, ignoreCase = true) }
     }
     
     /**
      * Checks if a name corresponds to a known card processor or bank.
      */
-    fun isCardProcessor(name: String): Boolean {
+    override fun isCardProcessor(name: String): Boolean {
         return cardProcessors.any { name.contains(it, ignoreCase = true) }
     }
 
     /**
      * Validates a candidate line for merchant extraction using multiple heuristics.
      */
-    fun isValidMerchantLine(line: String): Boolean {
+    override fun isValidMerchantLine(line: String): Boolean {
         if (line.length < 3) return false
         if (line.all { !it.isLetter() }) return false // Must have letters
         if (invalidMerchants.any { line.contains(it, ignoreCase = true) }) return false
@@ -113,7 +114,7 @@ class MerchantRulesRepository @Inject constructor() {
     /**
      * Cleans a raw merchant string by removing special characters, location markers, and corporate suffixes.
      */
-    fun cleanMerchantName(raw: String): String {
+    override fun cleanMerchantName(raw: String): String {
         // Include accented Greek (ά-ώ / Ά-Ώ) so accents survive until GreeklishNormalizer can
         // transliterate them properly. Without this, 'ί' in "Σκλαβενίτης" was silently stripped.
         var cleaned = raw.replace(Regex("[^a-zA-Zα-ωά-ώΑ-ΩΆ-Ώ0-9\\s&.'-]"), "").trim()

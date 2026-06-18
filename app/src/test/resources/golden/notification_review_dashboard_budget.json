@@ -1,0 +1,19 @@
+{
+  "expensesCreated": 3,
+  "duplicatesSkipped": 1,
+  "duplicateInsertReturnedZeroOrNegative": true,
+  "dashboardTotal": 145.5,
+  "dashboardTransactionCount": 3,
+  "categoryTotals": {
+    "3": 100,
+    "1": 45.5
+  },
+  "transactionEvents": [
+    "CREATED",
+    "CREATED",
+    "CREATE_DUPLICATE_SKIPPED",
+    "CREATED_FROM_REVIEW"
+  ],
+  "expectedTotal": 145.5,
+  "totalsMatch": true
+}

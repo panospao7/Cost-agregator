@@ -1,0 +1,258 @@
+package com.yourname.expensetracker.e2e
+
+import com.yourname.expensetracker.TEST_CATEGORIES
+import com.yourname.expensetracker.TestCurrencySettingsRepository
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.CategoryTotal
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.AnalyticsRepository
+import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
+import com.yourname.expensetracker.domain.analytics.AnalyticsInputAssembler
+import com.yourname.expensetracker.domain.analytics.AnomalyDetector
+import com.yourname.expensetracker.domain.analytics.BudgetVsActualEngine
+import com.yourname.expensetracker.domain.analytics.CategoryInsightEngine
+import com.yourname.expensetracker.domain.analytics.DailyBucketEngine
+import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
+import com.yourname.expensetracker.domain.analytics.InsightsEngine
+import com.yourname.expensetracker.domain.analytics.MerchantInsightEngine
+import com.yourname.expensetracker.domain.analytics.MonthlyComparisonCalculator
+import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
+import com.yourname.expensetracker.domain.analytics.SpendingPersonalityClassifier
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.location.AreaSpendingEngine
+import com.yourname.expensetracker.domain.location.LocationInsightsEngine
+import com.yourname.expensetracker.domain.location.NormalizedTravelInsight
+import com.yourname.expensetracker.domain.location.TravelDetectionEngine
+import com.yourname.expensetracker.domain.location.TravelInsight
+import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.ui.screens.analytics.AnalyticsViewModel
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.testCurrencyConverter
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.test.TestDispatcher
+
+@Suppress("DEPRECATION_ERROR")
+internal data class FlowPipeline(
+    val expenseDao: ExpenseDao,
+    val expenseRepository: ExpenseRepository,
+    val analyticsRepository: AnalyticsRepository,
+    val insightsEngine: InsightsEngine,
+    val advancedAnalyticsEngine: AdvancedAnalyticsEngine,
+    val viewModel: AnalyticsViewModel,
+    val timeProvider: TimeProvider
+)
+
+internal suspend fun FlowPipeline.awaitViewModelState(testDispatcher: TestDispatcher) : com.yourname.expensetracker.ui.screens.analytics.AnalyticsState {
+    return coroutineScope {
+        val awaited = async {
+            viewModel.state.first { !it.isLoading }
+        }
+
+        testDispatcher.scheduler.advanceTimeBy(1_500)
+        testDispatcher.scheduler.advanceUntilIdle()
+        awaited.await()
+    }
+}
+
+internal fun buildPipeline(
+    expenses: List<Expense>,
+    nowMs: Long,
+    categories: List<Category> = TEST_CATEGORIES
+): FlowPipeline {
+    val database = mockk<AppDatabase>(relaxed = true)
+    val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    val categoryRepository = mockk<CategoryRepository>(relaxed = true)
+    val budgetRepository = mockk<BudgetRepository>(relaxed = true)
+
+    val userCorrectionDao = mockk<com.yourname.expensetracker.data.database.dao.UserCorrectionDao>(relaxed = true)
+    val pendingReviewDao = mockk<com.yourname.expensetracker.data.database.dao.PendingReviewDao>(relaxed = true)
+    val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
+    val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
+    val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
+    val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+
+    val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
+    val locationInsightsEngine = mockk<LocationInsightsEngine>(relaxed = true)
+    val areaSpendingEngine = mockk<AreaSpendingEngine>(relaxed = true)
+    val travelDetectionEngine = mockk<TravelDetectionEngine>(relaxed = true)
+
+    val timeProvider = FakeTimeProvider(nowMs)
+    val currencySettingsRepository = TestCurrencySettingsRepository()
+    val currencyConverter = testCurrencyConverter()
+    val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(currencyConverter)
+
+    stubDao(expenseDao, expenses)
+
+    every { categoryRepository.allCategories } returns flowOf(categories)
+    coEvery { categoryRepository.getAll() } returns categories
+
+    every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+    coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
+
+    coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
+    every { locationInsightsEngine.compute(any()) } returns emptyList()
+    coEvery { areaSpendingEngine.computeNormalized(any(), any(), any()) } returns emptyList()
+    coEvery { travelDetectionEngine.computeNormalized(any(), any(), any()) } returns NormalizedTravelInsight(
+        homeLatitude = null,
+        homeLongitude = null,
+        homeAggregate = MoneyAggregate.empty(CurrencyCode.EUR),
+        localAggregate = MoneyAggregate.empty(CurrencyCode.EUR),
+        travelAggregate = MoneyAggregate.empty(CurrencyCode.EUR),
+        travelTrips = emptyList()
+    )
+
+    val expenseRepository = ExpenseRepository(
+        writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+        database = database,
+        expenseDao = expenseDao,
+        userCorrectionDao = userCorrectionDao,
+        pendingReviewDao = pendingReviewDao,
+        merchantCategoryRepository = merchantCategoryRepository,
+        merchantNormalizer = merchantNormalizer,
+        transferDirectionAnalytics = transferDirectionAnalytics,
+        transactionLifecycleCoordinator = transactionLifecycleCoordinator,
+        debugExpenseAuditWriter = mockk(relaxed = true)
+    )
+
+    val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository, currencyConverter = currencyConverter, analyticsCurrencyNormalizer = analyticsCurrencyNormalizer, multiCurrencyRepository = mockk(relaxed = true))
+    val spendingPersonalityClassifier = mockk<SpendingPersonalityClassifier>(relaxed = true)
+
+    val insightsEngine = InsightsEngine(
+        expenseRepository = expenseRepository,
+        recurringExpenseEngine = recurringExpenseEngine,
+        timeProvider = timeProvider,
+        spendingPaceCalculator = SpendingPaceCalculator(timeProvider),
+        anomalyDetector = AnomalyDetector(timeProvider = mockk()),
+        monthlyComparisonCalculator = MonthlyComparisonCalculator(),
+        categoryInsightEngine = CategoryInsightEngine(),
+        merchantInsightEngine = MerchantInsightEngine(),
+        dayOfWeekAnalyzer = DayOfWeekAnalyzer()
+    )
+
+    val advancedAnalyticsEngine = AdvancedAnalyticsEngine(
+        expenseRepository = expenseRepository,
+        categoryRepository = categoryRepository,
+        budgetRepository = budgetRepository,
+        currencySettingsRepository = currencySettingsRepository,
+        analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+        timeProvider = timeProvider,
+        defaultDispatcher = Dispatchers.Unconfined,
+        ioDispatcher = Dispatchers.Unconfined
+    )
+
+    val viewModel = AnalyticsViewModel(
+        expenseRepository = expenseRepository,
+        categoryRepository = categoryRepository,
+        budgetRepository = budgetRepository,
+        insightsEngine = insightsEngine,
+        recurringExpenseEngine = recurringExpenseEngine,
+        analyticsRepository = analyticsRepository,
+        advancedAnalyticsEngine = advancedAnalyticsEngine,
+        analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+        locationInsightsEngine = locationInsightsEngine,
+        areaSpendingEngine = areaSpendingEngine,
+        travelDetectionEngine = travelDetectionEngine,
+        spendingPersonalityClassifier = spendingPersonalityClassifier,
+        timeProvider = timeProvider,
+        analyticsInputAssembler = mockk<AnalyticsInputAssembler>(relaxed = true),
+        currencyConverter = currencyConverter,
+        currencySettingsRepository = currencySettingsRepository,
+        budgetVsActualEngine = BudgetVsActualEngine(),
+        dailyBucketEngine = DailyBucketEngine()
+    )
+
+    return FlowPipeline(
+        expenseDao = expenseDao,
+        expenseRepository = expenseRepository,
+        analyticsRepository = analyticsRepository,
+        insightsEngine = insightsEngine,
+        advancedAnalyticsEngine = advancedAnalyticsEngine,
+        viewModel = viewModel,
+        timeProvider = timeProvider
+    )
+}
+
+@Suppress("DEPRECATION_ERROR")
+private fun stubDao(expenseDao: ExpenseDao, allExpenses: List<Expense>) {
+    fun inRange(start: Long, end: Long): List<Expense> = allExpenses.filter {
+        it.date >= start && it.date < end
+    }
+
+    fun purchasesInRange(start: Long, end: Long): List<Expense> = inRange(start, end).filter {
+        it.transactionType == TransactionType.PURCHASE && !it.isNotMine
+    }
+
+    every { expenseDao.getAllFlow(any()) } returns flowOf(allExpenses)
+    coEvery { expenseDao.getAll() } returns allExpenses
+
+    coEvery { expenseDao.getExpensesBetween(any(), any()) } answers {
+        purchasesInRange(firstArg(), secondArg())
+    }
+    every { expenseDao.getExpensesBetweenFlow(any(), any()) } answers {
+        flowOf(purchasesInRange(firstArg(), secondArg()))
+    }
+
+    coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } answers {
+        purchasesInRange(firstArg(), secondArg())
+    }
+    every { expenseDao.getExpensesByTypeBetweenFlow(any(), any(), TransactionType.PURCHASE.name) } answers {
+        flowOf(purchasesInRange(firstArg(), secondArg()))
+    }
+
+    coEvery { expenseDao.getTotalForPeriod(any(), any()) } answers {
+        purchasesInRange(firstArg(), secondArg()).sumOf { it.effectiveAmount }
+    }
+    coEvery { expenseDao.getCountForPeriod(any(), any()) } answers {
+        purchasesInRange(firstArg(), secondArg()).size
+    }
+
+    coEvery { expenseDao.getCategoryTotalsForPeriod(any(), any()) } answers {
+        purchasesInRange(firstArg(), secondArg())
+            .filter { it.categoryId != null }
+            .groupBy { it.categoryId!! }
+            .map { (categoryId, exps) ->
+                CategoryTotal(
+                    categoryId = categoryId,
+                    total = exps.sumOf { it.effectiveAmount },
+                    txCount = exps.size
+                )
+            }
+            .sortedByDescending { it.total }
+    }
+
+    coEvery { expenseDao.getExpensesSince(any()) } answers {
+        val since = firstArg<Long>()
+        allExpenses.filter { it.date >= since && !it.isNotMine }
+    }
+
+    coEvery { expenseDao.getMerchantStats() } returns emptyList()
+    coEvery { expenseDao.getAllMerchantStats() } returns emptyList()
+    coEvery { expenseDao.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
+    coEvery { expenseDao.getLargestExpenseForPeriod(any(), any()) } returns null
+    coEvery { expenseDao.getLargestExpenseForMerchant(any(), any(), any()) } returns null
+    coEvery { expenseDao.getOldestExpenseDate() } returns allExpenses.minOfOrNull { it.date }
+    coEvery { expenseDao.getPurchaseCount() } returns allExpenses.count {
+        it.transactionType == TransactionType.PURCHASE && !it.isNotMine
+    }
+}

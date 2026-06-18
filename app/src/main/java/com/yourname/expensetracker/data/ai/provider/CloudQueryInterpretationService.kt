@@ -1,10 +1,24 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.PreparedCloudPayload
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditContext
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import androidx.annotation.VisibleForTesting
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,29 +26,53 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import kotlinx.coroutines.CancellationException
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @Singleton
-class CloudQueryInterpretationService @Inject constructor() : QueryInterpretationService {
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+class CloudQueryInterpretationService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage,
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor = DefaultCloudPayloadRedactor(),
+    // P8F-03: cloud-call provenance audit (Hilt resolves; default keeps test/secondary ctors inert)
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+) : QueryInterpretationService {
 
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String) : this() {
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage) : this(
+        secureKeyStorage,
+        OkHttpClient(),
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
+        }
+    )
+
+    @VisibleForTesting
+    internal constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
+        secureKeyStorage,
+        OkHttpClient(),
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.FailClosed("PrivacyGate not configured in test constructor")
+        }
+    ) {
         this.apiKeyOverride = apiKeyOverride
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(AppConfig.Ai.QUERY_INTERPRETATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(AppConfig.Ai.QUERY_INTERPRETATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
 
     private val promptHelper = OnDeviceQueryInterpretationService()
 
     private val apiKey: String
-        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun interpret(
         input: FinancialQueryInterpretationInput
@@ -44,44 +82,112 @@ class CloudQueryInterpretationService @Inject constructor() : QueryInterpretatio
             return unsupported()
         }
 
-        val requestBody = buildRequestBody(input)
-        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL}:generateContent?key=$apiKey"
+        // PRIVACY GATE: Check cloud AI privacy gate before proceeding
+        val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (gateDecision.blocksExecution()) {
+            Timber.d("CloudQueryInterpretationService: privacy gate denied: ${gateDecision.reason()}")
+            return unsupported("Cloud AI disabled by privacy gate")
+        }
+
+        val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
+        // ARCH-04: Redact PII from prompt before sending to cloud AI
+        val redacted = redactor.redactText(prompt, CloudPayloadPurpose.QUERY_INTERPRETATION)
+        // P8F-03: record cloud-call provenance (provenance comes from the redacted payload)
+        auditLogger.logCloudCall(
+            PrivacyCapability.CLOUD_AI_GENERAL,
+            PrivacyDecision.Allowed,
+            PrivacyAuditContext.forCloudCall(
+                provider = "gemini",
+                modelId = AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL,
+                purpose = CloudPayloadPurpose.QUERY_INTERPRETATION,
+                payload = PreparedCloudPayload(
+                    purpose = CloudPayloadPurpose.QUERY_INTERPRETATION,
+                    text = redacted.text,
+                    redactionApplied = redacted.redactionApplied,
+                    fieldsRedacted = redacted.fieldsRedacted,
+                    payloadHash = redacted.payloadHash,
+                    rawTextIncluded = !redacted.redactionApplied,
+                    rawImageIncluded = false
+                ),
+                correlationId = CloudCorrelation.newCorrelationId()
+            )
+        )
+        val requestBody = buildRequestBody(redacted.text)
+        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
             .post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
             .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey)
             .build()
 
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
+        return withContext(Dispatchers.IO) {
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                var retryableHttpFailure = false
+
+                try {
+                    val result = client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Timber.w(
+                                "CloudQueryInterpretationService: HTTP %d (attempt %d/%d)",
+                                response.code,
+                                attempt,
+                                CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                            )
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                                retryableHttpFailure = true
+                                return@use null
+                            }
+                            return@use unsupported()
+                        }
+
+                        val body = response.body?.string() ?: return@use unsupported()
+                        return@use parseResponse(input, body)
+                    }
+
+                    if (result != null) {
+                        return@withContext result
+                    }
+                    if (!retryableHttpFailure) {
+                        return@withContext unsupported()
+                    }
+                } catch (e: IOException) {
                     Timber.w(
-                        "CloudQueryInterpretationService: HTTP ${response.code} ${response.body?.string()?.take(200)}"
+                        e,
+                        "CloudQueryInterpretationService: network failure (attempt %d/%d)",
+                        attempt,
+                        CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                     )
-                    return@use unsupported()
+                    if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        return@withContext unsupported("Network error: ${e.message}")
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "CloudQueryInterpretationService: parse failure")
+                    return@withContext unsupported("Failed to parse response: ${e.message}")
                 }
 
-                val body = response.body?.string() ?: return@use unsupported()
-                parseResponse(input, body)
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    val delayMs = CloudRetryPolicy.backoffDelayMs(attempt)
+                    Timber.d("CloudQueryInterpretationService: retrying after ${delayMs}ms")
+                    delay(delayMs)
+                }
             }
-        } catch (e: IOException) {
-            Timber.w(e, "CloudQueryInterpretationService: network failure")
-            unsupported()
-        } catch (e: Exception) {
-            Timber.w(e, "CloudQueryInterpretationService: parse failure")
+
             unsupported()
         }
     }
 
-    private fun buildRequestBody(input: FinancialQueryInterpretationInput): String {
-        val prompt = promptHelper.buildPrompt(input)
+    private fun buildRequestBody(promptText: String): String {
+        // PRIV/ARCH-04: prompt is already redacted by the caller (interpret()).
         return JSONObject().apply {
             put(
                 "contents",
                 JSONArray().put(
                     JSONObject().put(
                         "parts",
-                        JSONArray().put(JSONObject().put("text", prompt))
+                        JSONArray().put(JSONObject().put("text", promptText))
                     )
                 )
             )
@@ -118,6 +224,20 @@ class CloudQueryInterpretationService @Inject constructor() : QueryInterpretatio
             ?: return unsupported()
 
         return promptHelper.parseResponse(input, text) ?: unsupported()
+    }
+
+    private fun FinancialQueryInterpretationInput.toCloudPromptInput(): FinancialQueryInterpretationInput {
+        if (merchantAliasMap.isEmpty() && categoryAliasMap.isEmpty()) return this
+
+        val aliasOnlyCategoryLookup = categoryAliasMap.keys.associateWith { alias ->
+            categoryLookupMap[alias] ?: categoryNameToIdMap[alias] ?: -1L
+        }.filterValues { it >= 0L }
+
+        return copy(
+            merchantLookupMap = merchantAliasMap,
+            categoryLookupMap = aliasOnlyCategoryLookup,
+            categoryNameToIdMap = categoryNameToIdMap.filterKeys(categoryAliasMap::containsKey)
+        )
     }
 
     private fun unsupported(

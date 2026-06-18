@@ -7,8 +7,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.domain.location.PlaceInsight
-import java.text.NumberFormat
-import java.util.Locale
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 
 /**
  * A compact card that displays spending data for a single location cluster.
@@ -16,8 +15,7 @@ import java.util.Locale
  * Used both on the Map tab (SpendingMapScreen) and the Analytics tab.
  */
 @Composable
-fun PlaceInsightCard(insight: PlaceInsight, modifier: Modifier = Modifier) {
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
+fun PlaceInsightCard(insight: PlaceInsight, modifier: Modifier = Modifier, homeCurrency: String = "EUR") {
 
     Card(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -34,13 +32,13 @@ fun PlaceInsightCard(insight: PlaceInsight, modifier: Modifier = Modifier) {
                     )
                 }
                 Text(
-                    text = "${insight.transactionCount} transactions · avg ${fmt.format(insight.avgTransaction)}",
+                    text = "${insight.transactionCount} transactions · avg ${CurrencyFormatter.formatMoney(insight.avgTransaction, homeCurrency)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                text = fmt.format(insight.totalSpend),
+                text = CurrencyFormatter.formatMoney(insight.totalSpend, homeCurrency),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary
             )

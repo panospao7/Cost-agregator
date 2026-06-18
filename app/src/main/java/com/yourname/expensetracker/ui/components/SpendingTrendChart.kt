@@ -20,6 +20,11 @@ import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.core.entry.entryOf
 import com.yourname.expensetracker.domain.usecase.dashboard.SpendingTrendSeries
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -29,8 +34,10 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
  */
 @Composable
 fun SpendingTrendChart(
-    series: List<SpendingTrendSeries>,
-    modifier: Modifier = Modifier
+ series: List<SpendingTrendSeries>,
+ modifier: Modifier = Modifier,
+ /** Placeholder default. Production callers should pass explicit currency. */
+ currency: String = "EUR"
 ) {
     val currentSeries = series.filter { it.isCurrentMonth }
     val historicalSeries = series.filter { !it.isCurrentMonth }
@@ -51,7 +58,7 @@ fun SpendingTrendChart(
         ) {
             Column {
                 Text(
-                    "TREND",
+                    stringResource(R.string.chart_trend_title),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.TextSecondary,
@@ -100,7 +107,7 @@ fun SpendingTrendChart(
                 Modifier.fillMaxWidth().height(120.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("No data", style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextMuted)
+                Text(stringResource(R.string.chart_no_data), style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextMuted)
             }
         } else {
             val historicalCount = historicalSeries.size
@@ -126,8 +133,16 @@ fun SpendingTrendChart(
             }
 
             val startAxisFormatter = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
-                if (value >= 1000) "€${String.format("%.0f", value / 1000)}k"
-                else "€${String.format("%.0f", value)}"
+                CurrencyFormatter.formatCompact(value.toDouble(), currency)
+            }
+
+            val currentValues = currentSeries.flatMap { it.data }
+            val allValues = allSeries.flatMap { it.data }
+            val minValue = (allValues.minOrNull() ?: 0.0).toDouble()
+            val maxValue = (allValues.maxOrNull() ?: 0.0).toDouble()
+            val currentValue = (currentValues.lastOrNull() ?: 0.0).toDouble()
+            val chartSummary = remember(subtitle, minValue, maxValue, currentValue) {
+                "Spending trend chart for $subtitle. Current value ${CurrencyFormatter.formatMoney(currentValue, currency, showCents = false)}, minimum ${CurrencyFormatter.formatMoney(minValue, currency, showCents = false)}, maximum ${CurrencyFormatter.formatMoney(maxValue, currency, showCents = false)}."
             }
 
             Chart(
@@ -147,6 +162,7 @@ fun SpendingTrendChart(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp)
+                    .semantics { contentDescription = chartSummary }
             )
         }
     }

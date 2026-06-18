@@ -1,0 +1,11 @@
+{
+  "afterFailure_status": "FAILED",
+  "afterPartial_status": "PARTIAL",
+  "afterRecovery_status": "SUCCESS",
+  "afterDisconnect_isActive": false,
+  "afterDisconnect_isConnected": false,
+  "afterDisconnect_tokenCleared": true,
+  "dashboardTotal": 75,
+  "dashboardTransactionCount": 2,
+  "dataNotCorrupted": true
+}

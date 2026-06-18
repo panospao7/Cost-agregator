@@ -11,6 +11,13 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// AID-4: This service can be simplified by using HybridRouter:
+// val router = HybridRouter(aiSettingsRepository, router, AiCapability.CATEGORIZATION_FALLBACK,
+//     cloudFn = { cloudCategorizationAssistService.suggest(it) },
+//     onDeviceFn = { onDeviceCategorizationAssistService.suggest(it) },
+//     fallbackFn = { noOpCategorizationAssistService.suggest(it) }
+// )
+// override suspend fun suggest(input: CategorizationAssistInput): CategoryAssistSuggestion? = router.execute(input)
 @Singleton
 class HybridCategorizationAssistService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,

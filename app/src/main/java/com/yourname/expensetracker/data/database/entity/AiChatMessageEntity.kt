@@ -10,6 +10,8 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 @Entity(
     tableName = "ai_chat_messages",
     foreignKeys = [
+        // DB-8: CASCADE on AiChatMessageEntity.sessionId → AiChatSessionEntity(id)
+        // Safe: Messages are child records of a chat session; orphaned messages have no meaning.
         ForeignKey(
             entity = AiChatSessionEntity::class,
             parentColumns = ["id"],
@@ -30,5 +32,6 @@ data class AiChatMessageEntity(
     val kind: AssistantMessageKind,
     val text: String,
     val payloadJson: String? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 )

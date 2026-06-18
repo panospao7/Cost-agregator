@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.theme
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
@@ -29,7 +31,7 @@ object SemanticColors {
     
     val TextPrimary = Color(0xFFF1F5F9)
     val TextSecondary = Color(0xFF94A3B8)
-    val TextMuted = Color(0x9994A3B8) // 60% alpha
+    val TextMuted = Color(0xCC94A3B8) // 80% alpha for better contrast
     
     val GlassSurface = Color(0x661E293B) // 40% alpha SurfaceLight
     val GlassBorder = Color(0x1A94A3B8)   // 10% alpha TextSecondary
@@ -51,6 +53,18 @@ object SemanticColors {
         confidence >= 0.65f -> WarningOrange
         else -> DangerRed
     }
+
+    // Status palette (UI audit consistency)
+    val StatusGreen = Color(0xFF4CAF50)
+    val StatusGreenLight = Color(0xFFE8F5E9)
+    val StatusYellow = Color(0xFFFF9800)
+    val StatusYellowLight = Color(0xFFFFF9C4)
+    val StatusOrangeLight = Color(0xFFFFE0B2)
+    val StatusRed = Color(0xFFF44336)
+    val StatusDarkRed = Color(0xFFB71C1C)
+    val StatusGreenAlt = Color(0xFF4CAF50)
+    val StatusOrangeAlt = Color(0xFFFFA726)
+    val StatusRedAlt = Color(0xFFEF5350)
 }
 
 // === Typography with Tabular Lining Figures ===
@@ -60,109 +74,94 @@ val ExpenseTypography = Typography(
         fontSize = 57.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 64.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     displayMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 45.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 52.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     displaySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 36.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 44.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     headlineLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 32.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 40.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 40.sp
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 28.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 36.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 36.sp
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 24.sp,
         fontWeight = FontWeight.SemiBold,
         lineHeight = 32.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 22.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 28.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 28.sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 24.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 24.sp
     ),
     titleSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp,
-        color = SemanticColors.TextSecondary
+        lineHeight = 20.sp
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 24.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 24.sp
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 20.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 20.sp
     ),
     bodySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 16.sp,
-        color = SemanticColors.TextSecondary
+        lineHeight = 16.sp
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 20.sp
     ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp,
-        color = SemanticColors.TextSecondary
+        lineHeight = 16.sp
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp,
-        color = SemanticColors.TextMuted
+        lineHeight = 16.sp
     )
 )
 
@@ -218,9 +217,9 @@ fun ExpenseTrackerTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            val activity = view.context.findActivity() ?: return@SideEffect
+            activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
+            WindowCompat.getInsetsController(activity.window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
 
@@ -229,4 +228,10 @@ fun ExpenseTrackerTheme(
         typography = ExpenseTypography,
         content = content
     )
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

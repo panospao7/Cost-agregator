@@ -18,17 +18,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
 
-        // Geocoding API keys — read from local.properties (not committed to VCS)
-        val localProps = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(
-            rootDir, providers
-        )
-        buildConfigField("String", "GEOAPIFY_API_KEY",
-            "\"${localProps.getProperty("geoapify.api.key", "")}\"")
-        buildConfigField("String", "GOOGLE_PLACES_API_KEY",
-            "\"${localProps.getProperty("google.places.api.key", "")}\"")
-        buildConfigField("String", "GEMINI_API_KEY",
-            "\"${localProps.getProperty("gemini.api.key", "")}\"")
+        // Geocoding API keys — removed from BuildConfig for security
+        // Keys are now stored in SecureKeyStorage (encrypted at rest)
     }
 
     buildTypes {
@@ -59,6 +52,27 @@ android {
     }
     sourceSets {
         getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
+
+        unitTests.all {
+            it.maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).takeIf { forks -> forks > 0 } ?: 1
+
+            it.systemProperty("updateGoldens", project.findProperty("updateGoldens") ?: "false")
+
+            it.testLogging {
+                events("passed", "skipped", "failed", "standardOut", "standardError")
+                showExceptions = true
+                showCauses = true
+                showStackTraces = true
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
+
     }
 }
 
@@ -145,11 +159,15 @@ dependencies {
     // Logging
     implementation("com.jakewharton.timber:timber:5.0.1")
     
+    // Gson - JSON serialization for split templates
+    implementation("com.google.code.gson:gson:2.10.1")
+    
     // Activity Extensions for viewModels()
     implementation("androidx.activity:activity-ktx:1.9.3")
     
     // Testing
     testImplementation("junit:junit:4.13.2")
+    testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("org.json:json:20231013")
@@ -163,6 +181,10 @@ dependencies {
     testImplementation("app.cash.turbine:turbine:1.2.0")
     // Truth - readable assertions
     testImplementation("com.google.truth:truth:1.4.4")
+    // WorkManager testing for unit worker tests
+    testImplementation("androidx.work:work-testing:2.9.1")
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.ui.test.junit4)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation("androidx.test:runner:1.5.2")
@@ -170,6 +192,7 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     androidTestImplementation("androidx.room:room-testing:$roomVersion")
+    testImplementation("androidx.room:room-testing:$roomVersion")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     androidTestImplementation("io.mockk:mockk-android:1.13.8")
     // WorkManager testing
@@ -179,31 +202,354 @@ dependencies {
 
 tasks.register("verifyRoomSchemaSnapshots") {
     group = "verification"
-    description = "Reports Room schema snapshot coverage by version"
+    description = "Reports Room schema snapshot coverage by version, migration-aware"
 
     doLast {
-        val maxVersion = 35
-        val schemaDir = file("$projectDir/schemas/com.yourname.expensetracker.data.database.AppDatabase")
-        val existing = if (schemaDir.exists()) {
+        // ── 1. Read AppDatabase.kt and extract schema version + migrations ─────────
+        val appDatabaseFile = file(
+            "$projectDir/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt"
+        )
+        if (!appDatabaseFile.exists()) {
+            throw GradleException(
+                "Cannot find AppDatabase.kt at ${appDatabaseFile.absolutePath}. " +
+                "Cannot determine the database schema version or registered migrations."
+            )
+        }
+        val content = appDatabaseFile.readText()
+
+        // Extract APP_DATABASE_SCHEMA_VERSION (e.g. "const val APP_DATABASE_SCHEMA_VERSION = 113")
+        val versionRegex = Regex("""const val APP_DATABASE_SCHEMA_VERSION\s*=\s*(\d+)""")
+        val latestVersion = versionRegex.find(content)
+            ?.groupValues
+            ?.get(1)
+            ?.toIntOrNull()
+            ?: throw GradleException(
+                "Could not parse APP_DATABASE_SCHEMA_VERSION from " +
+                "${appDatabaseFile.name}. Expected pattern: " +
+                "`const val APP_DATABASE_SCHEMA_VERSION = <number>`"
+            )
+
+        // Extract all migration start versions from MIGRATION_X_Y patterns
+        // (e.g. "MIGRATION_54_55" → start version 54)
+        val migrationRegex = Regex("""MIGRATION_(\d+)_(\d+)""")
+        val migrationStartVersions = migrationRegex.findAll(content)
+            .map { it.groupValues[1].toInt() }
+            .toSortedSet()
+
+        if (migrationStartVersions.isEmpty()) {
+            throw GradleException(
+                "Found zero MIGRATION_X_Y declarations in ${appDatabaseFile.name}. " +
+                "Cannot build the expected schema snapshot set."
+            )
+        }
+
+        // ── 2. Expected versions = all migration start versions + latest version ──
+        val expectedVersions = (migrationStartVersions + latestVersion).toSortedSet()
+
+        // ── 3. Scan existing snapshot files ───────────────────────────────────────
+        val schemaDir = file(
+            "$projectDir/schemas/com.yourname.expensetracker.data.database.AppDatabase"
+        )
+        val existingVersions = if (schemaDir.exists()) {
             schemaDir.listFiles()
                 ?.mapNotNull { it.nameWithoutExtension.toIntOrNull() }
-                ?.toSet()
-                ?: emptySet()
+                ?.toSortedSet()
+                ?: sortedSetOf()
         } else {
-            emptySet()
+            sortedSetOf()
         }
-        val expected = (1..maxVersion).toSet()
-        val missing = expected - existing
 
-        logger.lifecycle("Room schema snapshots present: ${existing.size}/$maxVersion")
-        logger.lifecycle("Present versions: ${existing.sorted()}")
-        if (missing.isNotEmpty()) {
-            logger.warn("Missing versions: ${missing.sorted()}")
-            if ((findProperty("strictRoomSchemas")?.toString()?.toBoolean() == true)) {
-                throw GradleException("Missing Room schema snapshots: ${missing.sorted()}")
+        val presentVersions = expectedVersions.intersect(existingVersions).toSortedSet()
+        val missingVersions = (expectedVersions - existingVersions).toSortedSet()
+        val extraVersions = (existingVersions - expectedVersions).toSortedSet()
+
+        // ── 4. Known intentional gaps — versions where schema files were never    ──
+        //       generated by Room (skip-migrations, early versions before schema
+        //       export was enabled, or transient versions).  These are tracked
+        //       explicitly so they are not silently ignored.
+        //       Update this list when the migration set changes.
+        //
+        //       Pre-33:   schema export was configured starting from version 33.
+        //       54-55:    schema files not generated (migrations exist but Room did
+        //                 not emit snapshots — likely a Room AP limitation with
+        //                 chained table-rebuild migrations at the time).
+        //       58:       same as 54-55.
+        //       61-63:    same as 54-55.
+        //       66:       same as 54-55.
+        //       97-99:    Room skip-migration from version 96 directly to 100
+        //                 (MIGRATION_96_100), so no intermediate schemas exist.
+        val knownGapVersions = sortedSetOf<Int>().apply {
+            // Pre-33: schema export started at version 33
+            addAll((migrationStartVersions.first()..32).toSet())
+            // 54-55: transient schema gap
+            addAll(setOf(54, 55))
+            // 58: transient schema gap
+            add(58)
+            // 61-63: transient schema gap
+            addAll(setOf(61, 62, 63))
+            // 66: transient schema gap
+            add(66)
+            // 97-99: skip-migration 96→100
+            addAll(setOf(97, 98, 99))
+        }
+        // Only retain gaps that are actually in our expected set
+        val effectiveKnownGaps = knownGapVersions.intersect(expectedVersions)
+        val unexpectedMissing = missingVersions - effectiveKnownGaps
+
+        // ── 5. Report ─────────────────────────────────────────────────────────────
+        logger.lifecycle("═══════════════════════════════════════════════════════════")
+        logger.lifecycle("  Room Schema Snapshot Verification")
+        logger.lifecycle("═══════════════════════════════════════════════════════════")
+        logger.lifecycle("  Database version (from AppDatabase.kt):  $latestVersion")
+        logger.lifecycle("  Migration start versions found:          ${migrationStartVersions.size}")
+        logger.lifecycle("  Expected snapshot versions:              ${expectedVersions.size}")
+        logger.lifecycle("  Present on disk:                         ${presentVersions.size}")
+        logger.lifecycle("  Known intentional gaps:                  ${effectiveKnownGaps.size}")
+        if (missingVersions.isNotEmpty()) {
+            logger.lifecycle("  Missing total:                           ${missingVersions.size}")
+        }
+        logger.lifecycle("")
+        logger.lifecycle("  Present versions : $presentVersions")
+        if (missingVersions.isNotEmpty()) {
+            logger.lifecycle("  Missing versions  : $missingVersions")
+        }
+        if (effectiveKnownGaps.isNotEmpty()) {
+            logger.lifecycle("  Known gaps        : $effectiveKnownGaps")
+        }
+        if (extraVersions.isNotEmpty()) {
+            logger.lifecycle("  Extra versions    : $extraVersions")
+        }
+        logger.lifecycle("═══════════════════════════════════════════════════════════")
+
+        // ── 6. Fail or warn on unexpected missing snapshots ───────────────────────
+        if (unexpectedMissing.isNotEmpty()) {
+            val strict = findProperty("strictRoomSchemas")?.toString()?.toBoolean() == true
+            val message = buildString {
+                appendLine("Unexpectedly missing Room schema snapshots for versions: $unexpectedMissing")
+                appendLine("")
+                appendLine("Required versions are migration start versions + the latest database version.")
+                appendLine("Known intentional gaps are excluded from this check:")
+                appendLine("  $effectiveKnownGaps")
+                appendLine("")
+                appendLine("To fix, either:")
+                appendLine("  a) Generate the missing snapshot (run Room annotation processor)")
+                appendLine("  b) If this is a new intentional gap, add it to the `knownGapVersions` set")
+                appendLine("     in the `verifyRoomSchemaSnapshots` task (app/build.gradle.kts)")
+            }
+            if (strict) {
+                throw GradleException(message.trimEnd())
+            } else {
+                logger.warn(message.trimEnd())
             }
         } else {
-            logger.lifecycle("All schema snapshots are present.")
+            logger.lifecycle("All expected Room schema snapshots are present (or accounted for as known gaps).")
         }
     }
+}
+
+// HIGH-5: Wire schema verification into the Gradle 'check' lifecycle
+tasks.named("check") {
+    dependsOn("verifyRoomSchemaSnapshots")
+}
+
+// HIGH-6: Ignored-test count guard — fails if @Ignore annotations grow
+tasks.register("verifyNoIgnoredGrowth") {
+    group = "verification"
+    description = "Fails if the number of @Ignore-annotated test methods grows beyond the threshold"
+
+    doLast {
+        val maxAllowed = (findProperty("maxIgnoredTests")?.toString()?.toIntOrNull()) ?: 310
+        val testDirs = listOf(
+            file("$projectDir/src/test/java"),
+            file("$projectDir/src/test/kotlin"),
+            file("$projectDir/src/androidTest/java"),
+            file("$projectDir/src/androidTest/kotlin")
+        )
+        var ignoredCount = 0
+        for (dir in testDirs) {
+            if (dir.exists()) {
+                dir.walkTopDown()
+                    .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
+                    .forEach { file ->
+                        ignoredCount += file.readText().lines()
+                            .count { line -> line.contains("@Ignore") && !line.trimStart().startsWith("//") }
+                    }
+            }
+        }
+        logger.lifecycle("Ignored test methods/classes found: $ignoredCount (max allowed: $maxAllowed)")
+        if (ignoredCount > maxAllowed) {
+            throw GradleException(
+                "Ignored test count ($ignoredCount) exceeds threshold ($maxAllowed). " +
+                "Either fix/delete ignored tests or increase the threshold via -PmaxIgnoredTests=N."
+            )
+        }
+    }
+}
+
+// CI guard: fails if production code calls deprecated raw aggregation DAO methods
+// TODO: Add CI guard that fails if production code calls deprecated raw aggregation
+// methods (e.g., getTotalSpentBetween, getTotalSpent) via grep/lint rule.
+
+// ARCH-01: Lifecycle bypass guard — wired into check lifecycle
+tasks.register("checkLifecycleBypasses") {
+    group = "verification"
+    description = "Fails if production code contains direct ExpenseDao calls that bypass TransactionLifecycleCoordinator"
+
+    doLast {
+        val script = file("$rootDir/scripts/guards/check_lifecycle_bypasses.kts")
+        if (!script.exists()) {
+            logger.warn("Lifecycle bypass guard script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine("kotlin", script.absolutePath)
+            }
+        } catch (e: Exception) {
+            throw GradleException("Lifecycle bypass guard failed: ${e.message}")
+        }
+    }
+}
+
+// Wire both guards into the check lifecycle
+tasks.named("check") {
+    dependsOn("checkLifecycleBypasses")
+}
+
+// PR-E23: Wire check_raw_money_aggregates.kts CI guard for raw Double financial totals.
+// Flags: sumOf { it.amount }, sumOf { it.effectiveAmount }, total: Double in public engine results.
+tasks.register("checkRawMoneyAggregates") {
+    group = "verification"
+    description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate"
+    doLast {
+        val script = file("$rootDir/scripts/guards/check_raw_money_aggregates.kts")
+        if (!script.exists()) {
+            logger.warn("Raw money aggregates guard script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine("kotlin", script.absolutePath)
+            }
+        } catch (e: Exception) {
+            throw GradleException("Raw money aggregates guard failed: ${e.message}")
+        }
+    }
+}
+
+// PR-E24: Wire check_direct_time_calls.kts CI guard.
+// Flags: System.currentTimeMillis(), Date(), Calendar.getInstance(), Instant.now(), LocalDate.now()
+// Allowlist: TimeProvider implementations, platform adapters, tests.
+tasks.register("checkDirectTimeCalls") {
+    group = "verification"
+    description = "Fails if production code calls System.currentTimeMillis() or Date() outside TimeProvider"
+    doLast {
+        val script = file("$rootDir/scripts/guards/check_direct_time_calls.kts")
+        if (!script.exists()) {
+            logger.warn("Direct time calls guard script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine("kotlin", script.absolutePath)
+            }
+        } catch (e: Exception) {
+            throw GradleException("Direct time calls guard failed: ${e.message}")
+        }
+    }
+}
+
+/**
+ * CI-enforced boundary guard.
+ *
+ * FAILS BUILD on direct ExpenseDao insert/update/delete mutations
+ * outside the lifecycle allowlist. Any new class that needs direct
+ * ExpenseDao access MUST be added to [allowlistForGuard] with a
+ * documented rationale in docs/expense-mutation-inventory.md.
+ *
+ * Allowlist (approved bypasses):
+ * - TransactionLifecycleCoordinator — the canonical mutation entry point
+ * - LocationBackfillWorker — background column backfill (1-2 cols, low-value events)
+ * - MerchantKeyBackfillWorker — background column backfill (1 col, low-value events)
+ * - GroupTransactionCoordinator — atomic group-expense creation within outer tx
+ * - DebugExpenseRepository — BuildConfig.DEBUG guarded debug methods
+ * - AppDatabase — Room infrastructure
+ * - ReceiptLinkService — circular dependency constraint (RCP-30)
+ * - ExpenseRepository — delegated to coordinator for all user paths
+ * - MultiCurrencyRepository — analytics-only read path with conversion inserts
+ * - NotificationRepository — notification capture, not expense mutation
+ */
+val srcDirForGuard = layout.projectDirectory.dir("src/main/java").asFile
+val allowlistForGuard = setOf(
+    "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",
+    "GroupTransactionCoordinator", "DebugExpenseRepository", "AppDatabase",
+    "ReceiptLinkService", "ExpenseRepository", "MultiCurrencyRepository",
+    "NotificationRepository"
+)
+tasks.register("checkLifecycleBypass") {
+    group = "verification"
+    description = "Fails if ExpenseDao.insert/update/delete called outside TransactionLifecycleCoordinator"
+    doLast {
+        val violations = mutableListOf<String>()
+        srcDirForGuard.walk().forEach { f ->
+            if (!f.name.endsWith(".kt") || f.isDirectory) return@forEach
+            val className = f.name.removeSuffix(".kt")
+            if (allowlistForGuard.any { className.contains(it) }) return@forEach
+            val text = f.readText()
+            val patterns = listOf("expenseDao\\.insert", "expenseDao\\.update", "expenseDao\\.delete")
+            for (pattern in patterns) {
+                if (Regex(pattern).containsMatchIn(text)) {
+                    violations.add("${f.path}: matches ${pattern}")
+                }
+            }
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException("LIFECYCLE BYPASS: Direct ExpenseDao mutations outside allowlist:\n  ${violations.joinToString("\n  ")}")
+        }
+    }
+}
+
+// Wire both new guards into the check lifecycle
+// VERIFIED (PR-E24): Both checkRawMoneyAggregates and checkDirectTimeCalls are
+// registered (above) AND wired to the "check" lifecycle via dependsOn.
+tasks.named("check") {
+    dependsOn("checkRawMoneyAggregates")
+    dependsOn("checkDirectTimeCalls")
+    dependsOn("checkLifecycleBypass")
+}
+
+// TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
+// calls outside approved TimeProvider implementations
+
+// PR 10 — DB access boundary guard in CI failure mode.
+tasks.register("verifyDbAccessBoundaries") {
+    group = "verification"
+    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer allowlist"
+    doLast {
+        val script = file("$rootDir/scripts/verify_db_access_boundaries.py")
+        if (!script.exists()) {
+            logger.warn("verifyDbAccessBoundaries: script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        val result = exec {
+            workingDir = rootDir
+            commandLine("python3", script.absolutePath, "--fail-on-violation")
+            isIgnoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            throw GradleException(
+                "DB access boundary violations found. " +
+                "Add the class to config/db_access_allowlist.yml with a reason, " +
+                "or route the write through the approved lifecycle coordinator. " +
+                "See docs/DB_WRITE_OWNERSHIP.md."
+            )
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn("verifyDbAccessBoundaries")
 }

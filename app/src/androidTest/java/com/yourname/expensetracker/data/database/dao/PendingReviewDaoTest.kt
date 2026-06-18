@@ -23,10 +23,9 @@ class PendingReviewDaoTest {
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
         pendingReviewDao = database.pendingReviewDao()
         rawNotificationDao = database.rawNotificationDao()
     }
@@ -65,7 +64,7 @@ class PendingReviewDaoTest {
         val rawId = insertRawNotification()
         pendingReviewDao.insert(makeReview(rawId))
 
-        val pending = pendingReviewDao.getPending()
+        val pending = pendingReviewDao.getPendingUncapped()
         assertEquals(1, pending.size)
         assertEquals(PendingReviewStatus.PENDING, pending[0].review.status)
     }
@@ -84,7 +83,11 @@ class PendingReviewDaoTest {
         val rawId = insertRawNotification()
         val id = pendingReviewDao.insert(makeReview(rawId))
 
-        val rows = pendingReviewDao.updateStatusIfPending(id, "APPROVED")
+        val rows = pendingReviewDao.transitionStatus(
+            id,
+            PendingReviewStatus.PENDING,
+            PendingReviewStatus.APPROVED
+        )
         assertEquals(1, rows)
 
         val review = pendingReviewDao.getById(id)
@@ -96,8 +99,16 @@ class PendingReviewDaoTest {
         val rawId = insertRawNotification()
         val id = pendingReviewDao.insert(makeReview(rawId))
 
-        pendingReviewDao.updateStatusIfPending(id, "APPROVED")
-        val rows = pendingReviewDao.updateStatusIfPending(id, "REJECTED")
+        pendingReviewDao.transitionStatus(
+            id,
+            PendingReviewStatus.PENDING,
+            PendingReviewStatus.APPROVED
+        )
+        val rows = pendingReviewDao.transitionStatus(
+            id,
+            PendingReviewStatus.PENDING,
+            PendingReviewStatus.REJECTED
+        )
         assertEquals(0, rows) // Already APPROVED, not PENDING
     }
 
@@ -108,9 +119,9 @@ class PendingReviewDaoTest {
         val id1 = pendingReviewDao.insert(makeReview(rawId1))
         pendingReviewDao.insert(makeReview(rawId2))
 
-        pendingReviewDao.updateStatus(id1, "APPROVED")
+        pendingReviewDao.updateStatus(id1, PendingReviewStatus.APPROVED)
 
-        val pending = pendingReviewDao.getPending()
+        val pending = pendingReviewDao.getPendingUncapped()
         assertEquals(1, pending.size)
     }
 
@@ -121,7 +132,7 @@ class PendingReviewDaoTest {
         val id1 = pendingReviewDao.insert(makeReview(rawId1))
         pendingReviewDao.insert(makeReview(rawId2))
 
-        pendingReviewDao.updateStatus(id1, "REJECTED")
+        pendingReviewDao.updateStatus(id1, PendingReviewStatus.REJECTED)
         pendingReviewDao.clearResolved()
 
         val all = pendingReviewDao.getAllFlow().first()
@@ -130,6 +141,7 @@ class PendingReviewDaoTest {
     }
 
     @Test
+    @Suppress("DEPRECATION")
     fun approveAllPendingApprovesAllPending() = runBlocking {
         val rawId1 = insertRawNotification()
         val rawId2 = insertRawNotification()
@@ -138,12 +150,31 @@ class PendingReviewDaoTest {
 
         pendingReviewDao.approveAllPending()
 
-        val pending = pendingReviewDao.getPending()
+        val pending = pendingReviewDao.getPendingUncapped()
         assertEquals(0, pending.size)
 
         val all = pendingReviewDao.getAllFlow().first()
         assertEquals(2, all.size)
         assertEquals(PendingReviewStatus.APPROVED, all[0].status)
         assertEquals(PendingReviewStatus.APPROVED, all[1].status)
+    }
+
+    @Test
+    fun upsertByRawNotificationId_updates_existing_row_instead_of_inserting_duplicate() = runBlocking {
+        val rawId = insertRawNotification()
+        val firstId = pendingReviewDao.insert(makeReview(rawId))
+
+        val replacementId = pendingReviewDao.upsertByRawNotificationId(
+            makeReview(rawId).copy(
+                suggestedAmount = 42.0,
+                notificationText = "Updated text"
+            )
+        )
+
+        val all = pendingReviewDao.getAllFlow().first()
+        assertEquals(firstId, replacementId)
+        assertEquals(1, all.size)
+        assertEquals(42.0, all.single().suggestedAmount!!, 0.001)
+        assertEquals("Updated text", all.single().notificationText)
     }
 }

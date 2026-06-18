@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.ui.screens.debug
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.NotificationRepository
@@ -15,16 +18,22 @@ import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.service.debug.LegacyDataMigrationService
+import com.yourname.expensetracker.service.debug.MigrationResult
+import com.yourname.expensetracker.util.CsvExpenseImporter
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.yourname.expensetracker.domain.util.TimeProvider
+import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
 class DebugViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: NotificationRepository,
     private val reviewQueueRepository: com.yourname.expensetracker.data.repository.ReviewQueueRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
@@ -36,8 +45,21 @@ class DebugViewModel @Inject constructor(
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiEngagementRepository: AiEngagementRepository,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
+    private val databaseBackupRepository: com.yourname.expensetracker.domain.backup.DatabaseBackupRepository,
+    val csvExpenseImporter: CsvExpenseImporter,
+    private val legacyDataMigrationService: LegacyDataMigrationService
 ) : ViewModel() {
+
+    private data class ClearAllUndoSnapshot(
+        val notificationsSnapshot: NotificationRepository.DebugNotificationsSnapshot,
+        val expenseSnapshot: com.yourname.expensetracker.data.repository.ExpenseRepository.DebugExpenseSnapshot
+    )
+
+    private var clearAllUndoSnapshot: ClearAllUndoSnapshot? = null
+    private var expenseUndoSnapshot: com.yourname.expensetracker.data.repository.ExpenseRepository.DebugExpenseSnapshot? = null
+    private var budgetUndoSnapshot: com.yourname.expensetracker.data.repository.BudgetRepository.DebugBudgetSnapshot? = null
+    private var sourceStatsUndoSnapshot: List<SourceStats>? = null
 
     private val _aiRuntimeStatuses = MutableStateFlow<Map<AiCapability, OnDeviceModelStatus>>(emptyMap())
     val aiRuntimeStatuses: StateFlow<Map<AiCapability, OnDeviceModelStatus>> = _aiRuntimeStatuses
@@ -107,10 +129,36 @@ class DebugViewModel @Inject constructor(
         _selectedPackageFilter.value = packageName
     }
     
+    @Suppress("DEPRECATION_ERROR")
     fun clearAll() {
         viewModelScope.launch {
             repository.deleteAll()
         }
+    }
+
+    @Suppress("DEPRECATION_ERROR")
+    suspend fun clearAllWithUndoSupport(): Boolean {
+        val notificationsSnapshot = repository.createDebugSnapshot()
+        val expensesSnapshot = expenseRepository.createDebugSnapshot()
+        clearAllUndoSnapshot = ClearAllUndoSnapshot(
+            notificationsSnapshot = notificationsSnapshot,
+            expenseSnapshot = expensesSnapshot
+        )
+        repository.deleteAll()
+        return notificationsSnapshot.notifications.isNotEmpty() ||
+            notificationsSnapshot.sourceStats.isNotEmpty() ||
+            expensesSnapshot.expenses.isNotEmpty()
+    }
+
+    suspend fun undoClearAll(): Boolean {
+        // TODO P2-CURRENT-016: These two restores are not in a single transaction.
+        // If the second fails, notifications are restored but expenses are not,
+        // leaving an inconsistent state. Wrap in database.withTransaction.
+        val snapshot = clearAllUndoSnapshot ?: return false
+        repository.restoreDebugSnapshot(snapshot.notificationsSnapshot)
+        expenseRepository.restoreDebugSnapshot(snapshot.expenseSnapshot)
+        clearAllUndoSnapshot = null
+        return true
     }
 
     fun resetExpenses() {
@@ -119,10 +167,41 @@ class DebugViewModel @Inject constructor(
         }
     }
 
+    suspend fun resetExpensesWithUndoSupport(): Boolean {
+        val snapshot = expenseRepository.createDebugSnapshot()
+        expenseUndoSnapshot = snapshot
+        expenseRepository.deleteAllExpenses()
+        return snapshot.expenses.isNotEmpty()
+    }
+
+    suspend fun undoResetExpenses(): Boolean {
+        val snapshot = expenseUndoSnapshot ?: return false
+        expenseRepository.restoreDebugSnapshot(snapshot)
+        expenseUndoSnapshot = null
+        return true
+    }
+
     fun resetBudgets() {
         viewModelScope.launch {
             budgetRepository.deleteAll()
         }
+    }
+
+    suspend fun resetBudgetsWithUndoSupport(): Boolean {
+        val snapshot = budgetRepository.createDebugSnapshot()
+        budgetUndoSnapshot = snapshot
+        budgetRepository.deleteAll()
+        return snapshot.budgets.isNotEmpty()
+    }
+
+    suspend fun undoResetBudgets(): Boolean {
+        val snapshot = budgetUndoSnapshot ?: return false
+        val restored = budgetRepository.restoreDebugSnapshot(snapshot)
+        if (restored is com.yourname.expensetracker.domain.model.Result.Success) {
+            budgetUndoSnapshot = null
+            return true
+        }
+        return false
     }
     
     fun markAsRelevant(id: Long, isRelevant: Boolean) {
@@ -153,6 +232,20 @@ class DebugViewModel @Inject constructor(
         viewModelScope.launch {
             repository.resetSourceStats()
         }
+    }
+
+    suspend fun resetSourceStatsWithUndoSupport(): Boolean {
+        val snapshot = repository.getSourceStatsSnapshot()
+        sourceStatsUndoSnapshot = snapshot
+        repository.resetSourceStats()
+        return snapshot.isNotEmpty()
+    }
+
+    suspend fun undoResetSourceStats(): Boolean {
+        val snapshot = sourceStatsUndoSnapshot ?: return false
+        repository.restoreSourceStatsSnapshot(snapshot)
+        sourceStatsUndoSnapshot = null
+        return true
     }
 
     private val _isSimulating = MutableStateFlow(false)
@@ -192,8 +285,8 @@ class DebugViewModel @Inject constructor(
             val fakeNotification = RawNotification(
                 packageName = "com.test.bank",
                 appName = "Test Bank",
-                title = "Purchase Alert",
-                text = "You paid €12.50 at Amazon",
+                title = context.getString(R.string.debug_purchase_alert_title),
+                text = context.getString(R.string.debug_purchase_message_format, 12.50, "Amazon"),
                 timestamp = timeProvider.now(),
                 capturedAt = timeProvider.now()
             )
@@ -215,7 +308,7 @@ class DebugViewModel @Inject constructor(
             val fakeNotification = RawNotification(
                 packageName = template.first,
                 appName = template.second,
-                title = "Deposit Received",
+                title = context.getString(R.string.debug_deposit_received_title),
                 text = template.third,
                 timestamp = timeProvider.now(),
                 capturedAt = timeProvider.now()
@@ -246,6 +339,220 @@ class DebugViewModel @Inject constructor(
                 now = _aiRuntimeMeta.value.lastRefreshedAt
             )
             _aiRuntimeEvents.value = aiRuntimeDiagnostics.getRecentEvents()
+        }
+    }
+    
+    // Database Backup Operations
+    private val _databaseExportResult = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseExportResult?>(null)
+    val databaseExportResult: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseExportResult?> = _databaseExportResult
+    
+    private val _databaseImportResult = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?>(null)
+    val databaseImportResult: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?> = _databaseImportResult
+
+    // Legacy DB Migration
+    private val _migrationResult = MutableStateFlow<MigrationResult?>(null)
+    val migrationResult: StateFlow<MigrationResult?> = _migrationResult
+
+    // Emits after successful import so UI can force refresh/reload if needed
+    private val _databaseImportRefreshSignal = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val databaseImportRefreshSignal: SharedFlow<Long> = _databaseImportRefreshSignal
+    
+    private val _databaseStats = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?>(null)
+    val databaseStats: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?> = _databaseStats
+
+    // BAK-10: Operation result messages for debug screen feedback
+    private val _databaseOperationResult = MutableStateFlow<String?>(null)
+    val databaseOperationResult: StateFlow<String?> = _databaseOperationResult.asStateFlow()
+    
+    fun loadDatabaseStats() {
+        viewModelScope.launch {
+            _databaseStats.value = databaseBackupRepository.getDatabaseStats()
+        }
+    }
+    
+    fun exportDatabase() {
+        viewModelScope.launch {
+            _databaseExportResult.value = com.yourname.expensetracker.domain.backup.DatabaseExportResult.Loading
+            val result = databaseBackupRepository.exportDatabase()
+            _databaseExportResult.value = if (result.isSuccess) {
+                val file = result.getOrNull()
+                if (file != null) {
+                    val warning = databaseBackupRepository.getLegacyPublicBackupNotice()
+                    com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success(
+                        filePath = file.absolutePath,
+                        warning = warning
+                    )
+                } else {
+                    com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error("Export succeeded but file not found")
+                }
+            } else {
+                com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error(result.exceptionOrNull()?.message ?: "Unknown error")
+            }
+        }
+    }
+    
+    fun importDatabase(uri: android.net.Uri, context: android.content.Context) {
+        viewModelScope.launch {
+            _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Loading
+            
+            // Preflight validation
+            val contentResolver = context.contentResolver
+            
+            // Check if we can open the file
+            val canOpen = try {
+                contentResolver.openInputStream(uri)?.use { it.read() }
+                true
+            } catch (e: Exception) {
+                false
+            }
+            
+            if (!canOpen) {
+                _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    "Cannot read selected file. Please choose a valid database file."
+                )
+                return@launch
+            }
+            
+            // Check file size
+            val fileSize = try {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                        if (sizeIndex >= 0) cursor.getLong(sizeIndex) else -1L
+                    } else -1L
+                } ?: -1L
+            } catch (e: Exception) {
+                -1L
+            }
+            
+            if (fileSize == 0L) {
+                _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    "Selected file is empty."
+                )
+                return@launch
+            }
+            
+            // Create temp file from URI
+            val tempFile = withContext(Dispatchers.IO) {
+                try {
+                    val temp = java.io.File.createTempFile("import_", ".db", context.cacheDir)
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        temp.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    temp
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            
+            if (tempFile == null) {
+                _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    "Failed to prepare file for import."
+                )
+                return@launch
+            }
+            
+            // Perform import
+            val result = databaseBackupRepository.importDatabase(tempFile)
+            
+            // Clean up temp file
+            tempFile.delete()
+            
+            _databaseImportResult.value = if (result.isSuccess) {
+                val summary = result.getOrNull()
+                val needsRestart = summary?.transactionCount == -1
+                when {
+                    needsRestart -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart(
+                        summary ?: com.yourname.expensetracker.domain.backup.DatabaseImportSummary(0, 0, 0, 0, 0)
+                    )
+                    summary != null -> {
+                        // Trigger immediate UI refresh hooks after successful import
+                        loadDatabaseStats()
+                        _databaseImportRefreshSignal.tryEmit(System.currentTimeMillis())
+                        com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success(summary)
+                    }
+                    else -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error("Import succeeded but summary unavailable")
+                }
+            } else {
+                val errorMsg = result.exceptionOrNull()?.message ?: "Unknown error"
+                com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    if (errorMsg.contains("not found", ignoreCase = true)) {
+                        "Import failed: Database file not accessible."
+                    } else {
+                        errorMsg
+                    }
+                )
+            }
+        }
+    }
+    
+    /**
+     * Reset database to empty state.
+     *
+     * ## BAK-10: Reset database requires typed confirmation
+     * Callers MUST obtain explicit typed confirmation from the user before
+     * invoking this method. The user must type the exact word "DELETE"
+     * (case-insensitive). This ViewModel validates the confirmation before
+     * delegating to the repository.
+     *
+     * @param confirmationString The string typed by the user to confirm deletion.
+     *   Must equal "DELETE" (case-insensitive) or the reset is rejected.
+     * @return true if the reset was initiated, false if confirmation failed.
+     */
+    fun resetDatabase(confirmationString: String = ""): Boolean {
+        // BAK-10: Require typed "DELETE" confirmation before proceeding
+        if (!confirmationString.equals("DELETE", ignoreCase = true)) {
+            _databaseOperationResult.value = "Reset cancelled: you must type DELETE to confirm."
+            return false
+        }
+        viewModelScope.launch {
+            databaseBackupRepository.resetDatabase()
+        }
+        return true
+    }
+    
+    fun clearExportResult() {
+        _databaseExportResult.value = null
+    }
+    
+    fun clearImportResult() {
+        _databaseImportResult.value = null
+    }
+
+    fun clearMigrationResult() {
+        _migrationResult.value = null
+    }
+
+    fun migrateLegacyDatabase(uri: Uri) {
+        viewModelScope.launch {
+            _migrationResult.value = null
+            val tempFile: File? = withContext(Dispatchers.IO) {
+                try {
+                    val temp = File.createTempFile("legacy_migration_", ".db", context.cacheDir)
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        temp.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    temp
+                } catch (e: Exception) {
+                    null
+                }
+            }
+
+            if (tempFile == null) {
+                return@launch
+            }
+
+            val result = withContext(Dispatchers.IO) {
+                legacyDataMigrationService.migrateFromBackup(tempFile.absolutePath)
+            }
+
+            tempFile.delete()
+
+            _migrationResult.value = result
         }
     }
 }

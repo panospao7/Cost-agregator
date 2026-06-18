@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.parser.GenericTransactionParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import io.mockk.mockk
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import org.junit.Assert.assertEquals
@@ -28,11 +29,12 @@ class CurrencyNormalizerConsistencyTest {
         currencyNormalizer = CurrencyNormalizer()
         val merchantCleaner = MerchantCleaner()
         revolutParser = RevolutParser(currencyNormalizer, merchantCleaner)
-        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner)
+        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR")
         genericParser = GenericTransactionParser(
             currencyNormalizer,
             merchantCleaner,
-            TransferDirectionDetector()
+            TransferDirectionDetector(),
+            timeProvider = mockk()
         )
     }
 
@@ -61,6 +63,14 @@ class CurrencyNormalizerConsistencyTest {
         val variants = listOf("£", "GBP", "POUND", "gbp")
         for (v in variants) {
             assertEquals("Variant '$v' must normalize to GBP", "GBP", currencyNormalizer.normalize(v))
+        }
+    }
+
+    @Test
+    fun `consistency - same INR variants normalize to INR`() {
+        val variants = listOf("₹", "INR", "RUPEE", "RUPEES", "inr")
+        for (v in variants) {
+            assertEquals("Variant '$v' must normalize to INR", "INR", currencyNormalizer.normalize(v))
         }
     }
 

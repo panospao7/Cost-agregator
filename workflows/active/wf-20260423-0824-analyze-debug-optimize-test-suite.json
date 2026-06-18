@@ -1,0 +1,74 @@
+{
+  "workflow_id": "wf-20260423-0824-analyze-debug-optimize-test-suite",
+  "title": "Analyze, Debug and Optimize the Test Suite",
+  "mode": "standard",
+  "status": "active",
+  "current_phase": "planning_complete",
+  "timestamps": {
+    "created_at": "2026-04-23T08:24:00Z",
+    "updated_at": "2026-04-23T08:45:00Z"
+  },
+  "phases": [
+    {
+      "name": "scouting",
+      "status": "completed",
+      "artifacts": [
+        "docsplans/test-suite-scout-report.md",
+        "docsplans/test-suite-file-inventory.md",
+        "docsplans/test-suite-quality-audit.md"
+      ]
+    },
+    {
+      "name": "planning",
+      "status": "completed",
+      "artifacts": ["docsplans/test-suite-batch-plan.md"]
+    },
+    {
+      "name": "implementation",
+      "status": "pending"
+    },
+    {
+      "name": "review",
+      "status": "pending"
+    },
+    {
+      "name": "validation",
+      "status": "pending"
+    }
+  ],
+  "tasks": [
+    {"batch": "B01", "name": "Infrastructure & Build Config", "priority": "P0", "status": "pending"},
+    {"batch": "B02", "name": "Quick Wins — Fix @Ignore'd Assertion Drift", "priority": "P0", "status": "pending"},
+    {"batch": "B03", "name": "Data / Repository", "priority": "P1", "status": "pending"},
+    {"batch": "B04", "name": "Data / AI Providers + Database + Other", "priority": "P1", "status": "pending"},
+    {"batch": "B05", "name": "Data / Email + Location + Security + Analytics", "priority": "P1", "status": "pending"},
+    {"batch": "B06", "name": "Domain / Analytics + Budget + Categorization + Currency", "priority": "P2", "status": "pending"},
+    {"batch": "B07", "name": "Domain / AI UseCases + Parser + Receipt", "priority": "P2", "status": "pending"},
+    {"batch": "B08", "name": "Domain / Health + Intelligence + Logic + Forecasting", "priority": "P2", "status": "pending"},
+    {"batch": "B09", "name": "Domain (cont.) + UI Screens (part 1)", "priority": "P2", "status": "pending"},
+    {"batch": "B10", "name": "UI Screens (part 2) + Service + E2E + Consistency", "priority": "P2", "status": "pending"},
+    {"batch": "B11", "name": "Consistency + Verification + Integration + Instrumented", "priority": "P3", "status": "pending"},
+    {"batch": "B12", "name": "Instrumented DAOs (cont.)", "priority": "P3", "status": "pending"},
+    {"batch": "B13", "name": "Marginal Tests — Domain Stress & Utility", "priority": "P4", "status": "pending"},
+    {"batch": "B14", "name": "Marginal Tests — UI Stress + B02 Re-verify", "priority": "P4", "status": "pending"},
+    {"batch": "B15", "name": "Dead / Trivial Cleanup (~50 files)", "priority": "P0", "status": "pending"},
+    {"batch": "B16", "name": "@Ignore Re-verification & CI Integration", "priority": "P0", "status": "pending"}
+  ],
+  "metadata": {
+    "feature_description": "Analyze, debug and optimize the test suite",
+    "review_gate": "required",
+    "test_gate": "required",
+    "security_gate": "optional",
+    "scout_report": "docsplans/test-suite-scout-report.md",
+    "file_inventory": "docsplans/test-suite-file-inventory.md",
+    "quality_audit": "docsplans/test-suite-quality-audit.md",
+    "batch_plan": "docsplans/test-suite-batch-plan.md",
+    "test_file_count": 421,
+    "test_method_count": 4347,
+    "meaningful_files": 190,
+    "marginal_files": 180,
+    "dead_trivial_files": 50,
+    "infrastructure_files": 15,
+    "total_batches": 16
+  }
+}

@@ -10,8 +10,7 @@ import javax.inject.Singleton
 
 /**
  * Hilt module for binding the TimeProvider interface.
- * Separate from AppModule because @Binds must be in an abstract class,
- * while AppModule uses @Provides in an object.
+ * Uses an abstract module because @Binds methods must be declared on abstract types.
  */
 @Module
 @InstallIn(SingletonComponent::class)
