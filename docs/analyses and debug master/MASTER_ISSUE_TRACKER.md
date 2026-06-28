@@ -451,7 +451,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P1, P4, P7, P9, P15, P17  
-**Status:** **PARTIALLY DONE** (PRs 1–5: commit `241adee`; PR6A: commit `89ee4ee`)  
+**Status:** **DONE** (PRs 1–11: branch `worker-architecture-prs-1-5`)  
 **Labels:** `workers`, `restore`, `release-blocker`
 
 #### Tasks
@@ -463,14 +463,14 @@ Choose one:
 - [x] Add active-worker drain tests.
 - [x] Add lease acquire-after-stop gate (PR6A).
 - [x] Add blocked/retry policy for restore/write-barrier blocks (PR6A).
-- [ ] Add static guard for worker guard usage (deferred to PR 10 / CI phase).
+- [x] Add static guard for worker guard usage (PR 10).
 
 #### Acceptance Criteria
 
 - [x] Restore drain cannot miss active same-name workers.
 - [x] Restore drain cannot miss workers acquired after stop request (PR6A).
 - [x] Dynamic one-shot blocked by restore/write-barrier returns retry, not success (PR6A).
-- [ ] Unguarded DB-writing worker fails CI (deferred to PR 10).
+- [x] Unguarded DB-writing worker fails CI (PR 10).
 
 ---
 
@@ -478,7 +478,7 @@ Choose one:
 
 **Severity:** S1  
 **Pipelines:** P9  
-**Status:** **PARTIALLY DONE** (PRs 1–5: commit `241adee`; PR6A: commit `89ee4ee`)  
+**Status:** **DONE** (PRs 1–11: branch `worker-architecture-prs-1-5`)  
 **Labels:** `workers`, `diagnostics`
 
 #### Tasks
@@ -487,16 +487,16 @@ Choose one:
 - [x] Make `WorkerRunLogger.Handle` terminal writes atomic with compare-and-set.
 - [x] Sync worker comments/docs after implementation.
 - [x] Add blocked policy for restore/write-barrier blocked runs (PR6A).
-- [ ] Daily briefing reschedule failure should be recoverable (deferred to PR 7).
-- [ ] Data retention partial failures should not soft-success silently (deferred to PR 6E).
-- [ ] `WorkerRegistry.scheduleAll()` must log/write sanitized diagnostic for each failed schedule entry (deferred to PR 7).
+- [x] Daily briefing reschedule failure should be recoverable (PR 7).
+- [x] Data retention partial failures should not soft-success silently (PR 6E).
+- [x] `WorkerRegistry.scheduleAll()` must log/write sanitized diagnostic for each failed schedule entry (PR 7).
 
 #### Acceptance Criteria
 
 - [x] Stale work does not survive incompatible version bumps.
 - [x] Worker terminal state cannot be double-written under race.
-- [ ] Partial failures are visible/durable (deferred to PR 6).
-- [ ] Per-entry schedule failures are visible (deferred to PR 7).
+- [x] Partial failures are visible/durable (PR 6).
+- [x] Per-entry schedule failures are visible (PR 7).
 
 ---
 

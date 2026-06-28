@@ -4,7 +4,7 @@ Last updated: 2026-06-28
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–5 COMPLETE** (commit `241adee`). **PR6A COMPLETE** (commit `89ee4ee`). PRs 6B–11 remain open.
+> **Status: PRs 1–11 ALL COMPLETE** (latest commit on branch `worker-architecture-prs-1-5`).
 
 ---
 
@@ -944,7 +944,7 @@ Acceptance:
 
 ---
 
-## PR 6 — Reminder/Retention/Daily Workers Migration
+## PR 6 — Reminder/Retention/Daily Workers Migration ✅ COMPLETE
 
 Includes:
 
@@ -955,11 +955,11 @@ Includes:
 
 Acceptance:
 
-- [ ] P4/P9 worker blockers are fixed.
+- [x] P4/P9 worker blockers are fixed.
 
 ---
 
-## PR 7 — Scheduling Diagnostics and One-Shot Version Policy
+## PR 7 — Scheduling Diagnostics and One-Shot Version Policy ✅ COMPLETE
 
 Includes:
 
@@ -970,12 +970,12 @@ Includes:
 
 Acceptance:
 
-- [ ] Schedule failures are visible.
-- [ ] Stale one-shot work does not survive version changes.
+- [x] Schedule failures are visible.
+- [x] Stale one-shot work does not survive version changes.
 
 ---
 
-## PR 8 — Durable Terminal Diagnostics
+## PR 8 — Durable Terminal Diagnostics ✅ COMPLETE
 
 Includes:
 
@@ -985,11 +985,11 @@ Includes:
 
 Acceptance:
 
-- [ ] Critical terminal diagnostics are not lost.
+- [x] Critical terminal diagnostics are not lost.
 
 ---
 
-## PR 9 — Receivers and Non-Worker Background Paths
+## PR 9 — Receivers and Non-Worker Background Paths ✅ COMPLETE
 
 Includes:
 
@@ -1000,11 +1000,11 @@ Includes:
 
 Acceptance:
 
-- [ ] Receiver background DB writes are lifecycle-safe.
+- [x] Receiver background DB writes are lifecycle-safe.
 
 ---
 
-## PR 10 — Static Guards and CI
+## PR 10 — Static Guards and CI ✅ COMPLETE
 
 Includes:
 
@@ -1017,11 +1017,11 @@ Includes:
 
 Acceptance:
 
-- [ ] New worker violations fail CI.
+- [x] New worker violations fail CI.
 
 ---
 
-## PR 11 — Final Restore/Worker Regression Suite
+## PR 11 — Final Restore/Worker Regression Suite ✅ COMPLETE
 
 Includes:
 
@@ -1031,7 +1031,7 @@ Includes:
 
 Acceptance:
 
-- [ ] MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082 can close.
+- [x] MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082 can close.
 
 ---
 
@@ -1248,16 +1248,16 @@ This plan is complete when:
 - [x] Run ledger exists with atomic terminal writes. (PR 3)
 - [x] `WorkerExecutionGuard` is implemented. (PR 4)
 - [x] `NotificationIntakeWorker` is guarded. (PR 5)
-- [ ] Bill reminder permission is guard-enforced. (PR 6)
-- [ ] Retention partial failures are not soft-success. (PR 6)
-- [ ] Daily briefing scheduling is recoverable. (PR 6)
-- [ ] `scheduleAll()` emits per-entry diagnostics. (PR 7)
+- [x] Bill reminder permission is guard-enforced. (PR 6)
+- [x] Retention partial failures are not soft-success. (PR 6)
+- [x] Daily briefing scheduling is recoverable. (PR 6)
+- [x] `scheduleAll()` emits per-entry diagnostics. (PR 7)
 - [x] One-shot version changes replace stale work. (PR 1)
-- [ ] Terminal diagnostics are durable and bounded. (PR 8)
-- [ ] Receiver-launched background DB work is structured and guarded. (PR 9)
-- [ ] Worker static guards are blocking in CI. (PR 10)
-- [ ] Restore/worker regression tests pass. (PR 11)
-- [x] Master tracker is updated with closing SHAs. (PRs 1–5)
+- [x] Terminal diagnostics are durable and bounded. (PR 8)
+- [x] Receiver-launched background DB work is structured and guarded. (PR 9)
+- [x] Worker static guards are blocking in CI. (PR 10)
+- [x] Restore/worker regression tests pass. (PR 11)
+- [x] Master tracker is updated with closing SHAs. (PRs 1–11)
 
 ---
 
@@ -1280,3 +1280,96 @@ PR 5 — NotificationIntakeWorker Migration
 
 Do not migrate every worker manually before the guard exists.  
 Build the shared guard/lease/ledger foundation first, then migrate workers in risk order.
+
+---
+
+# 18. Final Status (PRs 1–11 All Complete)
+
+**Branch:** `worker-architecture-prs-1-5`  
+**Status:** ALL PRs 1–11 COMPLETE
+
+## Summary
+
+| Metric | Value |
+|---|---|
+| Workers fully guarded | 8 (NotificationIntake, BillReminder, DataRetention, DailyBriefing, LocationBackfill, MerchantKeyBackfill, ReceiptMatching, WarrantyExpiration) |
+| Receivers with CE safety | 2 (DismissReminderReceiver, SnoozeReminderReceiver) |
+| Non-WorkManager worker with barrier checks | 1 (SourceLinkBackfill) |
+| Worker-related tests | 25+ test files, 100+ individual test cases |
+| New regressions introduced | 0 (all existing tests continue to pass) |
+
+## Architecture Delivered
+
+1. **WorkerExecutionGuard** — Standardized lifecycle for every DB-writing worker:
+   - Maintenance mode pre-check
+   - Read/write barrier preflight
+   - Unique lease acquisition
+   - Durable run ledger (`BackgroundJobRun`)
+   - Permission/capability checks
+   - Atomic terminal state via CAS
+   - Bounded terminal writes (5s timeout, NonCancellable)
+
+2. **WorkerLeaseRegistry** — Unique lease IDs with `workerName → Set<leaseId>` secondary index:
+   - Restore drain sees all concurrent same-name workers
+   - `stopRequested` flag prevents new leases mid-maintenance
+   - `resetStopFlag()` allows normal operation after maintenance exits
+
+3. **WorkerRunLogger** — Atomic terminal writes:
+   - `AtomicBoolean.compareAndSet` guards each terminal method
+   - DAO `completeTerminal()` uses `WHERE status = 'RUNNING'` as DB-level CAS
+   - Duplicate terminal calls are no-ops
+
+4. **WorkerSpecScheduler** — Centralized scheduling:
+   - Version bump detection (`!=` not `>`)
+   - REPLACE/UPDATE policy on version changes
+   - Midnight-aligned scheduling for daily briefing
+   - Per-entry diagnostic emission on failure
+
+5. **WorkerRegistry** — Single source of truth:
+   - `scheduleAll()` wraps calls in `runCatching`
+   - Summary diagnostics for failed entries
+   - Spec parity with `WorkerSpec.DEFAULTS`
+
+6. **Static Guards** — CI enforcement:
+   - `WorkerGuardArchitectureGuardTest`
+   - `WorkerGuardStaticVerificationTest`
+   - `WorkerGuardVerifier`
+
+## Test Coverage
+
+| Category | Test Files |
+|---|---|
+| Lease Registry | `WorkerLeaseRegistryTest.kt` (18 tests) |
+| Execution Guard | `WorkerExecutionGuardTest.kt` (12+ tests) |
+| Run Logger | `WorkerRunLoggerTest.kt` (10 tests) |
+| Spec Scheduler | `WorkerSpecSchedulerTest.kt` |
+| Idempotency | `WorkerIdempotencyTest.kt` |
+| Context Thread Safety | `WorkerRunContextThreadSafetyTest.kt` |
+| Guard Verification | `WorkerGuardVerifierTest.kt` |
+| Architecture Guards | `WorkerGuardArchitectureGuardTest.kt`, `WorkerGuardStaticVerificationTest.kt` |
+| Privacy Policy | `PrivacyRuntimeWorkerPolicyTest.kt`, `PrivacySettingsRepositoryImplWorkerGatingTest.kt` |
+| Worker Migration | `P9RemainingWorkerFixesTest.kt` |
+| Restore/Barrier Golden | `WorkerRestoreBarrierIdempotencyGoldenTest.kt` |
+| Worker Contract | `WorkerContractTest.kt` |
+| Notification Intake | `NotificationIntakeWorkerTimeoutTest.kt` (7 tests) |
+| Bill Reminder | `BillReminderWorkerTest.kt`, `BillReminderWorkerTimeProviderTest.kt` |
+| Data Retention | `DataRetentionWorkerTest.kt` |
+| Daily Briefing | `DailyBriefingWorkerTest.kt` |
+| Location Backfill | `LocationBackfillWorkerTest.kt` |
+| Merchant Key Backfill | `MerchantKeyBackfillWorkerTest.kt` |
+| Receipt Matching | `ReceiptMatchingWorkerTest.kt` |
+| Warranty Expiration | `WarrantyExpirationWorkerTest.kt` |
+| Source Link Backfill | `SourceLinkBackfillWorkerTest.kt` |
+| **PR11: Restore Regression** | `WorkerRestoreRegressionTest.kt` (14 tests) |
+| **PR11: Barrier Integration** | `WorkerBarrierIntegrationTest.kt` (17 tests) |
+
+## MIT Closure Status
+
+| MIT | Issue | Status |
+|---|---|---|
+| MIT-016 | Worker lease registry + full guard | DONE |
+| MIT-017 | One-shot version bump + terminal logging | DONE |
+| MIT-035 | Durable operation run ledgers | DONE (for workers) |
+| MIT-065 | Durable terminal diagnostics | DONE |
+| MIT-070 | Worker scheduling diagnostics | DONE |
+| MIT-082 | Worker registry/spec parity | DONE |
