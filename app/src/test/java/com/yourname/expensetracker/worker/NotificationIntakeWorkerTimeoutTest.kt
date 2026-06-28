@@ -11,8 +11,11 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
+import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
@@ -293,11 +296,301 @@ class NotificationIntakeWorkerTimeoutTest {
         }
     }
 
+    @Test
+    fun `privacy_denied_does_not_decrypt`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val diagnosticSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
+        val bgJobRunDao = mockk<BackgroundJobRunDao>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockk<WorkerRunHandle>(relaxed = true)
+        every { permissionChecker.areNotificationsEnabled() } returns true
+
+        // Privacy gate denies
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE, any()) } returns PrivacyDecision.Denied("test")
+
+        val executionGuard = WorkerExecutionGuard(
+            writeBarrier, readBarrier, restoreMode, runLogger,
+            privacyGate, leaseRegistry, diagnosticSink, bgJobRunDao,
+            permissionChecker, timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard
+        )
+
+        val result = worker.doWork()
+
+        assertEquals("Privacy denied should return success", WorkResult.success(), result)
+        coVerify(exactly = 0) { crypto.decrypt(any(), any(), any()) }
+    }
+
+    @Test
+    fun `privacy_fail_closed_does_not_decrypt`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val diagnosticSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
+        val bgJobRunDao = mockk<BackgroundJobRunDao>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockk<WorkerRunHandle>(relaxed = true)
+        every { permissionChecker.areNotificationsEnabled() } returns true
+
+        // Privacy gate fails closed
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE, any()) } returns PrivacyDecision.FailClosed("test")
+
+        val executionGuard = WorkerExecutionGuard(
+            writeBarrier, readBarrier, restoreMode, runLogger,
+            privacyGate, leaseRegistry, diagnosticSink, bgJobRunDao,
+            permissionChecker, timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard
+        )
+
+        val result = worker.doWork()
+
+        assertEquals("Privacy fail-closed should return success", WorkResult.success(), result)
+        coVerify(exactly = 0) { crypto.decrypt(any(), any(), any()) }
+    }
+
+    @Test
+    fun `privacy_denied_marks_intake_privacy_denied`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val diagnosticSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
+        val bgJobRunDao = mockk<BackgroundJobRunDao>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockk<WorkerRunHandle>(relaxed = true)
+        every { permissionChecker.areNotificationsEnabled() } returns true
+
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE, any()) } returns PrivacyDecision.Denied("test")
+
+        val executionGuard = WorkerExecutionGuard(
+            writeBarrier, readBarrier, restoreMode, runLogger,
+            privacyGate, leaseRegistry, diagnosticSink, bgJobRunDao,
+            permissionChecker, timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        val intakeRow = intakeEntity(
+            id = intakeId, packageName = "com.test.app",
+            attempts = 1, maxAttempts = 5, now = now
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getById(intakeId) } returns intakeRow
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard
+        )
+
+        val result = worker.doWork()
+
+        assertEquals("Privacy denied should return success", WorkResult.success(), result)
+        coVerify(exactly = 1) {
+            intakeDao.markTerminal(
+                id = intakeId,
+                status = NotificationIntakeStatus.PRIVACY_DENIED.name,
+                rawId = null, expenseId = null, reviewId = null,
+                finalOutcome = "PRIVACY_DENIED",
+                nowMs = now
+            )
+        }
+    }
+
+    @Test
+    fun `privacy_denied_purges_payload`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val diagnosticSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
+        val bgJobRunDao = mockk<BackgroundJobRunDao>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockk<WorkerRunHandle>(relaxed = true)
+        every { permissionChecker.areNotificationsEnabled() } returns true
+
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE, any()) } returns PrivacyDecision.Denied("test")
+
+        val executionGuard = WorkerExecutionGuard(
+            writeBarrier, readBarrier, restoreMode, runLogger,
+            privacyGate, leaseRegistry, diagnosticSink, bgJobRunDao,
+            permissionChecker, timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        val intakeRow = intakeEntity(
+            id = intakeId, packageName = "com.test.app",
+            attempts = 1, maxAttempts = 5, now = now,
+            payloadMode = "TRANSIENT"
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getById(intakeId) } returns intakeRow
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard
+        )
+
+        val result = worker.doWork()
+
+        assertEquals("Privacy denied should return success", WorkResult.success(), result)
+        coVerify(exactly = 1) { intakeDao.purgeRawPayload(intakeId, now) }
+        coVerify(exactly = 1) { intakeDao.purgeTransientPayload(intakeId, now) }
+    }
+
+    @Test
+    fun `checkpoint_stop_before_decrypt_prevents_decrypt`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val diagnosticSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
+        val bgJobRunDao = mockk<BackgroundJobRunDao>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockk<WorkerRunHandle>(relaxed = true)
+        every { permissionChecker.areNotificationsEnabled() } returns true
+
+        // Privacy gate allows (so the block executes)
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE, any()) } returns PrivacyDecision.Allowed
+
+        val executionGuard = WorkerExecutionGuard(
+            writeBarrier, readBarrier, restoreMode, runLogger,
+            privacyGate, leaseRegistry, diagnosticSink, bgJobRunDao,
+            permissionChecker, timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        val intakeRow = intakeEntity(
+            id = intakeId, packageName = "com.test.app",
+            attempts = 1, maxAttempts = 5, now = now
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getById(intakeId) } returns intakeRow
+        coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
+
+        // Make the reload checkpoint (before decrypt) throw to stop the worker
+        every { writeBarrier.checkWritesAllowed("intake:reload") } throws RuntimeException("Blocked")
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard
+        )
+
+        try {
+            worker.doWork()
+            org.junit.Assert.fail("Expected CancellationException")
+        } catch (e: CancellationException) {
+            // Expected — checkpoint threw and propagated as CancellationException
+        }
+
+        coVerify(exactly = 0) { crypto.decrypt(any(), any(), any()) }
+    }
+
     private fun intakeEntity(
         id: Long, packageName: String,
         attempts: Int, maxAttempts: Int, now: Long,
         title: String = "Paid €50.00",
-        text: String = "Card transaction"
+        text: String = "Card transaction",
+        payloadMode: String = "RAW"
     ): NotificationIntakeEntity = NotificationIntakeEntity(
         id = id, packageName = packageName, appName = "Test",
         notificationKeyHash = "hash", postTime = now, capturedAt = now,
@@ -305,7 +598,7 @@ class NotificationIntakeWorkerTimeoutTest {
         dedupeFingerprint = "fp-$id", contentHash = null,
         title = title, text = text, bigText = null, subText = null,
         extrasJson = null,
-        rawStorageMode = "STORE_RAW", payloadMode = "RAW",
+        rawStorageMode = "STORE_RAW", payloadMode = payloadMode,
         rawPayloadPurgedAt = null,
         transientPayloadCiphertext = null, transientPayloadNonce = null,
         transientPayloadVersion = null, transientPayloadPurgedAt = null,

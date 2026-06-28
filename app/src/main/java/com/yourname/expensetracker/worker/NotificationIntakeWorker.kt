@@ -12,10 +12,13 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.service.NotificationFilter
 import dagger.assisted.Assisted
@@ -46,13 +49,17 @@ class NotificationIntakeWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = WORKER_NAME,
                 requiresDatabaseWrite = true,
-                requiredCapabilities = emptyList(),
-                blockedPolicy = BlockedPolicy.RETRY
+                requiredCapabilities = listOf(PrivacyCapability.NOTIFICATION_CAPTURE),
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS[WORKER_NAME]?.version
             )
         ) { ctx ->
             // All DB operations happen INSIDE the guard
             val now = timeProvider.now()
 
+            ctx.checkpoint("intake:getById")
             val intake = intakeDao.getById(intakeId)
             if (intake == null) {
                 Timber.w("IntakeWorker: intake row $intakeId not found")
@@ -61,6 +68,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
 
             // PR 2: Enforce maxAttempts
             if (intake.attempts >= intake.maxAttempts) {
+                ctx.checkpoint("intake:maxAttempts")
                 intakeDao.markFinalFailure(
                     id = intakeId,
                     failureCode = "MAX_ATTEMPTS_EXCEEDED",
@@ -72,6 +80,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
             }
 
             // Claim the row
+            ctx.checkpoint("intake:claim")
             val claimed = intakeDao.claimForProcessing(
                 id = intakeId,
                 nowMs = now,
@@ -82,6 +91,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
             }
 
             // Reload after claim
+            ctx.checkpoint("intake:reload")
             val current = intakeDao.getById(intakeId)
                 ?: return@runGuardedWithContext
 
@@ -116,6 +126,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 processingExtrasJson = payload.extrasJson
             } else {
                 Timber.w("IntakeWorker: no payload available for intakeId=$intakeId")
+                ctx.checkpoint("intake:payloadUnavailable")
                 intakeDao.markTerminal(
                     id = intakeId,
                     status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
@@ -134,6 +145,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     processingText,
                     processingBody
                 )) {
+                ctx.checkpoint("intake:filterRejected")
                 intakeDao.markTerminal(
                     id = intakeId,
                     status = NotificationIntakeStatus.FILTER_REJECTED.name,
@@ -179,6 +191,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
             var terminalMarked = false
             var intentionalFailure = false
             try {
+                ctx.checkpoint("intake:process")
                 val outcome = repository.processAndSave(
                     processingNotification,
                     storageNotification,
@@ -196,6 +209,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     is NotificationPipelineOutcome.Error -> {
                         if (isRetryable(outcome.throwable) && current.attempts + 1 < current.maxAttempts) {
                             val backoff = computeBackoff(current.attempts + 1)
+                            ctx.checkpoint("intake:errorRetryable")
                             intakeDao.markRetryableFailure(
                                 id = intakeId,
                                 nextAttemptAt = now + backoff,
@@ -206,6 +220,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                             throw RetryableWorkerException("RETRYABLE_ERROR")
                         }
                         // Non-retryable or max attempts — mark terminal and signal failure
+                        ctx.checkpoint("intake:errorFinal")
                         intakeDao.markTerminal(
                             id = intakeId,
                             status = NotificationIntakeStatus.FAILED_FINAL.name,
@@ -229,6 +244,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     else -> null
                 }
 
+                ctx.checkpoint("intake:terminal")
                 intakeDao.markTerminal(
                     id = intakeId,
                     status = terminalStatus.name,
@@ -252,6 +268,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 Timber.w(e, "Worker timeout, marking retryable intakeId=$intakeId")
                 if (current.attempts + 1 < current.maxAttempts) {
                     val backoff = computeBackoff(current.attempts + 1)
+                    ctx.checkpoint("intake:timeoutRetryable")
                     intakeDao.markRetryableFailure(
                         id = intakeId,
                         nextAttemptAt = now + backoff,
@@ -261,6 +278,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     )
                     throw RetryableWorkerException("TIMEOUT")
                 } else {
+                    ctx.checkpoint("intake:timeoutFinal")
                     intakeDao.markFinalFailure(
                         id = intakeId,
                         failureCode = "TIMEOUT",
@@ -287,6 +305,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 Timber.e(e, "IntakeWorker: processing failed for intakeId=$intakeId")
                 if (isRetryable(e) && current.attempts + 1 < current.maxAttempts) {
                     val backoff = computeBackoff(current.attempts + 1)
+                    ctx.checkpoint("intake:exceptionRetryable")
                     intakeDao.markRetryableFailure(
                         id = intakeId,
                         nextAttemptAt = now + backoff,
@@ -296,6 +315,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     )
                     throw RetryableWorkerException("WORKER_EXCEPTION")
                 } else {
+                    ctx.checkpoint("intake:exceptionFinal")
                     intakeDao.markFinalFailure(
                         id = intakeId,
                         failureCode = "WORKER_EXCEPTION",
@@ -308,7 +328,35 @@ class NotificationIntakeWorker @AssistedInject constructor(
             }
         }
 
-        return guardResult.toWorkerResult()
+        return if (guardResult is WorkerGuardResult.Skipped &&
+            (guardResult.reason.startsWith("Privacy blocked:") ||
+             guardResult.reason.startsWith("Privacy fail-closed:"))
+        ) {
+            privacyCleanup(intakeId)
+            Result.success()
+        } else {
+            guardResult.toWorkerResult()
+        }
+    }
+
+    private suspend fun privacyCleanup(intakeId: Long) {
+        try {
+            executionGuard.checkpoint("privacyCleanup")
+            val now = timeProvider.now()
+            val intake = intakeDao.getById(intakeId) ?: return
+            intakeDao.markTerminal(
+                id = intakeId,
+                status = NotificationIntakeStatus.PRIVACY_DENIED.name,
+                rawId = null, expenseId = null, reviewId = null,
+                finalOutcome = "PRIVACY_DENIED",
+                nowMs = now
+            )
+            purgePayloadBestEffort(intake, now)
+        } catch (e: CancellationException) {
+            Timber.w(e, "IntakeWorker: privacyCleanup cancelled for intakeId=$intakeId")
+        } catch (e: Exception) {
+            Timber.w(e, "IntakeWorker: privacyCleanup failed for intakeId=$intakeId")
+        }
     }
 
     private suspend fun purgePayloadBestEffort(row: NotificationIntakeEntity, now: Long) {
