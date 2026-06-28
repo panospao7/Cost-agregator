@@ -192,7 +192,7 @@ class WorkerExecutionGuardTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `startRunSafely returns Skipped when write barrier denies before dao insert`() = runTest {
+    fun `startRunSafely returns BlockedRetry when write barrier denies before dao insert`() = runTest {
         // Simulate mode transitioning to non-NORMAL between the top-level check and
         // startRunSafely's internal barrier check (TOCTOU race).
         // First call (top-level check) passes; second call (inside startRunSafely) throws.
@@ -213,14 +213,136 @@ class WorkerExecutionGuardTest {
             WorkerGuardRequest(workerName = "test_worker", requiresNotificationPermission = false)
         ) { blockRan = true }
 
-        assertTrue(result is WorkerGuardResult.Skipped)
+        assertTrue(result is WorkerGuardResult.BlockedRetry)
         assertEquals(
             DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,
-            (result as WorkerGuardResult.Skipped).reason
+            (result as WorkerGuardResult.BlockedRetry).blockedReasonCode
         )
         assertFalse("block must not run when barrier denies at startRunSafely", blockRan)
         // workerRunLogger.start() must never be called if barrier throws first
         coVerify(exactly = 0) { workerRunLogger.start(any()) }
+    }
+
+    // -------------------------------------------------------------------------
+    // PR6A: BlockedPolicy tests
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `notification_intake_restore_block_returns_retry`() = runTest {
+        every { restoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.RESTORE_PREPARING
+        var blockRan = false
+
+        val result = guard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "notification_intake",
+                blockedPolicy = BlockedPolicy.RETRY
+            )
+        ) { blockRan = true }
+
+        assertTrue("restore block should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
+        assertEquals(
+            DiagnosticReasonCode.RESTORE_BLOCKED.name,
+            (result as WorkerGuardResult.BlockedRetry).blockedReasonCode
+        )
+        assertFalse("block must not run during restore", blockRan)
+    }
+
+    @Test
+    fun `notification_intake_write_barrier_block_returns_retry`() = runTest {
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
+            com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("notification_intake"),
+                mode = RestoreMaintenanceMode.Mode.NORMAL
+            )
+        var blockRan = false
+
+        val result = guard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "notification_intake",
+                blockedPolicy = BlockedPolicy.RETRY
+            )
+        ) { blockRan = true }
+
+        assertTrue("write barrier block should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
+        assertEquals(
+            DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,
+            (result as WorkerGuardResult.BlockedRetry).blockedReasonCode
+        )
+        assertFalse("block must not run when write barrier denies", blockRan)
+    }
+
+    @Test
+    fun `periodic_worker_restore_block_can_skip_success_when_policy_says_so`() = runTest {
+        every { restoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+        var blockRan = false
+
+        val result = guard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "ai_daily_briefing",
+                requiresDatabaseWrite = false,
+                blockedPolicy = BlockedPolicy.SKIP_SUCCESS
+            )
+        ) { blockRan = true }
+
+        assertTrue("SKIP_SUCCESS policy should return Skipped", result is WorkerGuardResult.Skipped)
+        assertEquals(
+            DiagnosticReasonCode.RESTORE_BLOCKED.name,
+            (result as WorkerGuardResult.Skipped).reason
+        )
+        assertFalse("block must not run during restore", blockRan)
+    }
+
+    @Test
+    fun `start_run_write_barrier_block_uses_worker_policy`() = runTest {
+        // Test all three policies for startRunSafely barrier denial
+        // Retry
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
+            com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("WorkerRunLogger.start:wrk"),
+                mode = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+            )
+        val resultRetry = guard.runGuarded(
+            WorkerGuardRequest(workerName = "wrk", blockedPolicy = BlockedPolicy.RETRY)
+        ) { }
+        assertTrue(resultRetry is WorkerGuardResult.BlockedRetry)
+
+        // Skip success
+        val resultSkip = guard.runGuarded(
+            WorkerGuardRequest(workerName = "wrk", blockedPolicy = BlockedPolicy.SKIP_SUCCESS)
+        ) { }
+        assertTrue(resultSkip is WorkerGuardResult.Skipped)
+
+        // Fail
+        val resultFail = guard.runGuarded(
+            WorkerGuardRequest(workerName = "wrk", blockedPolicy = BlockedPolicy.FAIL)
+        ) { }
+        assertTrue(resultFail is WorkerGuardResult.Failed)
+    }
+
+    @Test
+    fun `acquire_rejected_by_stop_request_returns_retry_for_dynamic_worker`() = runTest {
+        // Simulate stop requested => lease acquisition should throw LeaseAcquisitionBlockedException
+        // and the guard should map that to BlockedRetry (since default blockedPolicy is RETRY)
+        coEvery { leaseRegistry.acquire(any()) } throws
+            LeaseAcquisitionBlockedException("test_worker", "stop requested")
+        var blockRan = false
+
+        val result = guard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "test_worker",
+                requiresNotificationPermission = false,
+                blockedPolicy = BlockedPolicy.RETRY
+            )
+        ) { blockRan = true }
+
+        assertTrue("acquire blocked should return BlockedRetry", result is WorkerGuardResult.BlockedRetry)
+        assertEquals(
+            DiagnosticReasonCode.STOP_REQUESTED.name,
+            (result as WorkerGuardResult.BlockedRetry).blockedReasonCode
+        )
+        assertFalse("block must not run when acquire is rejected", blockRan)
     }
 
     // -------------------------------------------------------------------------

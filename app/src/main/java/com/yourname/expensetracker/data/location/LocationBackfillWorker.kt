@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -51,7 +52,8 @@ class LocationBackfillWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "location_backfill",
                 requiredCapabilities = listOf(PrivacyCapability.BACKGROUND_LOCATION_BACKFILL),
-                allowDuringBackupExport = false
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.RETRY
             )
         ) { ctx ->
             // Evict stale merchant-location cache entries before geocoding new ones.

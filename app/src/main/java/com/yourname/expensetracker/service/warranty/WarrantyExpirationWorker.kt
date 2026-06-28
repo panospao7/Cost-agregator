@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -72,7 +73,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "warranty_expiration_check",
                 requiresNotificationPermission = true,
-                allowDuringBackupExport = false
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.RETRY
             )
         ) { ctx ->
             try {

@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -67,7 +68,8 @@ class DataRetentionWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "data_retention",
-                allowDuringBackupExport = false
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.RETRY
             )
         ) { ctx ->
             val settings = privacySettingsRepository.getSettings()

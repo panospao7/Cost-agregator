@@ -7,6 +7,7 @@ import androidx.work.*
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -47,7 +48,8 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "merchant_key_backfill",
-                allowDuringBackupExport = false
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.RETRY
             )
         ) { ctx ->
             var totalUpdated = 0

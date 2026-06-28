@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.workers
 
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.yield
 import timber.log.Timber
@@ -12,7 +13,8 @@ import javax.inject.Singleton
 
 @Singleton
 class WorkerLeaseRegistryImpl @Inject constructor(
-    private val writeBarrier: DatabaseWriteBarrier
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val timeProvider: TimeProvider
 ) : WorkerLeaseRegistry, WorkerDrainController {
 
     internal data class LeaseRecord(
@@ -27,27 +29,38 @@ class WorkerLeaseRegistryImpl @Inject constructor(
     // Secondary index: workerName → set of leaseIds
     internal val workerNameIndex = ConcurrentHashMap<String, MutableSet<String>>()
     private val stopRequested = AtomicBoolean(false)
+    private val lock = Any()
 
     // ── WorkerLeaseRegistry ───────────────────────────────────────
 
     override suspend fun acquire(workerName: String): WorkerLease {
-        val leaseId = UUID.randomUUID().toString()
-        val lease = WorkerLeaseImpl(leaseId, workerName)
-        activeLeases[leaseId] = LeaseRecord(leaseId, workerName, lease)
-        workerNameIndex.computeIfAbsent(workerName) { ConcurrentHashMap.newKeySet() }.add(leaseId)
-        Timber.d("WorkerLease acquired: $workerName leaseId=$leaseId (active=${activeLeases.size})")
-        return lease
+        if (stopRequested.get()) {
+            throw LeaseAcquisitionBlockedException(workerName, "stop requested")
+        }
+        synchronized(lock) {
+            if (stopRequested.get()) {
+                throw LeaseAcquisitionBlockedException(workerName, "stop requested")
+            }
+            val leaseId = UUID.randomUUID().toString()
+            val lease = WorkerLeaseImpl(leaseId, workerName)
+            activeLeases[leaseId] = LeaseRecord(leaseId, workerName, lease)
+            workerNameIndex.computeIfAbsent(workerName) { ConcurrentHashMap.newKeySet() }.add(leaseId)
+            Timber.d("WorkerLease acquired: $workerName leaseId=$leaseId (active=${activeLeases.size})")
+            return lease
+        }
     }
 
     override suspend fun requestStopAll(reason: String) {
-        stopRequested.set(true)
+        synchronized(lock) {
+            stopRequested.set(true)
+        }
         Timber.w("WorkerLeaseRegistry: stop requested for all workers — reason=$reason")
     }
 
     override suspend fun awaitNoActiveWorkers(timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
+        val deadline = timeProvider.now() + timeoutMs
         while (activeLeases.isNotEmpty()) {
-            if (System.currentTimeMillis() >= deadline) {
+            if (timeProvider.now() >= deadline) {
                 Timber.w("WorkerLeaseRegistry: drain timed out, ${activeLeases.size} worker(s) still active: ${activeLeases.values.map { it.workerName }}")
                 return false
             }
@@ -93,10 +106,12 @@ class WorkerLeaseRegistryImpl @Inject constructor(
 
         override fun close() {
             if (released.compareAndSet(false, true)) {
-                activeLeases.remove(leaseId)
-                workerNameIndex.computeIfPresent(workerName) { _, ids ->
-                    ids.remove(leaseId)
-                    if (ids.isEmpty()) null else ids
+                synchronized(lock) {
+                    activeLeases.remove(leaseId)
+                    workerNameIndex.computeIfPresent(workerName) { _, ids ->
+                        ids.remove(leaseId)
+                        if (ids.isEmpty()) null else ids
+                    }
                 }
                 Timber.d("WorkerLease released: $workerName leaseId=$leaseId (active=${activeLeases.size})")
             }

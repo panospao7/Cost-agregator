@@ -20,6 +20,10 @@ import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
+enum class BlockedPolicy { RETRY, SKIP_SUCCESS, FAIL }
+enum class PermissionPolicy { SKIP_SUCCESS, RETRY, FAIL }
+enum class PrivacyPolicy { SKIP_SUCCESS, RETRY, FAIL }
+
 data class WorkerGuardRequest(
     val workerName: String,
     val requiredCapabilities: List<PrivacyCapability> = emptyList(),
@@ -32,12 +36,16 @@ data class WorkerGuardRequest(
      */
     val requiresNotificationPermission: Boolean = false,
     val requiresDatabaseWrite: Boolean = true,
-    val allowDuringBackupExport: Boolean = false
+    val allowDuringBackupExport: Boolean = false,
+    val blockedPolicy: BlockedPolicy = BlockedPolicy.RETRY,
+    val notificationPermissionPolicy: PermissionPolicy = PermissionPolicy.SKIP_SUCCESS,
+    val privacyPolicy: PrivacyPolicy = PrivacyPolicy.SKIP_SUCCESS
 )
 
 sealed interface WorkerGuardResult<out T> {
     data class Success<T>(val value: T) : WorkerGuardResult<T>
     data class Skipped(val reason: String) : WorkerGuardResult<Nothing>
+    data class BlockedRetry(val reason: String, val blockedReasonCode: String) : WorkerGuardResult<Nothing>
     data class Retry(val reason: String, val error: Throwable? = null) : WorkerGuardResult<Nothing>
     data class Failed(val reason: String, val error: Throwable? = null) : WorkerGuardResult<Nothing>
 }
@@ -45,9 +53,12 @@ sealed interface WorkerGuardResult<out T> {
 fun <T> WorkerGuardResult<T>.toWorkerResult(): ListenableWorker.Result = when (this) {
     is WorkerGuardResult.Success -> ListenableWorker.Result.success()
     is WorkerGuardResult.Skipped -> ListenableWorker.Result.success()
+    is WorkerGuardResult.BlockedRetry -> ListenableWorker.Result.retry()
     is WorkerGuardResult.Retry -> ListenableWorker.Result.retry()
     is WorkerGuardResult.Failed -> ListenableWorker.Result.failure()
 }
+
+class LeaseAcquisitionBlockedException(val workerName: String, message: String) : RuntimeException(message)
 
 @Singleton
 class WorkerExecutionGuard @Inject constructor(
@@ -82,12 +93,12 @@ class WorkerExecutionGuard @Inject constructor(
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                         reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
-                    return WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
+                    return applyBlockedPolicy(request, DiagnosticReasonCode.RESTORE_BLOCKED.name)
                 }
             } else {
                 diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                     reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
-                return WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
+                return applyBlockedPolicy(request, DiagnosticReasonCode.RESTORE_BLOCKED.name)
             }
         } else if (request.requiresDatabaseWrite) {
             try {
@@ -96,11 +107,15 @@ class WorkerExecutionGuard @Inject constructor(
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                     reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
-                return WorkerGuardResult.Skipped(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
+                return applyBlockedPolicy(request, DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
             }
         }
 
-        val lease = leaseRegistry.acquire(request.workerName)
+        val lease = try {
+            leaseRegistry.acquire(request.workerName)
+        } catch (e: LeaseAcquisitionBlockedException) {
+            return applyBlockedPolicy(request, DiagnosticReasonCode.STOP_REQUESTED.name)
+        }
         try {
             // Read-only backup path: no DB run logging
             if (allowedReadOnly) {
@@ -111,6 +126,7 @@ class WorkerExecutionGuard @Inject constructor(
             val run = when (val startResult = startRunSafely(request)) {
                 is StartRunResult.Started -> startResult.run
                 is StartRunResult.Skipped -> return WorkerGuardResult.Skipped(startResult.reason)
+                is StartRunResult.Blocked -> return applyBlockedPolicy(request, startResult.code)
                 is StartRunResult.Retry -> return WorkerGuardResult.Retry(startResult.reason)
             }
             try {
@@ -221,7 +237,7 @@ class WorkerExecutionGuard @Inject constructor(
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                         reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
-                    return WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
+                    return applyBlockedPolicy(request, DiagnosticReasonCode.RESTORE_BLOCKED.name)
                 }
                 val readOnlyCtx = WorkerRunContext(checkpointDelegate = { op ->
                     readBarrier.checkReadAllowed(
@@ -230,7 +246,11 @@ class WorkerExecutionGuard @Inject constructor(
                     )
                     yield()
                 })
-                val lease = leaseRegistry.acquire(request.workerName)
+                val lease = try {
+                    leaseRegistry.acquire(request.workerName)
+                } catch (e: LeaseAcquisitionBlockedException) {
+                    return applyBlockedPolicy(request, DiagnosticReasonCode.STOP_REQUESTED.name)
+                }
                 return try {
                     WorkerGuardResult.Success(block(readOnlyCtx))
                 } finally {
@@ -239,16 +259,21 @@ class WorkerExecutionGuard @Inject constructor(
             } else {
                 diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                     reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
-                return WorkerGuardResult.Skipped(DiagnosticReasonCode.RESTORE_BLOCKED.name)
+                return applyBlockedPolicy(request, DiagnosticReasonCode.RESTORE_BLOCKED.name)
             }
         }
 
         val ctx = WorkerRunContext(checkpointDelegate = ::checkpoint)
-        val lease = leaseRegistry.acquire(request.workerName)
+        val lease = try {
+            leaseRegistry.acquire(request.workerName)
+        } catch (e: LeaseAcquisitionBlockedException) {
+            return applyBlockedPolicy(request, DiagnosticReasonCode.STOP_REQUESTED.name)
+        }
         try {
             val run = when (val startResult = startRunSafely(request)) {
                 is StartRunResult.Started -> startResult.run
                 is StartRunResult.Skipped -> return WorkerGuardResult.Skipped(startResult.reason)
+                is StartRunResult.Blocked -> return applyBlockedPolicy(request, startResult.code)
                 is StartRunResult.Retry -> return WorkerGuardResult.Retry(startResult.reason)
             }
             try {
@@ -320,6 +345,7 @@ class WorkerExecutionGuard @Inject constructor(
     private sealed interface StartRunResult {
         data class Started(val run: WorkerRunHandle) : StartRunResult
         data class Skipped(val reason: String) : StartRunResult
+        data class Blocked(val code: String) : StartRunResult
         data class Retry(val reason: String) : StartRunResult
     }
 
@@ -339,7 +365,7 @@ class WorkerExecutionGuard @Inject constructor(
         } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
             diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9",
                 reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED)
-            StartRunResult.Skipped(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
+            StartRunResult.Blocked(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
         } catch (e: Exception) {
             Timber.w(e, "WorkerExecutionGuard: failed to start run for ${request.workerName}")
             diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9")
@@ -375,6 +401,13 @@ class WorkerExecutionGuard @Inject constructor(
             else -> false
         }
     }
+
+    private fun applyBlockedPolicy(request: WorkerGuardRequest, code: String): WorkerGuardResult<Nothing> =
+        when (request.blockedPolicy) {
+            BlockedPolicy.RETRY -> WorkerGuardResult.BlockedRetry(code, code)
+            BlockedPolicy.SKIP_SUCCESS -> WorkerGuardResult.Skipped(code)
+            BlockedPolicy.FAIL -> WorkerGuardResult.Failed(code)
+        }
 
     companion object {
         const val STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000L

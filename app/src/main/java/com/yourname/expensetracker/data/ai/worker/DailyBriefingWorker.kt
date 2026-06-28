@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUs
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
@@ -67,7 +68,8 @@ class DailyBriefingWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "ai_daily_briefing",
                 requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
-                allowDuringBackupExport = false
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.SKIP_SUCCESS
             )
         ) { ctx ->
             val startedAt = timeProvider.now()
@@ -145,6 +147,7 @@ class DailyBriefingWorker @AssistedInject constructor(
     private fun shouldRescheduleNextMidnight(result: WorkerGuardResult<Unit>): Boolean = when (result) {
         is WorkerGuardResult.Success -> true
         is WorkerGuardResult.Skipped -> result.reason != DISABLED_BY_SPEC_REASON
+        is WorkerGuardResult.BlockedRetry -> false
         is WorkerGuardResult.Retry -> false
         is WorkerGuardResult.Failed -> false
     }

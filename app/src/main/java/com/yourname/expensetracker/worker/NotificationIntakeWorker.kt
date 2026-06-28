@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.notification.capture.NotificationTrans
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.service.NotificationFilter
@@ -45,7 +46,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = WORKER_NAME,
                 requiresDatabaseWrite = true,
-                requiredCapabilities = emptyList()
+                requiredCapabilities = emptyList(),
+                blockedPolicy = BlockedPolicy.RETRY
             )
         ) { ctx ->
             // All DB operations happen INSIDE the guard
