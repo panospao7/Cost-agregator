@@ -261,7 +261,7 @@ This is the correct, safe behaviour — the worker stops promptly when maintenan
 
 Every key in `WorkerSpec.DEFAULTS` must have a matching `Entry` in `WorkerRegistry.entries` with the same `specName`, and vice versa.
 
-**Current parity: 7/7 — PASS** (as of commit `3372b917`)
+**Current parity: 7/7 — PASS** (as of commit `241adee`)
 
 | `WorkerSpec.DEFAULTS` key | `WorkerRegistry.entries` name | Match |
 |---|---|---|

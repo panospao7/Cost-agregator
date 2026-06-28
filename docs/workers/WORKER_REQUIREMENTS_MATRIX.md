@@ -1,6 +1,7 @@
 # Worker Requirements Matrix
 
-> **PRs 1–5 Complete** — Requirements declared for each worker, derived from reading actual source code at commit `3372b91714ab5117bef6b7bbfbdd52b0cfaf31a6`.
+> **PRs 1–5 Complete** — Requirements declared for each worker, derived from reading actual source code at commit `241adee`.
+> **PR6A Complete** — Guard result policy + lease stop gate (commit `89ee4ee`).
 
 ## Legend
 

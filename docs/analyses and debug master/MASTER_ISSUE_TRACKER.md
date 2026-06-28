@@ -451,7 +451,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P1, P4, P7, P9, P15, P17  
-**Status:** **DONE** (PRs 1–5, commit `3372b917`)  
+**Status:** **PARTIALLY DONE** (PRs 1–5: commit `241adee`; PR6A: commit `89ee4ee`)  
 **Labels:** `workers`, `restore`, `release-blocker`
 
 #### Tasks
@@ -461,11 +461,15 @@ Choose one:
 - [x] Ensure `NotificationIntakeWorker` barrier-checks before first DAO read.
 - [x] Ensure every DB-writing worker has lease + barrier + run ledger.
 - [x] Add active-worker drain tests.
+- [x] Add lease acquire-after-stop gate (PR6A).
+- [x] Add blocked/retry policy for restore/write-barrier blocks (PR6A).
 - [ ] Add static guard for worker guard usage (deferred to PR 10 / CI phase).
 
 #### Acceptance Criteria
 
 - [x] Restore drain cannot miss active same-name workers.
+- [x] Restore drain cannot miss workers acquired after stop request (PR6A).
+- [x] Dynamic one-shot blocked by restore/write-barrier returns retry, not success (PR6A).
 - [ ] Unguarded DB-writing worker fails CI (deferred to PR 10).
 
 ---
@@ -474,7 +478,7 @@ Choose one:
 
 **Severity:** S1  
 **Pipelines:** P9  
-**Status:** **DONE** (PRs 1–5, commit `3372b917`)  
+**Status:** **PARTIALLY DONE** (PRs 1–5: commit `241adee`; PR6A: commit `89ee4ee`)  
 **Labels:** `workers`, `diagnostics`
 
 #### Tasks
@@ -482,8 +486,9 @@ Choose one:
 - [x] Use `REPLACE` or cancel+enqueue when one-shot worker version changes.
 - [x] Make `WorkerRunLogger.Handle` terminal writes atomic with compare-and-set.
 - [x] Sync worker comments/docs after implementation.
-- [ ] Daily briefing reschedule failure should be recoverable (deferred to PR 6).
-- [ ] Data retention partial failures should not soft-success silently (deferred to PR 6).
+- [x] Add blocked policy for restore/write-barrier blocked runs (PR6A).
+- [ ] Daily briefing reschedule failure should be recoverable (deferred to PR 7).
+- [ ] Data retention partial failures should not soft-success silently (deferred to PR 6E).
 - [ ] `WorkerRegistry.scheduleAll()` must log/write sanitized diagnostic for each failed schedule entry (deferred to PR 7).
 
 #### Acceptance Criteria

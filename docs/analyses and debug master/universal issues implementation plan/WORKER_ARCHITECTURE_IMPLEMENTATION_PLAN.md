@@ -4,7 +4,7 @@ Last updated: 2026-06-28
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–5 COMPLETE** (commit `3372b917`). PRs 6–11 remain open.
+> **Status: PRs 1–5 COMPLETE** (commit `241adee`). **PR6A COMPLETE** (commit `89ee4ee`). PRs 6B–11 remain open.
 
 ---
 
