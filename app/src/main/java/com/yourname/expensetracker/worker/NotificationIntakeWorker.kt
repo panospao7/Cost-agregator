@@ -53,6 +53,12 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),
                 runAttemptCount = runAttemptCount,
+                // specVersion = null is intentional: notification_intake is a one-shot
+                // worker scheduled via NotificationIntakeCoordinator, not via
+                // WorkerSpecScheduler. It has no entry in WorkerSpec.DEFAULTS, so
+                // DEFAULTS[WORKER_NAME]?.version naturally resolves to null. This is
+                // correct — the guard's version-aware behaviour (force-update on bump)
+                // does not apply to coordinator-driven one-shots.
                 specVersion = WorkerSpec.DEFAULTS[WORKER_NAME]?.version
             )
         ) { ctx ->

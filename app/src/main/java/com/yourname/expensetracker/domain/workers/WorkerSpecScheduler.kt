@@ -317,6 +317,28 @@ object WorkerSpecScheduler {
     }
 
     /**
+     * Returns all known worker unique work names.
+     *
+     * Used by [WorkerGuardVerifier.verifyAllWorkersGuarded] to cross-check that every
+     * registered worker class maps to a known spec entry. When a new worker is added
+     * to [WorkerSpec.DEFAULTS], its key must be included here.
+     *
+     * Note: "notification_intake" is listed here even though it is not a periodic
+     * spec in [WorkerSpec.DEFAULTS] — it uses one-shot scheduling via
+     * [com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator].
+     */
+    fun listAllWorkerNames(): List<String> = listOf(
+        "notification_intake",
+        "location_backfill",
+        "merchant_key_backfill",
+        "receipt_matching",
+        "warranty_expiration_check",
+        "data_retention",
+        "ai_daily_briefing",
+        "bill_reminder_periodic"
+    )
+
+    /**
      * Fire-and-forget diagnostic emission on schedule failure.
      * Launched on a background scope; failures in the emit itself are silently discarded.
      */
