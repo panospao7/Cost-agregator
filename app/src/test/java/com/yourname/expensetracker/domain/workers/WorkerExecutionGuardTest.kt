@@ -15,6 +15,9 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,7 +71,7 @@ class WorkerExecutionGuardTest {
 
         every { restoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         coEvery { leaseRegistry.acquire(any()) } returns lease
-        coEvery { workerRunLogger.start(any()) } returns runHandle
+        coEvery { workerRunLogger.start(any(), any(), any(), any(), any(), any()) } returns runHandle
 
         guard = WorkerExecutionGuard(
             writeBarrier = writeBarrier,
@@ -220,7 +223,7 @@ class WorkerExecutionGuardTest {
         )
         assertFalse("block must not run when barrier denies at startRunSafely", blockRan)
         // workerRunLogger.start() must never be called if barrier throws first
-        coVerify(exactly = 0) { workerRunLogger.start(any()) }
+        coVerify(exactly = 0) { workerRunLogger.start(any(), any(), any(), any(), any(), any()) }
     }
 
     // -------------------------------------------------------------------------
@@ -437,5 +440,58 @@ class WorkerExecutionGuardTest {
         coVerify(exactly = 1) {
             runHandle.success(rowsScanned = 0, rowsUpdated = 3, notificationsSent = 0, message = null)
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // PR8: Durable Bounded Terminal Diagnostics
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `terminal_success_write_survives_worker_cancellation`() = runTest {
+        // Verify that the terminal write (runHandle.success()) completes even when
+        // the worker coroutine is cancelled, thanks to NonCancellable inside the
+        // withBoundedTerminalWrite helper.
+        permissionChecker.enabled = true
+        var successCalled = false
+        val enteredTerminalWrite = CompletableDeferred<Unit>()
+        val proceedWithWrite = CompletableDeferred<Unit>()
+
+        coEvery { runHandle.success() } coAnswers {
+            enteredTerminalWrite.complete(Unit)
+            proceedWithWrite.await() // suspend inside the terminal write
+            successCalled = true
+        }
+
+        val job = launch {
+            guard.runGuarded(request()) { /* block succeeds immediately */ }
+        }
+
+        // Wait until the coroutine has entered the terminal write and is suspended there
+        enteredTerminalWrite.await()
+        // Cancel the job while the terminal write is in progress.
+        // NonCancellable ensures the write still completes.
+        job.cancel()
+        // Allow the terminal write to proceed
+        proceedWithWrite.complete(Unit)
+        testScheduler.advanceUntilIdle()
+
+        assertTrue("Terminal write must complete even after cancellation", successCalled)
+    }
+
+    @Test
+    fun `terminal_write_timeout_does_not_hang_worker`() = runTest {
+        // Mock the DAO-backed handle to take longer than the 5s timeout.
+        // The guard should return quickly (within the timeout) rather than
+        // hanging on the blocked DB.
+        permissionChecker.enabled = true
+        coEvery { runHandle.success() } coAnswers {
+            delay(10_000L)  // longer than TERMINAL_WRITE_TIMEOUT_MS = 5_000
+        }
+
+        val result = guard.runGuarded(request()) { /* block succeeds immediately */ }
+
+        // The guard must return Success even though the terminal write timed out
+        // (the helper returns null and execution continues).
+        assertTrue("Result should be Success despite terminal write timeout", result is WorkerGuardResult.Success)
     }
 }

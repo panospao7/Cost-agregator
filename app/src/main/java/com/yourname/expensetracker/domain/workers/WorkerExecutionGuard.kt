@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import timber.log.Timber
 import javax.inject.Inject
@@ -39,7 +40,14 @@ data class WorkerGuardRequest(
     val allowDuringBackupExport: Boolean = false,
     val blockedPolicy: BlockedPolicy = BlockedPolicy.RETRY,
     val notificationPermissionPolicy: PermissionPolicy = PermissionPolicy.SKIP_SUCCESS,
-    val privacyPolicy: PrivacyPolicy = PrivacyPolicy.SKIP_SUCCESS
+    val privacyPolicy: PrivacyPolicy = PrivacyPolicy.SKIP_SUCCESS,
+    // --- PR6B WorkManager metadata ---
+    /** WorkManager work ID (UUID string from CoroutineWorker.id). */
+    val workId: String? = null,
+    /** WorkManager runAttemptCount. */
+    val runAttemptCount: Int? = null,
+    /** WorkerSpec version for this worker. */
+    val specVersion: Int? = null
 )
 
 sealed interface WorkerGuardResult<out T> {
@@ -123,7 +131,8 @@ class WorkerExecutionGuard @Inject constructor(
                 return WorkerGuardResult.Success(result)
             }
 
-            val run = when (val startResult = startRunSafely(request)) {
+            val leaseId = lease.leaseId
+            val run = when (val startResult = startRunSafely(request, leaseId)) {
                 is StartRunResult.Started -> startResult.run
                 is StartRunResult.Skipped -> return WorkerGuardResult.Skipped(startResult.reason)
                 is StartRunResult.Blocked -> return applyBlockedPolicy(request, startResult.code)
@@ -132,18 +141,18 @@ class WorkerExecutionGuard @Inject constructor(
             try {
                 val spec = WorkerSpec.DEFAULTS[request.workerName]
                 if (spec != null && !spec.enabled) {
-                    withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name) }
+                    withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name) }
                     return WorkerGuardResult.Skipped("Worker disabled by spec")
                 }
 
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
+                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
                             return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
                         }
                         is PrivacyDecision.FailClosed -> {
-                            withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name) }
+                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name) }
                             return WorkerGuardResult.Skipped("Privacy check failed (fail-closed): $capability - ${decision.reason}")
                         }
                         else -> { }
@@ -151,21 +160,21 @@ class WorkerExecutionGuard @Inject constructor(
                 }
 
                 if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
-                    withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
+                    withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
                     return WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
                 }
 
                 val result = block()
-                withContext(NonCancellable) { run.success() }
+                withBoundedTerminalWrite { run.success() }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
                 // P9-PR1 (NEW-P9-001): TimeoutCancellationException is retryable, not system cancel.
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
-                    withContext(NonCancellable) { run.retry("Timed out: ${e.message}", e) }
+                    withBoundedTerminalWrite { run.retry("Timed out: ${e.message}", e) }
                     return WorkerGuardResult.Retry("Timed out: ${e.message}", e)
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
-                    withContext(NonCancellable) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+                    withBoundedTerminalWrite { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
                     throw e
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
@@ -175,10 +184,10 @@ class WorkerExecutionGuard @Inject constructor(
                 // is already rethrown above (highest precedence); classifyTransient remains
                 // the unchanged fallback for every other exception.
                 return if (e is RetryableWorkerException || classifyTransient(e)) {
-                    withContext(NonCancellable) { run.retry(e.message ?: "Transient error", e) }
+                    withBoundedTerminalWrite { run.retry(e.message ?: "Transient error", e) }
                     WorkerGuardResult.Retry(e.message ?: "Transient error", e)
                 } else {
-                    withContext(NonCancellable) { run.failure(e.message ?: "Permanent error", e) }
+                    withBoundedTerminalWrite { run.failure(e.message ?: "Permanent error", e) }
                     WorkerGuardResult.Failed(e.message ?: "Permanent error", e)
                 }
             }
@@ -270,7 +279,8 @@ class WorkerExecutionGuard @Inject constructor(
             return applyBlockedPolicy(request, DiagnosticReasonCode.STOP_REQUESTED.name)
         }
         try {
-            val run = when (val startResult = startRunSafely(request)) {
+            val leaseId = lease.leaseId
+            val run = when (val startResult = startRunSafely(request, leaseId)) {
                 is StartRunResult.Started -> startResult.run
                 is StartRunResult.Skipped -> return WorkerGuardResult.Skipped(startResult.reason)
                 is StartRunResult.Blocked -> return applyBlockedPolicy(request, startResult.code)
@@ -279,18 +289,18 @@ class WorkerExecutionGuard @Inject constructor(
             try {
                 val spec = WorkerSpec.DEFAULTS[request.workerName]
                 if (spec != null && !spec.enabled) {
-                    withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name) }
+                    withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PROVIDER_DISABLED.name) }
                     return WorkerGuardResult.Skipped("Worker disabled by spec")
                 }
 
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
+                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
                             return WorkerGuardResult.Skipped("Privacy blocked: $capability")
                         }
                         is PrivacyDecision.FailClosed -> {
-                            withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name) }
+                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name) }
                             return WorkerGuardResult.Skipped("Privacy fail-closed: $capability")
                         }
                         else -> { }
@@ -298,12 +308,12 @@ class WorkerExecutionGuard @Inject constructor(
                 }
 
                 if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
-                    withContext(NonCancellable) { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
+                    withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
                     return WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
                 }
 
                 val result = block(ctx)
-                withContext(NonCancellable) {
+                withBoundedTerminalWrite {
                     val noWork = ctx.rowsScanned == 0 && ctx.rowsUpdated == 0 && ctx.notificationsSent == 0
                     run.success(
                         rowsScanned = ctx.rowsScanned,
@@ -316,11 +326,11 @@ class WorkerExecutionGuard @Inject constructor(
             } catch (e: Exception) {
                 // P9-PR1 (NEW-P9-001): TimeoutCancellationException is retryable, not system cancel.
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
-                    withContext(NonCancellable) { run.retry("Timed out: ${e.message}", e) }
+                    withBoundedTerminalWrite { run.retry("Timed out: ${e.message}", e) }
                     return WorkerGuardResult.Retry("Timed out: ${e.message}", e)
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
-                    withContext(NonCancellable) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+                    withBoundedTerminalWrite { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
                     throw e
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
@@ -330,15 +340,42 @@ class WorkerExecutionGuard @Inject constructor(
                 // is already rethrown above (highest precedence); classifyTransient remains
                 // the unchanged fallback for every other exception.
                 return if (e is RetryableWorkerException || classifyTransient(e)) {
-                    withContext(NonCancellable) { run.retry(e.message ?: "Transient error", e) }
+                    withBoundedTerminalWrite { run.retry(e.message ?: "Transient error", e) }
                     WorkerGuardResult.Retry(e.message ?: "Transient error", e)
                 } else {
-                    withContext(NonCancellable) { run.failure(e.message ?: "Permanent error", e) }
+                    withBoundedTerminalWrite { run.failure(e.message ?: "Permanent error", e) }
                     WorkerGuardResult.Failed(e.message ?: "Permanent error", e)
                 }
             }
         } finally {
             lease.close()
+        }
+    }
+
+    /**
+     * PR8: Bounded terminal write helper — wraps terminal DB writes with a timeout
+     * so that a blocked/locked database cannot hang the worker indefinitely during
+     * shutdown or restore. The [NonCancellable] context is INSIDE the timeout so
+     * that [withTimeout] can cancel its own child coroutine even while the outer
+     * scope is being cancelled. If [withTimeout] were outside [NonCancellable], the
+     * cancellation would be blocked and the timeout would be ineffective.
+     */
+    private suspend fun <T> withBoundedTerminalWrite(
+        block: suspend () -> T
+    ): T? {
+        return withContext(NonCancellable) {
+            try {
+                withTimeout(TERMINAL_WRITE_TIMEOUT_MS) {
+                    block()
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Timber.w("Terminal write timed out after ${TERMINAL_WRITE_TIMEOUT_MS}ms — continuing")
+                null
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Terminal write failed")
+                null
+            }
         }
     }
 
@@ -356,10 +393,17 @@ class WorkerExecutionGuard @Inject constructor(
      * inside workerRunLogger.start(). Without this, a mode transition between the two
      * could allow a write against a database about to be swapped.
      */
-    private suspend fun startRunSafely(request: WorkerGuardRequest): StartRunResult {
+    private suspend fun startRunSafely(request: WorkerGuardRequest, leaseId: String? = null): StartRunResult {
         return try {
             writeBarrier.checkWritesAllowed("WorkerRunLogger.start:${request.workerName}")
-            StartRunResult.Started(workerRunLogger.start(request.workerName))
+            StartRunResult.Started(workerRunLogger.start(
+                workerName = request.workerName,
+                workId = request.workId,
+                uniqueWorkName = request.workerName, // uniqueWorkName is the worker name for scheduling
+                specVersion = request.specVersion,
+                runAttempt = request.runAttemptCount,
+                leaseId = leaseId
+            ))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
@@ -411,5 +455,6 @@ class WorkerExecutionGuard @Inject constructor(
 
     companion object {
         const val STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000L
+        const val TERMINAL_WRITE_TIMEOUT_MS = 5_000L  // PR8: 5 seconds max for terminal write
     }
 }
