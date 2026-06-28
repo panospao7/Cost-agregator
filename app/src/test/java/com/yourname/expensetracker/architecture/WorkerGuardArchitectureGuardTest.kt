@@ -19,14 +19,6 @@ import java.io.File
  * is added without the guard, forcing an explicit decision: guard it, or justify
  * an allowlist entry with a documented rationale.
  *
- * ── Allowlist rationale ──────────────────────────────────────────────────────
- *  • NotificationIntakeWorker — Pipeline-1 notification intake worker. It is NOT
- *    a WorkerSpec/Registry-scheduled job; it drains a single queued intake row
- *    using its own [com.yourname.expensetracker.data.backup.DatabaseWriteBarrier]
- *    check plus an attempt/backoff state machine, and is intentionally NOT routed
- *    through WorkerExecutionGuard.
- * ─────────────────────────────────────────────────────────────────────────────
- *
  * Note: SourceLinkBackfillWorker (domain/provenance) is deliberately NOT in the
  * allowlist because it does not extend CoroutineWorker — it is a `@Singleton`
  * injected helper exposing a `runBackfill` suspend function, so it is never
@@ -55,9 +47,7 @@ class WorkerGuardArchitectureGuardTest {
          * an entry here does not map to a real worker file (stale allowlist) or if
          * an allowlisted worker actually uses the guard (redundant exemption).
          */
-        val ALLOWLISTED_WORKERS = setOf(
-            "NotificationIntakeWorker"
-        )
+        val ALLOWLISTED_WORKERS = emptySet<String>()
     }
 
     /**

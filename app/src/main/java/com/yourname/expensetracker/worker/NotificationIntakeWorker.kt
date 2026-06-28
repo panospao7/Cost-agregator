@@ -7,13 +7,15 @@ import androidx.work.WorkerParameters
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
-import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.service.NotificationFilter
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -27,7 +29,6 @@ class NotificationIntakeWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val intakeDao: NotificationIntakeDao,
     private val repository: NotificationRepository,
-    private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider,
     private val crypto: NotificationTransientPayloadCrypto,
     private val executionGuard: WorkerExecutionGuard
@@ -40,254 +41,272 @@ class NotificationIntakeWorker @AssistedInject constructor(
             return Result.failure()
         }
 
-        val intake = intakeDao.getById(intakeId)
-        if (intake == null) {
-            Timber.w("IntakeWorker: intake row $intakeId not found")
-            return Result.failure()
-        }
+        val guardResult = executionGuard.runGuardedWithContext(
+            WorkerGuardRequest(
+                workerName = WORKER_NAME,
+                requiresDatabaseWrite = true,
+                requiredCapabilities = emptyList()
+            )
+        ) { ctx ->
+            // All DB operations happen INSIDE the guard
+            val now = timeProvider.now()
 
-        val now = timeProvider.now()
+            val intake = intakeDao.getById(intakeId)
+            if (intake == null) {
+                Timber.w("IntakeWorker: intake row $intakeId not found")
+                throw RuntimeException("Intake row $intakeId not found")
+            }
 
-        // PR 2: Do not mutate DB when writes are blocked — just retry.
-        if (!writeBarrier.writesAllowed()) {
-            Timber.d("IntakeWorker: writes blocked, retrying intakeId=$intakeId")
-            return Result.retry()
-        }
+            // PR 2: Enforce maxAttempts
+            if (intake.attempts >= intake.maxAttempts) {
+                intakeDao.markFinalFailure(
+                    id = intakeId,
+                    failureCode = "MAX_ATTEMPTS_EXCEEDED",
+                    failureHash = null,
+                    nowMs = now
+                )
+                purgePayloadBestEffort(intake, now)
+                throw RuntimeException("MAX_ATTEMPTS_EXCEEDED")
+            }
 
-        // P9 (NEW-P9-008): Checkpoint to observe maintenance stop requests and
-        // write-barrier status before beginning the pipeline.
-        executionGuard.checkpoint("notification_intake")
-
-        // PR 2: Enforce maxAttempts
-        if (intake.attempts >= intake.maxAttempts) {
-            intakeDao.markFinalFailure(
+            // Claim the row
+            val claimed = intakeDao.claimForProcessing(
                 id = intakeId,
-                failureCode = "MAX_ATTEMPTS_EXCEEDED",
-                failureHash = null,
-                nowMs = now
+                nowMs = now,
+                workerId = "intake-worker-${timeProvider.now()}"
             )
-            purgePayloadBestEffort(intake, now)
-            return Result.failure()
-        }
+            if (claimed == 0) {
+                return@runGuardedWithContext // Already claimed — idempotent success
+            }
 
-        // Claim the row
-        val claimed = intakeDao.claimForProcessing(
-            id = intakeId,
-            nowMs = now,
-            workerId = "intake-worker-${System.currentTimeMillis()}"
-        )
-        if (claimed == 0) {
-            return Result.success() // Already claimed
-        }
+            // Reload after claim
+            val current = intakeDao.getById(intakeId)
+                ?: return@runGuardedWithContext
 
-        // Reload after claim
-        val current = intakeDao.getById(intakeId) ?: return Result.failure()
+            // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
+            // Previously filtered on null visible fields (broken for encrypted transient modes).
+            val isRaw = current.rawStorageMode == "STORE_RAW"
+            val processingTitle: String?
+            val processingText: String?
+            val processingBody: String?
+            val processingSubText: String?
+            val processingExtrasJson: String?
 
-        // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
-        // Previously filtered on null visible fields (broken for encrypted transient modes).
-        val isRaw = current.rawStorageMode == "STORE_RAW"
-        val processingTitle: String?
-        val processingText: String?
-        val processingBody: String?
-        val processingSubText: String?
-        val processingExtrasJson: String?
+            if (isRaw) {
+                processingTitle = current.title
+                processingText = current.text
+                processingBody = current.bigText
+                processingSubText = current.subText
+                processingExtrasJson = current.extrasJson
+            } else if (current.transientPayloadCiphertext != null
+                && current.transientPayloadNonce != null
+                && current.transientPayloadVersion != null
+            ) {
+                val payload = crypto.decrypt(
+                    current.transientPayloadCiphertext,
+                    current.transientPayloadNonce,
+                    current.transientPayloadVersion
+                )
+                processingTitle = payload.title
+                processingText = payload.text
+                processingBody = payload.bigText
+                processingSubText = payload.subText
+                processingExtrasJson = payload.extrasJson
+            } else {
+                Timber.w("IntakeWorker: no payload available for intakeId=$intakeId")
+                intakeDao.markTerminal(
+                    id = intakeId,
+                    status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
+                    rawId = null, expenseId = null, reviewId = null,
+                    finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
+                    nowMs = now
+                )
+                purgePayloadBestEffort(current, now)
+                return@runGuardedWithContext
+            }
 
-        if (isRaw) {
-            processingTitle = current.title
-            processingText = current.text
-            processingBody = current.bigText
-            processingSubText = current.subText
-            processingExtrasJson = current.extrasJson
-        } else if (current.transientPayloadCiphertext != null
-            && current.transientPayloadNonce != null
-            && current.transientPayloadVersion != null
-        ) {
-            val payload = crypto.decrypt(
-                current.transientPayloadCiphertext,
-                current.transientPayloadNonce,
-                current.transientPayloadVersion
-            )
-            processingTitle = payload.title
-            processingText = payload.text
-            processingBody = payload.bigText
-            processingSubText = payload.subText
-            processingExtrasJson = payload.extrasJson
-        } else {
-            Timber.w("IntakeWorker: no payload available for intakeId=$intakeId")
-            intakeDao.markTerminal(
-                id = intakeId,
-                status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
-                rawId = null, expenseId = null, reviewId = null,
-                finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
-                nowMs = now
-            )
-            purgePayloadBestEffort(current, now)
-            return Result.success()
-        }
+            // Run filter on the processing payload (decrypted or raw)
+            if (!NotificationFilter.shouldCapture(
+                    current.packageName,
+                    processingTitle,
+                    processingText,
+                    processingBody
+                )) {
+                intakeDao.markTerminal(
+                    id = intakeId,
+                    status = NotificationIntakeStatus.FILTER_REJECTED.name,
+                    rawId = null, expenseId = null, reviewId = null,
+                    finalOutcome = "FILTER_REJECTED",
+                    nowMs = now
+                )
+                purgePayloadBestEffort(current, now)
+                return@runGuardedWithContext
+            }
 
-        // Run filter on the processing payload (decrypted or raw)
-        if (!NotificationFilter.shouldCapture(
-                current.packageName,
-                processingTitle,
-                processingText,
-                processingBody
-            )) {
-            intakeDao.markTerminal(
-                id = intakeId,
-                status = NotificationIntakeStatus.FILTER_REJECTED.name,
-                rawId = null, expenseId = null, reviewId = null,
-                finalOutcome = "FILTER_REJECTED",
-                nowMs = now
-            )
-            purgePayloadBestEffort(current, now)
-            return Result.success()
-        }
-
-        val processingNotification = RawNotification(
-            packageName = current.packageName,
-            appName = current.appName,
-            title = processingTitle,
-            text = processingText,
-            bigText = processingBody,
-            subText = processingSubText,
-            extrasJson = processingExtrasJson,
-            timestamp = current.postTime,
-            capturedAt = current.capturedAt,
-            dedupeFingerprint = current.dedupeFingerprint
-        )
-
-        val storageNotification = buildStorageNotification(
-            processing = processingNotification,
-            rawStorageMode = current.rawStorageMode
-        )
-
-        // PR 4: Build captured persistence context from intake row
-        val rawMode = try {
-            com.yourname.expensetracker.domain.privacy.RawStorageMode.valueOf(current.rawStorageMode)
-        } catch (e: IllegalArgumentException) {
-            com.yourname.expensetracker.domain.privacy.RawStorageMode.DO_NOT_STORE
-        }
-        val persistenceContext = com.yourname.expensetracker.domain.notification.NotificationPersistenceContext(
-            rawStorageMode = rawMode,
-            payloadMode = current.payloadMode,
-            source = current.source
-        )
-
-        // Process through pipeline
-        var terminalMarked = false
-        return try {
-            val outcome = repository.processAndSave(
-                processingNotification,
-                storageNotification,
-                correlationId = current.correlationId,
-                persistenceContext = persistenceContext
+            val processingNotification = RawNotification(
+                packageName = current.packageName,
+                appName = current.appName,
+                title = processingTitle,
+                text = processingText,
+                bigText = processingBody,
+                subText = processingSubText,
+                extrasJson = processingExtrasJson,
+                timestamp = current.postTime,
+                capturedAt = current.capturedAt,
+                dedupeFingerprint = current.dedupeFingerprint
             )
 
-            val terminalStatus = when (outcome) {
-                is NotificationPipelineOutcome.AutoAccepted -> NotificationIntakeStatus.PROCESSED
-                is NotificationPipelineOutcome.NeedsReview -> NotificationIntakeStatus.PROCESSED
-                is NotificationPipelineOutcome.Duplicate -> NotificationIntakeStatus.DROPPED_DUPLICATE
-                is NotificationPipelineOutcome.ParserFailed -> NotificationIntakeStatus.FAILED_FINAL
-                is NotificationPipelineOutcome.AutoRejected -> NotificationIntakeStatus.DROPPED_POLICY
-                is NotificationPipelineOutcome.Dropped -> NotificationIntakeStatus.DROPPED_POLICY
-                is NotificationPipelineOutcome.Error -> {
-                    if (isRetryable(outcome.throwable) && current.attempts + 1 < current.maxAttempts) {
-                        val backoff = computeBackoff(current.attempts + 1)
-                        intakeDao.markRetryableFailure(
+            val storageNotification = buildStorageNotification(
+                processing = processingNotification,
+                rawStorageMode = current.rawStorageMode
+            )
+
+            // PR 4: Build captured persistence context from intake row
+            val rawMode = try {
+                com.yourname.expensetracker.domain.privacy.RawStorageMode.valueOf(current.rawStorageMode)
+            } catch (e: IllegalArgumentException) {
+                com.yourname.expensetracker.domain.privacy.RawStorageMode.DO_NOT_STORE
+            }
+            val persistenceContext = com.yourname.expensetracker.domain.notification.NotificationPersistenceContext(
+                rawStorageMode = rawMode,
+                payloadMode = current.payloadMode,
+                source = current.source
+            )
+
+            // Process through pipeline
+            var terminalMarked = false
+            var intentionalFailure = false
+            try {
+                val outcome = repository.processAndSave(
+                    processingNotification,
+                    storageNotification,
+                    correlationId = current.correlationId,
+                    persistenceContext = persistenceContext
+                )
+
+                val terminalStatus = when (outcome) {
+                    is NotificationPipelineOutcome.AutoAccepted -> NotificationIntakeStatus.PROCESSED
+                    is NotificationPipelineOutcome.NeedsReview -> NotificationIntakeStatus.PROCESSED
+                    is NotificationPipelineOutcome.Duplicate -> NotificationIntakeStatus.DROPPED_DUPLICATE
+                    is NotificationPipelineOutcome.ParserFailed -> NotificationIntakeStatus.FAILED_FINAL
+                    is NotificationPipelineOutcome.AutoRejected -> NotificationIntakeStatus.DROPPED_POLICY
+                    is NotificationPipelineOutcome.Dropped -> NotificationIntakeStatus.DROPPED_POLICY
+                    is NotificationPipelineOutcome.Error -> {
+                        if (isRetryable(outcome.throwable) && current.attempts + 1 < current.maxAttempts) {
+                            val backoff = computeBackoff(current.attempts + 1)
+                            intakeDao.markRetryableFailure(
+                                id = intakeId,
+                                nextAttemptAt = now + backoff,
+                                failureCode = "RETRYABLE_ERROR",
+                                failureHash = null,
+                                nowMs = now
+                            )
+                            throw RetryableWorkerException("RETRYABLE_ERROR")
+                        }
+                        // Non-retryable or max attempts — mark terminal and signal failure
+                        intakeDao.markTerminal(
                             id = intakeId,
-                            nextAttemptAt = now + backoff,
-                            failureCode = "RETRYABLE_ERROR",
-                            failureHash = null,
+                            status = NotificationIntakeStatus.FAILED_FINAL.name,
+                            rawId = null,
+                            expenseId = null,
+                            reviewId = null,
+                            finalOutcome = outcome::class.simpleName,
                             nowMs = now
                         )
-                        return Result.retry()
+                        purgePayloadBestEffort(current, now)
+                        intentionalFailure = true
+                        throw RuntimeException("FAILED_FINAL")
                     }
-                    NotificationIntakeStatus.FAILED_FINAL
+                }
+
+                val rawId = when (outcome) {
+                    is NotificationPipelineOutcome.AutoAccepted -> outcome.rawId
+                    is NotificationPipelineOutcome.NeedsReview -> outcome.rawId
+                    is NotificationPipelineOutcome.ParserFailed -> outcome.rawId
+                    is NotificationPipelineOutcome.AutoRejected -> outcome.rawId
+                    else -> null
+                }
+
+                intakeDao.markTerminal(
+                    id = intakeId,
+                    status = terminalStatus.name,
+                    rawId = rawId,
+                    expenseId = when (outcome) {
+                        is NotificationPipelineOutcome.AutoAccepted -> outcome.expenseId
+                        else -> null
+                    },
+                    reviewId = when (outcome) {
+                        is NotificationPipelineOutcome.NeedsReview -> outcome.reviewId
+                        else -> null
+                    },
+                    finalOutcome = outcome::class.simpleName,
+                    nowMs = now
+                )
+                terminalMarked = true
+
+                // P1-SLICE-D: markProcessed is now atomic inside the pipeline — no best-effort needed.
+                purgePayloadBestEffort(current, now)
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Timber.w(e, "Worker timeout, marking retryable intakeId=$intakeId")
+                if (current.attempts + 1 < current.maxAttempts) {
+                    val backoff = computeBackoff(current.attempts + 1)
+                    intakeDao.markRetryableFailure(
+                        id = intakeId,
+                        nextAttemptAt = now + backoff,
+                        failureCode = "TIMEOUT",
+                        failureHash = null,
+                        nowMs = now
+                    )
+                    throw RetryableWorkerException("TIMEOUT")
+                } else {
+                    intakeDao.markFinalFailure(
+                        id = intakeId,
+                        failureCode = "TIMEOUT",
+                        failureHash = null,
+                        nowMs = now
+                    )
+                    purgePayloadBestEffort(current, now)
+                    throw RuntimeException("MAX_RETRIES_EXHAUSTED")
+                }
+            } catch (e: RetryableWorkerException) {
+                throw e
+            } catch (e: CancellationException) {
+                Timber.d("IntakeWorker: cancelled intakeId=$intakeId")
+                throw e
+            } catch (e: Exception) {
+                if (intentionalFailure) {
+                    throw e
+                }
+                if (terminalMarked) {
+                    // Terminal status is already set — cleanup failure must not regress
+                    Timber.w(e, "IntakeWorker: post-terminal cleanup failed for intakeId=$intakeId")
+                    return@runGuardedWithContext
+                }
+                Timber.e(e, "IntakeWorker: processing failed for intakeId=$intakeId")
+                if (isRetryable(e) && current.attempts + 1 < current.maxAttempts) {
+                    val backoff = computeBackoff(current.attempts + 1)
+                    intakeDao.markRetryableFailure(
+                        id = intakeId,
+                        nextAttemptAt = now + backoff,
+                        failureCode = "WORKER_EXCEPTION",
+                        failureHash = null,
+                        nowMs = now
+                    )
+                    throw RetryableWorkerException("WORKER_EXCEPTION")
+                } else {
+                    intakeDao.markFinalFailure(
+                        id = intakeId,
+                        failureCode = "WORKER_EXCEPTION",
+                        failureHash = null,
+                        nowMs = now
+                    )
+                    purgePayloadBestEffort(current, now)
+                    throw RuntimeException("WORKER_EXCEPTION")
                 }
             }
-
-            val rawId = when (outcome) {
-                is NotificationPipelineOutcome.AutoAccepted -> outcome.rawId
-                is NotificationPipelineOutcome.NeedsReview -> outcome.rawId
-                is NotificationPipelineOutcome.ParserFailed -> outcome.rawId
-                is NotificationPipelineOutcome.AutoRejected -> outcome.rawId
-                else -> null
-            }
-
-            intakeDao.markTerminal(
-                id = intakeId,
-                status = terminalStatus.name,
-                rawId = rawId,
-                expenseId = when (outcome) {
-                    is NotificationPipelineOutcome.AutoAccepted -> outcome.expenseId
-                    else -> null
-                },
-                reviewId = when (outcome) {
-                    is NotificationPipelineOutcome.NeedsReview -> outcome.reviewId
-                    else -> null
-                },
-                finalOutcome = outcome::class.simpleName,
-                nowMs = now
-            )
-            terminalMarked = true
-
-            // P1-SLICE-D: markProcessed is now atomic inside the pipeline — no best-effort needed.
-            purgePayloadBestEffort(current, now)
-
-            Result.success()
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            Timber.w(e, "Worker timeout, marking retryable intakeId=$intakeId")
-            if (current.attempts + 1 < current.maxAttempts) {
-                val backoff = computeBackoff(current.attempts + 1)
-                intakeDao.markRetryableFailure(
-                    id = intakeId,
-                    nextAttemptAt = now + backoff,
-                    failureCode = "TIMEOUT",
-                    failureHash = null,
-                    nowMs = now
-                )
-                return Result.retry()
-            } else {
-                intakeDao.markFinalFailure(
-                    id = intakeId,
-                    failureCode = "TIMEOUT",
-                    failureHash = null,
-                    nowMs = now
-                )
-                purgePayloadBestEffort(current, now)
-                return Result.failure()
-            }
-        } catch (e: CancellationException) {
-            Timber.d("IntakeWorker: cancelled intakeId=$intakeId")
-            throw e
-        } catch (e: Exception) {
-            if (terminalMarked) {
-                // Terminal status is already set — cleanup failure must not regress
-                Timber.w(e, "IntakeWorker: post-terminal cleanup failed for intakeId=$intakeId")
-                return Result.success()
-            }
-            Timber.e(e, "IntakeWorker: processing failed for intakeId=$intakeId")
-            if (isRetryable(e) && current.attempts + 1 < current.maxAttempts) {
-                val backoff = computeBackoff(current.attempts + 1)
-                intakeDao.markRetryableFailure(
-                    id = intakeId,
-                    nextAttemptAt = now + backoff,
-                    failureCode = "WORKER_EXCEPTION",
-                    failureHash = null,
-                    nowMs = now
-                )
-                return Result.retry()
-            } else {
-                intakeDao.markFinalFailure(
-                    id = intakeId,
-                    failureCode = "WORKER_EXCEPTION",
-                    failureHash = null,
-                    nowMs = now
-                )
-                purgePayloadBestEffort(current, now)
-                return Result.failure()
-            }
         }
+
+        return guardResult.toWorkerResult()
     }
 
     private suspend fun purgePayloadBestEffort(row: NotificationIntakeEntity, now: Long) {
@@ -351,5 +370,9 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 extrasJson = null
             )
         }
+    }
+
+    companion object {
+        const val WORKER_NAME = "notification_intake"
     }
 }

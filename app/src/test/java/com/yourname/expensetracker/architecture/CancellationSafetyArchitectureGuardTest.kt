@@ -105,7 +105,6 @@ class CancellationSafetyArchitectureGuardTest {
             "ReceiptLifecycleCoordinator.kt",
             "ReceiptOcrService.kt",
             "ReceiptMatchingWorker.kt",
-            "NotificationIntakeWorker.kt",
             "WarrantyExpirationWorker.kt",
             // Services
             "NotificationCaptureService.kt",

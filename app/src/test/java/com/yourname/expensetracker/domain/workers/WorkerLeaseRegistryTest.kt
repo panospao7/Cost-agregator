@@ -85,7 +85,7 @@ class WorkerLeaseRegistryTest {
         registry.requestStopAll("restore started")
 
         assertThrows(kotlinx.coroutines.CancellationException::class.java) {
-            runTest { lease.checkpoint("updateLocation") }
+            kotlinx.coroutines.runBlocking { lease.checkpoint("updateLocation") }
         }
 
         lease.close()
@@ -101,7 +101,7 @@ class WorkerLeaseRegistryTest {
         val lease = registry.acquire("location_backfill")
 
         assertThrows(DatabaseAccessBlockedException::class.java) {
-            runTest { lease.checkpoint("updateLocation") }
+            kotlinx.coroutines.runBlocking { lease.checkpoint("updateLocation") }
         }
 
         lease.close()
@@ -152,27 +152,40 @@ class WorkerLeaseRegistryTest {
         assertTrue(registry.awaitNoActiveWorkers(100))
     }
 
-    // ── S6 (P9-P1-07 / NEW-07): same-name acquisition is NOT mutually exclusive ──
+    // ── PR2: same-name acquisitions create distinct leases ─────────
 
     @Test
-    fun same_name_acquire_is_not_mutually_exclusive() = runTest {
-        // Pins the S6 finding: acquire(name) records the lease in a map and returns
-        // immediately — it does NOT block or serialize. Two acquisitions of the SAME
-        // name (e.g. periodic "receipt_matching" overlapping the manual one-shot) both
-        // return without waiting, and collapse to a single map entry rather than queuing.
-        // Therefore the lease registry CANNOT be relied on to prevent overlapping
-        // receipt-matching runs; overlap safety is provided by the per-receipt atomic
-        // claim (ScannedReceiptDao.claimForAutoMatch) instead.
+    fun same_name_acquire_creates_distinct_leases() = runTest {
+        // PR2-FIX: concurrent same-name workers must each have their own lease,
+        // so that close() of one does not accidentally remove the other's lease.
         val lease1 = registry.acquire("receipt_matching")
-        // Second acquire of the same name must NOT block (no deadlock here proves it).
         val lease2 = registry.acquire("receipt_matching")
 
-        // Same key → one active entry, not two serialized leases.
-        assertEquals(1, registry.activeLeaseCount())
+        // Two distinct leases, not collapsed into one
+        assertEquals(2, registry.activeLeaseCount())
 
         lease1.close()
+        assertEquals(1, registry.activeLeaseCount()) // lease2 still active
+
         lease2.close()
         assertEquals(0, registry.activeLeaseCount())
+    }
+
+    @Test
+    fun drain_sees_all_concurrent_same_name_workers() = runTest {
+        val lease1 = registry.acquire("receipt_matching")
+        val lease2 = registry.acquire("receipt_matching")
+
+        // Drain should timeout while both leases are held
+        assertFalse(registry.awaitNoActiveWorkers(100))
+
+        lease1.close()
+        // Still one lease active
+        assertFalse(registry.awaitNoActiveWorkers(100))
+
+        lease2.close()
+        // Now fully drained
+        assertTrue(registry.awaitNoActiveWorkers(100))
     }
 }
 

@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.yield
 import timber.log.Timber
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -14,16 +15,27 @@ class WorkerLeaseRegistryImpl @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier
 ) : WorkerLeaseRegistry, WorkerDrainController {
 
-    // workerName → lease (one active lease per worker at a time)
-    internal val activeLeases = ConcurrentHashMap<String, WorkerLeaseImpl>()
+    internal data class LeaseRecord(
+        val leaseId: String,
+        val workerName: String,
+        val lease: WorkerLeaseImpl
+    )
+
+    // Primary store: leaseId → record
+    internal val activeLeases = ConcurrentHashMap<String, LeaseRecord>()
+
+    // Secondary index: workerName → set of leaseIds
+    internal val workerNameIndex = ConcurrentHashMap<String, MutableSet<String>>()
     private val stopRequested = AtomicBoolean(false)
 
     // ── WorkerLeaseRegistry ───────────────────────────────────────
 
     override suspend fun acquire(workerName: String): WorkerLease {
-        val lease = WorkerLeaseImpl(workerName)
-        activeLeases[workerName] = lease
-        Timber.d("WorkerLease acquired: $workerName (active=${activeLeases.size})")
+        val leaseId = UUID.randomUUID().toString()
+        val lease = WorkerLeaseImpl(leaseId, workerName)
+        activeLeases[leaseId] = LeaseRecord(leaseId, workerName, lease)
+        workerNameIndex.computeIfAbsent(workerName) { ConcurrentHashMap.newKeySet() }.add(leaseId)
+        Timber.d("WorkerLease acquired: $workerName leaseId=$leaseId (active=${activeLeases.size})")
         return lease
     }
 
@@ -36,7 +48,7 @@ class WorkerLeaseRegistryImpl @Inject constructor(
         val deadline = System.currentTimeMillis() + timeoutMs
         while (activeLeases.isNotEmpty()) {
             if (System.currentTimeMillis() >= deadline) {
-                Timber.w("WorkerLeaseRegistry: drain timed out, ${activeLeases.size} worker(s) still active: ${activeLeases.keys}")
+                Timber.w("WorkerLeaseRegistry: drain timed out, ${activeLeases.size} worker(s) still active: ${activeLeases.values.map { it.workerName }}")
                 return false
             }
             delay(50)
@@ -62,7 +74,10 @@ class WorkerLeaseRegistryImpl @Inject constructor(
 
     // ── WorkerLeaseImpl ───────────────────────────────────────────
 
-    inner class WorkerLeaseImpl(private val workerName: String) : WorkerLease {
+    inner class WorkerLeaseImpl(
+        val leaseId: String,
+        private val workerName: String
+    ) : WorkerLease {
         private val released = AtomicBoolean(false)
 
         override suspend fun checkpoint(operation: String) {
@@ -78,8 +93,12 @@ class WorkerLeaseRegistryImpl @Inject constructor(
 
         override fun close() {
             if (released.compareAndSet(false, true)) {
-                activeLeases.remove(workerName)
-                Timber.d("WorkerLease released: $workerName (active=${activeLeases.size})")
+                activeLeases.remove(leaseId)
+                workerNameIndex.computeIfPresent(workerName) { _, ids ->
+                    ids.remove(leaseId)
+                    if (ids.isEmpty()) null else ids
+                }
+                Timber.d("WorkerLease released: $workerName leaseId=$leaseId (active=${activeLeases.size})")
             }
         }
     }

@@ -64,38 +64,32 @@ class WorkerRunLoggerImpl @Inject constructor(
         private val completed = java.util.concurrent.atomic.AtomicBoolean(false)
 
         override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?) {
-            if (completed.get()) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate success"); return }
-            completed.set(true)
+            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate success"); return }
             update("SUCCESS", rowsScanned = rowsScanned, rowsUpdated = rowsUpdated, notificationsSent = notificationsSent, statusReason = message)
         }
 
         override suspend fun skipped(reason: String) {
-            if (completed.get()) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate skipped"); return }
-            completed.set(true)
+            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate skipped"); return }
             update("SKIPPED", statusReason = reason)
         }
 
         override suspend fun retry(reason: String, error: Throwable?) {
-            if (completed.get()) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate retry"); return }
-            completed.set(true)
+            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate retry"); return }
             update("RETRY", retryReason = reason, errorMessage = sanitizer.sanitizeExceptionMessage(error?.message), errorClass = error?.javaClass?.simpleName)
         }
 
         override suspend fun failure(reason: String, error: Throwable?) {
-            if (completed.get()) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate failure"); return }
-            completed.set(true)
+            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate failure"); return }
             update("FAILED", errorMessage = sanitizer.sanitizeExceptionMessage(error?.let { "$reason: ${it.message}" } ?: reason), errorClass = error?.javaClass?.simpleName)
         }
 
         override suspend fun cancelled(reason: String) {
-            if (completed.get()) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate cancelled"); return }
-            completed.set(true)
+            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate cancelled"); return }
             update("CANCELLED", statusReason = reason, cancellationReason = reason)
         }
 
         override suspend fun staleAborted() {
-            if (completed.get()) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate staleAborted"); return }
-            completed.set(true)
+            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate staleAborted"); return }
             update("STALE_ABORTED")
         }
 

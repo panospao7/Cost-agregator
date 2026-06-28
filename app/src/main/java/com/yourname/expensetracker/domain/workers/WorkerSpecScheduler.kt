@@ -99,7 +99,12 @@ object WorkerSpecScheduler {
                     // UPDATE atomically cancels the previous work and enqueues the
                     // new one — replacing the deprecated ExistingWorkPolicy.REPLACE
                     // (WorkManager 2.8+).
-                    ExistingWorkPolicy.KEEP
+                    // PR1-FIX: was KEEP — KEEP silently ignores the new request if
+                    // any work with the same unique name is already pending, meaning
+                    // a version bump (e.g. new constraints) would never take effect
+                    // until the existing request had run.
+                    // REPLACE cancels existing pending work and enqueues the new one.
+                    ExistingWorkPolicy.REPLACE
                 } else {
                     spec.oneShotPolicy
                 }
@@ -170,8 +175,12 @@ object WorkerSpecScheduler {
                 "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing UPDATE"
             )
             // A version bump always wins over the spec's oneShotPolicy.
-            // KEEP preserves existing work; REPLACE is deprecated in WorkManager 2.8+.
-            ExistingWorkPolicy.KEEP
+            // PR1-FIX: was KEEP — KEEP silently ignores the new request if
+            // any work with the same unique name is already pending, meaning
+            // a version bump (e.g. new constraints) would never take effect
+            // until the existing request had run.
+            // REPLACE cancels existing pending work and enqueues the new one.
+            ExistingWorkPolicy.REPLACE
         } else {
             spec.oneShotPolicy
         }
