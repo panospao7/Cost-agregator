@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
@@ -46,7 +47,11 @@ class BillReminderWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "bill_reminder_periodic",
                 allowDuringBackupExport = false,
-                blockedPolicy = BlockedPolicy.RETRY
+                blockedPolicy = BlockedPolicy.RETRY,
+                requiresNotificationPermission = true,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS["bill_reminder_periodic"]?.version
             )
         ) { ctx ->
             // P9-PR1 (NEW-P9-002): Settings/quiet-hours check moved INSIDE guard
@@ -125,7 +130,30 @@ class BillReminderWorker @AssistedInject constructor(
                         }
                         is NotificationSendResult.Failed -> {
                             Log.w(TAG, "Notification delivery failed for reminder ${reminder.id}: ${result.reason}")
-                            coordinator.markReminderFailed(reminder.id, result.reason)
+                            if (result.reason == "permission_denied") {
+                                coordinator.cancelClaimedReminderDelivery(
+                                    deliveryId = reminder.id,
+                                    reason = "notification_permission_revoked"
+                                )
+                                try {
+                                    diagnosticEventWriter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                        pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.RECURRING,
+                                        stage = "dispatch",
+                                        outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.SKIPPED,
+                                        entityType = "RecurringReminderDelivery",
+                                        entityId = reminder.id,
+                                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                            .put("delivered", false)
+                                            .put("reason", "notification_permission_revoked")
+                                            .build()
+                                    ))
+                                } catch (e: Exception) {
+                                    if (e is kotlinx.coroutines.CancellationException) throw e
+                                    Log.w(TAG, "Failed to write permission-revoked diagnostic", e)
+                                }
+                            } else {
+                                coordinator.markReminderFailed(reminder.id, result.reason)
+                            }
                             ctx.addRowsSkipped()
                         }
                     }
@@ -223,6 +251,10 @@ class BillReminderWorker @AssistedInject constructor(
         } catch (e: SecurityException) {
             Log.w(TAG, "Missing notification permission — cannot send notification", e)
             NotificationSendResult.Failed("permission_denied")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "Notification delivery failed", e)
+            NotificationSendResult.Failed("notification_error")
         }
     }
 

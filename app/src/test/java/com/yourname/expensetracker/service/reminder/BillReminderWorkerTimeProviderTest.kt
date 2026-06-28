@@ -92,8 +92,9 @@ class BillReminderWorkerTimeProviderTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        // Guard block should never be invoked because quiet hours short-circuit
-        coVerify(exactly = 0) { executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>()) }
+        // Guard IS invoked (settings check moved inside guard via P9-PR1),
+        // but getDueReminders() should NOT be called because quiet hours short-circuit
+        coVerify(exactly = 0) { coordinator.getDueReminders() }
     }
 
     @Test
@@ -125,6 +126,8 @@ class BillReminderWorkerTimeProviderTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 0) { executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>()) }
+        // Guard IS invoked (settings check moved inside guard via P9-PR1),
+        // but getDueReminders() should NOT be called because reminders are disabled
+        coVerify(exactly = 0) { coordinator.getDueReminders() }
     }
 }
