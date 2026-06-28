@@ -73,4 +73,46 @@ interface BackgroundJobRunDao {
           AND errorMessage IS NOT NULL
     """)
     suspend fun redactErrorMessagesOlderThan(cutoffMs: Long): Int
+
+    /**
+     * Atomically completes a job run record with terminal status and metrics.
+     * Uses UPDATE ... WHERE id = :id AND status = 'RUNNING' to prevent
+     * double-completion races.
+     * @return number of rows updated (1 = success, 0 = already completed).
+     */
+    @Query("""
+        UPDATE background_job_runs
+        SET status = :status,
+            finishedAt = :finishedAt,
+            rowsScanned = :rowsScanned,
+            rowsUpdated = :rowsUpdated,
+            notificationsSent = :notificationsSent,
+            statusReason = :statusReason,
+            retryReason = :retryReason,
+            errorMessage = :errorMessage,
+            errorClass = :errorClass,
+            cancellationReason = :cancellationReason,
+            terminalReasonCode = :terminalReasonCode,
+            terminalDiagnosticCode = :terminalDiagnosticCode,
+            partialFailureCount = :partialFailureCount,
+            failedTargetCount = :failedTargetCount
+        WHERE id = :id AND status = 'RUNNING'
+    """)
+    suspend fun completeTerminal(
+        id: Long,
+        status: String,
+        finishedAt: Long,
+        rowsScanned: Int = 0,
+        rowsUpdated: Int = 0,
+        notificationsSent: Int = 0,
+        statusReason: String? = null,
+        retryReason: String? = null,
+        errorMessage: String? = null,
+        errorClass: String? = null,
+        cancellationReason: String? = null,
+        terminalReasonCode: String? = null,
+        terminalDiagnosticCode: String? = null,
+        partialFailureCount: Int? = null,
+        failedTargetCount: Int? = null
+    ): Int
 }

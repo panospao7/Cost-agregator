@@ -33,6 +33,7 @@ class RestoreMaintenanceMode @Inject constructor(
         dagger.Lazy { com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController().let {
             object : WorkerLeaseRegistry {
                 override suspend fun acquire(workerName: String) = object : com.yourname.expensetracker.domain.workers.WorkerLease {
+                    override val leaseId: String = "restore-mode-noop"
                     override suspend fun checkpoint(operation: String) {}
                     override fun close() {}
                 }

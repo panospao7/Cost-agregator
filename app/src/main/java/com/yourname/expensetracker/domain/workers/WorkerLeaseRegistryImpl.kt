@@ -88,7 +88,7 @@ class WorkerLeaseRegistryImpl @Inject constructor(
     // ── WorkerLeaseImpl ───────────────────────────────────────────
 
     inner class WorkerLeaseImpl(
-        val leaseId: String,
+        override val leaseId: String,
         private val workerName: String
     ) : WorkerLease {
         private val released = AtomicBoolean(false)

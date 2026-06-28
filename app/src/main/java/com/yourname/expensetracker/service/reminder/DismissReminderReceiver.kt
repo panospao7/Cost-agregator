@@ -8,6 +8,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -29,6 +30,8 @@ class DismissReminderReceiver : BroadcastReceiver() {
             try {
                 coordinator.dismissReminderDelivery(deliveryId)
                 Timber.d("DismissReminderReceiver: delivery %d dismissed", deliveryId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.w(e, "DismissReminderReceiver: failed to dismiss delivery %d", deliveryId)
             } finally {

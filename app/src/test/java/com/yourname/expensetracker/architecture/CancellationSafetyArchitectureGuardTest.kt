@@ -151,8 +151,6 @@ class CancellationSafetyArchitectureGuardTest {
             "LocationSearchPicker.kt",
             "LoadableUiState.kt",
             "MutationState.kt",
-            "DismissReminderReceiver.kt",
-            "SnoozeReminderReceiver.kt",
             "InsightsEngine.kt",
             "TransactionLifecycleCoordinator.kt",
         )

@@ -8,6 +8,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -29,6 +30,8 @@ class SnoozeReminderReceiver : BroadcastReceiver() {
             try {
                 coordinator.snoozeReminderDelivery(deliveryId)
                 Timber.d("SnoozeReminderReceiver: delivery %d snoozed", deliveryId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.w(e, "SnoozeReminderReceiver: failed to snooze delivery %d", deliveryId)
             } finally {
