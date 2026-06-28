@@ -11,12 +11,15 @@ import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
+import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
@@ -58,7 +61,8 @@ class DailyBriefingWorker @AssistedInject constructor(
     private val timeProvider: TimeProvider,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiWorkScheduler: AiWorkScheduler,
-    private val executionGuard: WorkerExecutionGuard
+    private val executionGuard: WorkerExecutionGuard,
+    private val diagnosticEventWriter: DiagnosticEventWriter
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -69,7 +73,10 @@ class DailyBriefingWorker @AssistedInject constructor(
                 workerName = "ai_daily_briefing",
                 requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
                 allowDuringBackupExport = false,
-                blockedPolicy = BlockedPolicy.SKIP_SUCCESS
+                blockedPolicy = BlockedPolicy.SKIP_SUCCESS,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS["ai_daily_briefing"]?.version
             )
         ) { ctx ->
             val startedAt = timeProvider.now()
@@ -113,8 +120,15 @@ class DailyBriefingWorker @AssistedInject constructor(
         }
 
         if (shouldRescheduleNextMidnight(guardResult)) {
-            runCatching { aiWorkScheduler.scheduleDailyBriefing() }
-                .onFailure { Timber.e(it, "DailyBriefingWorker: failed to reschedule next midnight") }
+            val result = WorkerSpecScheduler.scheduleAtMidnight(
+                applicationContext,
+                AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
+                DailyBriefingWorker::class.java,
+                diagnosticEventWriter
+            )
+            if (!result.scheduled) {
+                Timber.w("DailyBriefingWorker: midnight reschedule failed — ${result.error}")
+            }
         }
 
         return guardResult.toWorkerResult()

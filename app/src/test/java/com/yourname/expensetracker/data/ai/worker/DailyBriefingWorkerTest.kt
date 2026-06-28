@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.ai.worker
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker.Result
+import androidx.work.WorkManager
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
@@ -15,6 +16,7 @@ import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
@@ -29,12 +31,16 @@ import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkAll
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -52,6 +58,8 @@ class DailyBriefingWorkerTest {
     private lateinit var executionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
     private val aiArtifactRepository = mockk<com.yourname.expensetracker.domain.ai.service.AiArtifactRepository>(relaxed = true)
     private val aiWorkScheduler = mockk<com.yourname.expensetracker.domain.ai.service.AiWorkScheduler>(relaxed = true)
+    private val diagnosticEventWriter = mockk<DiagnosticEventWriter>(relaxed = true)
+    private val workManager: WorkManager = mockk(relaxed = true)
     private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
 
     // Relaxed run context so behavioral tests can both run the guarded block AND
@@ -67,6 +75,17 @@ class DailyBriefingWorkerTest {
         deliverProactiveBriefingNotificationUseCase = mockk(relaxed = true)
         executionGuard = mockk(relaxed = true)
         ctx = mockk(relaxed = true)
+
+        // PR7: Mock WorkManager so the worker's reschedule call via
+        // WorkerSpecScheduler.scheduleAtMidnight doesn't crash in the test
+        // environment where WorkManager isn't initialized.
+        mockkStatic(WorkManager::class)
+        every { WorkManager.getInstance(any()) } returns workManager
+
+        // Mirror the real WorkerExecutionGuard.runGuardedWithContext exception handling:
+        // - Non-cancellation exceptions → WorkerGuardResult.Retry (via classifyTransient)
+        // - TimeoutCancellationException → WorkerGuardResult.Retry (P9-PR1 NEW-P9-001)
+        // - CancellationException → re-thrown
         coEvery {
             executionGuard.runGuardedWithContext(
                 any<WorkerGuardRequest>(),
@@ -74,9 +93,22 @@ class DailyBriefingWorkerTest {
             )
         } coAnswers {
             val block = secondArg<suspend (WorkerRunContext) -> Unit>()
-            block.invoke(ctx)
-            WorkerGuardResult.Success(Unit)
+            try {
+                block.invoke(ctx)
+                WorkerGuardResult.Success(Unit)
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                WorkerGuardResult.Retry("Timed out: ${e.message}", e)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                WorkerGuardResult.Retry(e.message ?: "Transient error", e)
+            }
         }
+    }
+
+    @After
+    fun tearDown() {
+        unmockkAll()
     }
 
     private fun buildWorker(): DailyBriefingWorker {
@@ -98,6 +130,7 @@ class DailyBriefingWorkerTest {
                         aiArtifactRepository = aiArtifactRepository,
                         aiWorkScheduler = aiWorkScheduler,
                         executionGuard = executionGuard,
+                        diagnosticEventWriter = diagnosticEventWriter
                     )
                 }
             })
@@ -118,6 +151,10 @@ class DailyBriefingWorkerTest {
         }
         // P9-S4 counts: a delivered briefing must surface a non-zero notificationsSent.
         verify(exactly = 1) { ctx.addNotificationsSent() }
+        // PR7: Reschedule should have been called (WorkManager enqueueUniqueWork called).
+        verify(atLeast = 1) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
     }
 
     @Test
@@ -199,7 +236,10 @@ class DailyBriefingWorkerTest {
 
         assertEquals(Result.success(), result)
         coVerify(exactly = 0) { generateDashboardBriefingUseCase(any(), any()) }
-        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        // PR7: Reschedule now goes through WorkerSpecScheduler → WorkManager.
+        verify(atLeast = 1) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
         // P9-S4 zero-count: a fresh artifact short-circuits before any delivery,
         // so no notification counter is incremented.
         verify(exactly = 0) { ctx.addNotificationsSent() }
@@ -217,7 +257,9 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(atLeast = 1) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
     }
 
     @Test
@@ -232,7 +274,9 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(atLeast = 1) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
     }
 
     @Test
@@ -242,7 +286,9 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 1) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(atLeast = 1) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
     }
 
     @Test
@@ -260,7 +306,10 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        verify(exactly = 0) { aiWorkScheduler.scheduleDailyBriefing() }
+        // PR7: Disabled workers must NOT trigger a reschedule → no enqueueUniqueWork call.
+        verify(exactly = 0) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
     }
 
     // Drift guard: the `disabled does not reschedule` test above only suppresses
@@ -288,7 +337,9 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.retry(), result)
-        verify(exactly = 0) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(exactly = 0) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
     }
 
     @Test
@@ -305,7 +356,9 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.failure(), result)
-        verify(exactly = 0) { aiWorkScheduler.scheduleDailyBriefing() }
+        verify(exactly = 0) {
+            workManager.enqueueUniqueWork(any(), any(), any<androidx.work.OneTimeWorkRequest>())
+        }
     }
 
     private fun freshBriefingArtifact(): AiArtifactRecord {

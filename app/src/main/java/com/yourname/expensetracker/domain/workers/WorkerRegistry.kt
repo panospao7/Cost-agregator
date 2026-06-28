@@ -5,9 +5,19 @@ import com.yourname.expensetracker.data.ai.worker.DailyBriefingWorker
 import com.yourname.expensetracker.data.location.LocationBackfillWorker
 import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
 import com.yourname.expensetracker.data.privacy.DataRetentionWorker
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
 import com.yourname.expensetracker.service.reminder.BillReminderWorker
 import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import timber.log.Timber
 
 /**
  * Single source-of-truth registry for all background workers.
@@ -42,6 +52,12 @@ object WorkerRegistry {
     )
 
     /**
+     * Fire-and-forget scope for summary diagnostic emission. Diagnostics are best-effort
+     * and must not block scheduling — failed emits are silently discarded.
+     */
+    private val diagnosticScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
      * All registered workers in startup / restore-resume order.
      *
      * Every key here must also exist in [WorkerSpec.DEFAULTS] for the pause
@@ -66,10 +82,53 @@ object WorkerRegistry {
      *
      * Each [Entry.schedule] call is wrapped in a [runCatching] so one failure
      * does not prevent other workers from being scheduled.
+     *
+     * If [diagnosticEventWriter] is provided, a summary diagnostic event is
+     * emitted after all entries have been scheduled, recording how many
+     * succeeded and how many threw exceptions.
+     *
+     * @param context Application or activity context.
+     * @param diagnosticEventWriter Optional writer for emitting summary diagnostic events.
      */
-    fun scheduleAll(context: Context) {
+    fun scheduleAll(context: Context, diagnosticEventWriter: DiagnosticEventWriter? = null) {
+        val failedWorkers = mutableListOf<String>()
+        var successCount = 0
+
         for (entry in entries) {
-            runCatching { entry.schedule(context) }
+            val caught = runCatching { entry.schedule(context) }
+            if (caught.isSuccess) {
+                successCount++
+            } else {
+                failedWorkers.add(entry.specName)
+                Timber.w(caught.exceptionOrNull(), "WorkerRegistry: failed to schedule ${entry.specName}")
+            }
+        }
+
+        val writer = diagnosticEventWriter ?: return
+        if (failedWorkers.isEmpty()) return
+
+        val metadata = SafeEventMetadata.builder()
+            .put("totalWorkers", entries.size)
+            .put("successCount", successCount)
+            .put("failedCount", failedWorkers.size)
+            .put("failedWorkers", failedWorkers.joinToString(","))
+            .build()
+
+        diagnosticScope.launch {
+            try {
+                writer.emit(
+                    DiagnosticEvent(
+                        pipeline = AppPipeline.WORKER,
+                        stage = "schedule_all",
+                        outcome = EventOutcome.FAILED_FINAL,
+                        entityType = "WorkerRegistry",
+                        entityId = null,
+                        metadata = metadata
+                    )
+                )
+            } catch (_: Exception) {
+                // Diagnostics are best-effort; suppress emit failures.
+            }
         }
     }
 }
