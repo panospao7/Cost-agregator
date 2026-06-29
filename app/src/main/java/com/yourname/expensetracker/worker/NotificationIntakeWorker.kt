@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.notification.NotificationPipelineOutco
 import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
@@ -35,7 +38,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
     private val repository: NotificationRepository,
     private val timeProvider: TimeProvider,
     private val crypto: NotificationTransientPayloadCrypto,
-    private val executionGuard: WorkerExecutionGuard
+    private val executionGuard: WorkerExecutionGuard,
+    private val privacyGate: PrivacyGate
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -101,6 +105,18 @@ class NotificationIntakeWorker @AssistedInject constructor(
             val current = intakeDao.getById(intakeId)
                 ?: return@runGuardedWithContext
 
+            // Recheck privacy capability before touching encrypted payload
+            for (capability in listOf(PrivacyCapability.NOTIFICATION_CAPTURE)) {
+                when (val decision = privacyGate.check(capability)) {
+                    is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
+                        ctx.checkpoint("intake:privacyChangedBeforeDecrypt")
+                        intakeDao.markPrivacyDeniedAndPurgeAllPayload(id = intakeId, nowMs = now)
+                        return@runGuardedWithContext
+                    }
+                    else -> { }
+                }
+            }
+
             // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
             // Previously filtered on null visible fields (broken for encrypted transient modes).
             val isRaw = current.rawStorageMode == "STORE_RAW"
@@ -120,6 +136,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 && current.transientPayloadNonce != null
                 && current.transientPayloadVersion != null
             ) {
+                ctx.checkpoint("intake:beforeDecrypt")
                 val payload = crypto.decrypt(
                     current.transientPayloadCiphertext,
                     current.transientPayloadNonce,
@@ -335,43 +352,41 @@ class NotificationIntakeWorker @AssistedInject constructor(
         }
 
         return if (guardResult is WorkerGuardResult.Skipped &&
-            (guardResult.reason.startsWith("Privacy blocked:") ||
-             guardResult.reason.startsWith("Privacy fail-closed:"))
+            (guardResult.reason == DiagnosticReasonCode.PRIVACY_DENIED.name ||
+             guardResult.reason == DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
         ) {
-            privacyCleanup(intakeId)
-            Result.success()
+            runPrivacyCleanupGuarded(intakeId).toWorkerResult()
         } else {
             guardResult.toWorkerResult()
         }
     }
 
-    private suspend fun privacyCleanup(intakeId: Long) {
-        try {
-            executionGuard.checkpoint("privacyCleanup")
+    private suspend fun runPrivacyCleanupGuarded(intakeId: Long): WorkerGuardResult<Unit> {
+        return executionGuard.runGuardedWithContext(
+            WorkerGuardRequest(
+                workerName = "notification_intake_privacy_cleanup",
+                requiresDatabaseWrite = true,
+                requiredCapabilities = emptyList(),
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount,
+                specVersion = null
+            )
+        ) { ctx ->
+            ctx.checkpoint("intakePrivacyCleanup:beforeUpdate")
             val now = timeProvider.now()
-            val intake = intakeDao.getById(intakeId) ?: return
-            intakeDao.markTerminal(
+            intakeDao.markPrivacyDeniedAndPurgeAllPayload(
                 id = intakeId,
-                status = NotificationIntakeStatus.PRIVACY_DENIED.name,
-                rawId = null, expenseId = null, reviewId = null,
-                finalOutcome = "PRIVACY_DENIED",
                 nowMs = now
             )
-            purgePayloadBestEffort(intake, now)
-        } catch (e: CancellationException) {
-            Timber.w(e, "IntakeWorker: privacyCleanup cancelled for intakeId=$intakeId")
-        } catch (e: Exception) {
-            Timber.w(e, "IntakeWorker: privacyCleanup failed for intakeId=$intakeId")
         }
     }
 
     private suspend fun purgePayloadBestEffort(row: NotificationIntakeEntity, now: Long) {
-        if (row.payloadMode != "TRANSIENT") return
         try {
-            intakeDao.purgeRawPayload(row.id, now)
-            intakeDao.purgeTransientPayload(row.id, now)
+            intakeDao.purgeAllPayload(id = row.id, nowMs = now)
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is CancellationException) throw e
             Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=${row.id}")
         }
     }

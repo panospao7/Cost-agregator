@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
+import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
 
 @Dao
 interface NotificationIntakeDao {
@@ -151,6 +152,47 @@ interface NotificationIntakeDao {
         WHERE id = :id
     """)
     suspend fun purgeTransientPayload(id: Long, nowMs: Long): Int
+
+    @Query("""
+        UPDATE notification_intake
+        SET status = :status,
+            finalOutcome = :finalOutcome,
+            rawNotificationId = NULL,
+            expenseId = NULL,
+            pendingReviewId = NULL,
+            title = NULL,
+            text = NULL,
+            bigText = NULL,
+            subText = NULL,
+            extrasJson = NULL,
+            transientPayloadCiphertext = NULL,
+            transientPayloadNonce = NULL,
+            transientPayloadVersion = NULL,
+            updatedAt = :nowMs,
+            terminalAt = :nowMs
+        WHERE id = :id
+    """)
+    suspend fun markPrivacyDeniedAndPurgeAllPayload(
+        id: Long,
+        status: String = NotificationIntakeStatus.PRIVACY_DENIED.name,
+        finalOutcome: String = "PRIVACY_DENIED",
+        nowMs: Long
+    ): Int
+
+    @Query("""
+        UPDATE notification_intake
+        SET title = NULL,
+            text = NULL,
+            bigText = NULL,
+            subText = NULL,
+            extrasJson = NULL,
+            transientPayloadCiphertext = NULL,
+            transientPayloadNonce = NULL,
+            transientPayloadVersion = NULL,
+            updatedAt = :nowMs
+        WHERE id = :id
+    """)
+    suspend fun purgeAllPayload(id: Long, nowMs: Long): Int
 
     // ── Data retention worker support (P8F-01) ─────────────────────────────────
 

@@ -142,7 +142,8 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         val result = worker.doWork()
@@ -212,7 +213,8 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         val result = worker.doWork()
@@ -282,7 +284,8 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         val result = worker.doWork()
@@ -338,7 +341,8 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         val result = worker.doWork()
@@ -389,7 +393,8 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         val result = worker.doWork()
@@ -445,20 +450,15 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         val result = worker.doWork()
 
         assertEquals("Privacy denied should return success", WorkResult.success(), result)
-        coVerify(exactly = 1) {
-            intakeDao.markTerminal(
-                id = intakeId,
-                status = NotificationIntakeStatus.PRIVACY_DENIED.name,
-                rawId = null, expenseId = null, reviewId = null,
-                finalOutcome = "PRIVACY_DENIED",
-                nowMs = now
-            )
+        coVerify(atLeast = 1) {
+            intakeDao.markPrivacyDeniedAndPurgeAllPayload(any(), any(), any(), any())
         }
     }
 
@@ -510,14 +510,14 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         val result = worker.doWork()
 
         assertEquals("Privacy denied should return success", WorkResult.success(), result)
-        coVerify(exactly = 1) { intakeDao.purgeRawPayload(intakeId, now) }
-        coVerify(exactly = 1) { intakeDao.purgeTransientPayload(intakeId, now) }
+        coVerify(atLeast = 1) { intakeDao.markPrivacyDeniedAndPurgeAllPayload(any(), any(), any(), any()) }
     }
 
     @Test
@@ -572,7 +572,8 @@ class NotificationIntakeWorkerTimeoutTest {
             appContext = context, params = params,
             intakeDao = intakeDao, repository = repository,
             timeProvider = timeProvider, crypto = crypto,
-            executionGuard = executionGuard
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
         )
 
         try {
