@@ -1,10 +1,10 @@
 # Worker Architecture Implementation Plan
 
-Last updated: 2026-06-28  
+Last updated: 2026-06-30  
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE** (latest commit on branch `worker-architecture-prs-1-5`).
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12F ALL COMPLETE** (latest commit on branch `worker-architecture-prs-1-5`).
 
 ---
 
@@ -126,10 +126,10 @@ After this plan:
 - [x] Every worker run has a durable `BackgroundJobRun` or equivalent run ledger row. (PR 3 + PR 4 + PR 5)
 - [x] Terminal worker state is written exactly once via compare-and-set. (PR 3)
 - [x] Cancellation is rethrown and not converted to success/failure incorrectly. (PR 4)
-- [ ] Terminal diagnostics are durable and not lost due to cancellable scope. (PR 8)
-- [ ] Schedule/reschedule failures are visible and sanitized. (PR 7)
+- [x] Terminal diagnostics are durable and not lost due to cancellable scope. (PR 8)
+- [x] Schedule/reschedule failures are visible and sanitized. (PR 7)
 - [x] One-shot incompatible version changes replace stale work. (PR 1)
-- [ ] New `CoroutineWorker` subclasses fail CI unless guarded or explicitly allowlisted. (PR 10)
+- [x] New `CoroutineWorker` subclasses fail CI unless guarded or explicitly allowlisted. (PR 10 + PR12F)
 - [x] Worker registry/spec comments match implementation. (PR 1)
 
 ---
@@ -1035,6 +1035,115 @@ Acceptance:
 
 ---
 
+## PR 12A — Room Schema/Migration Repair ✅ COMPLETE
+
+**Commit:** `f0ab0ff9`
+
+Includes:
+
+- Cleaned up Room schema 147/148 artifacts,
+- Verified fresh-install schema equals migrated schema,
+- DB version confirmed at 148 with valid 147→148 migration path,
+- Removed stale migration references.
+
+Acceptance:
+
+- [x] Schema parity between fresh and migrated DB is proven.
+- [x] DB version 148 upgrade path is valid.
+
+---
+
+## PR 12B — Durable Terminal State + Stale Recovery CAS ✅ COMPLETE
+
+**Commit:** `6c2dda79`
+
+Includes:
+
+- Fixed `WorkerRunLogger` terminal DB update ordering to prevent race in shutdown,
+- `StaleRecovery` condition SQL now uses proper `WHERE` clause to avoid false matches,
+- Added tests for stale-runner recovery under concurrent shutdown,
+- Terminal CAS now correctly orders DB flush before the `AtomicBoolean` toggle.
+
+Acceptance:
+
+- [x] Terminal DB state is written before `AtomicBoolean` release.
+- [x] Stale recovery SQL does not match non-stale runs.
+
+---
+
+## PR 12C — Honor Guard Privacy/Permission Policies ✅ COMPLETE
+
+**Commit:** `e7c7d05a`
+
+Includes:
+
+- `WorkerExecutionGuard` now checks privacy guard and permission policies before executing worker body,
+- `BillReminderWorker` cannot deliver when notification permission is revoked,
+- `NotificationIntakeWorker` rechecks privacy before decrypt/replay,
+- Denied permission produces `BLOCKED_PERMISSION` terminal state with sanitized diagnostic.
+
+Acceptance:
+
+- [x] Privacy/permission policies are enforced before worker execution.
+- [x] Denied permission does not silently lose work.
+
+---
+
+## PR 12D — NotificationIntake Privacy Cleanup + Payload Purge ✅ COMPLETE
+
+**Commit:** `46ff0fcd`
+
+Includes:
+
+- Raw notification payloads are purged after successful intake,
+- Transient/pending payloads are purged if privacy is revoked,
+- Checkpoint written before decrypt (not after) so partial decrypt cannot leave inconsistent state,
+- Sanitized diagnostics record purge reason without raw data.
+
+Acceptance:
+
+- [x] Raw payloads do not persist after intake completion.
+- [x] Revoked privacy purges queued transient payloads.
+- [x] Checkpoint occurs before decrypt, not after.
+
+---
+
+## PR 12E — Receivers Do Not Mutate DB Directly ✅ COMPLETE
+
+**Note:** Core receiver-structured-concurrency fix was delivered in PR 9; PR 12E adds verification and final hardening.
+
+Includes:
+
+- Verified `DismissReminderReceiver` and `SnoozeReminderReceiver` use structured app/background dispatcher,
+- Both receivers rethrow `CancellationException`,
+- DB writes go through lifecycle-guarded paths, not direct DAO access,
+- Added receiver DB-write barrier verification tests.
+
+Acceptance:
+
+- [x] Receivers do not mutate the database directly.
+- [x] Cancellation is correctly propagated.
+
+---
+
+## PR 12F — Stronger Source-Scanning Static Guards ✅ COMPLETE
+
+**Commit:** `886f5aca`
+
+Includes:
+
+- `SourceScanningArchitectureGuardTest` with 4 tests covering source-level worker pattern detection,
+- Static guards now discover new `CoroutineWorker` subclasses automatically,
+- Any unguarded worker (not wrapped in `WorkerExecutionGuard`) fails CI,
+- Works for all 8 original workers and 2 action workers.
+
+Acceptance:
+
+- [x] Static guards discover new workers without manual allowlist updates.
+- [x] Unguarded workers fail CI with clear error message.
+
+---
+
 # 11. Edge Cases
 
 ## Worker starts after DB swap but before restart
@@ -1195,44 +1304,44 @@ Mitigation:
 
 ## MIT-016 can close when
 
-- [ ] Lease registry tracks unique lease IDs.
-- [ ] Concurrent same-name workers are visible to restore drain.
-- [ ] `NotificationIntakeWorker` uses full guard.
-- [ ] Every DB-writing worker has guard/lease/run ledger or approved exception.
-- [ ] Static guard blocks new unguarded DB-writing workers.
+- [x] Lease registry tracks unique lease IDs.
+- [x] Concurrent same-name workers are visible to restore drain.
+- [x] `NotificationIntakeWorker` uses full guard.
+- [x] Every DB-writing worker has guard/lease/run ledger or approved exception.
+- [x] Static guard blocks new unguarded DB-writing workers.
 
 ## MIT-017 can close when
 
-- [ ] One-shot version bump uses `REPLACE` or cancel+enqueue.
-- [ ] Terminal run logging is atomic.
-- [ ] Retention partial failures are visible.
-- [ ] Daily briefing reschedule failures recover.
-- [ ] `scheduleAll()` records per-entry failures.
+- [x] One-shot version bump uses `REPLACE` or cancel+enqueue.
+- [x] Terminal run logging is atomic.
+- [x] Retention partial failures are visible.
+- [x] Daily briefing reschedule failures recover.
+- [x] `scheduleAll()` records per-entry failures.
 
 ## MIT-035 can close when
 
-- [ ] Worker run ledger exists and is durable.
-- [ ] Notification, bank/import/export/retention worker diagnostics are represented as needed.
-- [ ] Long-running worker operations are resumable or diagnosable.
+- [x] Worker run ledger exists and is durable.
+- [x] Notification, bank/import/export/retention worker diagnostics are represented as needed.
+- [x] Long-running worker operations are resumable or diagnosable.
 
 ## MIT-065 can close when
 
-- [ ] Terminal/pre-launch diagnostics use durable bounded path.
-- [ ] Shutdown/restore cancellation cannot erase critical diagnostics.
-- [ ] Tests cover service destroy and restore shutdown.
+- [x] Terminal/pre-launch diagnostics use durable bounded path.
+- [x] Shutdown/restore cancellation cannot erase critical diagnostics.
+- [x] Tests cover service destroy and restore shutdown.
 
 ## MIT-070 can close when
 
-- [ ] Worker scheduling failures emit sanitized diagnostics.
-- [ ] Worker comments/spec docs match implementation.
-- [ ] Schedule failure visibility tests pass.
+- [x] Worker scheduling failures emit sanitized diagnostics.
+- [x] Worker comments/spec docs match implementation.
+- [x] Schedule failure visibility tests pass.
 
 ## MIT-082 can close when
 
-- [ ] Every worker subclass is inventoried.
-- [ ] Registry/spec parity guard exists.
-- [ ] TimeProvider usage is fixed or documented.
-- [ ] Stale `RUNNING` recovery test passes.
+- [x] Every worker subclass is inventoried.
+- [x] Registry/spec parity guard exists.
+- [x] TimeProvider usage is fixed or documented.
+- [x] Stale `RUNNING` recovery test passes.
 
 ---
 
@@ -1258,6 +1367,12 @@ This plan is complete when:
 - [x] Worker static guards are blocking in CI. (PR 10)
 - [x] Restore/worker regression tests pass. (PR 11)
 - [x] Master tracker is updated with closing SHAs. (PRs 1–11)
+- [x] Room schema 147/148 cleanup with valid migration path. (PR12A)
+- [x] WorkerRunLogger terminal DB update ordering fixed. (PR12B)
+- [x] Guard privacy/permission policies honored. (PR12C)
+- [x] Notification intake privacy cleanup and payload purge. (PR12D)
+- [x] Receivers do not mutate DB directly. (PR12E)
+- [x] Static guards discover new workers automatically. (PR12F)
 
 ---
 
@@ -1283,19 +1398,24 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 ---
 
-# 18. Final Status (PRs 1–11 All Complete)
+# 18. Final Status (PRs 1–12 All Complete)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** ALL PRs 1–11 COMPLETE
+**Status:** ALL PRs 1–11 AND PR12A–PR12F COMPLETE  
+**HEAD commit:** `886f5aca`  
+**Closure date:** 2026-06-30
 
 ## Summary
 
 | Metric | Value |
 |---|---|
 | Workers fully guarded | 8 (NotificationIntake, BillReminder, DataRetention, DailyBriefing, LocationBackfill, MerchantKeyBackfill, ReceiptMatching, WarrantyExpiration) |
+| Action workers with guard/CE safety | 2 (SourceLinkBackfill, DismissReminderReceiver, SnoozeReminderReceiver) |
 | Receivers with CE safety | 2 (DismissReminderReceiver, SnoozeReminderReceiver) |
 | Non-WorkManager worker with barrier checks | 1 (SourceLinkBackfill) |
-| Worker-related tests | 25+ test files, 100+ individual test cases |
+| Worker-related test files | 26 |
+| Worker-related test cases | 240+ |
+| DB version | 148 with valid 147→148 migration |
 | New regressions introduced | 0 (all existing tests continue to pass) |
 
 ## Architecture Delivered
@@ -1306,6 +1426,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
    - Unique lease acquisition
    - Durable run ledger (`BackgroundJobRun`)
    - Permission/capability checks
+   - Privacy policy enforcement
    - Atomic terminal state via CAS
    - Bounded terminal writes (5s timeout, NonCancellable)
 
@@ -1318,6 +1439,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
    - `AtomicBoolean.compareAndSet` guards each terminal method
    - DAO `completeTerminal()` uses `WHERE status = 'RUNNING'` as DB-level CAS
    - Duplicate terminal calls are no-ops
+   - PR12B: terminal DB update ordering fixed for shutdown races
 
 4. **WorkerSpecScheduler** — Centralized scheduling:
    - Version bump detection (`!=` not `>`)
@@ -1334,34 +1456,47 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
    - `WorkerGuardArchitectureGuardTest`
    - `WorkerGuardStaticVerificationTest`
    - `WorkerGuardVerifier`
+   - `SourceScanningArchitectureGuardTest` (PR12F) — discovers new workers automatically
+
+7. **Privacy/Permission Enforcement** (PR12C/PR12D):
+   - Guard checks privacy before worker body execution
+   - Raw/transient payloads purged after intake
+   - Checkpoint written before decrypt
+   - Permission-denied produces `BLOCKED_PERMISSION` with diagnostic
+
+8. **Receiver Structured Background** (PR9 + PR12E):
+   - `DismissReminderReceiver` and `SnoozeReminderReceiver` use structured scope
+   - `CancellationException` rethrown
+   - No direct DAO mutation
 
 ## Test Coverage
 
 | Category | Test Files |
 |---|---|
 | Lease Registry | `WorkerLeaseRegistryTest.kt` (18 tests) |
-| Execution Guard | `WorkerExecutionGuardTest.kt` (12+ tests) |
-| Run Logger | `WorkerRunLoggerTest.kt` (10 tests) |
-| Spec Scheduler | `WorkerSpecSchedulerTest.kt` |
-| Idempotency | `WorkerIdempotencyTest.kt` |
-| Context Thread Safety | `WorkerRunContextThreadSafetyTest.kt` |
-| Guard Verification | `WorkerGuardVerifierTest.kt` |
-| Architecture Guards | `WorkerGuardArchitectureGuardTest.kt`, `WorkerGuardStaticVerificationTest.kt` |
-| Privacy Policy | `PrivacyRuntimeWorkerPolicyTest.kt`, `PrivacySettingsRepositoryImplWorkerGatingTest.kt` |
-| Worker Migration | `P9RemainingWorkerFixesTest.kt` |
-| Restore/Barrier Golden | `WorkerRestoreBarrierIdempotencyGoldenTest.kt` |
-| Worker Contract | `WorkerContractTest.kt` |
-| Notification Intake | `NotificationIntakeWorkerTimeoutTest.kt` (7 tests) |
-| Bill Reminder | `BillReminderWorkerTest.kt`, `BillReminderWorkerTimeProviderTest.kt` |
-| Data Retention | `DataRetentionWorkerTest.kt` |
-| Daily Briefing | `DailyBriefingWorkerTest.kt` |
-| Location Backfill | `LocationBackfillWorkerTest.kt` |
-| Merchant Key Backfill | `MerchantKeyBackfillWorkerTest.kt` |
-| Receipt Matching | `ReceiptMatchingWorkerTest.kt` |
-| Warranty Expiration | `WarrantyExpirationWorkerTest.kt` |
-| Source Link Backfill | `SourceLinkBackfillWorkerTest.kt` |
-| **PR11: Restore Regression** | `WorkerRestoreRegressionTest.kt` (14 tests) |
-| **PR11: Barrier Integration** | `WorkerBarrierIntegrationTest.kt` (17 tests) |
+| Execution Guard | `WorkerExecutionGuardTest.kt` (36 tests) |
+| Run Logger | `WorkerRunLoggerTest.kt` (16 tests) |
+| Spec Scheduler | `WorkerSpecSchedulerTest.kt` (7 tests) |
+| Idempotency | `WorkerIdempotencyTest.kt` (5 tests) |
+| Context Thread Safety | `WorkerRunContextThreadSafetyTest.kt` (2 tests) |
+| Guard Verification | `WorkerGuardVerifierTest.kt` (3 tests) |
+| Architecture Guards | `WorkerGuardArchitectureGuardTest.kt` (3 tests), `WorkerGuardStaticVerificationTest.kt` (4 tests) |
+| Source Scanning Guard | `SourceScanningArchitectureGuardTest.kt` (4 tests) |
+| Privacy Policy | `PrivacyRuntimeWorkerPolicyTest.kt` (9 tests), `PrivacySettingsRepositoryImplWorkerGatingTest.kt` (6 tests) |
+| Worker Migration | `P9RemainingWorkerFixesTest.kt` (12 tests) |
+| Restore/Barrier Golden | `WorkerRestoreBarrierIdempotencyGoldenTest.kt` (1 test) |
+| Worker Contract | `WorkerContractTest.kt` (5 tests) |
+| Notification Intake | `NotificationIntakeWorkerTimeoutTest.kt` (11 tests) |
+| Bill Reminder | `BillReminderWorkerTest.kt` (4 tests), `BillReminderWorkerTimeProviderTest.kt` (3 tests) |
+| Data Retention | `DataRetentionWorkerTest.kt` (7 tests) |
+| Daily Briefing | `DailyBriefingWorkerTest.kt` (14 tests) |
+| Location Backfill | `LocationBackfillWorkerTest.kt` (6 tests) |
+| Merchant Key Backfill | `MerchantKeyBackfillWorkerTest.kt` (5 tests) |
+| Receipt Matching | `ReceiptMatchingWorkerTest.kt` (11 tests) |
+| Warranty Expiration | `WarrantyExpirationWorkerTest.kt` (12 tests) |
+| Source Link Backfill | `SourceLinkBackfillWorkerTest.kt` (3 tests) |
+| **PR11: Restore Regression** | `WorkerRestoreRegressionTest.kt` (15 tests) |
+| **PR11: Barrier Integration** | `WorkerBarrierIntegrationTest.kt` (23 tests) |
 
 ## MIT Closure Status
 
@@ -1373,3 +1508,59 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | MIT-065 | Durable terminal diagnostics | DONE |
 | MIT-070 | Worker scheduling diagnostics | DONE |
 | MIT-082 | Worker registry/spec parity | DONE |
+
+---
+
+# 19. Final Status PR12 — Deep Review Blocker Resolution
+
+All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12F:
+
+| # | Blocker | PR | Resolution |
+|---|---|---|---|
+| 1 | WorkerRunLogger terminal DB update ordering | PR12B | DB flush before AtomicBoolean release in shutdown path |
+| 2 | Stale recovery conditional SQL | PR12B | Proper WHERE clause prevents false stale-runner matches |
+| 3 | Guard privacy/permission policies honored | PR12C | `WorkerExecutionGuard` checks privacy gate before body |
+| 4 | Notification intake privacy cleanup guarded | PR12D | Checkpoint before decrypt; raw payloads purged after intake |
+| 5 | Raw and transient payloads purged | PR12D | Purge on privacy revocation; sanitized diagnostics without raw data |
+| 6 | Checkpoint before decrypt | PR12D | Checkpoint written before decrypt operation, not after |
+| 7 | Receivers do not mutate DB directly | PR12E | Structured scope + CE rethrow; no direct DAO mutation |
+| 8 | Room schema 147/148 cleanup | PR12A | Valid migration path; fresh/migrated schema parity proven |
+| 9 | Static guards discover new workers | PR12F | `SourceScanningArchitectureGuardTest` auto-detects new workers |
+
+## Final Worker Inventory
+
+| Worker | Type | Guarded | Lease | Run Ledger | Tests |
+|---|---|---|---|---|---|
+| NotificationIntakeWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 11 |
+| BillReminderWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 7 |
+| DataRetentionWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 7 |
+| DailyBriefingWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 14 |
+| LocationBackfillWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 6 |
+| MerchantKeyBackfillWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 5 |
+| ReceiptMatchingWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 11 |
+| WarrantyExpirationWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 12 |
+| SourceLinkBackfillWorker | Non-WM worker | ✅ Barrier + TimeProvider | N/A | ✅ | 3 |
+| DismissReminderReceiver | BroadcastReceiver | ✅ CE-safe | N/A | N/A | Included above |
+| SnoozeReminderReceiver | BroadcastReceiver | ✅ CE-safe | N/A | N/A | Included above |
+
+**Total: 10 workers (8 CoroutineWorker + 2 action workers)**
+
+## Final Architecture Metrics
+
+| Metric | Value |
+|---|---|
+| DB version | 148 |
+| DB migration (147→148) | Valid — tested via migration test |
+| Fresh schema = migrated schema | ✅ Proven |
+| Workers with full guard | 8 of 8 |
+| Workers with unique lease | 8 of 8 |
+| Workers with run ledger | 8 of 8 + 1 non-WM worker |
+| Receivers with CE rethrow | 2 of 2 |
+| Terminal double-write races | 0 (CAS enforced) |
+| One-shot workers using KEEP | 0 (all REPLACE) |
+| Schedule failures with diagnostic | All (per-entry diagnostic) |
+| Static guard files | 4 (`WorkerGuardArchitectureGuardTest`, `WorkerGuardStaticVerificationTest`, `WorkerGuardVerifier`, `SourceScanningArchitectureGuardTest`) |
+| Architecture guard test methods | 14+ |
+| Worker-related test files | 26 |
+| Worker-related test methods | 240+ |
+| Architectural rules enforced by CI | ✅ Worker guard, cancellation safety, DB write barrier, privacy policy, source scanning |

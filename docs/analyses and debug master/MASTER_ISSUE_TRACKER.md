@@ -1,7 +1,7 @@
 # Cost Aggregator — Master Issue Tracker for Pipelines 1–18
 
-Last synced: 2026-06-15  
-Source docs commit: `14659197606b6fbe9874ed09639c53bd64007bea`  
+Last synced: 2026-06-30  
+Source docs commit: `886f5aca4a7738b425f2d0247a8f319f0f8f7412`  
 Debug reports primarily audit pinned code around: `83b798e`
 
 > This tracker is the single release-readiness source of truth for all Pipeline 1–18 findings.  
@@ -40,7 +40,7 @@ The app has good architectural direction, but release is blocked by cross-cuttin
 | P6 | Budget/forecast/cashflow | RED | Forecast correctness, recurring direction, date boundaries |
 | P7 | Backup/restore | YELLOW/RED-borderline | Stale DB consumers, non-atomic assets |
 | P8 | Privacy/AI/redaction | RED | Raw persistence, cloud fail-open, redaction gaps |
-| P9 | Workers/background jobs | **YELLOW** | Lease registry fixed, intake worker guarded, terminal logging atomic; remaining: scheduling diagnostics (MIT-070), retention partial-failure visibility, static CI guards |
+| P9 | Workers/background jobs | **GREEN** | All worker issues resolved: lease registry, full guard, terminal logging, scheduling diagnostics, retention partial-failure visibility, static CI guards, privacy/permission enforcement, receiver safety |
 | P10 | Bank integration/imports | RED | Demo/stub readiness, privacy, idempotency |
 | P11 | Email receipt ingestion | RED/high-YELLOW | False positives, dedupe races, raw body/item privacy |
 | P12 | Import/export/accounting | RED-ish | Import architecture mismatch, export/accounting gaps |
@@ -451,7 +451,8 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P1, P4, P7, P9, P15, P17  
-**Status:** **DONE** (PRs 1–11: branch `worker-architecture-prs-1-5`)  
+**Status:** **DONE** — closure date: 2026-06-30  
+**Closed by:** PRs 1–11 + PR12A–PR12F on branch `worker-architecture-prs-1-5` (HEAD `886f5aca`)  
 **Labels:** `workers`, `restore`, `release-blocker`
 
 #### Tasks
@@ -464,13 +465,26 @@ Choose one:
 - [x] Add lease acquire-after-stop gate (PR6A).
 - [x] Add blocked/retry policy for restore/write-barrier blocks (PR6A).
 - [x] Add static guard for worker guard usage (PR 10).
+- [x] Add source-scanning guard for new worker auto-detection (PR12F).
 
 #### Acceptance Criteria
 
 - [x] Restore drain cannot miss active same-name workers.
 - [x] Restore drain cannot miss workers acquired after stop request (PR6A).
 - [x] Dynamic one-shot blocked by restore/write-barrier returns retry, not success (PR6A).
-- [x] Unguarded DB-writing worker fails CI (PR 10).
+- [x] Unguarded DB-writing worker fails CI (PR 10 + PR12F).
+
+#### Final Acceptance Checklist (PR12G)
+
+- [x] WorkerRunLogger terminal DB update ordering fixed — DB flush before AtomicBoolean release (PR12B).
+- [x] Stale recovery conditional SQL uses proper WHERE clause (PR12B).
+- [x] Guard privacy/permission policies honored before worker body execution (PR12C).
+- [x] Notification intake privacy cleanup guarded — checkpoint before decrypt, raw payloads purged (PR12D).
+- [x] Raw and transient payloads purged on privacy revocation (PR12D).
+- [x] Checkpoint written before decrypt (PR12D).
+- [x] Receivers do not mutate DB directly — structured scope, CE rethrow, no direct DAO (PR12E).
+- [x] Room schema 147/148 cleanup — valid migration path, fresh/migrated parity (PR12A).
+- [x] Static guards discover new workers automatically — `SourceScanningArchitectureGuardTest` (PR12F).
 
 ---
 
@@ -478,7 +492,8 @@ Choose one:
 
 **Severity:** S1  
 **Pipelines:** P9  
-**Status:** **DONE** (PRs 1–11: branch `worker-architecture-prs-1-5`)  
+**Status:** **DONE** — closure date: 2026-06-30  
+**Closed by:** PRs 1–11 + PR12A–PR12F on branch `worker-architecture-prs-1-5` (HEAD `886f5aca`)  
 **Labels:** `workers`, `diagnostics`
 
 #### Tasks
@@ -490,6 +505,7 @@ Choose one:
 - [x] Daily briefing reschedule failure should be recoverable (PR 7).
 - [x] Data retention partial failures should not soft-success silently (PR 6E).
 - [x] `WorkerRegistry.scheduleAll()` must log/write sanitized diagnostic for each failed schedule entry (PR 7).
+- [x] Fix terminal DB update ordering for shutdown races (PR12B).
 
 #### Acceptance Criteria
 
@@ -497,6 +513,19 @@ Choose one:
 - [x] Worker terminal state cannot be double-written under race.
 - [x] Partial failures are visible/durable (PR 6).
 - [x] Per-entry schedule failures are visible (PR 7).
+- [x] Terminal DB update is correctly ordered before AtomicBoolean release (PR12B).
+
+#### Final Acceptance Checklist (PR12G)
+
+- [x] WorkerRunLogger terminal DB update ordering fixed — DB flush before AtomicBoolean release (PR12B).
+- [x] Stale recovery conditional SQL uses proper WHERE clause (PR12B).
+- [x] Guard privacy/permission policies honored before worker body execution (PR12C).
+- [x] Notification intake privacy cleanup guarded — checkpoint before decrypt, raw payloads purged (PR12D).
+- [x] Raw and transient payloads purged on privacy revocation (PR12D).
+- [x] Checkpoint written before decrypt (PR12D).
+- [x] Receivers do not mutate DB directly — structured scope, CE rethrow, no direct DAO (PR12E).
+- [x] Room schema 147/148 cleanup — valid migration path, fresh/migrated parity (PR12A).
+- [x] Static guards discover new workers automatically — `SourceScanningArchitectureGuardTest` (PR12F).
 
 ---
 
