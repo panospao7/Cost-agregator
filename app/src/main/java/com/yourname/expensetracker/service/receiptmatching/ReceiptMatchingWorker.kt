@@ -39,7 +39,9 @@ class ReceiptMatchingWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "receipt_matching",
                 allowDuringBackupExport = false,
-                blockedPolicy = BlockedPolicy.RETRY
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount
             )
         ) { ctx ->
             try {

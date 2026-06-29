@@ -49,7 +49,9 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "merchant_key_backfill",
                 allowDuringBackupExport = false,
-                blockedPolicy = BlockedPolicy.RETRY
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount
             )
         ) { ctx ->
             var totalUpdated = 0

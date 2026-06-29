@@ -53,7 +53,9 @@ class LocationBackfillWorker @AssistedInject constructor(
                 workerName = "location_backfill",
                 requiredCapabilities = listOf(PrivacyCapability.BACKGROUND_LOCATION_BACKFILL),
                 allowDuringBackupExport = false,
-                blockedPolicy = BlockedPolicy.RETRY
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount
             )
         ) { ctx ->
             // Evict stale merchant-location cache entries before geocoding new ones.

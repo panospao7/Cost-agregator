@@ -74,7 +74,9 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 workerName = "warranty_expiration_check",
                 requiresNotificationPermission = true,
                 allowDuringBackupExport = false,
-                blockedPolicy = BlockedPolicy.RETRY
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount
             )
         ) { ctx ->
             try {
