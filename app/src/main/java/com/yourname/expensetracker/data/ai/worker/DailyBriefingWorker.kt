@@ -98,23 +98,28 @@ class DailyBriefingWorker @AssistedInject constructor(
             }
 
             val notificationId = NotificationIdGenerator.forGeneral(dateKey.hashCode().toLong())
-            withTimeout(BRIEFING_PIPELINE_TIMEOUT_MS) {
-                val processedData = dashboardDataProvider
-                    .getProcessedDataFlow(analyticsRepository)
-                    .first()
-                generateDashboardBriefingUseCase(processedData, startedAt)
-                deliverProactiveBriefingNotificationUseCase(
-                    dateKey = dateKey,
-                    startedAt = startedAt,
-                    notificationId = notificationId
-                )
-                // P9-S4 (NEW-03): record the proactive briefing delivery so the run
-                // surfaces a non-zero notificationsSent in BackgroundJobRun. This is
-                // best-effort at the worker boundary: the delivery use case completed
-                // without throwing or timing out. (The use case may still internally
-                // no-op on settings/dedupe; surfacing that would require a delivery
-                // return value, which is out of scope for this counts-only slice.)
-                ctx.addNotificationsSent()
+            try {
+                withTimeout(BRIEFING_PIPELINE_TIMEOUT_MS) {
+                    val processedData = dashboardDataProvider
+                        .getProcessedDataFlow(analyticsRepository)
+                        .first()
+                    generateDashboardBriefingUseCase(processedData, startedAt)
+                    deliverProactiveBriefingNotificationUseCase(
+                        dateKey = dateKey,
+                        startedAt = startedAt,
+                        notificationId = notificationId
+                    )
+                    // P9-S4 (NEW-03): record the proactive briefing delivery so the run
+                    // surfaces a non-zero notificationsSent in BackgroundJobRun. This is
+                    // best-effort at the worker boundary: the delivery use case completed
+                    // without throwing or timing out. (The use case may still internally
+                    // no-op on settings/dedupe; surfacing that would require a delivery
+                    // return value, which is out of scope for this counts-only slice.)
+                    ctx.addNotificationsSent()
+                }
+            } catch (e: TimeoutCancellationException) {
+                Timber.w(e, "DailyBriefingWorker: pipeline timed out after ${BRIEFING_PIPELINE_TIMEOUT_MS}ms — retrying")
+                throw com.yourname.expensetracker.domain.workers.RetryableWorkerException("PIPELINE_TIMEOUT")
             }
             Timber.d("DailyBriefingWorker: completed successfully.")
         }
