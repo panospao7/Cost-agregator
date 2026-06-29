@@ -169,7 +169,9 @@ interface NotificationIntakeDao {
             transientPayloadNonce = NULL,
             transientPayloadVersion = NULL,
             updatedAt = :nowMs,
-            terminalAt = :nowMs
+            terminalAt = :nowMs,
+            rawPayloadPurgedAt = :nowMs,
+            transientPayloadPurgedAt = :nowMs
         WHERE id = :id
     """)
     suspend fun markPrivacyDeniedAndPurgeAllPayload(
@@ -189,7 +191,9 @@ interface NotificationIntakeDao {
             transientPayloadCiphertext = NULL,
             transientPayloadNonce = NULL,
             transientPayloadVersion = NULL,
-            updatedAt = :nowMs
+            updatedAt = :nowMs,
+            rawPayloadPurgedAt = :nowMs,
+            transientPayloadPurgedAt = :nowMs
         WHERE id = :id
     """)
     suspend fun purgeAllPayload(id: Long, nowMs: Long): Int

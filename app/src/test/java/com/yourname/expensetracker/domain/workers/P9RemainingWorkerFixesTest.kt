@@ -93,11 +93,11 @@ class P9RemainingWorkerFixesTest {
 
         // First call: should write to DAO
         handle.success()
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // Second call: must be idempotent — no additional DAO write
         handle.success()
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -112,11 +112,11 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.retry("transient error")
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // Second call is a no-op even with a different terminal status
         handle.success()
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -131,11 +131,11 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.failure("permanent error")
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // Second call is no-op
         handle.failure("ignored duplicate")
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -150,10 +150,10 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.cancelled("system cancel")
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         handle.cancelled("ignored duplicate")
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -168,10 +168,10 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.staleAborted()
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         handle.staleAborted()
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -186,10 +186,10 @@ class P9RemainingWorkerFixesTest {
         val handle = logger.start("test_worker")
 
         handle.skipped("work already in progress")
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         handle.skipped("ignored duplicate")
-        coVerify(exactly = 1) { dao.update(any()) }
+        coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     // ──────────────────────────────────────────────────────────────

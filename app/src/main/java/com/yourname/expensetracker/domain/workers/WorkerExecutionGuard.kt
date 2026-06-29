@@ -165,10 +165,12 @@ class WorkerExecutionGuard @Inject constructor(
                 withBoundedTerminalWrite { run.success() }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
-                // P9-PR1 (NEW-P9-001): TimeoutCancellationException is retryable, not system cancel.
+                // PR12-FIX-1: TimeoutCancellationException from the WORKER BLOCK must propagate
+                // to the worker's own handler so domain-specific retry logic (backoff, row state)
+                // executes before the guard records the terminal state. The guard only catches
+                // TimeoutCancellationException from its OWN operations (terminal writes, barriers).
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
-                    withBoundedTerminalWrite { run.retry("Timed out: ${e.message}", e) }
-                    return WorkerGuardResult.Retry("Timed out: ${e.message}", e)
+                    throw e
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
                     withBoundedTerminalWrite { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
@@ -318,10 +320,12 @@ class WorkerExecutionGuard @Inject constructor(
                 }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
-                // P9-PR1 (NEW-P9-001): TimeoutCancellationException is retryable, not system cancel.
+                // PR12-FIX-1: TimeoutCancellationException from the WORKER BLOCK must propagate
+                // to the worker's own handler so domain-specific retry logic (backoff, row state)
+                // executes before the guard records the terminal state. The guard only catches
+                // TimeoutCancellationException from its OWN operations (terminal writes, barriers).
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
-                    withBoundedTerminalWrite { run.retry("Timed out: ${e.message}", e) }
-                    return WorkerGuardResult.Retry("Timed out: ${e.message}", e)
+                    throw e
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
                     withBoundedTerminalWrite { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
