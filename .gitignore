@@ -3,6 +3,9 @@
 build/
 app/build/
 
+# Kotlin compiler sessions
+.kotlin/
+
 # Local configuration file (sdk.io.etc)
 local.properties
 

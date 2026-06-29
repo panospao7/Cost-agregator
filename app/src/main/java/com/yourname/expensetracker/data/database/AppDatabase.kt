@@ -40,7 +40,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 147
+const val APP_DATABASE_SCHEMA_VERSION = 148
 
 @Database(
     entities = [

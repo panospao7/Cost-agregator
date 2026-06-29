@@ -55,6 +55,21 @@ object DatabaseMigrations {
         }
     }
 
+    /** PR12A: Add worker-run tracing columns to background_job_runs. */
+    val MIGRATION_147_148 = object : Migration(147, 148) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN workId TEXT")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN uniqueWorkName TEXT")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN specVersion INTEGER")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN runAttempt INTEGER")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN leaseId TEXT")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN terminalReasonCode TEXT")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN terminalDiagnosticCode TEXT")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN partialFailureCount INTEGER")
+            database.execSQL("ALTER TABLE background_job_runs ADD COLUMN failedTargetCount INTEGER")
+        }
+    }
+
     /** All registered migrations, starting from v145 baseline. */
-    val ALL: Array<Migration> = arrayOf(MIGRATION_145_146, MIGRATION_146_147)
+    val ALL: Array<Migration> = arrayOf(MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148)
 }
