@@ -8,6 +8,8 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -576,6 +578,247 @@ class WorkerExecutionGuardTest {
                 statusReason = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name),
                 terminalReasonCode = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
             )
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12C: Privacy & Notification Permission Policy tests — runGuarded
+    // ══════════════════════════════════════════════════════════════════════
+
+    private fun privacyRequest(privacyPolicy: PrivacyPolicy = PrivacyPolicy.SKIP_SUCCESS) = WorkerGuardRequest(
+        workerName = "test_worker",
+        requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST),
+        requiresNotificationPermission = false,
+        privacyPolicy = privacyPolicy
+    )
+
+    private fun notificationRequest(permissionPolicy: PermissionPolicy = PermissionPolicy.SKIP_SUCCESS) = WorkerGuardRequest(
+        workerName = "test_worker",
+        requiresNotificationPermission = true,
+        notificationPermissionPolicy = permissionPolicy
+    )
+
+    @Test
+    fun `privacy_denied_skip_policy_returns_success`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.Denied("privacy opt-out")
+        var blockRan = false
+
+        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.SKIP_SUCCESS)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
+        assertFalse("block must not run when privacy denied", blockRan)
+        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
+    }
+
+    @Test
+    fun `privacy_denied_retry_policy_returns_retry`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.Denied("privacy opt-out")
+        var blockRan = false
+
+        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when privacy denied", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.PRIVACY_DENIED.name, null) }
+    }
+
+    @Test
+    fun `privacy_denied_fail_policy_returns_failure`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.Denied("privacy opt-out")
+        var blockRan = false
+
+        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.FAIL)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Failed)
+        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, (result as WorkerGuardResult.Failed).reason)
+        assertFalse("block must not run when privacy denied", blockRan)
+        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.PRIVACY_DENIED.name, null) }
+    }
+
+    @Test
+    fun `privacy_fail_closed_honors_policy`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.FailClosed("gate error")
+        var blockRan = false
+
+        val result = guard.runGuarded(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when privacy fail-closed", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, null) }
+    }
+
+    @Test
+    fun `notification_permission_denied_skip_policy_returns_success`() = runTest {
+        permissionChecker.enabled = false
+        var blockRan = false
+
+        val result = guard.runGuarded(notificationRequest(PermissionPolicy.SKIP_SUCCESS)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertEquals(
+            DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name,
+            (result as WorkerGuardResult.Skipped).reason
+        )
+        assertFalse("block must not run when permission denied", blockRan)
+        coVerify(exactly = 1) {
+            runHandle.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+        }
+    }
+
+    @Test
+    fun `notification_permission_denied_retry_policy_returns_retry`() = runTest {
+        permissionChecker.enabled = false
+        var blockRan = false
+
+        val result = guard.runGuarded(notificationRequest(PermissionPolicy.RETRY)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(
+            DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name,
+            (result as WorkerGuardResult.Retry).reason
+        )
+        assertFalse("block must not run when permission denied", blockRan)
+        coVerify(exactly = 1) {
+            runHandle.retry(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name, null)
+        }
+    }
+
+    @Test
+    fun `notification_permission_denied_fail_policy_returns_failure`() = runTest {
+        permissionChecker.enabled = false
+        var blockRan = false
+
+        val result = guard.runGuarded(notificationRequest(PermissionPolicy.FAIL)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Failed)
+        assertEquals(
+            DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name,
+            (result as WorkerGuardResult.Failed).reason
+        )
+        assertFalse("block must not run when permission denied", blockRan)
+        coVerify(exactly = 1) {
+            runHandle.failure(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name, null)
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12C: Privacy & Notification Permission Policy tests — runGuardedWithContext
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `runGuardedWithContext privacy_denied_skip_policy_returns_success`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.Denied("privacy opt-out")
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.SKIP_SUCCESS)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
+        assertFalse("block must not run when privacy denied", blockRan)
+        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
+    }
+
+    @Test
+    fun `runGuardedWithContext privacy_denied_retry_policy_returns_retry`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.Denied("privacy opt-out")
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when privacy denied", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.PRIVACY_DENIED.name, null) }
+    }
+
+    @Test
+    fun `runGuardedWithContext privacy_denied_fail_policy_returns_failure`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.Denied("privacy opt-out")
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.FAIL)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Failed)
+        assertEquals(DiagnosticReasonCode.PRIVACY_DENIED.name, (result as WorkerGuardResult.Failed).reason)
+        assertFalse("block must not run when privacy denied", blockRan)
+        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.PRIVACY_DENIED.name, null) }
+    }
+
+    @Test
+    fun `runGuardedWithContext privacy_fail_closed_honors_policy`() = runTest {
+        coEvery { privacyGate.check(any<PrivacyCapability>()) } returns
+            PrivacyDecision.FailClosed("gate error")
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(privacyRequest(PrivacyPolicy.RETRY)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, (result as WorkerGuardResult.Retry).reason)
+        assertFalse("block must not run when privacy fail-closed", blockRan)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name, null) }
+    }
+
+    @Test
+    fun `runGuardedWithContext notification_permission_denied_skip_policy_returns_success`() = runTest {
+        permissionChecker.enabled = false
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(notificationRequest(PermissionPolicy.SKIP_SUCCESS)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Skipped)
+        assertEquals(
+            DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name,
+            (result as WorkerGuardResult.Skipped).reason
+        )
+        assertFalse("block must not run when permission denied", blockRan)
+        coVerify(exactly = 1) {
+            runHandle.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+        }
+    }
+
+    @Test
+    fun `runGuardedWithContext notification_permission_denied_retry_policy_returns_retry`() = runTest {
+        permissionChecker.enabled = false
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(notificationRequest(PermissionPolicy.RETRY)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(
+            DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name,
+            (result as WorkerGuardResult.Retry).reason
+        )
+        assertFalse("block must not run when permission denied", blockRan)
+        coVerify(exactly = 1) {
+            runHandle.retry(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name, null)
+        }
+    }
+
+    @Test
+    fun `runGuardedWithContext notification_permission_denied_fail_policy_returns_failure`() = runTest {
+        permissionChecker.enabled = false
+        var blockRan = false
+
+        val result = guard.runGuardedWithContext(notificationRequest(PermissionPolicy.FAIL)) { blockRan = true }
+
+        assertTrue(result is WorkerGuardResult.Failed)
+        assertEquals(
+            DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name,
+            (result as WorkerGuardResult.Failed).reason
+        )
+        assertFalse("block must not run when permission denied", blockRan)
+        coVerify(exactly = 1) {
+            runHandle.failure(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name, null)
         }
     }
 }

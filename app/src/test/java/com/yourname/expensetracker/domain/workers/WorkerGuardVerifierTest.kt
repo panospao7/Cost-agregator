@@ -16,14 +16,14 @@ class WorkerGuardVerifierTest {
     private val verifier = WorkerGuardVerifier()
 
     /**
-     * Happy-path: the hardcoded [WorkerGuardVerifier.findWorkerClasses] maps 8 workers
+     * Happy-path: the hardcoded [WorkerGuardVerifier.findWorkerClasses] maps 10 workers
      * whose work names are all returned by [WorkerSpecScheduler.listAllWorkerNames].
      */
     @Test
-    fun `verifyAllWorkersGuarded returns Success when all 8 workers are registered`() {
+    fun `verifyAllWorkersGuarded returns Success when all 10 workers are registered`() {
         val result = verifier.verifyAllWorkersGuarded()
         assertEquals(
-            "All 8 workers should be guarded → Success",
+            "All 10 workers should be guarded → Success",
             WorkerGuardVerifier.VerificationResult.Success::class,
             result::class
         )
@@ -44,10 +44,10 @@ class WorkerGuardVerifierTest {
      * true negative enforcement.
      */
     @Test
-    fun `worker registry contains all 8 workers`() {
+    fun `worker registry contains all 10 workers`() {
         val knownNames = WorkerSpecScheduler.listAllWorkerNames()
 
-        // The 8 expected work names from the spec
+        // The 10 expected work names from the spec
         val expectedNames = setOf(
             "notification_intake",
             "location_backfill",
@@ -56,12 +56,14 @@ class WorkerGuardVerifierTest {
             "warranty_expiration_check",
             "data_retention",
             "ai_daily_briefing",
-            "bill_reminder_periodic"
+            "bill_reminder_periodic",
+            "reminder_action_dismiss",
+            "reminder_action_snooze"
         )
 
         assertEquals(
-            "listAllWorkerNames must return exactly 8 work names",
-            8, knownNames.size
+            "listAllWorkerNames must return exactly 10 work names",
+            10, knownNames.size
         )
 
         for (name in expectedNames) {
@@ -74,15 +76,22 @@ class WorkerGuardVerifierTest {
 
     /**
      * Verify that every work name known to the scheduler has a corresponding
-     * [WorkerSpec] entry (or is explicitly exempt like notification_intake).
+     * [WorkerSpec] entry (or is explicitly exempt like notification_intake
+     * and the action workers).
      */
     @Test
-    fun `every scheduled work name has worker spec except notification_intake`() {
+    fun `every scheduled work name has worker spec except exempt ones`() {
         val knownNames = WorkerSpecScheduler.listAllWorkerNames()
         val specKeys = WorkerSpec.DEFAULTS.keys
 
+        val exemptNames = setOf(
+            "notification_intake",  // one-shot via coordinator, not periodic spec
+            "reminder_action_dismiss",   // one-shot on-demand via DismissReminderReceiver
+            "reminder_action_snooze"     // one-shot on-demand via SnoozeReminderReceiver
+        )
+
         for (name in knownNames) {
-            if (name == "notification_intake") continue // one-shot via coordinator, not periodic spec
+            if (name in exemptNames) continue
             assertTrue(
                 "Work name '$name' must have a WorkerSpec entry",
                 name in specKeys

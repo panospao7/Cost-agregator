@@ -148,20 +148,17 @@ class WorkerExecutionGuard @Inject constructor(
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
-                            return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_DENIED.name)
                         }
                         is PrivacyDecision.FailClosed -> {
-                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name) }
-                            return WorkerGuardResult.Skipped("Privacy check failed (fail-closed): $capability - ${decision.reason}")
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
                         }
                         else -> { }
                     }
                 }
 
                 if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
-                    withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
-                    return WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
                 }
 
                 val result = block()
@@ -296,20 +293,17 @@ class WorkerExecutionGuard @Inject constructor(
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_DENIED.name) }
-                            return WorkerGuardResult.Skipped("Privacy blocked: $capability")
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_DENIED.name)
                         }
                         is PrivacyDecision.FailClosed -> {
-                            withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name) }
-                            return WorkerGuardResult.Skipped("Privacy fail-closed: $capability")
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
                         }
                         else -> { }
                     }
                 }
 
                 if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
-                    withBoundedTerminalWrite { run.skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name) }
-                    return WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
                 }
 
                 val result = block(ctx)
@@ -376,6 +370,44 @@ class WorkerExecutionGuard @Inject constructor(
                 Timber.w(e, "Terminal write failed")
                 null
             }
+        }
+    }
+
+    private suspend fun applyPrivacyPolicy(
+        request: WorkerGuardRequest,
+        run: WorkerRunHandle,
+        code: String
+    ): WorkerGuardResult<Nothing> = when (request.privacyPolicy) {
+        PrivacyPolicy.SKIP_SUCCESS -> {
+            withBoundedTerminalWrite { run.skipped(code) }
+            WorkerGuardResult.Skipped(code)
+        }
+        PrivacyPolicy.RETRY -> {
+            withBoundedTerminalWrite { run.retry(code) }
+            WorkerGuardResult.Retry(code)
+        }
+        PrivacyPolicy.FAIL -> {
+            withBoundedTerminalWrite { run.failure(code) }
+            WorkerGuardResult.Failed(code)
+        }
+    }
+
+    private suspend fun applyNotificationPermissionPolicy(
+        request: WorkerGuardRequest,
+        run: WorkerRunHandle,
+        code: String
+    ): WorkerGuardResult<Nothing> = when (request.notificationPermissionPolicy) {
+        PermissionPolicy.SKIP_SUCCESS -> {
+            withBoundedTerminalWrite { run.skipped(code) }
+            WorkerGuardResult.Skipped(code)
+        }
+        PermissionPolicy.RETRY -> {
+            withBoundedTerminalWrite { run.retry(code) }
+            WorkerGuardResult.Retry(code)
+        }
+        PermissionPolicy.FAIL -> {
+            withBoundedTerminalWrite { run.failure(code) }
+            WorkerGuardResult.Failed(code)
         }
     }
 

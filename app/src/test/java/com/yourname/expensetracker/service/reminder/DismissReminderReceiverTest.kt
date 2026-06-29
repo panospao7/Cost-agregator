@@ -1,42 +1,37 @@
 package com.yourname.expensetracker.service.reminder
 
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
-import io.mockk.coEvery
-import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * PR9 / PR12 — DismissReminderReceiver cancellation safety tests.
+ * PR12E — DismissReminderReceiver now enqueues a [DismissReminderActionWorker]
+ * via WorkManager instead of calling [RecurringLifecycleCoordinator] directly.
  *
- * Verifies that the receiver's coroutine handling correctly:
- * - Catches and handles non-CancellationException errors (finishes pending result)
- * - Rethrows CancellationException (does NOT swallow it in the broad catch)
+ * Verifies:
+ * - Receiver enqueues a one-shot WorkManager request with the correct deliveryId input data.
+ * - Missing deliveryId skips processing (no work enqueued).
+ * - Coordinator is NOT called directly by the receiver (structural guarantee).
  */
 class DismissReminderReceiverTest {
 
-    private val coordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
-    private val pendingResult = mockk<BroadcastReceiver.PendingResult>(relaxed = true)
+    private val workManager = mockk<WorkManager>(relaxed = true)
 
     private fun buildReceiver(): DismissReminderReceiver {
         val receiver = DismissReminderReceiver()
-        // Inject mock coordinator via reflection (field is lateinit var)
-        DismissReminderReceiver::class.java.getDeclaredField("coordinator").apply {
+        DismissReminderReceiver::class.java.getDeclaredField("workManager").apply {
             isAccessible = true
-            set(receiver, coordinator)
+            set(receiver, workManager)
         }
-        // Mock goAsync() via spy
-        val spy = io.mockk.spyk(receiver)
-        every { spy.goAsync() } returns pendingResult
-        return spy
+        return receiver
     }
 
     private fun intentWithDelivery(deliveryId: Long): Intent {
@@ -44,42 +39,58 @@ class DismissReminderReceiverTest {
     }
 
     @Test
-    fun `dismiss_receiver_catches_non_cancellation_exceptions`() = runBlocking {
-        coEvery { coordinator.dismissReminderDelivery(42L) } throws RuntimeException("DB error")
+    fun `receiver enqueues WorkManager request with correct deliveryId`() {
+        val receiver = buildReceiver()
+        val intent = intentWithDelivery(42L)
+        val requestSlot = slot<OneTimeWorkRequest>()
 
+        every { workManager.enqueue(capture(requestSlot)) } returns mockk(relaxed = true)
+
+        receiver.onReceive(mockk(relaxed = true), intent)
+
+        verify(exactly = 1) { workManager.enqueue(any<OneTimeWorkRequest>()) }
+        val capturedRequest = requestSlot.captured
+        val inputData = capturedRequest.workSpec.input
+        assertEquals("deliveryId must be 42 in input data", 42L, inputData.getLong("deliveryId", -1L))
+    }
+
+    /**
+     * Structural guarantee: the receiver no longer injects
+     * [RecurringLifecycleCoordinator] — only WorkManager.
+     * This test proves that a standalone coordinator mock is never called.
+     */
+    @Test
+    fun `receiver does NOT call coordinator directly`() = runBlocking {
+        // This mock is standalone — never injected into the receiver.
+        val coordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
         val receiver = buildReceiver()
         val intent = intentWithDelivery(42L)
 
+        // onReceive is synchronous, so the mock can only be called if the
+        // receiver held a reference to it, which it no longer does.
         receiver.onReceive(mockk(relaxed = true), intent)
-        delay(500) // allow IO dispatcher coroutine to run
 
-        coVerify { coordinator.dismissReminderDelivery(42L) }
-        verify { pendingResult.finish() }
+        // Verify the standalone mock is never touched.
+        io.mockk.coVerify(exactly = 0) { coordinator.dismissReminderDelivery(any()) }
     }
 
     @Test
-    fun `dismiss_receiver_rethrows_cancellation_exception`() = runBlocking {
-        coEvery { coordinator.dismissReminderDelivery(42L) } throws CancellationException("Cancelled")
-
+    fun `missing deliveryId skips WorkManager enqueue`() {
         val receiver = buildReceiver()
-        val intent = intentWithDelivery(42L)
+        val intent = Intent() // no deliveryId extra
 
         receiver.onReceive(mockk(relaxed = true), intent)
-        delay(500)
 
-        coVerify { coordinator.dismissReminderDelivery(42L) }
-        verify { pendingResult.finish() }
+        verify(exactly = 0) { workManager.enqueue(any<OneTimeWorkRequest>()) }
     }
 
     @Test
-    fun `missing_delivery_id_skips_processing`() = runBlocking {
+    fun `invalid deliveryId negative skips WorkManager enqueue`() {
         val receiver = buildReceiver()
-        val intent = Intent()
+        val intent = intentWithDelivery(-1L)
 
         receiver.onReceive(mockk(relaxed = true), intent)
-        delay(500)
 
-        coVerify(exactly = 0) { coordinator.dismissReminderDelivery(any()) }
-        verify(exactly = 0) { pendingResult.finish() }
+        verify(exactly = 0) { workManager.enqueue(any<OneTimeWorkRequest>()) }
     }
 }

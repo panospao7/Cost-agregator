@@ -335,7 +335,9 @@ object WorkerSpecScheduler {
         "warranty_expiration_check",
         "data_retention",
         "ai_daily_briefing",
-        "bill_reminder_periodic"
+        "bill_reminder_periodic",
+        "reminder_action_dismiss",
+        "reminder_action_snooze"
     )
 
     /**
