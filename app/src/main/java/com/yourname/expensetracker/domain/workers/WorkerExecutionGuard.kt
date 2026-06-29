@@ -418,18 +418,26 @@ class WorkerExecutionGuard @Inject constructor(
         }
     }
 
+    /**
+     * PR12B: Uses CAS-based [BackgroundJobRunDao.staleAbortIfStillRunning] to atomically
+     * transition stale RUNNING rows to STALE_ABORTED. The conditional WHERE clause
+     * (status = 'RUNNING' AND startedAt < :staleThresholdMs) prevents overwriting a
+     * real terminal state if recovery races with live completion.
+     */
     suspend fun recoverStaleRunningJobs(staleThresholdMs: Long = timeProvider.now() - STALE_THRESHOLD_MS) {
         val stale = backgroundJobRunDao.getStaleRunningRuns(staleThresholdMs)
+        var recovered = 0
         for (run in stale) {
-            backgroundJobRunDao.update(
-                run.copy(
-                    status = "STALE_ABORTED",
-                    finishedAt = timeProvider.now(),
-                    statusReason = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name
-                )
+            val affected = backgroundJobRunDao.staleAbortIfStillRunning(
+                id = run.id,
+                staleThresholdMs = staleThresholdMs,
+                finishedAt = timeProvider.now(),
+                statusReason = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name,
+                terminalReasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name
             )
+            if (affected == 1) recovered++
         }
-        if (stale.isNotEmpty()) Timber.w("Recovered ${stale.size} stale RUNNING job(s) as STALE_ABORTED")
+        if (recovered > 0) Timber.w("Recovered $recovered stale RUNNING job(s) as STALE_ABORTED")
     }
 
     private fun classifyTransient(e: Exception): Boolean {

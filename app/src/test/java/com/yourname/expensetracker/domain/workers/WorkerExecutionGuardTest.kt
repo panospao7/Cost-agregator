@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -493,5 +494,88 @@ class WorkerExecutionGuardTest {
         // The guard must return Success even though the terminal write timed out
         // (the helper returns null and execution continues).
         assertTrue("Result should be Success despite terminal write timeout", result is WorkerGuardResult.Success)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12B: CAS-based stale recovery — does NOT overwrite real terminal state
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `stale_recovery_does_not_overwrite_success`() = runTest {
+        val staleRun = BackgroundJobRun(
+            id = 1L,
+            workerName = "stale_worker",
+            startedAt = 100L,
+            status = "RUNNING"
+        )
+        coEvery { backgroundJobRunDao.getStaleRunningRuns(any()) } returns listOf(staleRun)
+        // staleAbortIfStillRunning returns 0 — row was already completed to SUCCESS by live worker
+        coEvery { backgroundJobRunDao.staleAbortIfStillRunning(any(), any(), any(), any(), any()) } returns 0
+
+        guard.recoverStaleRunningJobs(staleThresholdMs = 200L)
+
+        coVerify(exactly = 1) {
+            backgroundJobRunDao.staleAbortIfStillRunning(
+                id = eq(1L),
+                staleThresholdMs = eq(200L),
+                finishedAt = any(),
+                statusReason = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name),
+                terminalReasonCode = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
+            )
+        }
+        // 0 affected means no overwrite occurred — the real SUCCESS state was preserved
+    }
+
+    @Test
+    fun `stale_recovery_does_not_overwrite_failed`() = runTest {
+        val staleRun = BackgroundJobRun(
+            id = 2L,
+            workerName = "stale_worker",
+            startedAt = 100L,
+            status = "RUNNING"
+        )
+        coEvery { backgroundJobRunDao.getStaleRunningRuns(any()) } returns listOf(staleRun)
+        // staleAbortIfStillRunning returns 0 — row was already FAILED
+        coEvery { backgroundJobRunDao.staleAbortIfStillRunning(any(), any(), any(), any(), any()) } returns 0
+
+        guard.recoverStaleRunningJobs(staleThresholdMs = 300L)
+
+        coVerify(exactly = 1) {
+            backgroundJobRunDao.staleAbortIfStillRunning(
+                id = eq(2L),
+                staleThresholdMs = eq(300L),
+                finishedAt = any(),
+                statusReason = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name),
+                terminalReasonCode = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
+            )
+        }
+    }
+
+    @Test
+    fun `stale_recovery_only_updates_running_old_rows`() = runTest {
+        val staleRun = BackgroundJobRun(
+            id = 3L,
+            workerName = "old_worker",
+            startedAt = 100L,
+            status = "RUNNING"
+        )
+        coEvery { backgroundJobRunDao.getStaleRunningRuns(any()) } returns listOf(staleRun)
+        coEvery { backgroundJobRunDao.staleAbortIfStillRunning(any(), any(), any(), any(), any()) } returns 1
+
+        val threshold = timeProvider.now() - WorkerExecutionGuard.STALE_THRESHOLD_MS
+        guard.recoverStaleRunningJobs(staleThresholdMs = threshold)
+
+        coVerify(exactly = 1) {
+            backgroundJobRunDao.getStaleRunningRuns(threshold)
+        }
+        coVerify(exactly = 1) {
+            backgroundJobRunDao.staleAbortIfStillRunning(
+                id = eq(3L),
+                staleThresholdMs = eq(threshold),
+                finishedAt = any(),
+                statusReason = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name),
+                terminalReasonCode = eq(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
+            )
+        }
     }
 }

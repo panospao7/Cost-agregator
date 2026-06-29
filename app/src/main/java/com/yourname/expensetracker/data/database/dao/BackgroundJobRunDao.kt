@@ -55,6 +55,9 @@ interface BackgroundJobRunDao {
     )
     suspend fun getStaleRunningRuns(staleThresholdMs: Long): List<BackgroundJobRun>
 
+    @Query("SELECT * FROM background_job_runs WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): BackgroundJobRun?
+
     @Query("SELECT * FROM background_job_runs WHERE correlationId = :correlationId ORDER BY startedAt ASC")
     suspend fun getByCorrelationId(correlationId: String): List<BackgroundJobRun>
 
@@ -114,5 +117,29 @@ interface BackgroundJobRunDao {
         terminalDiagnosticCode: String? = null,
         partialFailureCount: Int? = null,
         failedTargetCount: Int? = null
+    ): Int
+
+    /**
+     * Conditionally marks a stale RUNNING job as STALE_ABORTED.
+     * Only updates if the row is still RUNNING and started before the stale threshold.
+     * This is a CAS (compare-and-set) to prevent overwriting a real terminal state.
+     * @return number of rows updated (1 = success, 0 = already terminal or not stale).
+     */
+    @Query("""
+        UPDATE background_job_runs
+        SET status = 'STALE_ABORTED',
+            finishedAt = :finishedAt,
+            statusReason = :statusReason,
+            terminalReasonCode = :terminalReasonCode
+        WHERE id = :id
+          AND status = 'RUNNING'
+          AND startedAt < :staleThresholdMs
+    """)
+    suspend fun staleAbortIfStillRunning(
+        id: Long,
+        staleThresholdMs: Long,
+        finishedAt: Long,
+        statusReason: String,
+        terminalReasonCode: String
     ): Int
 }

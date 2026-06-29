@@ -1,12 +1,15 @@
 package com.yourname.expensetracker.domain.workers
 
-import android.util.Log
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeout
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -81,87 +84,175 @@ class WorkerRunLoggerImpl @Inject constructor(
     ) : WorkerRunHandle {
 
         /**
-         * P9 (NEW-P9-015): Idempotency guard — once [complete] has been called
-         * (via any terminal method), all subsequent invocations are no-ops.
-         * This prevents duplicate database writes when the guard's catch blocks
-         * race with a [NonCancellable] terminal update.
+         * PR12B: Mutex-based terminal state machine replaces AtomicBoolean CAS-before-DB.
+         * The in-memory [completed] flag is ONLY set AFTER a successful (affected==1)
+         * DB write, or after confirming the DB row is already terminal. This prevents
+         * the handle from being permanently marked complete when the DB update fails.
          */
-        private val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val terminalMutex = Mutex()
+        private var completed = false
+
+        sealed class TerminalResult {
+            /** DB write succeeded (affected==1). Handle is now durably terminal. */
+            object Completed : TerminalResult()
+            /** Another caller already won the local mutex race. No DB call was made. */
+            object AlreadyCompletedLocal : TerminalResult()
+            /** DB row was already terminal (affected==0 + getById != RUNNING). */
+            data class AlreadyCompletedDb(val status: String?) : TerminalResult()
+            /** DB write timed out. Handle is NOT marked completed — retryable. */
+            object NotDurableTimeout : TerminalResult()
+            /** DB write returned 0 affected but the row is still RUNNING. */
+            object NotDurableStillRunning : TerminalResult()
+            /** DB write failed with a non-cancellation exception. */
+            data class NotDurableFailure(val error: Throwable) : TerminalResult()
+        }
+
+        private data class TerminalArgs(
+            val rowsScanned: Int = 0,
+            val rowsUpdated: Int = 0,
+            val notificationsSent: Int = 0,
+            val statusReason: String? = null,
+            val retryReason: String? = null,
+            val errorMessage: String? = null,
+            val errorClass: String? = null,
+            val cancellationReason: String? = null,
+            val terminalReasonCode: String? = null,
+            val terminalDiagnosticCode: String? = null,
+            val partialFailureCount: Int? = null,
+            val failedTargetCount: Int? = null
+        )
+
+        private suspend fun terminal(
+            status: String,
+            args: TerminalArgs
+        ): TerminalResult {
+            terminalMutex.lock()
+            try {
+                if (completed) return TerminalResult.AlreadyCompletedLocal
+
+                val affected = try {
+                    withTimeout(TERMINAL_WRITE_TIMEOUT_MS) {
+                        dao.completeTerminal(
+                            id = runId,
+                            status = status,
+                            finishedAt = timeProvider.now(),
+                            rowsScanned = args.rowsScanned,
+                            rowsUpdated = args.rowsUpdated,
+                            notificationsSent = args.notificationsSent,
+                            statusReason = args.statusReason,
+                            retryReason = args.retryReason,
+                            errorMessage = args.errorMessage,
+                            errorClass = args.errorClass,
+                            cancellationReason = args.cancellationReason,
+                            terminalReasonCode = args.terminalReasonCode,
+                            terminalDiagnosticCode = args.terminalDiagnosticCode,
+                            partialFailureCount = args.partialFailureCount,
+                            failedTargetCount = args.failedTargetCount
+                        )
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    return TerminalResult.NotDurableTimeout
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    return TerminalResult.NotDurableFailure(e)
+                }
+
+                if (affected == 1) {
+                    completed = true
+                    return TerminalResult.Completed
+                }
+
+                // affected == 0: row might already be terminal, or might still be RUNNING
+                val current = dao.getById(runId)
+                if (current?.status != "RUNNING") {
+                    completed = true
+                    return TerminalResult.AlreadyCompletedDb(current?.status)
+                }
+
+                return TerminalResult.NotDurableStillRunning
+            } finally {
+                terminalMutex.unlock()
+            }
+        }
 
         override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?) {
-            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate success"); return }
-            val affected = update("SUCCESS", rowsScanned = rowsScanned, rowsUpdated = rowsUpdated, notificationsSent = notificationsSent, statusReason = message)
-            if (affected == 0) Log.w("WorkerRunLogger", "Handle $runId DB-level duplicate terminal detected (success)")
+            when (val result = terminal("SUCCESS", TerminalArgs(
+                rowsScanned = rowsScanned,
+                rowsUpdated = rowsUpdated,
+                notificationsSent = notificationsSent,
+                statusReason = message
+            ))) {
+                is TerminalResult.Completed -> { /* normal */ }
+                is TerminalResult.AlreadyCompletedLocal -> Timber.w("Handle $runId already completed locally — ignoring duplicate success")
+                is TerminalResult.AlreadyCompletedDb -> Timber.w("Handle $runId already completed in DB as ${result.status} — ignoring duplicate success")
+                is TerminalResult.NotDurableTimeout -> Timber.w("Handle $runId terminal SUCCESS timed out — DB state may be stale")
+                is TerminalResult.NotDurableStillRunning -> Timber.w("Handle $runId terminal SUCCESS returned 0 affected but row is still RUNNING")
+                is TerminalResult.NotDurableFailure -> Timber.w(result.error, "Handle $runId terminal SUCCESS failed")
+            }
         }
 
         override suspend fun skipped(reason: String) {
-            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate skipped"); return }
-            val affected = update("SKIPPED", statusReason = reason)
-            if (affected == 0) Log.w("WorkerRunLogger", "Handle $runId DB-level duplicate terminal detected (skipped)")
+            when (val result = terminal("SKIPPED", TerminalArgs(statusReason = reason))) {
+                is TerminalResult.Completed -> { }
+                is TerminalResult.AlreadyCompletedLocal -> Timber.w("Handle $runId already completed locally — ignoring duplicate skipped")
+                is TerminalResult.AlreadyCompletedDb -> Timber.w("Handle $runId already completed in DB as ${result.status} — ignoring duplicate skipped")
+                is TerminalResult.NotDurableTimeout -> Timber.w("Handle $runId terminal SKIPPED timed out — DB state may be stale")
+                is TerminalResult.NotDurableStillRunning -> Timber.w("Handle $runId terminal SKIPPED returned 0 affected but row is still RUNNING")
+                is TerminalResult.NotDurableFailure -> Timber.w(result.error, "Handle $runId terminal SKIPPED failed")
+            }
         }
 
         override suspend fun retry(reason: String, error: Throwable?) {
-            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate retry"); return }
-            val affected = update("RETRY", retryReason = reason, errorMessage = sanitizer.sanitizeExceptionMessage(error?.message), errorClass = error?.javaClass?.simpleName)
-            if (affected == 0) Log.w("WorkerRunLogger", "Handle $runId DB-level duplicate terminal detected (retry)")
+            when (val result = terminal("RETRY", TerminalArgs(
+                retryReason = reason,
+                errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
+                errorClass = error?.javaClass?.simpleName
+            ))) {
+                is TerminalResult.Completed -> { }
+                is TerminalResult.AlreadyCompletedLocal -> Timber.w("Handle $runId already completed locally — ignoring duplicate retry")
+                is TerminalResult.AlreadyCompletedDb -> Timber.w("Handle $runId already completed in DB as ${result.status} — ignoring duplicate retry")
+                is TerminalResult.NotDurableTimeout -> Timber.w("Handle $runId terminal RETRY timed out — DB state may be stale")
+                is TerminalResult.NotDurableStillRunning -> Timber.w("Handle $runId terminal RETRY returned 0 affected but row is still RUNNING")
+                is TerminalResult.NotDurableFailure -> Timber.w(result.error, "Handle $runId terminal RETRY failed")
+            }
         }
 
         override suspend fun failure(reason: String, error: Throwable?) {
-            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate failure"); return }
-            val affected = update("FAILED", errorMessage = sanitizer.sanitizeExceptionMessage(error?.let { "$reason: ${it.message}" } ?: reason), errorClass = error?.javaClass?.simpleName)
-            if (affected == 0) Log.w("WorkerRunLogger", "Handle $runId DB-level duplicate terminal detected (failure)")
+            when (val result = terminal("FAILED", TerminalArgs(
+                errorMessage = sanitizer.sanitizeExceptionMessage(error?.let { "$reason: ${it.message}" } ?: reason),
+                errorClass = error?.javaClass?.simpleName
+            ))) {
+                is TerminalResult.Completed -> { }
+                is TerminalResult.AlreadyCompletedLocal -> Timber.w("Handle $runId already completed locally — ignoring duplicate failure")
+                is TerminalResult.AlreadyCompletedDb -> Timber.w("Handle $runId already completed in DB as ${result.status} — ignoring duplicate failure")
+                is TerminalResult.NotDurableTimeout -> Timber.w("Handle $runId terminal FAILED timed out — DB state may be stale")
+                is TerminalResult.NotDurableStillRunning -> Timber.w("Handle $runId terminal FAILED returned 0 affected but row is still RUNNING")
+                is TerminalResult.NotDurableFailure -> Timber.w(result.error, "Handle $runId terminal FAILED failed")
+            }
         }
 
         override suspend fun cancelled(reason: String) {
-            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate cancelled"); return }
-            val affected = update("CANCELLED", statusReason = reason, cancellationReason = reason)
-            if (affected == 0) Log.w("WorkerRunLogger", "Handle $runId DB-level duplicate terminal detected (cancelled)")
+            when (val result = terminal("CANCELLED", TerminalArgs(
+                statusReason = reason,
+                cancellationReason = reason
+            ))) {
+                is TerminalResult.Completed -> { }
+                is TerminalResult.AlreadyCompletedLocal -> Timber.w("Handle $runId already completed locally — ignoring duplicate cancelled")
+                is TerminalResult.AlreadyCompletedDb -> Timber.w("Handle $runId already completed in DB as ${result.status} — ignoring duplicate cancelled")
+                is TerminalResult.NotDurableTimeout -> Timber.w("Handle $runId terminal CANCELLED timed out — DB state may be stale")
+                is TerminalResult.NotDurableStillRunning -> Timber.w("Handle $runId terminal CANCELLED returned 0 affected but row is still RUNNING")
+                is TerminalResult.NotDurableFailure -> Timber.w(result.error, "Handle $runId terminal CANCELLED failed")
+            }
         }
 
         override suspend fun staleAborted() {
-            if (!completed.compareAndSet(false, true)) { Log.w("WorkerRunLogger", "Handle $runId already completed — ignoring duplicate staleAborted"); return }
-            val affected = update("STALE_ABORTED")
-            if (affected == 0) Log.w("WorkerRunLogger", "Handle $runId DB-level duplicate terminal detected (staleAborted)")
-        }
-
-        private suspend fun update(
-            status: String,
-            rowsScanned: Int = 0,
-            rowsUpdated: Int = 0,
-            notificationsSent: Int = 0,
-            statusReason: String? = null,
-            retryReason: String? = null,
-            errorMessage: String? = null,
-            errorClass: String? = null,
-            cancellationReason: String? = null,
-            terminalReasonCode: String? = null,
-            terminalDiagnosticCode: String? = null,
-            partialFailureCount: Int? = null,
-            failedTargetCount: Int? = null
-        ): Int {
-            return try {
-                withTimeout(TERMINAL_WRITE_TIMEOUT_MS) {
-                    dao.completeTerminal(
-                        id = runId,
-                        status = status,
-                        finishedAt = timeProvider.now(),
-                        rowsScanned = rowsScanned,
-                        rowsUpdated = rowsUpdated,
-                        notificationsSent = notificationsSent,
-                        statusReason = statusReason,
-                        retryReason = retryReason,
-                        errorMessage = errorMessage,
-                        errorClass = errorClass,
-                        cancellationReason = cancellationReason,
-                        terminalReasonCode = terminalReasonCode,
-                        terminalDiagnosticCode = terminalDiagnosticCode,
-                        partialFailureCount = partialFailureCount,
-                        failedTargetCount = failedTargetCount
-                    )
-                }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                Log.w("WorkerRunLogger", "Terminal DB update timed out for run $runId")
-                0
+            when (val result = terminal("STALE_ABORTED", TerminalArgs())) {
+                is TerminalResult.Completed -> { }
+                is TerminalResult.AlreadyCompletedLocal -> Timber.w("Handle $runId already completed locally — ignoring duplicate staleAborted")
+                is TerminalResult.AlreadyCompletedDb -> Timber.w("Handle $runId already completed in DB as ${result.status} — ignoring duplicate staleAborted")
+                is TerminalResult.NotDurableTimeout -> Timber.w("Handle $runId terminal STALE_ABORTED timed out — DB state may be stale")
+                is TerminalResult.NotDurableStillRunning -> Timber.w("Handle $runId terminal STALE_ABORTED returned 0 affected but row is still RUNNING")
+                is TerminalResult.NotDurableFailure -> Timber.w(result.error, "Handle $runId terminal STALE_ABORTED failed")
             }
         }
     }

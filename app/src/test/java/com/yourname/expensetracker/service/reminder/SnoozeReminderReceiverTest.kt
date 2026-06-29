@@ -3,72 +3,38 @@ package com.yourname.expensetracker.service.reminder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
-import dagger.Module
-import dagger.Provides
-import dagger.hilt.InstallIn
-import dagger.hilt.android.testing.HiltAndroidRule
-import dagger.hilt.android.testing.HiltAndroidTest
-import dagger.hilt.android.testing.HiltTestApplication
-import dagger.hilt.components.SingletonComponent
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.spyk
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
-import org.junit.Before
-import org.junit.Rule
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
- * PR9 — SnoozeReminderReceiver cancellation safety tests.
+ * PR9 / PR12 — SnoozeReminderReceiver cancellation safety tests.
  *
  * Verifies that the receiver's coroutine handling correctly:
  * - Catches and handles non-CancellationException errors (finishes pending result)
  * - Rethrows CancellationException (does NOT swallow it in the broad catch)
  */
-@HiltAndroidTest
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28], application = HiltTestApplication::class)
 class SnoozeReminderReceiverTest {
 
-    @get:Rule(order = 0)
-    var hiltRule = HiltAndroidRule(this)
-
-    @Module
-    @InstallIn(SingletonComponent::class)
-    class TestModule {
-        @Provides
-        @Singleton
-        fun provideCoordinator(): RecurringLifecycleCoordinator = mockk(relaxed = true)
-    }
-
-    // Injected by Hilt — the same instance that the receiver will get via @AndroidEntryPoint
-    @Inject
-    lateinit var coordinator: RecurringLifecycleCoordinator
-
-    private lateinit var pendingResult: BroadcastReceiver.PendingResult
-    private lateinit var context: Context
-
-    @Before
-    fun setup() {
-        hiltRule.inject()
-        pendingResult = mockk(relaxed = true)
-        context = ApplicationProvider.getApplicationContext()
-    }
+    private val coordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
+    private val pendingResult = mockk<BroadcastReceiver.PendingResult>(relaxed = true)
 
     private fun buildReceiver(): SnoozeReminderReceiver {
-        val receiver = spyk(SnoozeReminderReceiver(), recordPrivateCalls = true)
-        every { receiver.goAsync() } returns pendingResult
-        return receiver
+        val receiver = SnoozeReminderReceiver()
+        SnoozeReminderReceiver::class.java.getDeclaredField("coordinator").apply {
+            isAccessible = true
+            set(receiver, coordinator)
+        }
+        val spy = io.mockk.spyk(receiver)
+        every { spy.goAsync() } returns pendingResult
+        return spy
     }
 
     private fun intentWithDelivery(deliveryId: Long): Intent {
@@ -76,38 +42,40 @@ class SnoozeReminderReceiverTest {
     }
 
     @Test
-    fun `snooze_receiver_catches_non_cancellation_exceptions`() {
+    fun `snooze_receiver_catches_non_cancellation_exceptions`() = runBlocking {
         coEvery { coordinator.snoozeReminderDelivery(any(), any()) } throws RuntimeException("DB error")
 
         val receiver = buildReceiver()
         val intent = intentWithDelivery(42L)
 
-        receiver.onReceive(context, intent)
+        receiver.onReceive(mockk(relaxed = true), intent)
+        delay(500)
 
-        // Use timeout for coVerify since the coroutine runs on Dispatchers.IO
-        coVerify(timeout = 3000) { coordinator.snoozeReminderDelivery(any(), any()) }
-        verify(timeout = 3000) { pendingResult.finish() }
+        coVerify { coordinator.snoozeReminderDelivery(any(), any()) }
+        verify { pendingResult.finish() }
     }
 
     @Test
-    fun `snooze_receiver_rethrows_cancellation_exception`() {
+    fun `snooze_receiver_rethrows_cancellation_exception`() = runBlocking {
         coEvery { coordinator.snoozeReminderDelivery(any(), any()) } throws CancellationException("Cancelled")
 
         val receiver = buildReceiver()
         val intent = intentWithDelivery(42L)
 
-        receiver.onReceive(context, intent)
+        receiver.onReceive(mockk(relaxed = true), intent)
+        delay(500)
 
-        coVerify(timeout = 3000) { coordinator.snoozeReminderDelivery(any(), any()) }
-        verify(timeout = 3000) { pendingResult.finish() }
+        coVerify { coordinator.snoozeReminderDelivery(any(), any()) }
+        verify { pendingResult.finish() }
     }
 
     @Test
-    fun `missing_delivery_id_skips_processing`() {
+    fun `missing_delivery_id_skips_processing`() = runBlocking {
         val receiver = buildReceiver()
         val intent = Intent()
 
-        receiver.onReceive(context, intent)
+        receiver.onReceive(mockk(relaxed = true), intent)
+        delay(500)
 
         coVerify(exactly = 0) { coordinator.snoozeReminderDelivery(any(), any()) }
         verify(exactly = 0) { pendingResult.finish() }
