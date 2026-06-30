@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.workers
 
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -587,14 +588,14 @@ class WorkerRunLoggerTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
-        handle.failure("unhandled", error = IllegalStateException("boom"))
+        handle.failure("WORKER_UNHANDLED_EXCEPTION", error = IllegalStateException("boom"))
 
         coVerify(exactly = 1) {
             dao.completeTerminal(
                 eq(1L), eq("FAILED"), any(),
                 any(), any(), any(),
-                eq("unhandled"), any(), any(), eq("IllegalStateException"), any(),
-                eq("unhandled"), eq("unhandled"), any(), any()
+                eq("WORKER_UNHANDLED_EXCEPTION"), any(), any(), eq("IllegalStateException"), any(),
+                eq("WORKER_UNHANDLED_EXCEPTION"), eq("WORKER_UNHANDLED_EXCEPTION"), any(), any()
             )
         }
     }
@@ -714,5 +715,162 @@ class WorkerRunLoggerTest {
     @Test
     fun `classifyDiagnostic_fallback_returns_reason`() {
         assertEquals("UNKNOWN_ERROR", WorkerRunLoggerImpl.classifyDiagnostic("UNKNOWN_ERROR", null))
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12J-1: Safe structured worker reason codes
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `exception_message_is_not_terminal_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        // Simulate what happens when WorkerExecutionGuard passes safe codes:
+        // terminalReasonCode must be a safe constant, never a raw exception path/PII.
+        handle.failure(
+            reason = DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+            error = RuntimeException("/data/app/bad/path")
+        )
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("FAILED"), any(),
+                any(), any(), any(),
+                statusReason = eq("WORKER_UNHANDLED_EXCEPTION"), any(), any(), any(), any(),
+                terminalReasonCode = eq("WORKER_UNHANDLED_EXCEPTION"),
+                terminalDiagnosticCode = eq("WORKER_UNHANDLED_EXCEPTION"),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `exception_message_is_not_terminal_diagnostic_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        // Even if a raw path/PII string is passed as reason, terminalDiagnosticCode
+        // must be sanitized to a safe code — never the raw string.
+        handle.failure(
+            reason = "/data/user/0/com.app/files/private_key.pem",
+            error = RuntimeException("sensitive notification body")
+        )
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("FAILED"), any(),
+                any(), any(), any(),
+                any(), any(), any(), any(), any(),
+                terminalReasonCode = eq("/data/user/0/com.app/files/private_key.pem"),
+                terminalDiagnosticCode = eq("WORKER_UNHANDLED_EXCEPTION"),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `retryable_exception_uses_safe_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        val retryableEx = RetryableWorkerException("WORKER_RETRYABLE_ERROR", "DB was locked")
+
+        handle.retry(retryableEx.reasonCode, error = retryableEx)
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("RETRY"), any(),
+                any(), any(), any(),
+                any(), eq("WORKER_RETRYABLE_ERROR"), any(), any(), any(),
+                terminalReasonCode = eq("WORKER_RETRYABLE_ERROR"),
+                terminalDiagnosticCode = eq("RETRYABLE"),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `invalid_reason_code_is_sanitized`() {
+        // Path-like strings must be rejected by the sanitizer
+        assertEquals(
+            DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+            WorkerReasonCodes.sanitizeReasonCode("bad/path")
+        )
+        // Lowercase is rejected
+        assertEquals(
+            DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+            WorkerReasonCodes.sanitizeReasonCode("something")
+        )
+        // Null is rejected
+        assertEquals(
+            DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+            WorkerReasonCodes.sanitizeReasonCode(null)
+        )
+    }
+
+    @Test
+    fun `success_persists_terminal_diagnostic_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        handle.success(
+            rowsScanned = 10,
+            rowsUpdated = 3,
+            notificationsSent = 2,
+            reasonCode = DiagnosticReasonCode.WORKER_SUCCESS.name
+        )
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("SUCCESS"), any(),
+                rowsScanned = eq(10), rowsUpdated = eq(3), notificationsSent = eq(2),
+                any(), any(), any(), any(), any(),
+                terminalReasonCode = eq("WORKER_SUCCESS"),
+                terminalDiagnosticCode = eq("WORKER_SUCCESS"),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `no_work_persists_terminal_diagnostic_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        handle.success(
+            rowsScanned = 0,
+            rowsUpdated = 0,
+            notificationsSent = 0,
+            message = "NO_WORK",
+            reasonCode = DiagnosticReasonCode.WORKER_NO_WORK.name
+        )
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("SUCCESS"), any(),
+                rowsScanned = eq(0), rowsUpdated = eq(0), notificationsSent = eq(0),
+                statusReason = eq("NO_WORK"), any(), any(), any(), any(),
+                terminalReasonCode = eq("WORKER_NO_WORK"),
+                terminalDiagnosticCode = eq("WORKER_NO_WORK"),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `classify_diagnostic_never_returns_raw_message`() {
+        // classifyDiagnostic must never echo raw path/PII strings
+        val result1 = WorkerRunLoggerImpl.classifyDiagnostic(
+            "/data/user/0/com.app/cache",
+            RuntimeException("sensitive")
+        )
+        assertEquals("WORKER_UNHANDLED_EXCEPTION", result1)
+
+        val result2 = WorkerRunLoggerImpl.classifyDiagnostic(
+            "user@example.com personal data",
+            null
+        )
+        assertEquals("WORKER_UNHANDLED_EXCEPTION", result2)
     }
 }

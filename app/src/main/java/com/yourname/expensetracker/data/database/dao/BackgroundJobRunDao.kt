@@ -130,7 +130,8 @@ interface BackgroundJobRunDao {
         SET status = 'STALE_ABORTED',
             finishedAt = :finishedAt,
             statusReason = :statusReason,
-            terminalReasonCode = :terminalReasonCode
+            terminalReasonCode = :terminalReasonCode,
+            terminalDiagnosticCode = :terminalDiagnosticCode
         WHERE id = :id
           AND status = 'RUNNING'
           AND startedAt < :staleThresholdMs
@@ -140,6 +141,7 @@ interface BackgroundJobRunDao {
         staleThresholdMs: Long,
         finishedAt: Long,
         statusReason: String,
-        terminalReasonCode: String
+        terminalReasonCode: String,
+        terminalDiagnosticCode: String
     ): Int
 }

@@ -12,7 +12,7 @@ import javax.inject.Singleton
  * this sink so the event is never silently lost. Implementations must not throw.
  */
 interface WorkerTerminalDiagnosticSink {
-    fun recordWorkerTerminalWriteFailure(
+    suspend fun recordWorkerTerminalWriteFailure(
         workerName: String,
         runId: Long,
         correlationId: String?,
@@ -40,7 +40,7 @@ interface WorkerTerminalDiagnosticSink {
  */
 @Singleton
 class LoggingWorkerTerminalDiagnosticSink @Inject constructor() : WorkerTerminalDiagnosticSink {
-    override fun recordWorkerTerminalWriteFailure(
+    override suspend fun recordWorkerTerminalWriteFailure(
         workerName: String,
         runId: Long,
         correlationId: String?,

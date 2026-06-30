@@ -3,6 +3,10 @@ package com.yourname.expensetracker.domain.workers
 import android.content.Context
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -14,10 +18,10 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * PR12I-1: Tests for [FileWorkerTerminalDiagnosticSink].
+ * PR12J-2: Tests for [FileWorkerTerminalDiagnosticSink] with bounded suspend path.
  *
- * Verifies durable JSONL file persistence, sanitization, rotation,
- * survivability across instances, and graceful failure handling.
+ * Verifies durable JSONL file persistence, timeout behaviour, sanitization,
+ * rotation, survivability across instances, and graceful failure handling.
  */
 class FileWorkerTerminalDiagnosticSinkTest {
 
@@ -54,7 +58,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
         val timestampMs: Long = 1700000000000L
     )
 
-    private fun record(sink: FileWorkerTerminalDiagnosticSink, event: TestEvent = TestEvent()) {
+    private suspend fun record(sink: FileWorkerTerminalDiagnosticSink, event: TestEvent = TestEvent()) {
         sink.recordWorkerTerminalWriteFailure(
             workerName = event.workerName,
             runId = event.runId,
@@ -88,11 +92,29 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     // ------------------------------------------------------------------
-    // Tests
+    // Test helper: slow-IO sink for timeout tests
+    // ------------------------------------------------------------------
+
+    /**
+     * A test variant of [FileWorkerTerminalDiagnosticSink] that adds a
+     * cancellable [delay] inside [appendLineSafely] to simulate slow I/O.
+     */
+    private class DelayedDiagnosticSink(
+        context: Context,
+        private val delayMs: Long = 2000L
+    ) : FileWorkerTerminalDiagnosticSink(context) {
+        override suspend fun appendLineSafely(line: String) {
+            delay(delayMs) // cancellable: allows withTimeout to fire
+            super.appendLineSafely(line)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Existing tests (adapted for suspend)
     // ------------------------------------------------------------------
 
     @Test
-    fun `terminal_db_timeout_records_file_diagnostic`() {
+    fun `terminal_db_timeout_records_file_diagnostic`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         val event = TestEvent(
             workerName = "GeocodingBackfillWorker",
@@ -117,7 +139,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `terminal_db_exception_records_file_diagnostic`() {
+    fun `terminal_db_exception_records_file_diagnostic`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         val event = TestEvent(
             workerName = "DailyBriefingWorker",
@@ -140,20 +162,19 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_survives_new_sink_instance`() {
+    fun `diagnostic_survives_new_sink_instance`() = runTest {
         // Write with one instance
         val sink1 = FileWorkerTerminalDiagnosticSink(context)
         record(sink1, TestEvent(runId = 1L, workerName = "InstanceTestWorker"))
 
         // Read with a completely new instance
-        val sink2 = FileWorkerTerminalDiagnosticSink(context)
         val events = readAll()
         assertEquals("Diagnostic must survive new sink instance", 1, events.size)
         assertEquals("InstanceTestWorker", events[0].getString("workerName"))
     }
 
     @Test
-    fun `diagnostic_does_not_store_exception_message`() {
+    fun `diagnostic_does_not_store_exception_message`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         // Record an event — the sink interface does not accept an errorMessage
         // parameter, so by design no exception message CAN be stored.
@@ -170,7 +191,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_does_not_store_stacktrace`() {
+    fun `diagnostic_does_not_store_stacktrace`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent())
 
@@ -194,14 +215,13 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_file_rotation_keeps_recent_events`() {
+    fun `diagnostic_file_rotation_keeps_recent_events`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
 
         // Write many events to exceed 512 KB. Each event is ~250 bytes,
         // so we need ~2100 events to reach 512 KB.
         // Use a payload that makes each line ~400 bytes to reduce total count.
         val largeWorkerName = "A".repeat(200) // makes each event ~450 bytes
-        val eventsNeeded = 100
 
         // Pin initial state
         val currentFile = File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl")
@@ -258,7 +278,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_append_failure_does_not_crash_worker`() {
+    fun `diagnostic_append_failure_does_not_crash_worker`() = runTest {
         // Create a sink with a context whose filesDir is a READ-ONLY directory.
         // The sink must NOT throw — it must catch the IOException and fall back
         // to Timber (which we can't easily assert, but we CAN assert no throw).
@@ -284,7 +304,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_does_not_store_notification_content`() {
+    fun `diagnostic_does_not_store_notification_content`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent())
 
@@ -300,7 +320,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_does_not_store_bank_data`() {
+    fun `diagnostic_does_not_store_bank_data`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent())
 
@@ -316,7 +336,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `diagnostic_does_not_store_ocr_receipt_data`() {
+    fun `diagnostic_does_not_store_ocr_receipt_data`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent())
 
@@ -331,7 +351,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `nullable_fields_are_written_as_json_null`() {
+    fun `nullable_fields_are_written_as_json_null`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent(
             correlationId = null,
@@ -353,7 +373,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `multiple_events_are_appended_as_separate_jsonl_lines`() {
+    fun `multiple_events_are_appended_as_separate_jsonl_lines`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent(runId = 1L))
         record(sink, TestEvent(runId = 2L))
@@ -367,7 +387,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `json_special_characters_are_properly_escaped`() {
+    fun `json_special_characters_are_properly_escaped`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         val workerWithSpecialChars = "Worker\"With\\Quotes\nAnd\tNewlines"
 
@@ -382,7 +402,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `workerTerminalDiagnosticReader_parses_file_correctly`() {
+    fun `workerTerminalDiagnosticReader_parses_file_correctly`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
         record(sink, TestEvent(
             workerName = "ReaderTestWorker",
@@ -426,7 +446,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `file_rotation_replaces_existing_backup`() {
+    fun `file_rotation_replaces_existing_backup`() = runTest {
         val sink = FileWorkerTerminalDiagnosticSink(context)
 
         val currentFile = File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl")
@@ -455,7 +475,7 @@ class FileWorkerTerminalDiagnosticSinkTest {
     }
 
     @Test
-    fun `sink_does_not_throw_when_context_filesDir_is_null`() {
+    fun `sink_does_not_throw_when_context_filesDir_is_null`() = runTest {
         // Simulate a context where filesDir somehow throws (pathological case)
         val badContext = mockk<Context> {
             every { filesDir } throws RuntimeException("Simulated filesDir failure")
@@ -470,5 +490,163 @@ class FileWorkerTerminalDiagnosticSinkTest {
             throw AssertionError("Sink must never throw into the worker path", e)
         }
         // If we reach here, the test passes
+    }
+
+    // ------------------------------------------------------------------
+    // PR12J-2: New bounded-suspend tests
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `file_sink_records_event_under_timeout`() = runTest {
+        // Verify that a normal (fast) write completes successfully
+        // within the bounded timeout.
+        val sink = FileWorkerTerminalDiagnosticSink(context)
+        val event = TestEvent(
+            workerName = "BoundedWriteWorker",
+            runId = 100L,
+            failureCode = "TERMINAL_WRITE_TIMEOUT",
+            errorClass = "TimeoutCancellationException"
+        )
+        record(sink, event)
+
+        val events = readAll()
+        assertEquals("Should have written exactly 1 event under timeout", 1, events.size)
+
+        val json = events[0]
+        assertEquals("BoundedWriteWorker", json.getString("workerName"))
+        assertEquals(100L, json.getLong("runId"))
+        assertEquals("TERMINAL_WRITE_TIMEOUT", json.getString("failureCode"))
+    }
+
+    @Test
+    fun `file_sink_slow_append_times_out`() = runTest {
+        // Use DelayedDiagnosticSink with a delay longer than the
+        // FILE_DIAGNOSTIC_WRITE_TIMEOUT_MS (500 ms). The cancellable
+        // delay inside appendLineSafely allows withTimeout to fire.
+        val sink = DelayedDiagnosticSink(context, delayMs = 2000L)
+        val event = TestEvent(
+            workerName = "SlowWorker",
+            runId = 200L,
+            failureCode = "TERMINAL_WRITE_TIMEOUT"
+        )
+        // This must not throw — the TimeoutCancellationException is
+        // caught internally and logged via Timber.e.
+        record(sink, event)
+
+        // Since the delay was longer than the timeout, appendLineSafely
+        // should have been cancelled and no file written.
+        val events = readAll()
+        assertTrue(
+            "Slow append should time out before writing — file must be empty or absent",
+            events.isEmpty() || !File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl").exists()
+        )
+    }
+
+    @Test
+    fun `file_sink_timeout_does_not_throw`() = runTest {
+        // Verify that even when the timeout fires, the method does NOT
+        // propagate TimeoutCancellationException to the caller.
+        val sink = DelayedDiagnosticSink(context, delayMs = 2000L)
+        val event = TestEvent(workerName = "NoThrowWorker", runId = 300L)
+
+        var threwToCaller = false
+        try {
+            record(sink, event)
+        } catch (e: Exception) {
+            threwToCaller = true
+        }
+        assertFalse(
+            "Timeout must NOT throw to the caller — sink must catch it internally",
+            threwToCaller
+        )
+    }
+
+    @Test
+    fun `file_sink_concurrent_writes_still_serialize`() = runTest {
+        // Verify that the Mutex still serializes concurrent writes under
+        // the new bounded-suspend path. Multiple coroutines writing
+        // concurrently should result in exactly N events with no interleaving.
+        val sink = FileWorkerTerminalDiagnosticSink(context)
+        val numWriters = 20
+        val runIds = (0 until numWriters).toList()
+
+        // Launch concurrent writes
+        val deferred = runIds.map { runId ->
+            async {
+                record(sink, TestEvent(
+                    workerName = "ConcurrentWorker",
+                    runId = runId.toLong()
+                ))
+            }
+        }
+        deferred.awaitAll()
+
+        val events = readAll()
+        assertEquals(
+            "Concurrent writes must produce exactly $numWriters events",
+            numWriters, events.size
+        )
+
+        // Verify all runIds are present (no lost or corrupted writes)
+        val writtenIds = events.map { it.getLong("runId") }.toSet()
+        assertEquals(
+            "All runIds must be present — no lost writes",
+            runIds.map { it.toLong() }.toSet(), writtenIds
+        )
+
+        // Verify each line is valid JSON (no interleaving corruption)
+        val rawLines = readAllStrings()
+        assertEquals(numWriters, rawLines.size)
+        rawLines.forEachIndexed { index, line ->
+            try {
+                JSONObject(line)
+            } catch (_: Exception) {
+                throw AssertionError("Line $index is not valid JSON: $line")
+            }
+        }
+    }
+
+    @Test
+    fun `file_sink_rotation_still_works`() = runTest {
+        // Verify that file rotation still functions correctly under the
+        // new bounded-suspend path. Fill the file past 512 KB, trigger
+        // rotation, and confirm the backup exists with old contents.
+        val sink = FileWorkerTerminalDiagnosticSink(context)
+
+        val currentFile = File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl")
+        val backupFile = File(tempDir, "diagnostics/worker_terminal_diagnostics.jsonl.1")
+
+        val largeWorkerName = "B".repeat(250) // ~500 bytes per event
+
+        // Fill past rotation threshold
+        var count = 0
+        while (currentFile.exists().not() || currentFile.length() <= 512L * 1024L) {
+            record(sink, TestEvent(
+                workerName = largeWorkerName,
+                runId = count.toLong(),
+                workId = null,
+                correlationId = null,
+                runAttempt = null,
+                reasonCode = null,
+                errorClass = null
+            ))
+            count++
+            if (count > 5000) break // safety
+        }
+
+        // Trigger rotation
+        record(sink, TestEvent(
+            workerName = "PostRotationBounded",
+            runId = 999L
+        ))
+
+        // Verify rotation occurred
+        assertTrue("Backup file must exist after rotation", backupFile.exists())
+        assertTrue("Backup file must have content", backupFile.length() > 0)
+        assertTrue("Current file must exist after rotation", currentFile.exists())
+        assertTrue(
+            "Current file must be small after rotation (was ${currentFile.length()} bytes)",
+            currentFile.length() < 100L * 1024L
+        )
     }
 }

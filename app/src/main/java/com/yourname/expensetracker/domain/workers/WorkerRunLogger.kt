@@ -68,7 +68,7 @@ class WorkerRunLoggerImpl @Inject constructor(
          */
         fun classifyDiagnostic(reason: String, error: Throwable?): String = when {
             error is TimeoutCancellationException -> "TIMEOUT"
-            error is RetryableWorkerException -> when (error.message) {
+            error is RetryableWorkerException -> when (error.reasonCode) {
                 "PIPELINE_TIMEOUT" -> "PIPELINE_TIMEOUT"
                 else -> "RETRYABLE"
             }
@@ -84,7 +84,7 @@ class WorkerRunLoggerImpl @Inject constructor(
             reason.contains("PRIVACY", ignoreCase = true) -> "PRIVACY"
             reason.contains("RESTORE", ignoreCase = true) -> "RESTORE_BLOCKED"
             reason.contains("NETWORK", ignoreCase = true) -> "NETWORK_UNAVAILABLE"
-            else -> reason
+            else -> WorkerReasonCodes.sanitizeReasonCode(reason)
         }
     }
 
@@ -238,14 +238,16 @@ class WorkerRunLoggerImpl @Inject constructor(
         }
 
         override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?, reasonCode: String?): TerminalWriteOutcome {
+            val code = reasonCode ?: com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.WORKER_SUCCESS.name
             val result = terminal("SUCCESS", TerminalArgs(
                 rowsScanned = rowsScanned,
                 rowsUpdated = rowsUpdated,
                 notificationsSent = notificationsSent,
                 statusReason = message,
-                terminalReasonCode = reasonCode
+                terminalReasonCode = code,
+                terminalDiagnosticCode = code
             ))
-            return result.toOutcome("SUCCESS", reasonCode ?: message, null)
+            return result.toOutcome("SUCCESS", code, null)
         }
 
         override suspend fun skipped(reason: String): TerminalWriteOutcome {

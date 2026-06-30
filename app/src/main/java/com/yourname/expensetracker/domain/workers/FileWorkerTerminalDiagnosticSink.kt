@@ -1,11 +1,16 @@
 package com.yourname.expensetracker.domain.workers
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import java.io.File
 import java.io.IOException
@@ -35,7 +40,7 @@ import javax.inject.Singleton
  * @param context Android context used to resolve [Context.filesDir]
  */
 @Singleton
-class FileWorkerTerminalDiagnosticSink @Inject constructor(
+open class FileWorkerTerminalDiagnosticSink @Inject constructor(
     private val context: Context
 ) : WorkerTerminalDiagnosticSink {
 
@@ -59,7 +64,7 @@ class FileWorkerTerminalDiagnosticSink @Inject constructor(
     // Public API
     // ------------------------------------------------------------------
 
-    override fun recordWorkerTerminalWriteFailure(
+    open suspend override fun recordWorkerTerminalWriteFailure(
         workerName: String,
         runId: Long,
         correlationId: String?,
@@ -85,13 +90,16 @@ class FileWorkerTerminalDiagnosticSink @Inject constructor(
             errorClass = errorClass
         )
         try {
-            runBlocking {
-                mutex.withLock {
-                    appendLineSafely(jsonLine)
+            withContext(Dispatchers.IO + NonCancellable) {
+                withTimeout(FILE_DIAGNOSTIC_WRITE_TIMEOUT_MS) {
+                    mutex.withLock {
+                        appendLineSafely(jsonLine)
+                    }
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            Timber.e("Worker terminal diagnostic write timed out")
         } catch (e: Exception) {
-            // Never throw into the worker path.
             Timber.e(e, "FileWorkerTerminalDiagnosticSink: failed to record terminal diagnostic")
         }
     }
@@ -100,11 +108,14 @@ class FileWorkerTerminalDiagnosticSink @Inject constructor(
     // Internal: file I/O (must be called inside mutex.withLock)
     // ------------------------------------------------------------------
 
-    private fun appendLineSafely(line: String) {
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal open suspend fun appendLineSafely(line: String) {
         try {
-            ensureDirectoryExists()
-            rotateIfNeeded()
-            currentFile.appendText(line + "\n")
+            withContext(Dispatchers.IO) {
+                ensureDirectoryExists()
+                rotateIfNeeded()
+                currentFile.appendText(line + "\n")
+            }
         } catch (e: IOException) {
             // Never throw into the worker path.
             Timber.e(e, "FileWorkerTerminalDiagnosticSink: I/O error appending diagnostic")
@@ -206,6 +217,7 @@ class FileWorkerTerminalDiagnosticSink @Inject constructor(
         private const val FILE_NAME = "worker_terminal_diagnostics.jsonl"
         private const val BACKUP_FILE_NAME = "worker_terminal_diagnostics.jsonl.1"
         private const val MAX_FILE_SIZE_BYTES = 512L * 1024L  // 512 KB
+        const val FILE_DIAGNOSTIC_WRITE_TIMEOUT_MS = 500L
     }
 }
 
@@ -233,7 +245,7 @@ class CompositeWorkerTerminalDiagnosticSink(
     private val loggingSink: WorkerTerminalDiagnosticSink
 ) : WorkerTerminalDiagnosticSink {
 
-    override fun recordWorkerTerminalWriteFailure(
+    override suspend fun recordWorkerTerminalWriteFailure(
         workerName: String,
         runId: Long,
         correlationId: String?,

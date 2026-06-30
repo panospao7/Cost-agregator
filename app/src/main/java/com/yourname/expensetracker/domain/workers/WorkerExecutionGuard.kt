@@ -127,14 +127,14 @@ class WorkerExecutionGuard @Inject constructor(
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                     reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
-                return applyBlockedPolicy(request, DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
+                return applyBlockedPolicy(request, DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name)
             }
         }
 
         val lease = try {
             leaseRegistry.acquire(request.workerName)
         } catch (e: LeaseAcquisitionBlockedException) {
-            return applyBlockedPolicy(request, DiagnosticReasonCode.STOP_REQUESTED.name)
+            return applyBlockedPolicy(request, DiagnosticReasonCode.WORKER_STOP_REQUESTED.name)
         }
         try {
             // Read-only backup path: no DB run logging
@@ -160,21 +160,21 @@ class WorkerExecutionGuard @Inject constructor(
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_DENIED.name)
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name)
                         }
                         is PrivacyDecision.FailClosed -> {
-                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name)
                         }
                         else -> { }
                     }
                 }
 
                 if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
-                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name)
                 }
 
                 val result = block()
-                guardTerminal(run, "SUCCESS", DiagnosticReasonCode.SUCCESS.name) { run.success(reasonCode = DiagnosticReasonCode.SUCCESS.name) }
+                guardTerminal(run, "SUCCESS", DiagnosticReasonCode.WORKER_SUCCESS.name) { run.success(reasonCode = DiagnosticReasonCode.WORKER_SUCCESS.name) }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
                 // PR12H-1: TimeoutCancellationException from the worker block is now
@@ -185,17 +185,17 @@ class WorkerExecutionGuard @Inject constructor(
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
                     return when (request.timeoutPolicy) {
                         WorkerTimeoutPolicy.RETRY -> {
-                            guardTerminal(run, "RETRY", DiagnosticReasonCode.TIMEOUT.name) { run.retry(DiagnosticReasonCode.TIMEOUT.name, e) }
-                            WorkerGuardResult.Retry(DiagnosticReasonCode.TIMEOUT.name, e)
+                            guardTerminal(run, "RETRY", DiagnosticReasonCode.WORKER_TIMEOUT.name) { run.retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, e) }
+                            WorkerGuardResult.Retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, e)
                         }
                         WorkerTimeoutPolicy.PROPAGATE_CANCELLATION -> {
-                            guardTerminal(run, "CANCELLED", DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+                            guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) { run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
                             throw e
                         }
                     }
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
-                    guardTerminal(run, "CANCELLED", DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+                    guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) { run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
                     throw e
                 }
                 if (e is WorkerCheckpointBlockedException) {
@@ -215,17 +215,20 @@ class WorkerExecutionGuard @Inject constructor(
                     return applyBlockedPolicy(request, code)
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
-                // P9-NEW-13: an explicit typed retry signal takes precedence over the
-                // message-based heuristic, so a worker's retry intent is never lost when
-                // its message matches none of the transient keywords. CancellationException
-                // is already rethrown above (highest precedence); classifyTransient remains
-                // the unchanged fallback for every other exception.
-                return if (e is RetryableWorkerException || classifyTransient(e)) {
-                    val reason = e.message ?: "Transient error"
+                // PR12J-1: Use safe structured reason codes instead of raw exception
+                // messages. RetryableWorkerException.reasonCode takes precedence over
+                // message-based heuristics; classifyTransient remains the unchanged
+                // fallback for every other exception.
+                return if (e is RetryableWorkerException) {
+                    val reason = e.reasonCode
+                    guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
+                    WorkerGuardResult.Retry(reason, e)
+                } else if (classifyTransient(e)) {
+                    val reason = DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
                     guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
                     WorkerGuardResult.Retry(reason, e)
                 } else {
-                    val reason = e.message ?: "Permanent error"
+                    val reason = DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
                     guardTerminal(run, "FAILED", reason) { run.failure(reason, e) }
                     WorkerGuardResult.Failed(reason, e)
                 }
@@ -245,7 +248,7 @@ class WorkerExecutionGuard @Inject constructor(
     suspend fun checkpoint(operation: String) {
         if (leaseRegistry.isStopRequested()) {
             throw WorkerCheckpointBlockedException(
-                reasonCode = DiagnosticReasonCode.STOP_REQUESTED.name,
+                reasonCode = DiagnosticReasonCode.WORKER_STOP_REQUESTED.name,
                 message = "Worker checkpoint blocked: stop requested at '$operation'"
             )
         }
@@ -260,7 +263,7 @@ class WorkerExecutionGuard @Inject constructor(
                 "P9"
             )
             throw WorkerCheckpointBlockedException(
-                reasonCode = DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,
+                reasonCode = DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name,
                 message = "Worker checkpoint blocked by write barrier at '$operation': ${e.message}",
                 cause = e
             )
@@ -301,7 +304,7 @@ class WorkerExecutionGuard @Inject constructor(
                 val lease = try {
                     leaseRegistry.acquire(request.workerName)
                 } catch (e: LeaseAcquisitionBlockedException) {
-                    return applyBlockedPolicy(request, DiagnosticReasonCode.STOP_REQUESTED.name)
+                    return applyBlockedPolicy(request, DiagnosticReasonCode.WORKER_STOP_REQUESTED.name)
                 }
                 return try {
                     WorkerGuardResult.Success(block(readOnlyCtx))
@@ -319,7 +322,7 @@ class WorkerExecutionGuard @Inject constructor(
         val lease = try {
             leaseRegistry.acquire(request.workerName)
         } catch (e: LeaseAcquisitionBlockedException) {
-            return applyBlockedPolicy(request, DiagnosticReasonCode.STOP_REQUESTED.name)
+            return applyBlockedPolicy(request, DiagnosticReasonCode.WORKER_STOP_REQUESTED.name)
         }
         try {
             val leaseId = lease.leaseId
@@ -339,22 +342,22 @@ class WorkerExecutionGuard @Inject constructor(
                 for (capability in request.requiredCapabilities) {
                     when (val decision = privacyGate.check(capability)) {
                         is PrivacyDecision.Denied -> {
-                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_DENIED.name)
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name)
                         }
                         is PrivacyDecision.FailClosed -> {
-                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
+                            return applyPrivacyPolicy(request, run, DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name)
                         }
                         else -> { }
                     }
                 }
 
                 if (request.requiresNotificationPermission && !notificationPermissionChecker.areNotificationsEnabled()) {
-                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
+                    return applyNotificationPermissionPolicy(request, run, DiagnosticReasonCode.WORKER_NOTIFICATION_PERMISSION_DENIED.name)
                 }
 
                 val result = block(ctx)
                 val noWork = ctx.rowsScanned == 0 && ctx.rowsUpdated == 0 && ctx.notificationsSent == 0
-                val reason = if (noWork) DiagnosticReasonCode.NO_WORK.name else DiagnosticReasonCode.SUCCESS.name
+                val reason = if (noWork) DiagnosticReasonCode.WORKER_NO_WORK.name else DiagnosticReasonCode.WORKER_SUCCESS.name
                 guardTerminal(run, "SUCCESS", reason) {
                     run.success(
                         rowsScanned = ctx.rowsScanned,
@@ -374,17 +377,17 @@ class WorkerExecutionGuard @Inject constructor(
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
                     return when (request.timeoutPolicy) {
                         WorkerTimeoutPolicy.RETRY -> {
-                            guardTerminal(run, "RETRY", DiagnosticReasonCode.TIMEOUT.name) { run.retry(DiagnosticReasonCode.TIMEOUT.name, e) }
-                            WorkerGuardResult.Retry(DiagnosticReasonCode.TIMEOUT.name, e)
+                            guardTerminal(run, "RETRY", DiagnosticReasonCode.WORKER_TIMEOUT.name) { run.retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, e) }
+                            WorkerGuardResult.Retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, e)
                         }
                         WorkerTimeoutPolicy.PROPAGATE_CANCELLATION -> {
-                            guardTerminal(run, "CANCELLED", DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+                            guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) { run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
                             throw e
                         }
                     }
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
-                    guardTerminal(run, "CANCELLED", DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+                    guardTerminal(run, "CANCELLED", DiagnosticReasonCode.WORKER_CANCELLED.name) { run.cancelled(DiagnosticReasonCode.WORKER_CANCELLED.name) }
                     throw e
                 }
                 if (e is WorkerCheckpointBlockedException) {
@@ -404,17 +407,20 @@ class WorkerExecutionGuard @Inject constructor(
                     return applyBlockedPolicy(request, code)
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
-                // P9-NEW-13: an explicit typed retry signal takes precedence over the
-                // message-based heuristic, so a worker's retry intent is never lost when
-                // its message matches none of the transient keywords. CancellationException
-                // is already rethrown above (highest precedence); classifyTransient remains
-                // the unchanged fallback for every other exception.
-                return if (e is RetryableWorkerException || classifyTransient(e)) {
-                    val reason = e.message ?: "Transient error"
+                // PR12J-1: Use safe structured reason codes instead of raw exception
+                // messages. RetryableWorkerException.reasonCode takes precedence over
+                // message-based heuristics; classifyTransient remains the unchanged
+                // fallback for every other exception.
+                return if (e is RetryableWorkerException) {
+                    val reason = e.reasonCode
+                    guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
+                    WorkerGuardResult.Retry(reason, e)
+                } else if (classifyTransient(e)) {
+                    val reason = DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
                     guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
                     WorkerGuardResult.Retry(reason, e)
                 } else {
-                    val reason = e.message ?: "Permanent error"
+                    val reason = DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
                     guardTerminal(run, "FAILED", reason) { run.failure(reason, e) }
                     WorkerGuardResult.Failed(reason, e)
                 }
@@ -564,12 +570,12 @@ class WorkerExecutionGuard @Inject constructor(
         } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
             diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9",
                 reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED)
-            StartRunResult.Blocked(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name)
+            StartRunResult.Blocked(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name)
         } catch (e: Exception) {
             Timber.w(e, "WorkerExecutionGuard: failed to start run for ${request.workerName}")
             diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9")
-            if (classifyTransient(e)) StartRunResult.Retry(e.message ?: "Transient start failure")
-            else StartRunResult.Retry(DiagnosticReasonCode.UNKNOWN_ERROR.name)
+            if (classifyTransient(e)) StartRunResult.Retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name)
+            else StartRunResult.Retry(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name)
         }
     }
 
@@ -587,8 +593,9 @@ class WorkerExecutionGuard @Inject constructor(
                 id = run.id,
                 staleThresholdMs = staleThresholdMs,
                 finishedAt = timeProvider.now(),
-                statusReason = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name,
-                terminalReasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name
+                statusReason = DiagnosticReasonCode.STALE_RUNNING_ABORTED.name,
+                terminalReasonCode = DiagnosticReasonCode.STALE_RUNNING_ABORTED.name,
+                terminalDiagnosticCode = DiagnosticReasonCode.STALE_RUNNING_ABORTED.name
             )
             if (affected == 1) recovered++
         }
