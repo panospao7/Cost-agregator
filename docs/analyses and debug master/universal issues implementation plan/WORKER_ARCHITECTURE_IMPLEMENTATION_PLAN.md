@@ -4,9 +4,9 @@ Last updated: 2026-06-30
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12H MOSTLY COMPLETE; PR12I FINAL HARDENING PENDING**  
-> Remaining blockers: durable terminal fallback diagnostics, terminal reason-code completion for all states, NotificationIntake worker metrics, static guard hardening (PR12H-5), DailyBriefing timeout idempotency tests.  
-> Do not mark MIT-016/MIT-017 fully done until PR12I passes.
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12I ALL COMPLETE**  
+> All 6 deep-review blockers resolved: durable terminal fallback diagnostics (PR12I-1), terminal reason-code completion (PR12I-2), NotificationIntake metrics (PR12I-3), static guard hardening (PR12I-4), DailyBriefing idempotency (PR12I-5).  
+> MIT-016/MIT-017 can now be marked DONE.
 
 ---
 
@@ -1400,12 +1400,12 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 ---
 
-# 18. Status (PRs 1–12H — Mostly Complete; PR12I Pending)
+# 18. Final Status (PRs 1–12I ALL COMPLETE)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** PRs 1–11 COMPLETE; PR12A–PR12H MOSTLY COMPLETE; PR12I FINAL HARDENING PENDING  
-**HEAD commit:** `1ac8bfb7`  
-**Last updated:** 2026-06-30
+**Status:** PRs 1–11 COMPLETE; PR12A–PR12I ALL COMPLETE  
+**HEAD commit:** `f8c30076`  
+**Closure date:** 2026-06-30
 
 ## Summary
 
@@ -1414,8 +1414,8 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | Workers fully guarded | 10 (8 original + DismissReminderActionWorker + SnoozeReminderActionWorker) |
 | Receivers with indirect DB only | 2 (DismissReminderReceiver, SnoozeReminderReceiver) |
 | Non-WorkManager worker with barrier checks | 1 (SourceLinkBackfill) |
-| Worker-related test files | 27 |
-| Worker-related test cases | 250+ |
+| Worker-related test files | 28 |
+| Worker-related test cases | 270+ |
 | DB version | 148 with valid 147→148 migration |
 | New regressions introduced | 0 (all existing tests continue to pass) |
 
@@ -1495,6 +1495,32 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
     - `RetryableWorkerException` preserves `TimeoutCancellationException` as cause
     - Guard tests verify cause chain intact for retry classification
 
+14. **Durable Terminal Diagnostic Sink** (PR12I-1):
+    - `FileWorkerTerminalDiagnosticSink` writes sanitized JSONL to app-private file
+    - 512 KB rotation, Mutex synchronization, never throws into worker path
+    - `WorkerTerminalDiagnosticReader` parses events for tests/debug
+
+15. **Complete Terminal Reason-Code Persistence** (PR12I-2):
+    - `classifyDiagnostic()` maps errors to known-safe codes (never raw messages)
+    - All terminal states (skipped/retry/failed/cancelled/stale) persist reason codes
+    - `failure()` separates `statusReason` from `errorMessage`
+
+16. **NotificationIntake Worker Metrics** (PR12I-3):
+    - `ctx.addRowsScanned()` for metadata reads and payload loads
+    - `ctx.addRowsUpdated()` for claims, terminal marks, retry/failure marks, privacy purges
+    - True no-op paths remain `NO_WORK`; real side effects are never misclassified
+
+17. **Static Architecture Guard Hardening** (PR12I-4):
+    - `stripComments()` prevents comment-faking of guard calls
+    - Direct DAO rule with allowlist for existing debt
+    - Notification permission rule, privacy capability rule, dynamic retry policy rule
+    - All new violations caught by CI
+
+18. **DailyBriefing Timeout Idempotency** (PR12I-5):
+    - Deterministic `notificationId` from `dateKey` hash
+    - Existing artifact prevents duplicate generation/delivery
+    - Retry after timeout uses identical notification ID
+
 ## Test Coverage
 
 | Category | Test Files |
@@ -1523,9 +1549,11 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | Source Link Backfill | `SourceLinkBackfillWorkerTest.kt` (3 tests) |
 | **PR11: Restore Regression** | `WorkerRestoreRegressionTest.kt` (15 tests) |
 | **PR11: Barrier Integration** | `WorkerBarrierIntegrationTest.kt` (23 tests) |
-| **PR12H: Terminal Logger** | `WorkerRunLoggerTest.kt` (37 tests) |
+| **PR12H: Terminal Logger** | `WorkerRunLoggerTest.kt` (49 tests) |
 | **PR12H: Guard Timeout** | `WorkerExecutionGuardTest.kt` (42 tests) |
 | **PR12H: Static Guards** | `SourceScanningArchitectureGuardTest.kt` (4 tests) |
+| **PR12I: Durable Diagnostic Sink** | `FileWorkerTerminalDiagnosticSinkTest.kt` (18 tests) |
+| **PR12I: DailyBriefing Idempotency** | `DailyBriefingWorkerTest.kt` (18 tests) |
 
 ## MIT Closure Status
 
@@ -1542,7 +1570,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 # 19. Final Status PR12 — Deep Review Blocker Resolution
 
-All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation.
+All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation. PR12I-1 through PR12I-5 resolved the 6 remaining blockers from the PR12H deep review: durable terminal fallback diagnostics, complete reason-code persistence, NotificationIntake metrics, static guard hardening, and DailyBriefing idempotency.
 
 | # | Blocker | PR | Resolution |
 |---|---|---|---|
@@ -1560,10 +1588,10 @@ All 9 blocking issues identified in the deep review of PRs 1–11 have been reso
 
 | Worker | Type | Guarded | Lease | Run Ledger | Tests |
 |---|---|---|---|---|---|
-| NotificationIntakeWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 11 |
+| NotificationIntakeWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 13 |
 | BillReminderWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 7 |
 | DataRetentionWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 7 |
-| DailyBriefingWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 14 |
+| DailyBriefingWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 18 |
 | LocationBackfillWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 6 |
 | MerchantKeyBackfillWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 5 |
 | ReceiptMatchingWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 11 |
