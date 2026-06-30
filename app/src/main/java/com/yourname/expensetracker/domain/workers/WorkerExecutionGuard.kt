@@ -174,7 +174,7 @@ class WorkerExecutionGuard @Inject constructor(
                 }
 
                 val result = block()
-                guardTerminal(run, "SUCCESS") { run.success() }
+                guardTerminal(run, "SUCCESS", DiagnosticReasonCode.SUCCESS.name) { run.success(reasonCode = DiagnosticReasonCode.SUCCESS.name) }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
                 // PR12H-1: TimeoutCancellationException from the worker block is now
@@ -354,12 +354,14 @@ class WorkerExecutionGuard @Inject constructor(
 
                 val result = block(ctx)
                 val noWork = ctx.rowsScanned == 0 && ctx.rowsUpdated == 0 && ctx.notificationsSent == 0
-                guardTerminal(run, "SUCCESS") {
+                val reason = if (noWork) DiagnosticReasonCode.NO_WORK.name else DiagnosticReasonCode.SUCCESS.name
+                guardTerminal(run, "SUCCESS", reason) {
                     run.success(
                         rowsScanned = ctx.rowsScanned,
                         rowsUpdated = ctx.rowsUpdated,
                         notificationsSent = ctx.notificationsSent,
-                        message = if (noWork) "NO_WORK" else null
+                        message = if (noWork) "NO_WORK" else null,
+                        reasonCode = reason
                     )
                 }
                 return WorkerGuardResult.Success(result)

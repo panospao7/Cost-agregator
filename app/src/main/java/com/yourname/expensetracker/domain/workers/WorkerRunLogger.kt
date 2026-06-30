@@ -40,7 +40,7 @@ interface WorkerRunHandle {
     val workerName: String
     val workId: String?
     val runAttempt: Int?
-    suspend fun success(rowsScanned: Int = 0, rowsUpdated: Int = 0, notificationsSent: Int = 0, message: String? = null): TerminalWriteOutcome
+    suspend fun success(rowsScanned: Int = 0, rowsUpdated: Int = 0, notificationsSent: Int = 0, message: String? = null, reasonCode: String? = null): TerminalWriteOutcome
     suspend fun skipped(reason: String): TerminalWriteOutcome
     suspend fun retry(reason: String, error: Throwable? = null): TerminalWriteOutcome
     suspend fun failure(reason: String, error: Throwable? = null): TerminalWriteOutcome
@@ -209,14 +209,15 @@ class WorkerRunLoggerImpl @Inject constructor(
             }
         }
 
-        override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?): TerminalWriteOutcome {
+        override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?, reasonCode: String?): TerminalWriteOutcome {
             val result = terminal("SUCCESS", TerminalArgs(
                 rowsScanned = rowsScanned,
                 rowsUpdated = rowsUpdated,
                 notificationsSent = notificationsSent,
-                statusReason = message
+                statusReason = message,
+                terminalReasonCode = reasonCode
             ))
-            return result.toOutcome("SUCCESS", message, null)
+            return result.toOutcome("SUCCESS", reasonCode ?: message, null)
         }
 
         override suspend fun skipped(reason: String): TerminalWriteOutcome {

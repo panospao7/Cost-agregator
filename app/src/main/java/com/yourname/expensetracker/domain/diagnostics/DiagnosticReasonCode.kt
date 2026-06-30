@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.diagnostics
 
 enum class DiagnosticReasonCode {
+    SUCCESS,
+    NO_WORK,
     PRIVACY_DENIED,
     PRIVACY_FAIL_CLOSED,
     RESTORE_BLOCKED,
