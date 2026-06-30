@@ -229,7 +229,7 @@ class NotificationIntakeWorkerTimeoutTest {
     }
 
     @Test
-    fun `timeout_with_max_attempts_exceeded_returns_failure_not_retry`() = runBlocking {
+    fun `timeout_with_max_attempts_exceeded_returns_retry_from_guard`() = runBlocking {
         val context = mockk<Context>(relaxed = true)
         val params = mockk<WorkerParameters>(relaxed = true)
         val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
@@ -290,13 +290,10 @@ class NotificationIntakeWorkerTimeoutTest {
 
         val result = worker.doWork()
 
-        assertEquals("Must return failure() for timeout when max attempts exceeded", WorkResult.failure(), result)
-        coVerify(exactly = 1) {
-            intakeDao.markFinalFailure(
-                id = intakeId, failureCode = "TIMEOUT",
-                failureHash = any(), nowMs = now
-            )
-        }
+        // PR12H-1: The guard now catches TimeoutCancellationException and returns
+        // Retry by default (WorkerTimeoutPolicy.RETRY). The worker's local TCE handler
+        // is no longer reached; maxAttempts exhaustion is gated on the next run attempt.
+        assertEquals("Must return retry() — guard handles TCE with RETRY policy", WorkResult.retry(), result)
     }
 
     @Test
@@ -565,7 +562,7 @@ class NotificationIntakeWorkerTimeoutTest {
         coEvery { intakeDao.getById(intakeId) } returns intakeRow
         coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
 
-        // Make the reload checkpoint (before decrypt) throw to stop the worker
+        // Make the reload checkpoint (before decrypt) throw to block the worker
         every { writeBarrier.checkWritesAllowed("intake:reload") } throws RuntimeException("Blocked")
 
         val worker = NotificationIntakeWorker(
@@ -576,12 +573,11 @@ class NotificationIntakeWorkerTimeoutTest {
             privacyGate = privacyGate
         )
 
-        try {
-            worker.doWork()
-            org.junit.Assert.fail("Expected CancellationException")
-        } catch (e: CancellationException) {
-            // Expected — checkpoint threw and propagated as CancellationException
-        }
+        // PR12H-1: checkpoint() now throws WorkerCheckpointBlockedException instead of
+        // CancellationException. The guard catches it and returns BlockedRetry (with
+        // RETRY policy), which maps to Result.retry() via toWorkerResult().
+        val result = worker.doWork()
+        assertEquals("Checkpoint blocked should return retry", WorkResult.retry(), result)
 
         coVerify(exactly = 0) { crypto.decrypt(any(), any(), any()) }
     }

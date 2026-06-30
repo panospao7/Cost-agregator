@@ -24,6 +24,7 @@ import javax.inject.Singleton
 enum class BlockedPolicy { RETRY, SKIP_SUCCESS, FAIL }
 enum class PermissionPolicy { SKIP_SUCCESS, RETRY, FAIL }
 enum class PrivacyPolicy { SKIP_SUCCESS, RETRY, FAIL }
+enum class WorkerTimeoutPolicy { RETRY, PROPAGATE_CANCELLATION }
 
 data class WorkerGuardRequest(
     val workerName: String,
@@ -47,7 +48,9 @@ data class WorkerGuardRequest(
     /** WorkManager runAttemptCount. */
     val runAttemptCount: Int? = null,
     /** WorkerSpec version for this worker. */
-    val specVersion: Int? = null
+    val specVersion: Int? = null,
+    /** How the guard handles [kotlinx.coroutines.TimeoutCancellationException] from the worker block. */
+    val timeoutPolicy: WorkerTimeoutPolicy = WorkerTimeoutPolicy.RETRY
 )
 
 sealed interface WorkerGuardResult<out T> {
@@ -67,6 +70,12 @@ fun <T> WorkerGuardResult<T>.toWorkerResult(): ListenableWorker.Result = when (t
 }
 
 class LeaseAcquisitionBlockedException(val workerName: String, message: String) : RuntimeException(message)
+
+class WorkerCheckpointBlockedException(
+    val reasonCode: String,
+    message: String,
+    cause: Throwable? = null
+) : RuntimeException(message, cause)
 
 @Singleton
 class WorkerExecutionGuard @Inject constructor(
@@ -165,16 +174,40 @@ class WorkerExecutionGuard @Inject constructor(
                 withBoundedTerminalWrite { run.success() }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
-                // PR12-FIX-1: TimeoutCancellationException from the WORKER BLOCK must propagate
-                // to the worker's own handler so domain-specific retry logic (backoff, row state)
-                // executes before the guard records the terminal state. The guard only catches
-                // TimeoutCancellationException from its OWN operations (terminal writes, barriers).
+                // PR12H-1: TimeoutCancellationException from the worker block is now
+                // handled by the guard according to the request's timeoutPolicy.
+                // Default (RETRY) avoids losing the run to cancellation; workers that
+                // need domain-specific timeout handling catch it locally and re-throw
+                // as RetryableWorkerException, which is handled below.
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
-                    throw e
+                    return when (request.timeoutPolicy) {
+                        WorkerTimeoutPolicy.RETRY -> {
+                            withBoundedTerminalWrite {
+                                run.retry(DiagnosticReasonCode.TIMEOUT.name, e)
+                            }
+                            WorkerGuardResult.Retry(DiagnosticReasonCode.TIMEOUT.name, e)
+                        }
+                        WorkerTimeoutPolicy.PROPAGATE_CANCELLATION -> {
+                            withBoundedTerminalWrite {
+                                run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
+                            }
+                            throw e
+                        }
+                    }
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
                     withBoundedTerminalWrite { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
                     throw e
+                }
+                if (e is WorkerCheckpointBlockedException) {
+                    withBoundedTerminalWrite {
+                        when (request.blockedPolicy) {
+                            BlockedPolicy.RETRY -> run.retry(e.reasonCode, e)
+                            BlockedPolicy.SKIP_SUCCESS -> run.skipped(e.reasonCode)
+                            BlockedPolicy.FAIL -> run.failure(e.reasonCode, e)
+                        }
+                    }
+                    return applyBlockedPolicy(request, e.reasonCode)
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
                 // P9-NEW-13: an explicit typed retry signal takes precedence over the
@@ -196,15 +229,17 @@ class WorkerExecutionGuard @Inject constructor(
     }
 
     /**
-     * P9 (NEW-P9-013): The read-only path (checking if writes are allowed) is
-     * wrapped in try-catch. If an exception occurs, log and fail-safe by
-     * throwing a [kotlinx.coroutines.CancellationException] to stop the worker
-     * rather than allowing it to proceed with an unknown barrier state.
+     * PR12H-1: Checkpoint that throws [WorkerCheckpointBlockedException] instead of
+     * [kotlinx.coroutines.CancellationException] so the guard can apply the worker's
+     * [BlockedPolicy] (retry/skip/fail) rather than losing the run to cancellation.
+     * Workers using the context-based API ([runGuardedWithContext]) invoke this
+     * checkpoint via [WorkerRunContext.checkpoint].
      */
     suspend fun checkpoint(operation: String) {
         if (leaseRegistry.isStopRequested()) {
-            throw kotlinx.coroutines.CancellationException(
-                "Worker cancelled at checkpoint '$operation' — maintenance stop requested"
+            throw WorkerCheckpointBlockedException(
+                reasonCode = DiagnosticReasonCode.STOP_REQUESTED.name,
+                message = "Worker checkpoint blocked: stop requested at '$operation'"
             )
         }
         try {
@@ -217,8 +252,10 @@ class WorkerExecutionGuard @Inject constructor(
                 restoreMaintenanceMode.currentMode(),
                 "P9"
             )
-            throw kotlinx.coroutines.CancellationException(
-                "Writes blocked at checkpoint '$operation': ${e.message}"
+            throw WorkerCheckpointBlockedException(
+                reasonCode = DiagnosticReasonCode.WRITE_BARRIER_DENIED.name,
+                message = "Worker checkpoint blocked by write barrier at '$operation': ${e.message}",
+                cause = e
             )
         }
         yield()
@@ -320,16 +357,40 @@ class WorkerExecutionGuard @Inject constructor(
                 }
                 return WorkerGuardResult.Success(result)
             } catch (e: Exception) {
-                // PR12-FIX-1: TimeoutCancellationException from the WORKER BLOCK must propagate
-                // to the worker's own handler so domain-specific retry logic (backoff, row state)
-                // executes before the guard records the terminal state. The guard only catches
-                // TimeoutCancellationException from its OWN operations (terminal writes, barriers).
+                // PR12H-1: TimeoutCancellationException from the worker block is now
+                // handled by the guard according to the request's timeoutPolicy.
+                // Default (RETRY) avoids losing the run to cancellation; workers that
+                // need domain-specific timeout handling catch it locally and re-throw
+                // as RetryableWorkerException, which is handled below.
                 if (e is kotlinx.coroutines.TimeoutCancellationException) {
-                    throw e
+                    return when (request.timeoutPolicy) {
+                        WorkerTimeoutPolicy.RETRY -> {
+                            withBoundedTerminalWrite {
+                                run.retry(DiagnosticReasonCode.TIMEOUT.name, e)
+                            }
+                            WorkerGuardResult.Retry(DiagnosticReasonCode.TIMEOUT.name, e)
+                        }
+                        WorkerTimeoutPolicy.PROPAGATE_CANCELLATION -> {
+                            withBoundedTerminalWrite {
+                                run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name)
+                            }
+                            throw e
+                        }
+                    }
                 }
                 if (e is kotlinx.coroutines.CancellationException) {
                     withBoundedTerminalWrite { run.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
                     throw e
+                }
+                if (e is WorkerCheckpointBlockedException) {
+                    withBoundedTerminalWrite {
+                        when (request.blockedPolicy) {
+                            BlockedPolicy.RETRY -> run.retry(e.reasonCode, e)
+                            BlockedPolicy.SKIP_SUCCESS -> run.skipped(e.reasonCode)
+                            BlockedPolicy.FAIL -> run.failure(e.reasonCode, e)
+                        }
+                    }
+                    return applyBlockedPolicy(request, e.reasonCode)
                 }
                 Timber.w(e, "Worker ${request.workerName} failed")
                 // P9-NEW-13: an explicit typed retry signal takes precedence over the

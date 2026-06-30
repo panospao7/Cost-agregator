@@ -19,9 +19,12 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -74,6 +77,7 @@ class WorkerExecutionGuardTest {
 
         every { restoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         coEvery { leaseRegistry.acquire(any()) } returns lease
+        every { leaseRegistry.isStopRequested() } returns false
         coEvery { workerRunLogger.start(any(), any(), any(), any(), any(), any()) } returns runHandle
 
         guard = WorkerExecutionGuard(
@@ -820,5 +824,173 @@ class WorkerExecutionGuardTest {
         coVerify(exactly = 1) {
             runHandle.failure(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name, null)
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12H-1: TimeoutPolicy + Checkpoint Block Semantics
+    // ══════════════════════════════════════════════════════════════════════
+
+    /** Helper: creates a real [TimeoutCancellationException] via [withTimeout]. */
+    private fun createTimeoutCancellationException(): TimeoutCancellationException = runBlocking {
+        try {
+            withTimeout(1) { delay(10) }
+            throw IllegalStateException("Expected TimeoutCancellationException")
+        } catch (e: TimeoutCancellationException) {
+            return@runBlocking e
+        }
+    }
+
+    @Test
+    fun `worker_block_timeout_default_policy_returns_retry`() = runTest {
+        permissionChecker.enabled = true
+        val timeoutEx = createTimeoutCancellationException()
+
+        val result = guard.runGuarded(
+            WorkerGuardRequest(workerName = "test_worker", requiresNotificationPermission = false)
+        ) { throw timeoutEx }
+
+        assertTrue("Default RETRY policy should return Retry for TCE", result is WorkerGuardResult.Retry)
+        assertEquals(DiagnosticReasonCode.TIMEOUT.name, (result as WorkerGuardResult.Retry).reason)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.TIMEOUT.name, timeoutEx) }
+        coVerify(exactly = 0) { runHandle.cancelled(any()) }
+    }
+
+    @Test
+    fun `worker_block_timeout_propagate_policy_rethrows_cancellation`() = runTest {
+        permissionChecker.enabled = true
+        val timeoutEx = createTimeoutCancellationException()
+
+        try {
+            guard.runGuarded(
+                WorkerGuardRequest(
+                    workerName = "test_worker",
+                    requiresNotificationPermission = false,
+                    timeoutPolicy = WorkerTimeoutPolicy.PROPAGATE_CANCELLATION
+                )
+            ) { throw timeoutEx }
+            throw AssertionError("Expected TimeoutCancellationException to propagate")
+        } catch (e: TimeoutCancellationException) {
+            assertEquals(timeoutEx, e)
+        }
+        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+        coVerify(exactly = 0) { runHandle.retry(any(), any()) }
+    }
+
+    @Test
+    fun `checkpoint_stop_requested_retry_policy_returns_retry`() = runTest {
+        permissionChecker.enabled = true
+        every { leaseRegistry.isStopRequested() } returns true
+
+        var blockRan = false
+        val result = guard.runGuardedWithContext(
+            WorkerGuardRequest(
+                workerName = "test_worker",
+                requiresNotificationPermission = false,
+                blockedPolicy = BlockedPolicy.RETRY
+            )
+        ) { ctx -> blockRan = true; ctx.checkpoint("test_op") }
+
+        assertTrue("Stop requested should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
+        assertEquals(DiagnosticReasonCode.STOP_REQUESTED.name, (result as WorkerGuardResult.BlockedRetry).blockedReasonCode)
+        // block started running but checkpoint blocked it
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.STOP_REQUESTED.name, any<WorkerCheckpointBlockedException>()) }
+    }
+
+    @Test
+    fun `checkpoint_write_barrier_denied_retry_policy_returns_retry`() = runTest {
+        permissionChecker.enabled = true
+        // Let startRunSafely's barrier check pass, but block the checkpoint's barrier check
+        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+            val op = firstArg<String>()
+            if (op.startsWith("WorkerRunLogger.start:")) return@answers
+            throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
+                mode = RestoreMaintenanceMode.Mode.NORMAL
+            )
+        }
+
+        var blockRan = false
+        val result = guard.runGuardedWithContext(
+            WorkerGuardRequest(
+                workerName = "test_worker",
+                requiresNotificationPermission = false,
+                blockedPolicy = BlockedPolicy.RETRY
+            )
+        ) { ctx -> blockRan = true; ctx.checkpoint("blocked_op") }
+
+        assertTrue("Write barrier denied should return BlockedRetry for RETRY policy", result is WorkerGuardResult.BlockedRetry)
+        assertEquals(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.BlockedRetry).blockedReasonCode)
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>()) }
+    }
+
+    @Test
+    fun `checkpoint_write_barrier_denied_skip_policy_returns_success`() = runTest {
+        permissionChecker.enabled = true
+        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+            val op = firstArg<String>()
+            if (op.startsWith("WorkerRunLogger.start:")) return@answers
+            throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
+                mode = RestoreMaintenanceMode.Mode.NORMAL
+            )
+        }
+
+        var blockRan = false
+        val result = guard.runGuardedWithContext(
+            WorkerGuardRequest(
+                workerName = "test_worker",
+                requiresNotificationPermission = false,
+                blockedPolicy = BlockedPolicy.SKIP_SUCCESS
+            )
+        ) { ctx -> blockRan = true; ctx.checkpoint("blocked_op") }
+
+        assertTrue("Write barrier denied should return Skipped for SKIP_SUCCESS policy", result is WorkerGuardResult.Skipped)
+        assertEquals(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.Skipped).reason)
+        coVerify(exactly = 1) { runHandle.skipped(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name) }
+    }
+
+    @Test
+    fun `checkpoint_write_barrier_denied_fail_policy_returns_failure`() = runTest {
+        permissionChecker.enabled = true
+        every { writeBarrier.checkWritesAllowed(any<String>()) } answers {
+            val op = firstArg<String>()
+            if (op.startsWith("WorkerRunLogger.start:")) return@answers
+            throw com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(op),
+                mode = RestoreMaintenanceMode.Mode.NORMAL
+            )
+        }
+
+        var blockRan = false
+        val result = guard.runGuardedWithContext(
+            WorkerGuardRequest(
+                workerName = "test_worker",
+                requiresNotificationPermission = false,
+                blockedPolicy = BlockedPolicy.FAIL
+            )
+        ) { ctx -> blockRan = true; ctx.checkpoint("blocked_op") }
+
+        assertTrue("Write barrier denied should return Failed for FAIL policy", result is WorkerGuardResult.Failed)
+        assertEquals(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, (result as WorkerGuardResult.Failed).reason)
+        coVerify(exactly = 1) { runHandle.failure(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, any<WorkerCheckpointBlockedException>()) }
+    }
+
+    @Test
+    fun `true_external_cancellation_still_rethrows`() = runTest {
+        permissionChecker.enabled = true
+        val ex = kotlinx.coroutines.CancellationException("system cancel")
+
+        try {
+            guard.runGuarded(request()) { throw ex }
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            assertEquals(ex, e)
+        }
+        coVerify(exactly = 1) { runHandle.cancelled(DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name) }
+        coVerify(exactly = 0) { runHandle.retry(any(), any()) }
+        coVerify(exactly = 0) { runHandle.failure(any(), any()) }
     }
 }

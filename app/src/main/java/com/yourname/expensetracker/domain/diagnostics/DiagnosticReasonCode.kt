@@ -24,5 +24,6 @@ enum class DiagnosticReasonCode {
     SIDE_EFFECT_EXCEPTION,
     SOURCE_LINK_FAILED,
     UNKNOWN_ERROR,
-    STOP_REQUESTED
+    STOP_REQUESTED,
+    TIMEOUT
 }
