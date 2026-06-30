@@ -4,9 +4,9 @@ Last updated: 2026-06-30
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12I ALL COMPLETE**  
-> All 6 deep-review blockers resolved: durable terminal fallback diagnostics (PR12I-1), terminal reason-code completion (PR12I-2), NotificationIntake metrics (PR12I-3), static guard hardening (PR12I-4), DailyBriefing idempotency (PR12I-5).  
-> MIT-016/MIT-017 can now be marked DONE.
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12I MOSTLY COMPLETE; PR12J SEMANTIC HARDENING PENDING**  
+> Remaining blockers: safe structured reason codes, bounded diagnostic sink, DataRetention privacy semantics, ReceiptMatching notification semantics, static guard allowlists/fixtures, DailyBriefing post-delivery idempotency.  
+> Do not mark MIT-016/MIT-017 fully done until PR12J passes.
 
 ---
 
@@ -1400,12 +1400,12 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 ---
 
-# 18. Final Status (PRs 1–12I ALL COMPLETE)
+# 18. Status (PRs 1–12I — Mostly Complete; PR12J Pending)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** PRs 1–11 COMPLETE; PR12A–PR12I ALL COMPLETE  
-**HEAD commit:** `a68b7c28`  
-**Closure date:** 2026-06-30
+**Status:** PRs 1–11 COMPLETE; PR12A–PR12I MOSTLY COMPLETE; PR12J SEMANTIC HARDENING PENDING  
+**HEAD commit:** `9fff157b`  
+**Last updated:** 2026-06-30
 
 ## Summary
 
