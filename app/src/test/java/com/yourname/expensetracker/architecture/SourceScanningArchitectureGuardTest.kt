@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.architecture
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -86,7 +87,71 @@ class SourceScanningArchitectureGuardTest {
         return result
     }
 
-    // ── Tests ─────────────────────────────────────────────────────────────────
+    // ── Negative fixtures ───────────────────────────────────────────────────
+    // These tests use synthetic bad source strings to prove the guard rules
+    // are not vacuously passing — they actually detect violations.
+
+    @Test
+    fun `negative_fixture_coroutine_worker_without_guard_is_caught`() {
+        val badWorker = """
+            class BadWorker : CoroutineWorker(context, params) {
+                override suspend fun doWork(): Result {
+                    return Result.success()
+                }
+            }
+        """.trimIndent()
+        val stripped = stripComments(badWorker)
+        val hasGuard = stripped.contains("runGuarded(") || stripped.contains("runGuardedWithContext(")
+        assertTrue("Negative fixture: CoroutineWorker without guard must be detected", !hasGuard)
+    }
+
+    @Test
+    fun `negative_fixture_broadcast_receiver_with_dao_is_caught`() {
+        val badReceiver = """
+            class BadReceiver : BroadcastReceiver() {
+                @Inject lateinit var expenseDao: ExpenseDao
+                override fun onReceive(context: Context, intent: Intent) {
+                    GlobalScope.launch { expenseDao.deleteAll() }
+                }
+            }
+        """.trimIndent()
+        val stripped = stripComments(badReceiver)
+        val hasViolation = stripped.contains("@Inject") && (stripped.contains("Dao") || stripped.contains("Repository")) ||
+            stripped.contains("GlobalScope") || stripped.contains("launch {")
+        assertTrue("Negative fixture: BroadcastReceiver with DAO injection must be detected", hasViolation)
+    }
+
+    @Test
+    fun `negative_fixture_worker_missing_notification_permission_is_caught`() {
+        val badWorker = """
+            class BadWorker : CoroutineWorker(context, params) {
+                override suspend fun doWork(): Result {
+                    val service = NotificationService()
+                    service.sendNotification()
+                    return Result.success()
+                }
+            }
+        """.trimIndent()
+        val stripped = stripComments(badWorker)
+        val hasPermissionFlag = stripped.contains("requiresNotificationPermission = true")
+        assertTrue("Negative fixture: Notification worker missing permission flag must be detected", !hasPermissionFlag)
+    }
+
+    @Test
+    fun `negative_fixture_comment_faked_guard_call_is_stripped`() {
+        val sourceWithCommentedGuard = """
+            class FakeWorker : CoroutineWorker(context, params) {
+                // runGuardedWithContext(request) { }
+                override suspend fun doWork(): Result {
+                    return Result.success()
+                }
+            }
+        """.trimIndent()
+        val stripped = stripComments(sourceWithCommentedGuard)
+        assertFalse("Commented guard call must be stripped before scanning", stripped.contains("runGuardedWithContext"))
+    }
+
+    // ── Positive tests (scan real source tree) ────────────────────────────────
 
     @Test
     fun `all_coroutine_worker_files_contain_guard_call`() {
