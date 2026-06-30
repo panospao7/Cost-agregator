@@ -27,12 +27,19 @@ interface WorkerTerminalDiagnosticSink {
 }
 
 /**
- * Timber-only implementation of [WorkerTerminalDiagnosticSink].
- * Emits [Timber.e] with all structured context so non-durable terminal writes
- * are always visible in logcat (unlike the previous Timber.w-only approach).
+ * Logging-only implementation of [WorkerTerminalDiagnosticSink].
+ *
+ * **IMPORTANT: This sink is NOT durable.** It emits [Timber.e] with all structured
+ * context so non-durable terminal writes are visible in logcat (unlike the previous
+ * Timber.w-only approach). However, logcat can be lost, release builds may not
+ * preserve logs, and diagnostics emitted via this sink do NOT survive process death.
+ *
+ * Prefer [FileWorkerTerminalDiagnosticSink] for production use. This sink exists
+ * primarily for debug builds via [CompositeWorkerTerminalDiagnosticSink] and for
+ * environments where file I/O is not possible.
  */
 @Singleton
-class TimberWorkerTerminalDiagnosticSink @Inject constructor() : WorkerTerminalDiagnosticSink {
+class LoggingWorkerTerminalDiagnosticSink @Inject constructor() : WorkerTerminalDiagnosticSink {
     override fun recordWorkerTerminalWriteFailure(
         workerName: String,
         runId: Long,
@@ -54,3 +61,13 @@ class TimberWorkerTerminalDiagnosticSink @Inject constructor() : WorkerTerminalD
         )
     }
 }
+
+/**
+ * Retained for backward-compatibility with any code that still references
+ * the old class name. Delegates to [LoggingWorkerTerminalDiagnosticSink].
+ */
+@Deprecated(
+    message = "Renamed to LoggingWorkerTerminalDiagnosticSink for clarity",
+    replaceWith = ReplaceWith("LoggingWorkerTerminalDiagnosticSink")
+)
+typealias TimberWorkerTerminalDiagnosticSink = LoggingWorkerTerminalDiagnosticSink

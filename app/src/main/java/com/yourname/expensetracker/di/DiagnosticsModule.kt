@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.di
 
+import android.content.Context
 import com.yourname.expensetracker.domain.diagnostics.CompositeDiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.CompositeOperationRunRecorder
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
@@ -19,13 +20,15 @@ import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionL
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.validation.DefaultTransactionDatePolicy
 import com.yourname.expensetracker.domain.transaction.validation.TransactionDatePolicy
-import com.yourname.expensetracker.domain.workers.TimberWorkerTerminalDiagnosticSink
+import com.yourname.expensetracker.domain.workers.FileWorkerTerminalDiagnosticSink
 import com.yourname.expensetracker.domain.workers.WorkerRunLogger
 import com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
 import com.yourname.expensetracker.domain.workers.WorkerTerminalDiagnosticSink
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
@@ -63,6 +66,14 @@ abstract class DiagnosticsModule {
     @Binds @Singleton
     abstract fun bindTransactionDatePolicy(impl: DefaultTransactionDatePolicy): TransactionDatePolicy
 
-    @Binds @Singleton
-    abstract fun bindWorkerTerminalDiagnosticSink(impl: TimberWorkerTerminalDiagnosticSink): WorkerTerminalDiagnosticSink
+    // PR12I-1: Production binding — durable file-backed diagnostic sink.
+    // For debug builds, replace with CompositeWorkerTerminalDiagnosticSink wrapping
+    // both FileWorkerTerminalDiagnosticSink and LoggingWorkerTerminalDiagnosticSink.
+    companion object {
+        @Provides @Singleton
+        @JvmStatic
+        fun bindWorkerTerminalDiagnosticSink(
+            @ApplicationContext context: Context
+        ): WorkerTerminalDiagnosticSink = FileWorkerTerminalDiagnosticSink(context)
+    }
 }
