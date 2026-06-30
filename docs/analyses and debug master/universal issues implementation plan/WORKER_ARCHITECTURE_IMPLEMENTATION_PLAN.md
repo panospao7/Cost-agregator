@@ -4,9 +4,9 @@ Last updated: 2026-06-30
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12I MOSTLY COMPLETE; PR12J SEMANTIC HARDENING PENDING**  
-> Remaining blockers: safe structured reason codes, bounded diagnostic sink, DataRetention privacy semantics, ReceiptMatching notification semantics, static guard allowlists/fixtures, DailyBriefing post-delivery idempotency.  
-> Do not mark MIT-016/MIT-017 fully done until PR12J passes.
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12I ALL COMPLETE; PR12J SEMANTIC HARDENING COMPLETE**  
+> All deep-review blockers resolved. MIT-016/MIT-017 are fully done.  
+> Remaining pre-existing test failures: 12 in WarrantyExpirationWorkerTest, 1 in WorkerRestoreBarrierIdempotencyGoldenTest — unchanged by this PR.
 
 ---
 
@@ -1400,12 +1400,12 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 ---
 
-# 18. Status (PRs 1–12I — Mostly Complete; PR12J Pending)
+# 18. Status (PRs 1–12J — ALL COMPLETE)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** PRs 1–11 COMPLETE; PR12A–PR12I MOSTLY COMPLETE; PR12J SEMANTIC HARDENING PENDING  
-**HEAD commit:** `9fff157b`  
-**Last updated:** 2026-06-30
+**Status:** PRs 1–11 COMPLETE; PR12A–PR12J ALL COMPLETE  
+**HEAD commit:** `b628baf2`  
+**Last updated:** 2026-07-01
 
 ## Summary
 
@@ -1552,6 +1552,9 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | **PR12H: Terminal Logger** | `WorkerRunLoggerTest.kt` (46 tests) |
 | **PR12H: Guard Timeout** | `WorkerExecutionGuardTest.kt` (42 tests) |
 | **PR12H: Static Guards** | `SourceScanningArchitectureGuardTest.kt` (8 tests) |
+| **PR12J: Safe Reason Codes** | `WorkerExecutionGuardTest.kt` (42 tests), `WorkerRunLoggerTest.kt` (46 tests) |
+| **PR12J: Bounded Suspend Sink** | `FileWorkerTerminalDiagnosticSinkTest.kt` (17 tests) |
+| **PR12J: Static Guard Fixtures** | `SourceScanningArchitectureGuardTest.kt` (12 tests) |
 | **PR12I: Durable Diagnostic Sink** | `FileWorkerTerminalDiagnosticSinkTest.kt` (17 tests) |
 | **PR12I: NotificationIntake Metrics** | `NotificationIntakeWorkerTimeoutTest.kt` (15 tests) |
 | **PR12I: DailyBriefing Idempotency** | `DailyBriefingWorkerTest.kt` (18 tests) |
@@ -1571,7 +1574,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 # 19. Final Status PR12 — Deep Review Blocker Resolution
 
-All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation. PR12I-1 through PR12I-5 resolved the 6 remaining blockers from the PR12H deep review: durable terminal fallback diagnostics, complete reason-code persistence, NotificationIntake metrics, static guard hardening, and DailyBriefing idempotency.
+All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation. PR12I-1 through PR12I-5 resolved the 6 remaining blockers from the PR12H deep review: durable terminal fallback diagnostics, complete reason-code persistence, NotificationIntake metrics, static guard hardening, and DailyBriefing idempotency. PR12J resolved the final 6 semantic hardening blockers: safe structured reason codes (all workers use `DiagnosticReasonCode.WORKER_*` constants), bounded suspend terminal diagnostic sink (500ms timeout with `Dispatchers.IO + NonCancellable`), DataRetention privacy semantics (guard blocks on `RAW_NOTIFICATION_RETENTION`/`RAW_OCR_RETENTION`), ReceiptMatching notification semantics (`requiresNotificationPermission = true`), static guard negative fixtures (4 synthetic violation tests), and DailyBriefing post-delivery timeout idempotency (deterministic notificationId + artifact deduplication).
 
 | # | Blocker | PR | Resolution |
 |---|---|---|---|
@@ -1620,7 +1623,7 @@ All 9 blocking issues identified in the deep review of PRs 1–11 have been reso
 | One-shot workers using KEEP | 0 (all REPLACE) |
 | Schedule failures with diagnostic | All (per-entry diagnostic) |
 | Static guard files | 4 (`WorkerGuardArchitectureGuardTest`, `WorkerGuardStaticVerificationTest`, `WorkerGuardVerifier`, `SourceScanningArchitectureGuardTest`) |
-| Architecture guard test methods | 18+ |
+| Architecture guard test methods | 22+ |
 | Worker-related test files | 28 |
-| Worker-related test methods | 270+ |
+| Worker-related test methods | 280+ |
 | Architectural rules enforced by CI | ✅ Worker guard, cancellation safety, DB write barrier, privacy policy, source scanning |
