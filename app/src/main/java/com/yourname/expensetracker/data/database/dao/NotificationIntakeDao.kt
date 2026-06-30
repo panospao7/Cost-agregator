@@ -7,6 +7,46 @@ import androidx.room.Query
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
 
+// ── Projection DTOs ─────────────────────────────────────────────────────────
+
+/**
+ * Metadata-only projection used for maxAttempts checks, claim/status tracking,
+ * and non-sensitive routing fields — does NOT load raw title/text/extras or
+ * transient ciphertext (PR12H-2).
+ */
+data class NotificationIntakeProcessingMetadata(
+    val id: Long,
+    val status: String,
+    val attempts: Int,
+    val maxAttempts: Int,
+    val payloadMode: String,
+    val rawStorageMode: String,
+    val packageName: String,
+    val appName: String?,
+    val postTime: Long,
+    val capturedAt: Long,
+    val source: String,
+    val correlationId: String,
+    val dedupeFingerprint: String
+)
+
+/**
+ * Payload-only projection that isolates every column holding notification
+ * content so it is never loaded before the mid-run privacy recheck (PR12H-2).
+ */
+data class NotificationIntakePayloadForProcessing(
+    val id: Long,
+    val payloadMode: String,
+    val title: String?,
+    val text: String?,
+    val bigText: String?,
+    val subText: String?,
+    val extrasJson: String?,
+    val transientPayloadCiphertext: String?,
+    val transientPayloadNonce: String?,
+    val transientPayloadVersion: Int?
+)
+
 @Dao
 interface NotificationIntakeDao {
 
@@ -15,6 +55,26 @@ interface NotificationIntakeDao {
 
     @Query("SELECT * FROM notification_intake WHERE id = :id")
     suspend fun getById(id: Long): NotificationIntakeEntity?
+
+    @Query("""
+        SELECT id, status, attempts, maxAttempts, payloadMode, rawStorageMode,
+               packageName, appName, postTime, capturedAt, source,
+               correlationId, dedupeFingerprint
+        FROM notification_intake
+        WHERE id = :id
+        LIMIT 1
+    """)
+    suspend fun getProcessingMetadataById(id: Long): NotificationIntakeProcessingMetadata?
+
+    @Query("""
+        SELECT id, payloadMode, title, text, bigText, subText, extrasJson,
+               transientPayloadCiphertext, transientPayloadNonce,
+               transientPayloadVersion
+        FROM notification_intake
+        WHERE id = :id
+        LIMIT 1
+    """)
+    suspend fun getPayloadForProcessing(id: Long): NotificationIntakePayloadForProcessing?
 
     @Query("""
         SELECT * FROM notification_intake

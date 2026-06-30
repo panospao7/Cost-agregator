@@ -5,8 +5,9 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+import com.yourname.expensetracker.data.database.dao.NotificationIntakeProcessingMetadata
+import com.yourname.expensetracker.data.database.dao.NotificationIntakePayloadForProcessing
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
-import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
@@ -69,15 +70,16 @@ class NotificationIntakeWorker @AssistedInject constructor(
             // All DB operations happen INSIDE the guard
             val now = timeProvider.now()
 
-            ctx.checkpoint("intake:getById")
-            val intake = intakeDao.getById(intakeId)
-            if (intake == null) {
+            // PR12H-2: Load metadata only — no raw payload or ciphertext
+            ctx.checkpoint("intake:metadata")
+            val meta = intakeDao.getProcessingMetadataById(intakeId)
+            if (meta == null) {
                 Timber.w("IntakeWorker: intake row $intakeId not found")
                 throw RuntimeException("Intake row $intakeId not found")
             }
 
-            // PR 2: Enforce maxAttempts
-            if (intake.attempts >= intake.maxAttempts) {
+            // PR 2: Enforce maxAttempts using metadata only
+            if (meta.attempts >= meta.maxAttempts) {
                 ctx.checkpoint("intake:maxAttempts")
                 intakeDao.markFinalFailure(
                     id = intakeId,
@@ -85,7 +87,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     failureHash = null,
                     nowMs = now
                 )
-                purgePayloadBestEffort(intake, now)
+                purgePayloadBestEffort(intakeId, now)
                 throw RuntimeException("MAX_ATTEMPTS_EXCEEDED")
             }
 
@@ -100,26 +102,25 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 return@runGuardedWithContext // Already claimed — idempotent success
             }
 
-            // Reload after claim
-            ctx.checkpoint("intake:reload")
-            val current = intakeDao.getById(intakeId)
+            // Reload metadata after claim (still no payload)
+            ctx.checkpoint("intake:reloadMetadata")
+            val claimedMeta = intakeDao.getProcessingMetadataById(intakeId)
                 ?: return@runGuardedWithContext
 
-            // Recheck privacy capability before touching encrypted payload
-            for (capability in listOf(PrivacyCapability.NOTIFICATION_CAPTURE)) {
-                when (val decision = privacyGate.check(capability)) {
-                    is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
-                        ctx.checkpoint("intake:privacyChangedBeforeDecrypt")
-                        intakeDao.markPrivacyDeniedAndPurgeAllPayload(id = intakeId, nowMs = now)
-                        return@runGuardedWithContext
-                    }
-                    else -> { }
-                }
+            // PR12H-2: Mid-run privacy recheck BEFORE loading any payload
+            ctx.checkpoint("intake:privacyBeforePayloadLoad")
+            if (!isNotificationCaptureAllowed()) {
+                intakeDao.markPrivacyDeniedAndPurgeAllPayload(id = intakeId, nowMs = now)
+                return@runGuardedWithContext
             }
+
+            // PR12H-2: Only now load the payload — after privacy is confirmed
+            ctx.checkpoint("intake:loadPayload")
+            val payload = intakeDao.getPayloadForProcessing(intakeId)
 
             // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
             // Previously filtered on null visible fields (broken for encrypted transient modes).
-            val isRaw = current.rawStorageMode == "STORE_RAW"
+            val isRaw = claimedMeta.rawStorageMode == "STORE_RAW"
             val processingTitle: String?
             val processingText: String?
             val processingBody: String?
@@ -127,26 +128,40 @@ class NotificationIntakeWorker @AssistedInject constructor(
             val processingExtrasJson: String?
 
             if (isRaw) {
-                processingTitle = current.title
-                processingText = current.text
-                processingBody = current.bigText
-                processingSubText = current.subText
-                processingExtrasJson = current.extrasJson
-            } else if (current.transientPayloadCiphertext != null
-                && current.transientPayloadNonce != null
-                && current.transientPayloadVersion != null
-            ) {
-                ctx.checkpoint("intake:beforeDecrypt")
-                val payload = crypto.decrypt(
-                    current.transientPayloadCiphertext,
-                    current.transientPayloadNonce,
-                    current.transientPayloadVersion
-                )
+                if (payload == null) {
+                    Timber.w("IntakeWorker: no payload available for raw intakeId=$intakeId")
+                    ctx.checkpoint("intake:payloadUnavailable")
+                    intakeDao.markTerminal(
+                        id = intakeId,
+                        status = NotificationIntakeStatus.PAYLOAD_UNAVAILABLE_PRIVACY.name,
+                        rawId = null, expenseId = null, reviewId = null,
+                        finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
+                        nowMs = now
+                    )
+                    purgePayloadBestEffort(intakeId, now)
+                    return@runGuardedWithContext
+                }
                 processingTitle = payload.title
                 processingText = payload.text
                 processingBody = payload.bigText
                 processingSubText = payload.subText
                 processingExtrasJson = payload.extrasJson
+            } else if (payload != null
+                && payload.transientPayloadCiphertext != null
+                && payload.transientPayloadNonce != null
+                && payload.transientPayloadVersion != null
+            ) {
+                ctx.checkpoint("intake:beforeDecrypt")
+                val decrypted = crypto.decrypt(
+                    payload.transientPayloadCiphertext,
+                    payload.transientPayloadNonce,
+                    payload.transientPayloadVersion
+                )
+                processingTitle = decrypted.title
+                processingText = decrypted.text
+                processingBody = decrypted.bigText
+                processingSubText = decrypted.subText
+                processingExtrasJson = decrypted.extrasJson
             } else {
                 Timber.w("IntakeWorker: no payload available for intakeId=$intakeId")
                 ctx.checkpoint("intake:payloadUnavailable")
@@ -157,13 +172,13 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
                     nowMs = now
                 )
-                purgePayloadBestEffort(current, now)
+                purgePayloadBestEffort(intakeId, now)
                 return@runGuardedWithContext
             }
 
             // Run filter on the processing payload (decrypted or raw)
             if (!NotificationFilter.shouldCapture(
-                    current.packageName,
+                    claimedMeta.packageName,
                     processingTitle,
                     processingText,
                     processingBody
@@ -176,38 +191,38 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     finalOutcome = "FILTER_REJECTED",
                     nowMs = now
                 )
-                purgePayloadBestEffort(current, now)
+                purgePayloadBestEffort(intakeId, now)
                 return@runGuardedWithContext
             }
 
             val processingNotification = RawNotification(
-                packageName = current.packageName,
-                appName = current.appName,
+                packageName = claimedMeta.packageName,
+                appName = claimedMeta.appName,
                 title = processingTitle,
                 text = processingText,
                 bigText = processingBody,
                 subText = processingSubText,
                 extrasJson = processingExtrasJson,
-                timestamp = current.postTime,
-                capturedAt = current.capturedAt,
-                dedupeFingerprint = current.dedupeFingerprint
+                timestamp = claimedMeta.postTime,
+                capturedAt = claimedMeta.capturedAt,
+                dedupeFingerprint = claimedMeta.dedupeFingerprint
             )
 
             val storageNotification = buildStorageNotification(
                 processing = processingNotification,
-                rawStorageMode = current.rawStorageMode
+                rawStorageMode = claimedMeta.rawStorageMode
             )
 
             // PR 4: Build captured persistence context from intake row
             val rawMode = try {
-                com.yourname.expensetracker.domain.privacy.RawStorageMode.valueOf(current.rawStorageMode)
+                com.yourname.expensetracker.domain.privacy.RawStorageMode.valueOf(claimedMeta.rawStorageMode)
             } catch (e: IllegalArgumentException) {
                 com.yourname.expensetracker.domain.privacy.RawStorageMode.DO_NOT_STORE
             }
             val persistenceContext = com.yourname.expensetracker.domain.notification.NotificationPersistenceContext(
                 rawStorageMode = rawMode,
-                payloadMode = current.payloadMode,
-                source = current.source
+                payloadMode = claimedMeta.payloadMode,
+                source = claimedMeta.source
             )
 
             // Process through pipeline
@@ -218,7 +233,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 val outcome = repository.processAndSave(
                     processingNotification,
                     storageNotification,
-                    correlationId = current.correlationId,
+                    correlationId = claimedMeta.correlationId,
                     persistenceContext = persistenceContext
                 )
 
@@ -230,8 +245,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     is NotificationPipelineOutcome.AutoRejected -> NotificationIntakeStatus.DROPPED_POLICY
                     is NotificationPipelineOutcome.Dropped -> NotificationIntakeStatus.DROPPED_POLICY
                     is NotificationPipelineOutcome.Error -> {
-                        if (isRetryable(outcome.throwable) && current.attempts + 1 < current.maxAttempts) {
-                            val backoff = computeBackoff(current.attempts + 1)
+                        if (isRetryable(outcome.throwable) && claimedMeta.attempts + 1 < claimedMeta.maxAttempts) {
+                            val backoff = computeBackoff(claimedMeta.attempts + 1)
                             ctx.checkpoint("intake:errorRetryable")
                             intakeDao.markRetryableFailure(
                                 id = intakeId,
@@ -253,7 +268,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                             finalOutcome = outcome::class.simpleName,
                             nowMs = now
                         )
-                        purgePayloadBestEffort(current, now)
+                        purgePayloadBestEffort(intakeId, now)
                         intentionalFailure = true
                         throw RuntimeException("FAILED_FINAL")
                     }
@@ -286,11 +301,11 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 terminalMarked = true
 
                 // P1-SLICE-D: markProcessed is now atomic inside the pipeline — no best-effort needed.
-                purgePayloadBestEffort(current, now)
+                purgePayloadBestEffort(intakeId, now)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 Timber.w(e, "Worker timeout, marking retryable intakeId=$intakeId")
-                if (current.attempts + 1 < current.maxAttempts) {
-                    val backoff = computeBackoff(current.attempts + 1)
+                if (claimedMeta.attempts + 1 < claimedMeta.maxAttempts) {
+                    val backoff = computeBackoff(claimedMeta.attempts + 1)
                     ctx.checkpoint("intake:timeoutRetryable")
                     intakeDao.markRetryableFailure(
                         id = intakeId,
@@ -308,7 +323,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         failureHash = null,
                         nowMs = now
                     )
-                    purgePayloadBestEffort(current, now)
+                    purgePayloadBestEffort(intakeId, now)
                     throw RuntimeException("MAX_RETRIES_EXHAUSTED")
                 }
             } catch (e: RetryableWorkerException) {
@@ -326,8 +341,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     return@runGuardedWithContext
                 }
                 Timber.e(e, "IntakeWorker: processing failed for intakeId=$intakeId")
-                if (isRetryable(e) && current.attempts + 1 < current.maxAttempts) {
-                    val backoff = computeBackoff(current.attempts + 1)
+                if (isRetryable(e) && claimedMeta.attempts + 1 < claimedMeta.maxAttempts) {
+                    val backoff = computeBackoff(claimedMeta.attempts + 1)
                     ctx.checkpoint("intake:exceptionRetryable")
                     intakeDao.markRetryableFailure(
                         id = intakeId,
@@ -345,7 +360,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         failureHash = null,
                         nowMs = now
                     )
-                    purgePayloadBestEffort(current, now)
+                    purgePayloadBestEffort(intakeId, now)
                     throw RuntimeException("WORKER_EXCEPTION")
                 }
             }
@@ -382,12 +397,20 @@ class NotificationIntakeWorker @AssistedInject constructor(
         }
     }
 
-    private suspend fun purgePayloadBestEffort(row: NotificationIntakeEntity, now: Long) {
+    private suspend fun purgePayloadBestEffort(id: Long, now: Long) {
         try {
-            intakeDao.purgeAllPayload(id = row.id, nowMs = now)
+            intakeDao.purgeAllPayload(id = id, nowMs = now)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=${row.id}")
+            Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=$id")
+        }
+    }
+
+    private suspend fun isNotificationCaptureAllowed(): Boolean {
+        return when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
+            is PrivacyDecision.Denied -> false
+            is PrivacyDecision.FailClosed -> false
+            else -> true
         }
     }
 

@@ -10,6 +10,8 @@ import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+import com.yourname.expensetracker.data.database.dao.NotificationIntakeProcessingMetadata
+import com.yourname.expensetracker.data.database.dao.NotificationIntakePayloadForProcessing
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
 import com.yourname.expensetracker.data.repository.NotificationRepository
@@ -125,15 +127,17 @@ class NotificationIntakeWorkerTimeoutTest {
 
         val intakeId = 42L
         val now = 1_700_000_000_000L
-        val intakeRow = intakeEntity(
+        val metaRow = processingMetadata(
             id = intakeId, packageName = "com.test.app",
             attempts = 1, maxAttempts = 5, now = now
         )
+        val payloadRow = payloadForProcessing(id = intakeId)
 
         every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
         every { timeProvider.now() } returns now
-        coEvery { intakeDao.getById(intakeId) } returns intakeRow
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
         coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
+        coEvery { intakeDao.getPayloadForProcessing(intakeId) } returns payloadRow
         coEvery { repository.processAndSave(any(), any(), any(), any()) } coAnswers {
             throw java.io.IOException("database is locked")
         }
@@ -196,15 +200,17 @@ class NotificationIntakeWorkerTimeoutTest {
 
         val intakeId = 42L
         val now = 1_700_000_000_000L
-        val intakeRow = intakeEntity(
+        val metaRow = processingMetadata(
             id = intakeId, packageName = "com.test.app",
             attempts = 4, maxAttempts = 5, now = now
         )
+        val payloadRow = payloadForProcessing(id = intakeId)
 
         every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
         every { timeProvider.now() } returns now
-        coEvery { intakeDao.getById(intakeId) } returns intakeRow
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
         coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
+        coEvery { intakeDao.getPayloadForProcessing(intakeId) } returns payloadRow
         coEvery { repository.processAndSave(any(), any(), any(), any()) } coAnswers {
             throw java.io.IOException("timeout")
         }
@@ -267,15 +273,17 @@ class NotificationIntakeWorkerTimeoutTest {
 
         val intakeId = 42L
         val now = 1_700_000_000_000L
-        val intakeRow = intakeEntity(
+        val metaRow = processingMetadata(
             id = intakeId, packageName = "com.test.app",
             attempts = 4, maxAttempts = 5, now = now
         )
+        val payloadRow = payloadForProcessing(id = intakeId)
 
         every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
         every { timeProvider.now() } returns now
-        coEvery { intakeDao.getById(intakeId) } returns intakeRow
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
         coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
+        coEvery { intakeDao.getPayloadForProcessing(intakeId) } returns payloadRow
         coEvery { repository.processAndSave(any(), any(), any(), any()) } coAnswers {
             throw createTimeoutCancellationException()
         }
@@ -552,18 +560,18 @@ class NotificationIntakeWorkerTimeoutTest {
 
         val intakeId = 42L
         val now = 1_700_000_000_000L
-        val intakeRow = intakeEntity(
+        val metaRow = processingMetadata(
             id = intakeId, packageName = "com.test.app",
             attempts = 1, maxAttempts = 5, now = now
         )
 
         every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
         every { timeProvider.now() } returns now
-        coEvery { intakeDao.getById(intakeId) } returns intakeRow
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
         coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
 
-        // Make the reload checkpoint (before decrypt) throw to block the worker
-        every { writeBarrier.checkWritesAllowed("intake:reload") } throws RuntimeException("Blocked")
+        // Make the reload-metadata checkpoint (before payload load) throw to block the worker
+        every { writeBarrier.checkWritesAllowed("intake:reloadMetadata") } throws RuntimeException("Blocked")
 
         val worker = NotificationIntakeWorker(
             appContext = context, params = params,
@@ -580,6 +588,134 @@ class NotificationIntakeWorkerTimeoutTest {
         assertEquals("Checkpoint blocked should return retry", WorkResult.retry(), result)
 
         coVerify(exactly = 0) { crypto.decrypt(any(), any(), any()) }
+    }
+
+    @Test
+    fun `metadata_query_does_not_load_raw_payload`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val diagnosticSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
+        val bgJobRunDao = mockk<BackgroundJobRunDao>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockk<WorkerRunHandle>(relaxed = true)
+        every { permissionChecker.areNotificationsEnabled() } returns true
+
+        // Guard allows so the worker block executes
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE, any()) } returns PrivacyDecision.Allowed
+
+        val executionGuard = WorkerExecutionGuard(
+            writeBarrier, readBarrier, restoreMode, runLogger,
+            privacyGate, leaseRegistry, diagnosticSink, bgJobRunDao,
+            permissionChecker, timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+
+        // Metadata with attempts >= maxAttempts — worker fails before ever loading payload
+        val metaRow = processingMetadata(
+            id = intakeId, packageName = "com.test.app",
+            attempts = 5, maxAttempts = 5, now = now
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
+        )
+
+        val result = worker.doWork()
+
+        assertEquals("MAX_ATTEMPTS should return failure", WorkResult.failure(), result)
+
+        // Verify: metadata query WAS used, payload query was NEVER called
+        coVerify(atLeast = 1) { intakeDao.getProcessingMetadataById(intakeId) }
+        coVerify(exactly = 0) { intakeDao.getPayloadForProcessing(any()) }
+    }
+
+    @Test
+    fun `privacy_disabled_before_payload_load_does_not_call_getPayloadForProcessing`() = runBlocking {
+        val context = mockk<Context>(relaxed = true)
+        val params = mockk<WorkerParameters>(relaxed = true)
+        val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
+        val repository = mockk<NotificationRepository>(relaxed = true)
+        val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val crypto = mockk<NotificationTransientPayloadCrypto>(relaxed = true)
+
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        val readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        val runLogger = mockk<WorkerRunLogger>(relaxed = true)
+        val privacyGate = mockk<PrivacyGate>(relaxed = true)
+        val leaseRegistry = mockk<WorkerLeaseRegistry>(relaxed = true)
+        val diagnosticSink = mockk<MaintenanceSafeDiagnosticSink>(relaxed = true)
+        val bgJobRunDao = mockk<BackgroundJobRunDao>(relaxed = true)
+        val permissionChecker = mockk<NotificationPermissionChecker>(relaxed = true)
+
+        every { restoreMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        coEvery { leaseRegistry.acquire(any()) } returns mockk(relaxed = true)
+        coEvery { runLogger.start(any()) } returns mockk<WorkerRunHandle>(relaxed = true)
+        every { permissionChecker.areNotificationsEnabled() } returns true
+
+        // Guard allows (first call) → worker enters block.
+        // Mid-run recheck denies (second call) → worker aborts before payload load.
+        coEvery { privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE) } returnsMany
+            listOf(PrivacyDecision.Allowed, PrivacyDecision.Denied("mid-run recheck"))
+
+        val executionGuard = WorkerExecutionGuard(
+            writeBarrier, readBarrier, restoreMode, runLogger,
+            privacyGate, leaseRegistry, diagnosticSink, bgJobRunDao,
+            permissionChecker, timeProvider
+        )
+
+        val intakeId = 42L
+        val now = 1_700_000_000_000L
+        val metaRow = processingMetadata(
+            id = intakeId, packageName = "com.test.app",
+            attempts = 1, maxAttempts = 5, now = now
+        )
+
+        every { params.inputData } returns Data.Builder().putLong("intakeId", intakeId).build()
+        every { timeProvider.now() } returns now
+        coEvery { intakeDao.getProcessingMetadataById(intakeId) } returns metaRow
+        coEvery { intakeDao.claimForProcessing(intakeId, now, any()) } returns 1
+
+        val worker = NotificationIntakeWorker(
+            appContext = context, params = params,
+            intakeDao = intakeDao, repository = repository,
+            timeProvider = timeProvider, crypto = crypto,
+            executionGuard = executionGuard,
+            privacyGate = privacyGate
+        )
+
+        val result = worker.doWork()
+
+        // Mid-run privacy denial should return success (clean exit)
+        assertEquals("Mid-run privacy denied should return success", WorkResult.success(), result)
+
+        // Verify: metadata was loaded, but payload was NEVER fetched
+        coVerify(atLeast = 1) { intakeDao.getProcessingMetadataById(intakeId) }
+        coVerify(exactly = 0) { intakeDao.getPayloadForProcessing(any()) }
     }
 
     private fun intakeEntity(
@@ -606,5 +742,53 @@ class NotificationIntakeWorkerTimeoutTest {
         rawNotificationId = null, expenseId = null, pendingReviewId = null,
         lastFailureCode = null, lastFailureMessageHash = null,
         finalOutcome = null, createdAt = now, updatedAt = now
+    )
+
+    // ── PR12H-2 DTO helpers ────────────────────────────────────────────────
+
+    private fun processingMetadata(
+        id: Long, packageName: String = "com.test.app",
+        attempts: Int = 1, maxAttempts: Int = 5,
+        now: Long = 1_700_000_000_000L,
+        payloadMode: String = "RAW",
+        rawStorageMode: String = "STORE_RAW"
+    ): NotificationIntakeProcessingMetadata = NotificationIntakeProcessingMetadata(
+        id = id,
+        status = "RECEIVED",
+        attempts = attempts,
+        maxAttempts = maxAttempts,
+        payloadMode = payloadMode,
+        rawStorageMode = rawStorageMode,
+        packageName = packageName,
+        appName = "Test",
+        postTime = now,
+        capturedAt = now,
+        source = "LISTENER",
+        correlationId = "corr-$id",
+        dedupeFingerprint = "fp-$id"
+    )
+
+    private fun payloadForProcessing(
+        id: Long,
+        payloadMode: String = "RAW",
+        title: String? = "Paid €50.00",
+        text: String? = "Card transaction",
+        bigText: String? = null,
+        subText: String? = null,
+        extrasJson: String? = null,
+        transientPayloadCiphertext: String? = null,
+        transientPayloadNonce: String? = null,
+        transientPayloadVersion: Int? = null
+    ): NotificationIntakePayloadForProcessing = NotificationIntakePayloadForProcessing(
+        id = id,
+        payloadMode = payloadMode,
+        title = title,
+        text = text,
+        bigText = bigText,
+        subText = subText,
+        extrasJson = extrasJson,
+        transientPayloadCiphertext = transientPayloadCiphertext,
+        transientPayloadNonce = transientPayloadNonce,
+        transientPayloadVersion = transientPayloadVersion
     )
 }
