@@ -1404,7 +1404,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 **Branch:** `worker-architecture-prs-1-5`  
 **Status:** PRs 1–11 COMPLETE; PR12A–PR12I ALL COMPLETE  
-**HEAD commit:** `f8c30076`  
+**HEAD commit:** `a68b7c28`  
 **Closure date:** 2026-06-30
 
 ## Summary
@@ -1549,10 +1549,11 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | Source Link Backfill | `SourceLinkBackfillWorkerTest.kt` (3 tests) |
 | **PR11: Restore Regression** | `WorkerRestoreRegressionTest.kt` (15 tests) |
 | **PR11: Barrier Integration** | `WorkerBarrierIntegrationTest.kt` (23 tests) |
-| **PR12H: Terminal Logger** | `WorkerRunLoggerTest.kt` (49 tests) |
+| **PR12H: Terminal Logger** | `WorkerRunLoggerTest.kt` (46 tests) |
 | **PR12H: Guard Timeout** | `WorkerExecutionGuardTest.kt` (42 tests) |
-| **PR12H: Static Guards** | `SourceScanningArchitectureGuardTest.kt` (4 tests) |
-| **PR12I: Durable Diagnostic Sink** | `FileWorkerTerminalDiagnosticSinkTest.kt` (18 tests) |
+| **PR12H: Static Guards** | `SourceScanningArchitectureGuardTest.kt` (8 tests) |
+| **PR12I: Durable Diagnostic Sink** | `FileWorkerTerminalDiagnosticSinkTest.kt` (17 tests) |
+| **PR12I: NotificationIntake Metrics** | `NotificationIntakeWorkerTimeoutTest.kt` (15 tests) |
 | **PR12I: DailyBriefing Idempotency** | `DailyBriefingWorkerTest.kt` (18 tests) |
 
 ## MIT Closure Status
@@ -1619,7 +1620,7 @@ All 9 blocking issues identified in the deep review of PRs 1–11 have been reso
 | One-shot workers using KEEP | 0 (all REPLACE) |
 | Schedule failures with diagnostic | All (per-entry diagnostic) |
 | Static guard files | 4 (`WorkerGuardArchitectureGuardTest`, `WorkerGuardStaticVerificationTest`, `WorkerGuardVerifier`, `SourceScanningArchitectureGuardTest`) |
-| Architecture guard test methods | 14+ |
-| Worker-related test files | 26 |
-| Worker-related test methods | 240+ |
+| Architecture guard test methods | 18+ |
+| Worker-related test files | 28 |
+| Worker-related test methods | 270+ |
 | Architectural rules enforced by CI | ✅ Worker guard, cancellation safety, DB write barrier, privacy policy, source scanning |
