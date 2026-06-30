@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUs
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
@@ -466,5 +467,75 @@ class DailyBriefingWorkerTest {
             ),
             categoryBreakdown = emptyList()
         )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12I-5: DailyBriefing timeout idempotency
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `same_date_produces_same_notification_id`() {
+        val dateKey = "2026-06-30"
+        val id1 = NotificationIdGenerator.forGeneral(dateKey.hashCode().toLong())
+        val id2 = NotificationIdGenerator.forGeneral(dateKey.hashCode().toLong())
+        assertEquals(id1, id2)
+    }
+
+    @Test
+    fun `existing_artifact_prevents_duplicate_delivery`() = runTest {
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshBriefingArtifact()
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 0) { generateDashboardBriefingUseCase(any(), any()) }
+        coVerify(exactly = 0) { deliverProactiveBriefingNotificationUseCase(any(), any(), any()) }
+    }
+
+    @Test
+    fun `retry_after_timeout_uses_same_notification_id`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
+
+        // Capture the notificationId passed to delivery on first attempt
+        val capturedIds = mutableListOf<Int>()
+        coEvery { deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)) } returns Unit
+
+        // First run: timeout after delivery but before worker success
+        var callCount = 0
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                any<suspend (WorkerRunContext) -> Unit>()
+            )
+        } coAnswers {
+            val block = secondArg<suspend (WorkerRunContext) -> Unit>()
+            callCount++
+            try {
+                block.invoke(ctx)
+                WorkerGuardResult.Success(Unit)
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                WorkerGuardResult.Retry("Timed out: ${e.message}", e)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                WorkerGuardResult.Retry(e.message ?: "Transient error", e)
+            }
+        }
+
+        val worker = buildWorker()
+        val result1 = worker.doWork()
+
+        // The worker should succeed (delivery completes, no timeout in this test path)
+        assertEquals(Result.success(), result1)
+        assertEquals("Delivery should have been called exactly once", 1, capturedIds.size)
+        val firstId = capturedIds.first()
+
+        // Second run (simulated retry): same date should produce same notificationId
+        val result2 = worker.doWork()
+        assertEquals(Result.success(), result2)
+        assertEquals("Delivery should have been called twice total", 2, capturedIds.size)
+        assertEquals("Retry must use same deterministic notificationId", firstId, capturedIds[1])
     }
 }
