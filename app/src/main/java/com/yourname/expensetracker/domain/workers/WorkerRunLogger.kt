@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.workers
 import com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
 import com.yourname.expensetracker.data.database.entity.BackgroundJobRun
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
@@ -69,7 +70,7 @@ class WorkerRunLoggerImpl @Inject constructor(
         fun classifyDiagnostic(reason: String, error: Throwable?): String = when {
             error is TimeoutCancellationException -> "TIMEOUT"
             error is RetryableWorkerException -> when (error.reasonCode) {
-                "PIPELINE_TIMEOUT" -> "PIPELINE_TIMEOUT"
+                "PIPELINE_TIMEOUT", DiagnosticReasonCode.WORKER_TIMEOUT.name -> "TIMEOUT"
                 else -> "RETRYABLE"
             }
             error is WorkerCheckpointBlockedException -> error.reasonCode

@@ -374,15 +374,15 @@ class WorkerExecutionGuardTest {
     @Test
     fun `RetryableWorkerException maps to Retry and finalizes run as retry`() = runTest {
         permissionChecker.enabled = true
-        val ex = RetryableWorkerException("explicit retry requested")
+        val ex = RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
 
         val result = guard.runGuarded(request()) { throw ex }
 
         assertTrue(result is WorkerGuardResult.Retry)
-        assertEquals("explicit retry requested", (result as WorkerGuardResult.Retry).reason)
+        assertEquals(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, (result as WorkerGuardResult.Retry).reason)
         // The run must be finalized as RETRY, never as FAILED — the worker's explicit
         // retry intent must survive even though the message matches no transient keyword.
-        coVerify(exactly = 1) { runHandle.retry("explicit retry requested", ex) }
+        coVerify(exactly = 1) { runHandle.retry(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, ex) }
         coVerify(exactly = 0) { runHandle.failure(any(), any()) }
     }
 

@@ -265,7 +265,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                                 nowMs = now
                             )
                             ctx.addRowsUpdated() // PR12I-3: retryable failure mark
-                            throw RetryableWorkerException("RETRYABLE_ERROR")
+                            throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
                         }
                         // Non-retryable or max attempts — mark terminal and signal failure
                         ctx.checkpoint("intake:errorFinal")
@@ -327,7 +327,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         nowMs = now
                     )
                     ctx.addRowsUpdated() // PR12I-3: retryable failure mark
-                    throw RetryableWorkerException("TIMEOUT")
+                    throw RetryableWorkerException(DiagnosticReasonCode.WORKER_TIMEOUT.name)
                 } else {
                     ctx.checkpoint("intake:timeoutFinal")
                     intakeDao.markFinalFailure(
@@ -366,7 +366,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         nowMs = now
                     )
                     ctx.addRowsUpdated() // PR12I-3: retryable failure mark
-                    throw RetryableWorkerException("WORKER_EXCEPTION")
+                    throw RetryableWorkerException(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name)
                 } else {
                     ctx.checkpoint("intake:exceptionFinal")
                     intakeDao.markFinalFailure(
@@ -383,8 +383,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
         }
 
         return if (guardResult is WorkerGuardResult.Skipped &&
-            (guardResult.reason == DiagnosticReasonCode.PRIVACY_DENIED.name ||
-             guardResult.reason == DiagnosticReasonCode.PRIVACY_FAIL_CLOSED.name)
+            (guardResult.reason == DiagnosticReasonCode.WORKER_PRIVACY_DENIED.name ||
+             guardResult.reason == DiagnosticReasonCode.WORKER_PRIVACY_FAIL_CLOSED.name)
         ) {
             runPrivacyCleanupGuarded(intakeId).toWorkerResult()
         } else {

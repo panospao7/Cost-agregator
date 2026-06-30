@@ -277,7 +277,7 @@ class DailyBriefingWorkerTest {
             kotlinx.coroutines.TimeoutCancellationException::class.java,
             blockEx?.cause?.javaClass
         )
-        assertEquals("PIPELINE_TIMEOUT", (blockEx as? com.yourname.expensetracker.domain.workers.RetryableWorkerException)?.message)
+        assertEquals(DiagnosticReasonCode.WORKER_TIMEOUT.name, (blockEx as? com.yourname.expensetracker.domain.workers.RetryableWorkerException)?.reasonCode)
     }
 
     // P9-P1-04 / PR3 — one-shot midnight chain must survive incidental skips.

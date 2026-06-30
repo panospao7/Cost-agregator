@@ -120,7 +120,7 @@ class DailyBriefingWorker @AssistedInject constructor(
                 }
             } catch (e: TimeoutCancellationException) {
                 Timber.w(e, "DailyBriefingWorker: pipeline timed out after ${BRIEFING_PIPELINE_TIMEOUT_MS}ms — retrying")
-                throw com.yourname.expensetracker.domain.workers.RetryableWorkerException("PIPELINE_TIMEOUT", e)
+                throw com.yourname.expensetracker.domain.workers.RetryableWorkerException(DiagnosticReasonCode.WORKER_TIMEOUT.name, cause = e)
             }
             Timber.d("DailyBriefingWorker: completed successfully.")
         }

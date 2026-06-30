@@ -668,7 +668,7 @@ class WorkerRunLoggerTest {
 
     @Test
     fun `classifyDiagnostic_retryable_returns_message`() {
-        assertEquals("PIPELINE_TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("any", RetryableWorkerException("PIPELINE_TIMEOUT")))
+        assertEquals("TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("any", RetryableWorkerException(DiagnosticReasonCode.WORKER_TIMEOUT.name)))
     }
 
     @Test

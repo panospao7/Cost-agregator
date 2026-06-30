@@ -6,6 +6,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
@@ -81,7 +82,7 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
                         TAG,
                         "Merchant-key backfill made no progress; retrying after repeated failures for ${batch.size} rows"
                     )
-                    throw RetryableWorkerException("No progress made")
+                    throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
                 }
 
                 var batchUpdated = 0
@@ -109,14 +110,14 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
 
                 if (!isStopped && batchUpdated == 0) {
                     Log.w(TAG, "Merchant-key backfill made no progress for current batch; retrying")
-                    throw RetryableWorkerException("No progress in current batch")
+                    throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
                 }
             }
 
             Log.d(TAG, "Merchant-key backfill complete: updated $totalUpdated rows")
             // P9-PR2 (NEW-P9-010): If stopped mid-loop, signal retry instead of misleading SUCCESS
             if (isStopped) {
-                throw RetryableWorkerException("Worker stopped mid-backfill, will retry remaining")
+                throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
             }
         }
 

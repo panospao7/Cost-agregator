@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
@@ -229,7 +230,7 @@ class DataRetentionWorker @AssistedInject constructor(
             if (anyTransient) {
                 val transientNames = failedTargets.filter { it.isTransient }.map { it.targetName }
                 Log.w(TAG, "Transient failures detected in targets: $transientNames — requesting retry")
-                throw RetryableWorkerException("RETENTION_PARTIAL_FAILURE: $transientNames")
+                throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, message = "RETENTION_PARTIAL_FAILURE: $transientNames")
             }
         }
 
