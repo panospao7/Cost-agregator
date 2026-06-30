@@ -72,6 +72,7 @@ class DailyBriefingWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "ai_daily_briefing",
                 requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
+                requiresNotificationPermission = true,
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.SKIP_SUCCESS,
                 workId = id.toString(),

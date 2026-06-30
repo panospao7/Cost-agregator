@@ -77,6 +77,10 @@ class DataRetentionWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "data_retention",
+                requiredCapabilities = listOf(
+                    PrivacyCapability.RAW_NOTIFICATION_RETENTION,
+                    PrivacyCapability.RAW_OCR_RETENTION
+                ),
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),

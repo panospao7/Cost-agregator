@@ -38,6 +38,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "receipt_matching",
+                requiresNotificationPermission = true,
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),

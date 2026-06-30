@@ -56,12 +56,42 @@ class SourceScanningArchitectureGuardTest {
         .filter { it.isFile && it.extension == "kt" }
         .toList()
 
+    /**
+     * Strips line comments (// ...), block comments (/* ... */), and KDoc (/** ... */)
+     * from the given source text. This prevents commented-out code from satisfying
+     * architecture checks (e.g. `// runGuardedWithContext(`).
+     *
+     * The stripping is regex-based and handles nested block comments in a simplified
+     * way by removing the innermost block comments first until none remain.
+     * String literals are left intact so URLs like "https://..." are not mangled.
+     */
+    private fun stripComments(text: String): String {
+        // Remove KDoc /** ... */ — must be done before block comments since KDoc
+        // starts with /** which would otherwise be consumed by the block-comment regex.
+        var result = text
+            .replace(Regex("/\\*\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+
+        // Remove nested block comments /* ... */ by repeatedly stripping innermost
+        // pairs (those that contain no inner /* */) until none remain.
+        var previous: String
+        do {
+            previous = result
+            result = result.replace(Regex("/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/"), "")
+        } while (result != previous)
+
+        // Remove line comments // ... (but preserve the newline so line counts stay
+        // roughly aligned for diagnostics).
+        result = result.replace(Regex("//[^\n]*"), "")
+
+        return result
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     @Test
     fun `all_coroutine_worker_files_contain_guard_call`() {
         val workerFiles = kotlinFiles().filter { file ->
-            val text = file.readText()
+            val text = stripComments(file.readText())
             text.contains(": CoroutineWorker") || text.contains("extends CoroutineWorker")
         }
 
@@ -72,7 +102,7 @@ class SourceScanningArchitectureGuardTest {
         )
 
         val violations = workerFiles.filter { file ->
-            val text = file.readText()
+            val text = stripComments(file.readText())
             !text.contains("runGuarded(") && !text.contains("runGuardedWithContext(")
         }
 
@@ -86,16 +116,17 @@ class SourceScanningArchitectureGuardTest {
     @Test
     fun `no_broadcast_receiver_contains_direct_dao_injection`() {
         val receiverFiles = kotlinFiles().filter { file ->
-            file.readText().contains(": BroadcastReceiver")
+            stripComments(file.readText()).contains(": BroadcastReceiver")
         }
 
         val violations = receiverFiles.filter { file ->
-            val text = file.readText()
-            text.contains("@Inject") && (text.contains("Dao") || text.contains("Repository"))
+            val text = stripComments(file.readText())
+            text.contains("@Inject") && (text.contains("Dao") || text.contains("Repository")) ||
+                text.contains("GlobalScope") || text.contains("launch {")
         }
 
         assertTrue(
-            "BroadcastReceiver files with direct DAO/repository injection: " +
+            "BroadcastReceiver files with direct DAO/repository injection or GlobalScope/launch: " +
                 violations.map { it.relativeTo(sourceRoot).path },
             violations.isEmpty()
         )
@@ -104,7 +135,7 @@ class SourceScanningArchitectureGuardTest {
     @Test
     fun `all_coroutine_workers_pass_workId_and_runAttemptCount`() {
         val workerFiles = kotlinFiles().filter { file ->
-            val text = file.readText()
+            val text = stripComments(file.readText())
             text.contains(": CoroutineWorker")
         }
 
@@ -115,7 +146,7 @@ class SourceScanningArchitectureGuardTest {
         )
 
         val violations = workerFiles.filter { file ->
-            val text = file.readText()
+            val text = stripComments(file.readText())
             text.contains("runGuardedWithContext(") &&
             (!text.contains("workId") || !text.contains("runAttemptCount"))
         }
@@ -154,6 +185,118 @@ class SourceScanningArchitectureGuardTest {
             "APP_DATABASE_SCHEMA_VERSION ($declaredVersion) must match latest schema JSON ($maxVersion). " +
                 "If you just added a Room migration, update the constant in AppDatabase.kt.",
             maxVersion, declaredVersion
+        )
+    }
+
+    @Test
+    fun `worker_files_do_not_contain_direct_dao_usage`() {
+        val workerFiles = kotlinFiles().filter { file ->
+            val text = stripComments(file.readText())
+            text.contains(": CoroutineWorker")
+        }
+
+        // Exclude action workers and SourceLinkBackfillWorker — they have
+        // explicit architectural reasons for accessing DAOs directly.
+        // PR12I-4: The following workers have direct DAO usage that predates the
+        // architecture guard. They are allowlisted here with a TODO to refactor.
+        // - DataRetentionWorker: uses PrivacyAuditDao directly for retention audit
+        // - WarrantyExpirationWorker: uses WarrantyReminderDeliveryDao directly
+        // - NotificationIntakeWorker: uses NotificationIntakeDao directly (PR12H-2)
+        val allowlist = setOf(
+            "DismissReminderActionWorker.kt",
+            "SnoozeReminderActionWorker.kt",
+            "SourceLinkBackfillWorker.kt",
+            "DataRetentionWorker.kt",
+            "WarrantyExpirationWorker.kt",
+            "NotificationIntakeWorker.kt"
+        )
+
+        val violations = workerFiles.filter { file ->
+            if (file.name in allowlist) return@filter false
+            val text = stripComments(file.readText())
+            text.contains("Dao") || text.contains("@Inject")
+        }
+
+        assertTrue(
+            "CoroutineWorker files with direct DAO usage or @Inject (action workers " +
+                "and SourceLinkBackfillWorker are allowlisted): " +
+                violations.map { it.relativeTo(sourceRoot).path },
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `notification_posting_workers_require_permission_flag`() {
+        val notificationWorkers = kotlinFiles().filter { file ->
+            val text = stripComments(file.readText())
+            text.contains(": CoroutineWorker") && (
+                text.contains("NotificationService") ||
+                text.contains("NotificationManager") ||
+                text.contains("notify(") ||
+                text.contains("deliverNotification") ||
+                text.contains("BillReminder") ||
+                text.contains("WarrantyExpiration") ||
+                text.contains("DailyBriefing")
+            )
+        }
+
+        val violations = notificationWorkers.filter { file ->
+            val text = stripComments(file.readText())
+            !text.contains("requiresNotificationPermission = true")
+        }
+
+        assertTrue(
+            "Notification-posting workers missing requiresNotificationPermission = true: " +
+                violations.map { it.relativeTo(sourceRoot).path },
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `privacy_sensitive_workers_require_capabilities`() {
+        val privacyWorkers = kotlinFiles().filter { file ->
+            val text = stripComments(file.readText())
+            text.contains(": CoroutineWorker") && (
+                text.contains("NotificationIntake") ||
+                text.contains("Receipt OCR") ||
+                text.contains("privacyGate") ||
+                text.contains("PrivacyCapability") ||
+                text.contains("decrypt")
+            )
+        }
+
+        val violations = privacyWorkers.filter { file ->
+            val text = stripComments(file.readText())
+            !text.contains("requiredCapabilities")
+        }
+
+        assertTrue(
+            "Privacy-sensitive workers missing requiredCapabilities: " +
+                violations.map { it.relativeTo(sourceRoot).path },
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `dynamic_one_shot_workers_require_retry_blocked_policy`() {
+        val dynamicWorkers = kotlinFiles().filter { file ->
+            val text = stripComments(file.readText())
+            text.contains(": CoroutineWorker") && (
+                text.contains("NotificationIntake") ||
+                text.contains("DismissReminderAction") ||
+                text.contains("SnoozeReminderAction")
+            )
+        }
+
+        val violations = dynamicWorkers.filter { file ->
+            val text = stripComments(file.readText())
+            !text.contains("blockedPolicy = BlockedPolicy.RETRY")
+        }
+
+        assertTrue(
+            "Dynamic one-shot workers missing blockedPolicy = BlockedPolicy.RETRY: " +
+                violations.map { it.relativeTo(sourceRoot).path },
+            violations.isEmpty()
         )
     }
 }
