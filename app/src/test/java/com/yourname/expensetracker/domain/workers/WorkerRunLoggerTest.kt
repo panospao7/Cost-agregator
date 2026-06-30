@@ -537,4 +537,182 @@ class WorkerRunLoggerTest {
         assertEquals("work-uuid-123", handle.workId)
         assertEquals(3, handle.runAttempt)
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12I-2: Terminal reason-code persistence for all states
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `skipped_persists_terminal_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        handle.skipped("PRIVACY_DENIED")
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("SKIPPED"), any(),
+                any(), any(), any(),
+                eq("PRIVACY_DENIED"), any(), any(), any(), any(),
+                eq("PRIVACY_DENIED"), eq("PRIVACY_DENIED"), any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `retry_persists_terminal_reason_code_and_classifies_diagnostic`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        val timeoutEx = kotlinx.coroutines.runBlocking {
+            try {
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+                throw IllegalStateException("Expected TimeoutCancellationException")
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) { e }
+        }
+        handle.retry("pipeline timeout", error = timeoutEx)
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("RETRY"), any(),
+                any(), any(), any(),
+                any(), eq("pipeline timeout"), any(), eq("TimeoutCancellationException"), any(),
+                eq("pipeline timeout"), eq("TIMEOUT"), any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `failure_persists_terminal_reason_code_and_classifies_diagnostic`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        handle.failure("unhandled", error = IllegalStateException("boom"))
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("FAILED"), any(),
+                any(), any(), any(),
+                eq("unhandled"), any(), any(), eq("IllegalStateException"), any(),
+                eq("unhandled"), eq("unhandled"), any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `cancelled_persists_terminal_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        handle.cancelled("CANCELLED_BY_SYSTEM")
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("CANCELLED"), any(),
+                any(), any(), any(),
+                eq("CANCELLED_BY_SYSTEM"), any(), any(), any(), eq("CANCELLED_BY_SYSTEM"),
+                eq("CANCELLED_BY_SYSTEM"), eq("CANCELLED_BY_SYSTEM"), any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `stale_aborted_persists_terminal_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        handle.staleAborted()
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("STALE_ABORTED"), any(),
+                any(), any(), any(),
+                eq("STALE_RUNNING_ABORTED"), any(), any(), any(), any(),
+                eq("STALE_RUNNING_ABORTED"), eq("STALE_RUNNING_ABORTED"), any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `failure_does_not_store_reason_inside_error_message`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+        handle.failure("unhandled", error = IllegalStateException("sensitive db path"))
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("FAILED"), any(),
+                any(), any(), any(),
+                eq("unhandled"), any(), any(), any(), any(),
+                any(), any(), any(), any()
+            )
+        }
+        // verify sanitizer was called with raw exception message only (not "reason: message")
+        coVerify(exactly = 1) {
+            sanitizer.sanitizeExceptionMessage("sensitive db path")
+        }
+    }
+
+    @Test
+    fun `classifyDiagnostic_timeout_returns_TIMEOUT`() {
+        val timeoutEx = kotlinx.coroutines.runBlocking {
+            try {
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+                throw IllegalStateException("Expected TimeoutCancellationException")
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) { e }
+        }
+        assertEquals("TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("any", timeoutEx))
+    }
+
+    @Test
+    fun `classifyDiagnostic_retryable_returns_message`() {
+        assertEquals("PIPELINE_TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("any", RetryableWorkerException("PIPELINE_TIMEOUT")))
+    }
+
+    @Test
+    fun `classifyDiagnostic_checkpoint_returns_reasonCode`() {
+        val ex = WorkerCheckpointBlockedException("STOP_REQUESTED", "msg")
+        assertEquals("STOP_REQUESTED", WorkerRunLoggerImpl.classifyDiagnostic("any", ex))
+    }
+
+    @Test
+    fun `classifyDiagnostic_security_with_notification_context_returns_permission_denied`() {
+        assertEquals("NOTIFICATION_PERMISSION_DENIED", WorkerRunLoggerImpl.classifyDiagnostic("notification permission revoked", SecurityException()))
+    }
+
+    @Test
+    fun `classifyDiagnostic_reason_contains_TIMEOUT_returns_TIMEOUT`() {
+        assertEquals("TIMEOUT", WorkerRunLoggerImpl.classifyDiagnostic("pipeline TIMEOUT occurred", null))
+    }
+
+    @Test
+    fun `classifyDiagnostic_security_without_notification_returns_security_exception`() {
+        assertEquals("SECURITY_EXCEPTION", WorkerRunLoggerImpl.classifyDiagnostic("generic failure", SecurityException()))
+    }
+
+    @Test
+    fun `classifyDiagnostic_reason_contains_BLOCKED_returns_BLOCKED`() {
+        assertEquals("BLOCKED", WorkerRunLoggerImpl.classifyDiagnostic("WRITE_BARRIER_BLOCKED", null))
+    }
+
+    @Test
+    fun `classifyDiagnostic_reason_contains_PRIVACY_returns_PRIVACY`() {
+        assertEquals("PRIVACY", WorkerRunLoggerImpl.classifyDiagnostic("PRIVACY_DENIED", null))
+    }
+
+    @Test
+    fun `classifyDiagnostic_reason_contains_RESTORE_returns_RESTORE_BLOCKED`() {
+        assertEquals("RESTORE_BLOCKED", WorkerRunLoggerImpl.classifyDiagnostic("RESTORE_PREPARING", null))
+    }
+
+    @Test
+    fun `classifyDiagnostic_reason_contains_NETWORK_returns_NETWORK_UNAVAILABLE`() {
+        assertEquals("NETWORK_UNAVAILABLE", WorkerRunLoggerImpl.classifyDiagnostic("NETWORK_UNAVAILABLE", null))
+    }
+
+    @Test
+    fun `classifyDiagnostic_fallback_returns_reason`() {
+        assertEquals("UNKNOWN_ERROR", WorkerRunLoggerImpl.classifyDiagnostic("UNKNOWN_ERROR", null))
+    }
 }

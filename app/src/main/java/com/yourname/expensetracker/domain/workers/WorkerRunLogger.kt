@@ -58,6 +58,34 @@ class WorkerRunLoggerImpl @Inject constructor(
     companion object {
         /** PR8: 5 seconds max for a terminal DB write — backstop inside the guard's own timeout. */
         private const val TERMINAL_WRITE_TIMEOUT_MS = 5_000L
+
+        /**
+         * PR12I-2: Classify a reason/error pair into a structured diagnostic code.
+         * Never returns raw exception messages or stack traces.
+         *
+         * Known-safe message map for [RetryableWorkerException] so custom messages
+         * containing paths/PII are never persisted verbatim.
+         */
+        fun classifyDiagnostic(reason: String, error: Throwable?): String = when {
+            error is TimeoutCancellationException -> "TIMEOUT"
+            error is RetryableWorkerException -> when (error.message) {
+                "PIPELINE_TIMEOUT" -> "PIPELINE_TIMEOUT"
+                else -> "RETRYABLE"
+            }
+            error is WorkerCheckpointBlockedException -> error.reasonCode
+            error is SecurityException -> {
+                if (reason.contains("notification", ignoreCase = true) ||
+                    reason.contains("permission", ignoreCase = true)
+                ) "NOTIFICATION_PERMISSION_DENIED"
+                else "SECURITY_EXCEPTION"
+            }
+            reason.contains("TIMEOUT", ignoreCase = true) -> "TIMEOUT"
+            reason.contains("BLOCKED", ignoreCase = true) -> "BLOCKED"
+            reason.contains("PRIVACY", ignoreCase = true) -> "PRIVACY"
+            reason.contains("RESTORE", ignoreCase = true) -> "RESTORE_BLOCKED"
+            reason.contains("NETWORK", ignoreCase = true) -> "NETWORK_UNAVAILABLE"
+            else -> reason
+        }
     }
 
     override suspend fun start(
@@ -221,7 +249,11 @@ class WorkerRunLoggerImpl @Inject constructor(
         }
 
         override suspend fun skipped(reason: String): TerminalWriteOutcome {
-            val result = terminal("SKIPPED", TerminalArgs(statusReason = reason))
+            val result = terminal("SKIPPED", TerminalArgs(
+                statusReason = reason,
+                terminalReasonCode = reason,
+                terminalDiagnosticCode = reason
+            ))
             return result.toOutcome("SKIPPED", reason, null)
         }
 
@@ -229,15 +261,20 @@ class WorkerRunLoggerImpl @Inject constructor(
             val result = terminal("RETRY", TerminalArgs(
                 retryReason = reason,
                 errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
-                errorClass = error?.javaClass?.simpleName
+                errorClass = error?.javaClass?.simpleName,
+                terminalReasonCode = reason,
+                terminalDiagnosticCode = classifyDiagnostic(reason, error)
             ))
             return result.toOutcome("RETRY", reason, error)
         }
 
         override suspend fun failure(reason: String, error: Throwable?): TerminalWriteOutcome {
             val result = terminal("FAILED", TerminalArgs(
-                errorMessage = sanitizer.sanitizeExceptionMessage(error?.let { "$reason: ${it.message}" } ?: reason),
-                errorClass = error?.javaClass?.simpleName
+                statusReason = reason,
+                errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
+                errorClass = error?.javaClass?.simpleName,
+                terminalReasonCode = reason,
+                terminalDiagnosticCode = classifyDiagnostic(reason, error)
             ))
             return result.toOutcome("FAILED", reason, error)
         }
@@ -245,14 +282,21 @@ class WorkerRunLoggerImpl @Inject constructor(
         override suspend fun cancelled(reason: String): TerminalWriteOutcome {
             val result = terminal("CANCELLED", TerminalArgs(
                 statusReason = reason,
-                cancellationReason = reason
+                cancellationReason = reason,
+                terminalReasonCode = reason,
+                terminalDiagnosticCode = reason
             ))
             return result.toOutcome("CANCELLED", reason, null)
         }
 
         override suspend fun staleAborted(): TerminalWriteOutcome {
-            val result = terminal("STALE_ABORTED", TerminalArgs())
-            return result.toOutcome("STALE_ABORTED", null, null)
+            val reason = "STALE_RUNNING_ABORTED"
+            val result = terminal("STALE_ABORTED", TerminalArgs(
+                statusReason = reason,
+                terminalReasonCode = reason,
+                terminalDiagnosticCode = reason
+            ))
+            return result.toOutcome("STALE_ABORTED", reason, null)
         }
     }
 }
