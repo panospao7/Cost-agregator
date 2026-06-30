@@ -222,6 +222,63 @@ class DailyBriefingWorkerTest {
         }
     }
 
+    // PR12H-6: DailyBriefing idempotency/cause — TimeoutCancellationException must be
+    // wrapped in RetryableWorkerException with the original cause preserved.
+    @Test
+    fun `pipeline timeout wraps in RetryableWorkerException with cause`() = runTest {
+        val processed = sampleProcessedData()
+        val timeoutEx = kotlinx.coroutines.runBlocking {
+            try {
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+                throw IllegalStateException("Expected TimeoutCancellationException")
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                e
+            }
+        }
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } throws timeoutEx
+
+        // The worker should throw RetryableWorkerException, NOT plain TimeoutCancellationException
+        var thrown: Throwable? = null
+        try {
+            buildWorker().doWork()
+        } catch (e: Throwable) {
+            thrown = e
+        }
+
+        // Because the guard mock in this test catches all non-cancellation exceptions and
+        // returns Retry, the worker itself never propagates the raw RetryableWorkerException.
+        // Instead we verify the guard mock receives the wrapped exception by inspecting
+        // the mock call history.
+        val capturedBlock = mutableListOf<suspend (WorkerRunContext) -> Unit>()
+        coVerify(atLeast = 1) {
+            executionGuard.runGuardedWithContext(
+                any<WorkerGuardRequest>(),
+                capture(capturedBlock)
+            )
+        }
+        // When the captured block is executed, it should throw RetryableWorkerException
+        // with TimeoutCancellationException as cause.
+        val block = capturedBlock.first()
+        var blockEx: Throwable? = null
+        try {
+            block.invoke(ctx)
+        } catch (e: Throwable) {
+            blockEx = e
+        }
+        assertEquals(
+            "Worker block should throw RetryableWorkerException on pipeline timeout",
+            com.yourname.expensetracker.domain.workers.RetryableWorkerException::class.java,
+            blockEx?.javaClass
+        )
+        assertEquals(
+            "RetryableWorkerException must preserve TimeoutCancellationException as cause",
+            kotlinx.coroutines.TimeoutCancellationException::class.java,
+            blockEx?.cause?.javaClass
+        )
+        assertEquals("PIPELINE_TIMEOUT", (blockEx as? com.yourname.expensetracker.domain.workers.RetryableWorkerException)?.message)
+    }
+
     // P9-P1-04 / PR3 — one-shot midnight chain must survive incidental skips.
     // These assert the real worker->scheduler path: reschedule on Success and on
     // incidental Skipped, but NOT when the guard reports the worker is disabled.
