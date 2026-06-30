@@ -4,7 +4,7 @@ Last updated: 2026-06-30
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12F ALL COMPLETE** (latest commit on branch `worker-architecture-prs-1-5`).
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12H ALL COMPLETE** (latest commit on branch `worker-architecture-prs-1-5`).
 
 ---
 
@@ -1401,20 +1401,19 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 # 18. Final Status (PRs 1–12 All Complete)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** ALL PRs 1–11 AND PR12A–PR12F COMPLETE  
-**HEAD commit:** `886f5aca`  
+**Status:** ALL PRs 1–11 AND PR12A–PR12H COMPLETE  
+**HEAD commit:** `e0dc7666`  
 **Closure date:** 2026-06-30
 
 ## Summary
 
 | Metric | Value |
 |---|---|
-| Workers fully guarded | 8 (NotificationIntake, BillReminder, DataRetention, DailyBriefing, LocationBackfill, MerchantKeyBackfill, ReceiptMatching, WarrantyExpiration) |
-| Action workers with guard/CE safety | 2 (SourceLinkBackfill, DismissReminderReceiver, SnoozeReminderReceiver) |
-| Receivers with CE safety | 2 (DismissReminderReceiver, SnoozeReminderReceiver) |
+| Workers fully guarded | 10 (8 original + DismissReminderActionWorker + SnoozeReminderActionWorker) |
+| Receivers with indirect DB only | 2 (DismissReminderReceiver, SnoozeReminderReceiver) |
 | Non-WorkManager worker with barrier checks | 1 (SourceLinkBackfill) |
-| Worker-related test files | 26 |
-| Worker-related test cases | 240+ |
+| Worker-related test files | 27 |
+| Worker-related test cases | 250+ |
 | DB version | 148 with valid 147→148 migration |
 | New regressions introduced | 0 (all existing tests continue to pass) |
 
@@ -1469,6 +1468,31 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
    - `CancellationException` rethrown
    - No direct DAO mutation
 
+9. **Guard Timeout & Checkpoint Block Semantics** (PR12H-1):
+   - `WorkerTimeoutPolicy` (RETRY / PROPAGATE_CANCELLATION) for worker block timeouts
+   - `WorkerCheckpointBlockedException` replaces plain `CancellationException` at checkpoints
+   - Guard maps checkpoint blocks through `blockedPolicy` instead of losing the run
+   - `DiagnosticReasonCode.TIMEOUT` added
+
+10. **NotificationIntake Privacy-Split Reload** (PR12H-2):
+    - Metadata-only reload before mid-run privacy recheck
+    - Payload (`getPayloadForProcessing`) loaded only after privacy confirmed
+    - Prevents decrypt of sensitive data when privacy revoked mid-run
+
+11. **Durable Terminal Fallback Diagnostics** (PR12H-3):
+    - `TerminalWriteOutcome` sealed interface (Durable / AlreadyTerminal / NotDurable)
+    - `WorkerTerminalDiagnosticSink` records structured context for every non-durable terminal write
+    - `guardTerminal()` helper ensures consistent wrapping across all terminal paths
+
+12. **Terminal Reason Code Completion** (PR12H-4):
+    - `DiagnosticReasonCode.SUCCESS` and `NO_WORK` added
+    - All terminal methods pass `reasonCode` through `TerminalArgs.terminalReasonCode`
+    - Enables post-hoc analysis of WHY each run reached its terminal state
+
+13. **DailyBriefing Cause Preservation** (PR12H-6):
+    - `RetryableWorkerException` preserves `TimeoutCancellationException` as cause
+    - Guard tests verify cause chain intact for retry classification
+
 ## Test Coverage
 
 | Category | Test Files |
@@ -1486,10 +1510,10 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | Worker Migration | `P9RemainingWorkerFixesTest.kt` (12 tests) |
 | Restore/Barrier Golden | `WorkerRestoreBarrierIdempotencyGoldenTest.kt` (1 test) |
 | Worker Contract | `WorkerContractTest.kt` (5 tests) |
-| Notification Intake | `NotificationIntakeWorkerTimeoutTest.kt` (11 tests) |
+| Notification Intake | `NotificationIntakeWorkerTimeoutTest.kt` (13 tests) |
 | Bill Reminder | `BillReminderWorkerTest.kt` (4 tests), `BillReminderWorkerTimeProviderTest.kt` (3 tests) |
 | Data Retention | `DataRetentionWorkerTest.kt` (7 tests) |
-| Daily Briefing | `DailyBriefingWorkerTest.kt` (14 tests) |
+| Daily Briefing | `DailyBriefingWorkerTest.kt` (15 tests) |
 | Location Backfill | `LocationBackfillWorkerTest.kt` (6 tests) |
 | Merchant Key Backfill | `MerchantKeyBackfillWorkerTest.kt` (5 tests) |
 | Receipt Matching | `ReceiptMatchingWorkerTest.kt` (11 tests) |
@@ -1497,6 +1521,9 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | Source Link Backfill | `SourceLinkBackfillWorkerTest.kt` (3 tests) |
 | **PR11: Restore Regression** | `WorkerRestoreRegressionTest.kt` (15 tests) |
 | **PR11: Barrier Integration** | `WorkerBarrierIntegrationTest.kt` (23 tests) |
+| **PR12H: Terminal Logger** | `WorkerRunLoggerTest.kt` (37 tests) |
+| **PR12H: Guard Timeout** | `WorkerExecutionGuardTest.kt` (42 tests) |
+| **PR12H: Static Guards** | `SourceScanningArchitectureGuardTest.kt` (4 tests) |
 
 ## MIT Closure Status
 
@@ -1513,7 +1540,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 # 19. Final Status PR12 — Deep Review Blocker Resolution
 
-All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12F:
+All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation.
 
 | # | Blocker | PR | Resolution |
 |---|---|---|---|
@@ -1540,8 +1567,10 @@ All 9 blocking issues identified in the deep review of PRs 1–11 have been reso
 | ReceiptMatchingWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 11 |
 | WarrantyExpirationWorker | Periodic | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 12 |
 | SourceLinkBackfillWorker | Non-WM worker | ✅ Barrier + TimeProvider | N/A | ✅ | 3 |
-| DismissReminderReceiver | BroadcastReceiver | ✅ CE-safe | N/A | N/A | Included above |
-| SnoozeReminderReceiver | BroadcastReceiver | ✅ CE-safe | N/A | N/A | Included above |
+| DismissReminderActionWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 4 |
+| SnoozeReminderActionWorker | One-shot | ✅ Full guard | ✅ Unique | ✅ BackgroundJobRun | 4 |
+| DismissReminderReceiver | BroadcastReceiver | ✅ Indirect WM enqueue only | N/A | N/A | N/A |
+| SnoozeReminderReceiver | BroadcastReceiver | ✅ Indirect WM enqueue only | N/A | N/A | N/A |
 
 **Total: 10 workers (8 CoroutineWorker + 2 action workers)**
 
