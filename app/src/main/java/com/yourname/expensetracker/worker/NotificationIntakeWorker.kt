@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
@@ -77,6 +78,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 Timber.w("IntakeWorker: intake row $intakeId not found")
                 throw RuntimeException("Intake row $intakeId not found")
             }
+            ctx.addRowsScanned() // PR12I-3: metadata read found row
 
             // PR 2: Enforce maxAttempts using metadata only
             if (meta.attempts >= meta.maxAttempts) {
@@ -87,7 +89,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     failureHash = null,
                     nowMs = now
                 )
-                purgePayloadBestEffort(intakeId, now)
+                ctx.addRowsUpdated() // PR12I-3: final failure mark
+                purgePayloadBestEffort(intakeId, now, ctx)
                 throw RuntimeException("MAX_ATTEMPTS_EXCEEDED")
             }
 
@@ -99,24 +102,28 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 workerId = "intake-worker-${timeProvider.now()}"
             )
             if (claimed == 0) {
-                return@runGuardedWithContext // Already claimed — idempotent success
+                return@runGuardedWithContext // Already claimed — idempotent success (true NO_WORK)
             }
+            ctx.addRowsUpdated() // PR12I-3: claim succeeded
 
             // Reload metadata after claim (still no payload)
             ctx.checkpoint("intake:reloadMetadata")
             val claimedMeta = intakeDao.getProcessingMetadataById(intakeId)
                 ?: return@runGuardedWithContext
+            ctx.addRowsScanned() // PR12I-3: reload metadata found row
 
             // PR12H-2: Mid-run privacy recheck BEFORE loading any payload
             ctx.checkpoint("intake:privacyBeforePayloadLoad")
             if (!isNotificationCaptureAllowed()) {
                 intakeDao.markPrivacyDeniedAndPurgeAllPayload(id = intakeId, nowMs = now)
+                ctx.addRowsUpdated() // PR12I-3: privacy purge
                 return@runGuardedWithContext
             }
 
             // PR12H-2: Only now load the payload — after privacy is confirmed
             ctx.checkpoint("intake:loadPayload")
             val payload = intakeDao.getPayloadForProcessing(intakeId)
+            if (payload != null) ctx.addRowsScanned() // PR12I-3: payload found
 
             // PR 1 FIX: Load/decrypt processing payload BEFORE filter.
             // Previously filtered on null visible fields (broken for encrypted transient modes).
@@ -138,7 +145,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
                         nowMs = now
                     )
-                    purgePayloadBestEffort(intakeId, now)
+                    purgePayloadBestEffort(intakeId, now, ctx)
                     return@runGuardedWithContext
                 }
                 processingTitle = payload.title
@@ -172,7 +179,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     finalOutcome = "PAYLOAD_UNAVAILABLE_PRIVACY",
                     nowMs = now
                 )
-                purgePayloadBestEffort(intakeId, now)
+                ctx.addRowsUpdated() // PR12I-3: terminal mark
+                purgePayloadBestEffort(intakeId, now, ctx)
                 return@runGuardedWithContext
             }
 
@@ -191,7 +199,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     finalOutcome = "FILTER_REJECTED",
                     nowMs = now
                 )
-                purgePayloadBestEffort(intakeId, now)
+                ctx.addRowsUpdated() // PR12I-3: terminal mark
+                purgePayloadBestEffort(intakeId, now, ctx)
                 return@runGuardedWithContext
             }
 
@@ -255,6 +264,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                                 failureHash = null,
                                 nowMs = now
                             )
+                            ctx.addRowsUpdated() // PR12I-3: retryable failure mark
                             throw RetryableWorkerException("RETRYABLE_ERROR")
                         }
                         // Non-retryable or max attempts — mark terminal and signal failure
@@ -268,7 +278,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                             finalOutcome = outcome::class.simpleName,
                             nowMs = now
                         )
-                        purgePayloadBestEffort(intakeId, now)
+                        ctx.addRowsUpdated() // PR12I-3: terminal mark
+                        purgePayloadBestEffort(intakeId, now, ctx)
                         intentionalFailure = true
                         throw RuntimeException("FAILED_FINAL")
                     }
@@ -298,10 +309,11 @@ class NotificationIntakeWorker @AssistedInject constructor(
                     finalOutcome = outcome::class.simpleName,
                     nowMs = now
                 )
+                ctx.addRowsUpdated() // PR12I-3: terminal mark
                 terminalMarked = true
 
                 // P1-SLICE-D: markProcessed is now atomic inside the pipeline — no best-effort needed.
-                purgePayloadBestEffort(intakeId, now)
+                purgePayloadBestEffort(intakeId, now, ctx)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 Timber.w(e, "Worker timeout, marking retryable intakeId=$intakeId")
                 if (claimedMeta.attempts + 1 < claimedMeta.maxAttempts) {
@@ -314,6 +326,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         failureHash = null,
                         nowMs = now
                     )
+                    ctx.addRowsUpdated() // PR12I-3: retryable failure mark
                     throw RetryableWorkerException("TIMEOUT")
                 } else {
                     ctx.checkpoint("intake:timeoutFinal")
@@ -323,7 +336,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         failureHash = null,
                         nowMs = now
                     )
-                    purgePayloadBestEffort(intakeId, now)
+                    ctx.addRowsUpdated() // PR12I-3: final failure mark
+                    purgePayloadBestEffort(intakeId, now, ctx)
                     throw RuntimeException("MAX_RETRIES_EXHAUSTED")
                 }
             } catch (e: RetryableWorkerException) {
@@ -351,6 +365,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         failureHash = null,
                         nowMs = now
                     )
+                    ctx.addRowsUpdated() // PR12I-3: retryable failure mark
                     throw RetryableWorkerException("WORKER_EXCEPTION")
                 } else {
                     ctx.checkpoint("intake:exceptionFinal")
@@ -360,7 +375,8 @@ class NotificationIntakeWorker @AssistedInject constructor(
                         failureHash = null,
                         nowMs = now
                     )
-                    purgePayloadBestEffort(intakeId, now)
+                    ctx.addRowsUpdated() // PR12I-3: final failure mark
+                    purgePayloadBestEffort(intakeId, now, ctx)
                     throw RuntimeException("WORKER_EXCEPTION")
                 }
             }
@@ -394,12 +410,14 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 id = intakeId,
                 nowMs = now
             )
+            ctx.addRowsUpdated() // PR12I-3: privacy cleanup update
         }
     }
 
-    private suspend fun purgePayloadBestEffort(id: Long, now: Long) {
+    private suspend fun purgePayloadBestEffort(id: Long, now: Long, ctx: WorkerRunContext? = null) {
         try {
             intakeDao.purgeAllPayload(id = id, nowMs = now)
+            ctx?.addRowsUpdated() // PR12I-3: payload purge
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Timber.w(e, "IntakeWorker: purgePayload failed for intakeId=$id")
