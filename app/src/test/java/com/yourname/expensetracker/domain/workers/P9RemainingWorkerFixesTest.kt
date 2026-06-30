@@ -197,7 +197,7 @@ class P9RemainingWorkerFixesTest {
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `checkpoint write barrier exception is caught and converted to CancellationException`() = runTest {
+    fun `checkpoint write barrier exception is caught and converted to WorkerCheckpointBlockedException`() = runTest {
         val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
         val readBarrier = mockk<com.yourname.expensetracker.data.backup.DatabaseReadBarrier>(relaxed = true)
         val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
@@ -218,6 +218,8 @@ class P9RemainingWorkerFixesTest {
 
         every { timeProvider.now() } returns 1000L
 
+        val workerTerminalDiagnosticSink = mockk<WorkerTerminalDiagnosticSink>(relaxed = true)
+
         val guard = WorkerExecutionGuard(
             writeBarrier = writeBarrier,
             readBarrier = readBarrier,
@@ -226,25 +228,26 @@ class P9RemainingWorkerFixesTest {
             privacyGate = privacyGate,
             leaseRegistry = leaseRegistry,
             diagnosticSink = diagnosticSink,
+            workerTerminalDiagnosticSink = workerTerminalDiagnosticSink,
             backgroundJobRunDao = backgroundJobRunDao,
             notificationPermissionChecker = permissionChecker,
             timeProvider = timeProvider
         )
 
-        // The checkpoint should throw CancellationException (fail-safe) rather
+        // The checkpoint should throw WorkerCheckpointBlockedException (fail-safe) rather
         // than propagating the raw RuntimeException.
-        var threwCancellation = false
+        var threwBlocked = false
         try {
             guard.checkpoint("test_op")
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            threwCancellation = true
+        } catch (e: WorkerCheckpointBlockedException) {
+            threwBlocked = true
         } catch (e: Exception) {
-            throw AssertionError("Expected CancellationException but got ${e::class.simpleName}: ${e.message}")
+            throw AssertionError("Expected WorkerCheckpointBlockedException but got ${e::class.simpleName}: ${e.message}")
         }
 
         assertTrue(
-            "checkpoint must throw CancellationException on write barrier failure",
-            threwCancellation
+            "checkpoint must throw WorkerCheckpointBlockedException on write barrier failure",
+            threwBlocked
         )
         coVerify(exactly = 1) { diagnosticSink.recordBlockedOperation(any(), any(), any()) }
     }

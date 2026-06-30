@@ -40,6 +40,7 @@ class WorkerExecutionGuardTest {
     private lateinit var privacyGate: PrivacyGate
     private lateinit var leaseRegistry: WorkerLeaseRegistry
     private lateinit var diagnosticSink: MaintenanceSafeDiagnosticSink
+    private lateinit var workerTerminalDiagnosticSink: WorkerTerminalDiagnosticSink
     private lateinit var backgroundJobRunDao: BackgroundJobRunDao
     private lateinit var timeProvider: TimeProvider
     private lateinit var runHandle: WorkerRunHandle
@@ -69,6 +70,7 @@ class WorkerExecutionGuardTest {
         privacyGate = mockk(relaxed = true)
         leaseRegistry = mockk()
         diagnosticSink = mockk(relaxed = true)
+        workerTerminalDiagnosticSink = mockk(relaxed = true)
         backgroundJobRunDao = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         runHandle = mockk(relaxed = true)
@@ -80,6 +82,15 @@ class WorkerExecutionGuardTest {
         every { leaseRegistry.isStopRequested() } returns false
         coEvery { workerRunLogger.start(any(), any(), any(), any(), any(), any()) } returns runHandle
 
+        // PR12H-3: explicit stubs for terminal methods returning TerminalWriteOutcome
+        // (mockk(relaxed=true) cannot create mocks of sealed interfaces)
+        coEvery { runHandle.success(any(), any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.skipped(any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.retry(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.failure(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.cancelled(any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.staleAborted() } returns TerminalWriteOutcome.Durable
+
         guard = WorkerExecutionGuard(
             writeBarrier = writeBarrier,
             readBarrier = readBarrier,
@@ -88,6 +99,7 @@ class WorkerExecutionGuardTest {
             privacyGate = privacyGate,
             leaseRegistry = leaseRegistry,
             diagnosticSink = diagnosticSink,
+            workerTerminalDiagnosticSink = workerTerminalDiagnosticSink,
             backgroundJobRunDao = backgroundJobRunDao,
             notificationPermissionChecker = permissionChecker,
             timeProvider = timeProvider
@@ -467,6 +479,7 @@ class WorkerExecutionGuardTest {
             enteredTerminalWrite.complete(Unit)
             proceedWithWrite.await() // suspend inside the terminal write
             successCalled = true
+            TerminalWriteOutcome.Durable
         }
 
         val job = launch {
@@ -493,6 +506,7 @@ class WorkerExecutionGuardTest {
         permissionChecker.enabled = true
         coEvery { runHandle.success() } coAnswers {
             delay(10_000L)  // longer than TERMINAL_WRITE_TIMEOUT_MS = 5_000
+            TerminalWriteOutcome.Durable
         }
 
         val result = guard.runGuarded(request()) { /* block succeeds immediately */ }

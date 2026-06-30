@@ -19,8 +19,10 @@ import com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionL
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.validation.DefaultTransactionDatePolicy
 import com.yourname.expensetracker.domain.transaction.validation.TransactionDatePolicy
+import com.yourname.expensetracker.domain.workers.TimberWorkerTerminalDiagnosticSink
 import com.yourname.expensetracker.domain.workers.WorkerRunLogger
 import com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
+import com.yourname.expensetracker.domain.workers.WorkerTerminalDiagnosticSink
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -60,4 +62,7 @@ abstract class DiagnosticsModule {
 
     @Binds @Singleton
     abstract fun bindTransactionDatePolicy(impl: DefaultTransactionDatePolicy): TransactionDatePolicy
+
+    @Binds @Singleton
+    abstract fun bindWorkerTerminalDiagnosticSink(impl: TimberWorkerTerminalDiagnosticSink): WorkerTerminalDiagnosticSink
 }

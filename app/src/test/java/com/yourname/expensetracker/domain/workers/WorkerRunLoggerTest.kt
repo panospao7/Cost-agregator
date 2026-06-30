@@ -363,4 +363,178 @@ class WorkerRunLoggerTest {
         coVerify(exactly = 2) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 2) { dao.getById(1L) }
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12H-3: TerminalWriteOutcome return value tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `terminal success returns Durable when db write succeeds`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.success()
+        assertTrue(outcome is TerminalWriteOutcome.Durable)
+    }
+
+    @Test
+    fun `terminal skipped returns Durable when db write succeeds`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.skipped("privacy_denied")
+        assertTrue(outcome is TerminalWriteOutcome.Durable)
+    }
+
+    @Test
+    fun `terminal retry returns Durable when db write succeeds`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.retry("timeout", error = RuntimeException("boom"))
+        assertTrue(outcome is TerminalWriteOutcome.Durable)
+    }
+
+    @Test
+    fun `terminal failure returns Durable when db write succeeds`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.failure("permanent", error = RuntimeException("boom"))
+        assertTrue(outcome is TerminalWriteOutcome.Durable)
+    }
+
+    @Test
+    fun `terminal cancelled returns Durable when db write succeeds`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.cancelled("system_shutdown")
+        assertTrue(outcome is TerminalWriteOutcome.Durable)
+    }
+
+    @Test
+    fun `terminal staleAborted returns Durable when db write succeeds`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.staleAborted()
+        assertTrue(outcome is TerminalWriteOutcome.Durable)
+    }
+
+    @Test
+    fun `terminal success db timeout returns NotDurable`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            delay(6_000L)  // > 5_000ms timeout
+            1
+        }
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.success()
+        assertTrue(outcome is TerminalWriteOutcome.NotDurable)
+        val nd = outcome as TerminalWriteOutcome.NotDurable
+        assertEquals("SUCCESS", nd.intendedStatus)
+        assertEquals("TERMINAL_WRITE_TIMEOUT", nd.failureCode)
+        assertEquals("TimeoutCancellationException", nd.errorClass)
+    }
+
+    @Test
+    fun `terminal retry db exception returns NotDurable`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            SQLException("db error")
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.retry("timeout", error = RuntimeException("boom"))
+        assertTrue(outcome is TerminalWriteOutcome.NotDurable)
+        val nd = outcome as TerminalWriteOutcome.NotDurable
+        assertEquals("RETRY", nd.intendedStatus)
+        assertEquals("timeout", nd.reasonCode)
+        assertEquals("TERMINAL_WRITE_FAILED", nd.failureCode)
+        assertEquals("RuntimeException", nd.errorClass)
+    }
+
+    @Test
+    fun `terminal db failure keeps handle retryable`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            SQLException("db error") andThen 1
+        val handle = logger.start("test_worker")
+
+        val outcome1 = handle.success()   // DB fails → NotDurable
+        assertTrue(outcome1 is TerminalWriteOutcome.NotDurable)
+
+        val outcome2 = handle.success()   // Handle is still retryable → DB succeeds → Durable
+        assertTrue(outcome2 is TerminalWriteOutcome.Durable)
+
+        coVerify(exactly = 2) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `duplicate terminal returns AlreadyTerminal`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        handle.success()   // first call → Durable
+        val outcome = handle.success()   // second call → AlreadyTerminal (AlreadyCompletedLocal)
+        assertTrue(outcome is TerminalWriteOutcome.AlreadyTerminal)
+    }
+
+    @Test
+    fun `terminal zero affected but already completed in db returns AlreadyTerminal`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 0
+        coEvery { dao.getById(1L) } returns BackgroundJobRun(
+            id = 1L,
+            workerName = "test_worker",
+            startedAt = 1700000000000L,
+            status = "FAILED"
+        )
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.success()
+        assertTrue(outcome is TerminalWriteOutcome.AlreadyTerminal)
+        assertEquals("FAILED", (outcome as TerminalWriteOutcome.AlreadyTerminal).status)
+    }
+
+    @Test
+    fun `terminal zero affected but still running returns NotDurable`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 0
+        coEvery { dao.getById(1L) } returns BackgroundJobRun(
+            id = 1L,
+            workerName = "test_worker",
+            startedAt = 1700000000000L,
+            status = "RUNNING"
+        )
+        val handle = logger.start("test_worker")
+
+        val outcome = handle.success()
+        assertTrue(outcome is TerminalWriteOutcome.NotDurable)
+        val nd = outcome as TerminalWriteOutcome.NotDurable
+        assertEquals("TERMINAL_WRITE_ZERO_AFFECTED", nd.failureCode)
+    }
+
+    @Test
+    fun `handle exposes workerName workId and runAttempt`() = runTest {
+        coEvery { dao.insert(any()) } returns 42L
+        val handle = logger.start(
+            workerName = "my_worker",
+            workId = "work-uuid-123",
+            runAttempt = 3
+        )
+
+        assertEquals(42L, handle.runId)
+        assertEquals("my_worker", handle.workerName)
+        assertEquals("work-uuid-123", handle.workId)
+        assertEquals(3, handle.runAttempt)
+    }
 }

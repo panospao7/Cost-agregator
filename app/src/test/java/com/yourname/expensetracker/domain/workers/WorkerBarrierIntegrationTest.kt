@@ -13,7 +13,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
-import kotlinx.coroutines.CancellationException
+// import kotlinx.coroutines.CancellationException // PR12H-1: checkpoint throws WorkerCheckpointBlockedException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -86,6 +86,16 @@ class WorkerBarrierIntegrationTest {
         coEvery { leaseRegistry.acquire(any()) } returns lease
         coEvery { workerRunLogger.start(any(), any(), any(), any(), any(), any()) } returns runHandle
 
+        // PR12H-3: explicit stubs for terminal methods returning TerminalWriteOutcome
+        coEvery { runHandle.success(any(), any(), any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.skipped(any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.retry(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.failure(any(), any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.cancelled(any()) } returns TerminalWriteOutcome.Durable
+        coEvery { runHandle.staleAborted() } returns TerminalWriteOutcome.Durable
+
+        val workerTerminalDiagnosticSink = mockk<WorkerTerminalDiagnosticSink>(relaxed = true)
+
         guard = WorkerExecutionGuard(
             writeBarrier = writeBarrier,
             readBarrier = readBarrier,
@@ -94,6 +104,7 @@ class WorkerBarrierIntegrationTest {
             privacyGate = privacyGate,
             leaseRegistry = leaseRegistry,
             diagnosticSink = diagnosticSink,
+            workerTerminalDiagnosticSink = workerTerminalDiagnosticSink,
             backgroundJobRunDao = backgroundJobRunDao,
             notificationPermissionChecker = permissionChecker,
             timeProvider = timeProvider
@@ -222,7 +233,7 @@ class WorkerBarrierIntegrationTest {
                 RestoreMaintenanceMode.Mode.RESTORE_PREPARING
             )
 
-        val ex = assertThrows(CancellationException::class.java) {
+        val ex = assertThrows(WorkerCheckpointBlockedException::class.java) {
             kotlinx.coroutines.runBlocking { guard.checkpoint("process_item") }
         }
 
@@ -231,6 +242,7 @@ class WorkerBarrierIntegrationTest {
             ex.message?.contains("blocked", ignoreCase = true) == true ||
                 ex.message?.contains("Writes blocked", ignoreCase = true) == true
         )
+        assertEquals(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, ex.reasonCode)
     }
 
     @Test
@@ -238,14 +250,15 @@ class WorkerBarrierIntegrationTest {
         every { restoreMaintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
         every { leaseRegistry.isStopRequested() } returns true
 
-        val ex = assertThrows(CancellationException::class.java) {
+        val ex = assertThrows(WorkerCheckpointBlockedException::class.java) {
             kotlinx.coroutines.runBlocking { guard.checkpoint("save_results") }
         }
 
         assertTrue(
-            "Exception should mention maintenance stop: ${ex.message}",
-            ex.message?.contains("maintenance", ignoreCase = true) == true
+            "Exception should mention stop: ${ex.message}",
+            ex.message?.contains("stop", ignoreCase = true) == true
         )
+        assertEquals(DiagnosticReasonCode.STOP_REQUESTED.name, ex.reasonCode)
     }
 
     @Test
