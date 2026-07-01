@@ -242,7 +242,7 @@ class WorkerBarrierIntegrationTest {
             ex.message?.contains("blocked", ignoreCase = true) == true ||
                 ex.message?.contains("Writes blocked", ignoreCase = true) == true
         )
-        assertEquals(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, ex.reasonCode)
+        assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, ex.reasonCode)
     }
 
     @Test
@@ -258,7 +258,7 @@ class WorkerBarrierIntegrationTest {
             "Exception should mention stop: ${ex.message}",
             ex.message?.contains("stop", ignoreCase = true) == true
         )
-        assertEquals(DiagnosticReasonCode.STOP_REQUESTED.name, ex.reasonCode)
+        assertEquals(DiagnosticReasonCode.WORKER_STOP_REQUESTED.name, ex.reasonCode)
     }
 
     @Test
@@ -376,7 +376,7 @@ class WorkerBarrierIntegrationTest {
         assertFalse("Worker block must not execute when barrier denies", blockRan)
         assertTrue(result is WorkerGuardResult.BlockedRetry)
         val blocked = result as WorkerGuardResult.BlockedRetry
-        assertEquals(DiagnosticReasonCode.WRITE_BARRIER_DENIED.name, blocked.blockedReasonCode)
+        assertEquals(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name, blocked.blockedReasonCode)
     }
 
     // ─────────────────────────────────────────────────────────────────

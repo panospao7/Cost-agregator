@@ -84,7 +84,6 @@ class WriteBarrierArchitectureGuardTest {
             "DatabaseBackupRepositoryImpl",     // orchestrates backup/restore within maintenance mode
             "AppDatabase",                      // Room database class; migrations use raw SQL, not DAO write calls
             "AppStartupCoordinator",            // startup recovery — runs before barrier is available
-            "RestoreDatabaseOpenerImpl",        // opens fresh DB instance after file swap; no DAO writes directly
             "MaintenanceOperationRunner",       // maintenance mode itself — enters/drains, does not call DAO writes
             // ── Stale references (kept for safety) ───────────────────
             // "RestoreVerificationCoordinator"  // does not exist yet — uncomment when created
