@@ -84,14 +84,14 @@ class WorkerRunLoggerTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
-        handle.skipped("privacy_denied")
+        handle.skipped("PRIVACY_DENIED")
 
         coVerify(exactly = 1) {
             dao.completeTerminal(
                 id = eq(1L),
                 status = eq("SKIPPED"),
                 finishedAt = eq(1700000000000L),
-                statusReason = eq("privacy_denied"),
+                statusReason = eq("PRIVACY_DENIED"),
                 rowsScanned = eq(0),
                 rowsUpdated = eq(0),
                 notificationsSent = eq(0),
@@ -112,14 +112,14 @@ class WorkerRunLoggerTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
-        handle.retry("timeout", error = RuntimeException("boom"))
+        handle.retry("TIMEOUT", error = RuntimeException("boom"))
 
         coVerify(exactly = 1) {
             dao.completeTerminal(
                 id = eq(1L),
                 status = eq("RETRY"),
                 finishedAt = eq(1700000000000L),
-                retryReason = eq("timeout"),
+                retryReason = eq("TIMEOUT"),
                 errorMessage = any(),
                 errorClass = eq("RuntimeException"),
                 statusReason = any(),
@@ -140,7 +140,7 @@ class WorkerRunLoggerTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
-        handle.failure("permanent", error = RuntimeException("boom"))
+        handle.failure("PERMANENT", error = RuntimeException("boom"))
 
         coVerify(exactly = 1) {
             dao.completeTerminal(
@@ -168,15 +168,15 @@ class WorkerRunLoggerTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
-        handle.cancelled("system_shutdown")
+        handle.cancelled("SYSTEM_SHUTDOWN")
 
         coVerify(exactly = 1) {
             dao.completeTerminal(
                 id = eq(1L),
                 status = eq("CANCELLED"),
                 finishedAt = eq(1700000000000L),
-                statusReason = eq("system_shutdown"),
-                cancellationReason = eq("system_shutdown"),
+                statusReason = eq("SYSTEM_SHUTDOWN"),
+                cancellationReason = eq("SYSTEM_SHUTDOWN"),
                 retryReason = any(),
                 errorMessage = any(),
                 errorClass = any(),
@@ -201,9 +201,9 @@ class WorkerRunLoggerTest {
 
         val jobs = listOf(
             async { handle.success() },
-            async { handle.failure("race", error = null) },
-            async { handle.retry("race") },
-            async { handle.skipped("race") }
+            async { handle.failure("RACE_CONDITION", error = null) },
+            async { handle.retry("RACE_CONDITION") },
+            async { handle.skipped("RACE_CONDITION") }
         )
         jobs.awaitAll()
 
@@ -229,8 +229,8 @@ class WorkerRunLoggerTest {
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
 
-        handle.failure("boom")
-        handle.failure("boom2")
+        handle.failure("BOOM")
+        handle.failure("BOOM2")
 
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
@@ -321,8 +321,8 @@ class WorkerRunLoggerTest {
         }
         val handle = logger.start("test_worker")
 
-        handle.skipped("first attempt")   // DB fails
-        handle.skipped("second attempt")  // DB succeeds
+        handle.skipped("FIRST_ATTEMPT")   // DB fails
+        handle.skipped("SECOND_ATTEMPT")  // DB succeeds
 
         coVerify(exactly = 2) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
@@ -457,7 +457,7 @@ class WorkerRunLoggerTest {
         assertTrue(outcome is TerminalWriteOutcome.NotDurable)
         val nd = outcome as TerminalWriteOutcome.NotDurable
         assertEquals("RETRY", nd.intendedStatus)
-        assertEquals("timeout", nd.reasonCode)
+        assertEquals(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, nd.reasonCode)
         assertEquals("TERMINAL_WRITE_FAILED", nd.failureCode)
         assertEquals("RuntimeException", nd.errorClass)
     }
@@ -578,7 +578,7 @@ class WorkerRunLoggerTest {
                 eq(1L), eq("RETRY"), any(),
                 any(), any(), any(),
                 any(), eq("pipeline timeout"), any(), eq("TimeoutCancellationException"), any(),
-                eq("pipeline timeout"), eq("TIMEOUT"), any(), any()
+                eq("WORKER_UNHANDLED_EXCEPTION"), eq("TIMEOUT"), any(), any()
             )
         }
     }
@@ -639,13 +639,13 @@ class WorkerRunLoggerTest {
         coEvery { dao.insert(any()) } returns 1L
         coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
         val handle = logger.start("test_worker")
-        handle.failure("unhandled", error = IllegalStateException("sensitive db path"))
+        handle.failure("UNHANDLED", error = IllegalStateException("sensitive db path"))
 
         coVerify(exactly = 1) {
             dao.completeTerminal(
                 eq(1L), eq("FAILED"), any(),
                 any(), any(), any(),
-                eq("unhandled"), any(), any(), any(), any(),
+                eq("UNHANDLED"), any(), any(), any(), any(),
                 any(), any(), any(), any()
             )
         }
@@ -762,7 +762,7 @@ class WorkerRunLoggerTest {
                 eq(1L), eq("FAILED"), any(),
                 any(), any(), any(),
                 any(), any(), any(), any(), any(),
-                terminalReasonCode = eq("/data/user/0/com.app/files/private_key.pem"),
+                terminalReasonCode = eq("WORKER_UNHANDLED_EXCEPTION"),
                 terminalDiagnosticCode = eq("WORKER_UNHANDLED_EXCEPTION"),
                 any(), any()
             )
@@ -872,5 +872,109 @@ class WorkerRunLoggerTest {
             null
         )
         assertEquals("WORKER_UNHANDLED_EXCEPTION", result2)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12K-4: Retryable reason-code boundary hardening
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `logger_sanitizes_retry_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        handle.retry("bad/path", error = RuntimeException("boom"))
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("RETRY"), any(),
+                any(), any(), any(),
+                any(), any(), any(), any(), any(),
+                terminalReasonCode = eq(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name),
+                terminalDiagnosticCode = any(),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `logger_sanitizes_failure_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        handle.failure("../../../etc/passwd", error = RuntimeException("boom"))
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("FAILED"), any(),
+                any(), any(), any(),
+                any(), any(), any(), any(), any(),
+                terminalReasonCode = eq(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name),
+                terminalDiagnosticCode = eq(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `logger_sanitizes_skipped_reason_code`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        handle.skipped("user data leak")
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("SKIPPED"), any(),
+                any(), any(), any(),
+                any(), any(), any(), any(), any(),
+                terminalReasonCode = eq(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name),
+                terminalDiagnosticCode = eq(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `path_like_reason_code_not_persisted`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        handle.retry("/data/app/com.example/cache/tmp", error = RuntimeException("sensitive"))
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("RETRY"), any(),
+                any(), any(), any(),
+                any(), any(), any(), any(), any(),
+                terminalReasonCode = eq(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name),
+                terminalDiagnosticCode = any(),
+                any(), any()
+            )
+        }
+    }
+
+    @Test
+    fun `valid_reason_code_is_preserved`() = runTest {
+        coEvery { dao.insert(any()) } returns 1L
+        coEvery { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 1
+        val handle = logger.start("test_worker")
+
+        handle.retry(DiagnosticReasonCode.WORKER_TIMEOUT.name, error = null)
+
+        coVerify(exactly = 1) {
+            dao.completeTerminal(
+                eq(1L), eq("RETRY"), any(),
+                any(), any(), any(),
+                any(), any(), any(), any(), any(),
+                terminalReasonCode = eq(DiagnosticReasonCode.WORKER_TIMEOUT.name),
+                terminalDiagnosticCode = any(),
+                any(), any()
+            )
+        }
     }
 }

@@ -220,7 +220,7 @@ class WorkerExecutionGuard @Inject constructor(
                 // message-based heuristics; classifyTransient remains the unchanged
                 // fallback for every other exception.
                 return if (e is RetryableWorkerException) {
-                    val reason = e.reasonCode
+                    val reason = WorkerReasonCodes.sanitizeReasonCode(e.reasonCode)
                     guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
                     WorkerGuardResult.Retry(reason, e)
                 } else if (classifyTransient(e)) {
@@ -412,7 +412,7 @@ class WorkerExecutionGuard @Inject constructor(
                 // message-based heuristics; classifyTransient remains the unchanged
                 // fallback for every other exception.
                 return if (e is RetryableWorkerException) {
-                    val reason = e.reasonCode
+                    val reason = WorkerReasonCodes.sanitizeReasonCode(e.reasonCode)
                     guardTerminal(run, "RETRY", reason) { run.retry(reason, e) }
                     WorkerGuardResult.Retry(reason, e)
                 } else if (classifyTransient(e)) {

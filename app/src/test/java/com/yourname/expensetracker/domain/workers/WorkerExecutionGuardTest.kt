@@ -386,6 +386,45 @@ class WorkerExecutionGuardTest {
         coVerify(exactly = 0) { runHandle.failure(any(), any()) }
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12K-4: Retryable reason-code boundary hardening
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `invalid_retryable_reason_code_is_sanitized_before_guard_result`() = runTest {
+        permissionChecker.enabled = true
+        val ex = RetryableWorkerException("bad/path!with/special chars")
+
+        val result = guard.runGuarded(request()) { throw ex }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(
+            DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+            (result as WorkerGuardResult.Retry).reason
+        )
+        coVerify(exactly = 1) {
+            runHandle.retry(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex)
+        }
+        coVerify(exactly = 0) { runHandle.failure(any(), any()) }
+    }
+
+    @Test
+    fun `guard_sanitizes_retryable_reason_code`() = runTest {
+        permissionChecker.enabled = true
+        val ex = RetryableWorkerException("../../secret.key")
+
+        val result = guard.runGuarded(request()) { throw ex }
+
+        assertTrue(result is WorkerGuardResult.Retry)
+        assertEquals(
+            DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name,
+            (result as WorkerGuardResult.Retry).reason
+        )
+        coVerify(exactly = 1) {
+            runHandle.retry(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name, ex)
+        }
+    }
+
     @Test
     fun `non-transient RuntimeException maps to Failed`() = runTest {
         permissionChecker.enabled = true

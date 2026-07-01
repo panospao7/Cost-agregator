@@ -11,9 +11,11 @@ package com.yourname.expensetracker.domain.workers
  * keyword-matching fallback in `classifyTransient`.
  */
 class RetryableWorkerException(
-    val reasonCode: String,
+    rawReasonCode: String,
     message: String? = null,
     cause: Throwable? = null
-) : RuntimeException(message ?: reasonCode, cause) {
-    constructor(reasonCode: String, cause: Throwable?) : this(reasonCode, reasonCode, cause)
+) : RuntimeException(message ?: WorkerReasonCodes.sanitizeReasonCode(rawReasonCode), cause) {
+    val reasonCode: String = WorkerReasonCodes.sanitizeReasonCode(rawReasonCode)
+
+    constructor(rawReasonCode: String, cause: Throwable?) : this(rawReasonCode, null, cause)
 }

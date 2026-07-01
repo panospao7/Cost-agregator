@@ -9,6 +9,7 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
@@ -18,12 +19,14 @@ import com.yourname.expensetracker.domain.privacy.RetentionTarget
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -250,6 +253,124 @@ class DataRetentionWorkerTest {
             fail("Expected CancellationException to be thrown")
         } catch (e: CancellationException) {
             assertEquals("worker stopped", e.message)
+        }
+    }
+
+    // ── PR12K-1: DataRetention Privacy Cleanup Semantics ──────────────
+
+    @Test
+    fun `data_retention_runs_when_raw_notification_retention_disabled`() = runTest {
+        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawNotificationRetentionDays = 0)
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("raw_notifications", 5)
+        )
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+    }
+
+    @Test
+    fun `data_retention_purges_raw_notification_payload_when_disabled`() = runTest {
+        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawNotificationRetentionDays = 0)
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("raw_notifications", 5)
+        )
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { ctx.addRowsUpdated(5) }
+    }
+
+    @Test
+    fun `data_retention_runs_when_raw_ocr_retention_disabled`() = runTest {
+        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawOcrRetentionDays = 0)
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("scanned_receipts.rawOcrText", 3)
+        )
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+    }
+
+    @Test
+    fun `data_retention_purges_raw_ocr_payload_when_disabled`() = runTest {
+        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings(rawOcrRetentionDays = 0)
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("scanned_receipts.rawOcrText", 3)
+        )
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { ctx.addRowsUpdated(3) }
+    }
+
+    @Test
+    fun `data_retention_is_not_gated_by_raw_retention_capabilities`() = runTest {
+        every { retentionRegistry.allTargets() } returns emptySet()
+
+        val result = buildWorker().doWork()
+
+        // Worker must succeed (not be blocked by privacy gate)
+        assertEquals(Result.success(), result)
+        coVerify {
+            executionGuard.runGuardedWithContext(any(), any<suspend (WorkerRunContext) -> Any>())
+        }
+    }
+
+    // ── PR12K-2: DataRetention Sanitized Diagnostics ─────────────────
+
+    @Test
+    fun `retention_exception_message_path_not_persisted`() = runTest {
+        // A throwing target with sensitive path info in message
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_a", IllegalArgumentException("C:\\Users\\sensitive\\path"))
+        )
+
+        buildWorker().doWork()
+
+        // Diagnostic metadata must not contain the raw exception message
+        coVerify(atLeast = 1) {
+            diagnosticEventWriter.emit(match { event ->
+                event.stage == "retention_purge" &&
+                !event.metadata.toJson().contains("sensitive") &&
+                !event.metadata.toJson().contains("\"error\":")
+            })
+        }
+    }
+
+    @Test
+    fun `retention_diagnostic_uses_failure_code`() = runTest {
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_a", IllegalArgumentException("test"))
+        )
+
+        buildWorker().doWork()
+
+        coVerify(atLeast = 1) {
+            diagnosticEventWriter.emit(match { event ->
+                event.stage == "retention_purge" &&
+                event.metadata.toJson().contains(DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name)
+            })
+        }
+    }
+
+    @Test
+    fun `retention_diagnostic_uses_error_class`() = runTest {
+        every { retentionRegistry.allTargets() } returns setOf(
+            throwingTarget("target_a", IllegalArgumentException("test"))
+        )
+
+        buildWorker().doWork()
+
+        coVerify(atLeast = 1) {
+            diagnosticEventWriter.emit(match { event ->
+                event.stage == "retention_purge" &&
+                event.metadata.toJson().contains("IllegalArgumentException")
+            })
         }
     }
 }

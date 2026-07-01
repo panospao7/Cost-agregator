@@ -240,56 +240,61 @@ class WorkerRunLoggerImpl @Inject constructor(
 
         override suspend fun success(rowsScanned: Int, rowsUpdated: Int, notificationsSent: Int, message: String?, reasonCode: String?): TerminalWriteOutcome {
             val code = reasonCode ?: com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.WORKER_SUCCESS.name
+            val safeReason = WorkerReasonCodes.sanitizeReasonCode(code)
             val result = terminal("SUCCESS", TerminalArgs(
                 rowsScanned = rowsScanned,
                 rowsUpdated = rowsUpdated,
                 notificationsSent = notificationsSent,
                 statusReason = message,
-                terminalReasonCode = code,
-                terminalDiagnosticCode = code
+                terminalReasonCode = safeReason,
+                terminalDiagnosticCode = safeReason
             ))
-            return result.toOutcome("SUCCESS", code, null)
+            return result.toOutcome("SUCCESS", safeReason, null)
         }
 
         override suspend fun skipped(reason: String): TerminalWriteOutcome {
+            val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("SKIPPED", TerminalArgs(
                 statusReason = reason,
-                terminalReasonCode = reason,
-                terminalDiagnosticCode = reason
+                terminalReasonCode = safeReason,
+                terminalDiagnosticCode = safeReason
             ))
-            return result.toOutcome("SKIPPED", reason, null)
+            return result.toOutcome("SKIPPED", safeReason, null)
         }
 
         override suspend fun retry(reason: String, error: Throwable?): TerminalWriteOutcome {
+            val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("RETRY", TerminalArgs(
                 retryReason = reason,
                 errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
                 errorClass = error?.javaClass?.simpleName,
-                terminalReasonCode = reason,
-                terminalDiagnosticCode = classifyDiagnostic(reason, error)
+                terminalReasonCode = safeReason,
+                terminalDiagnosticCode = classifyDiagnostic(safeReason, error)
             ))
-            return result.toOutcome("RETRY", reason, error)
+            return result.toOutcome("RETRY", safeReason, error)
         }
 
         override suspend fun failure(reason: String, error: Throwable?): TerminalWriteOutcome {
+            val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("FAILED", TerminalArgs(
                 statusReason = reason,
                 errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
                 errorClass = error?.javaClass?.simpleName,
-                terminalReasonCode = reason,
-                terminalDiagnosticCode = classifyDiagnostic(reason, error)
+                terminalReasonCode = safeReason,
+                terminalDiagnosticCode = classifyDiagnostic(safeReason, error)
             ))
-            return result.toOutcome("FAILED", reason, error)
+            return result.toOutcome("FAILED", safeReason, error)
         }
 
         override suspend fun cancelled(reason: String): TerminalWriteOutcome {
+            val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("CANCELLED", TerminalArgs(
                 statusReason = reason,
                 cancellationReason = reason,
-                terminalReasonCode = reason,
-                terminalDiagnosticCode = reason
+                terminalReasonCode = safeReason,
+                terminalDiagnosticCode = safeReason
             ))
-            return result.toOutcome("CANCELLED", reason, null)
+            return result.toOutcome("CANCELLED", safeReason, null)
         }
 
         override suspend fun staleAborted(): TerminalWriteOutcome {

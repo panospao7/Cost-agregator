@@ -78,10 +78,7 @@ class DataRetentionWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "data_retention",
-                requiredCapabilities = listOf(
-                    PrivacyCapability.RAW_NOTIFICATION_RETENTION,
-                    PrivacyCapability.RAW_OCR_RETENTION
-                ),
+                requiredCapabilities = emptyList(),
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),
@@ -139,11 +136,15 @@ class DataRetentionWorker @AssistedInject constructor(
                     if (e is CancellationException) throw e
                     Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing", e)
                     val isTransient = isTransientFailure(e)
+                    val failureCode = if (isTransient)
+                        DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
+                        else DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
                     RetentionPurgeResult(
                         targetName = target.name,
                         rowsPurged = 0,
                         success = false,
-                        errorMessage = "${if (isTransient) "TRANSIENT" else "PERMANENT"}: ${e.message}",
+                        errorCode = failureCode,
+                        errorClass = e.javaClass.simpleName,
                         isTransient = isTransient
                     )
                 }
@@ -153,7 +154,7 @@ class DataRetentionWorker @AssistedInject constructor(
                     markTargetComplete(prefs, target.name)
                 } else {
                     markTargetFailed(prefs, target.name)
-                    Log.w(TAG, "RetentionTarget[${target.name}] purge reported failure: ${result.errorMessage}")
+                    Log.w(TAG, "RetentionTarget[${target.name}] purge reported failure: ${result.errorCode}/${result.errorClass}")
 
                     // Emit diagnostic for failure
                     try {
@@ -166,7 +167,8 @@ class DataRetentionWorker @AssistedInject constructor(
                             metadata = SafeEventMetadata.builder()
                                 .put("target", target.name)
                                 .put("transient", result.isTransient)
-                                .put("error", result.errorMessage)
+                                .put("failureCode", result.errorCode)
+                                .put("errorClass", result.errorClass)
                                 .build()
                         ))
                     } catch (e: Exception) {
@@ -184,7 +186,7 @@ class DataRetentionWorker @AssistedInject constructor(
             // Log per-target counts and audit successes
             for (result in results) {
                 if (result.rowsPurged > 0 || !result.success) {
-                    Log.d(TAG, "RetentionTarget[${result.targetName}]: purged=${result.rowsPurged} success=${result.success} error=${result.errorMessage}")
+                    Log.d(TAG, "RetentionTarget[${result.targetName}]: purged=${result.rowsPurged} success=${result.success} errorCode=${result.errorCode} errorClass=${result.errorClass}")
                 }
             }
 

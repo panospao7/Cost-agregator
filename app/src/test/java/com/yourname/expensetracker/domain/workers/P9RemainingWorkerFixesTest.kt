@@ -111,7 +111,7 @@ class P9RemainingWorkerFixesTest {
         val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
         val handle = logger.start("test_worker")
 
-        handle.retry("transient error")
+        handle.retry("TRANSIENT_ERROR")
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // Second call is a no-op even with a different terminal status
@@ -130,11 +130,11 @@ class P9RemainingWorkerFixesTest {
         val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
         val handle = logger.start("test_worker")
 
-        handle.failure("permanent error")
+        handle.failure("PERMANENT_ERROR")
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // Second call is no-op
-        handle.failure("ignored duplicate")
+        handle.failure("IGNORED_DUPLICATE")
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
@@ -149,10 +149,10 @@ class P9RemainingWorkerFixesTest {
         val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
         val handle = logger.start("test_worker")
 
-        handle.cancelled("system cancel")
+        handle.cancelled("SYSTEM_CANCEL")
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
-        handle.cancelled("ignored duplicate")
+        handle.cancelled("IGNORED_DUPLICATE")
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
@@ -185,10 +185,10 @@ class P9RemainingWorkerFixesTest {
         val logger = WorkerRunLoggerImpl(dao, sanitizer, timeProvider)
         val handle = logger.start("test_worker")
 
-        handle.skipped("work already in progress")
+        handle.skipped("WORK_ALREADY_IN_PROGRESS")
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
-        handle.skipped("ignored duplicate")
+        handle.skipped("IGNORED_DUPLICATE")
         coVerify(exactly = 1) { dao.completeTerminal(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
