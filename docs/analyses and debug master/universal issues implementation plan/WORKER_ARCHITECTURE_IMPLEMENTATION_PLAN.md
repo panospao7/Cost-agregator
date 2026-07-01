@@ -4,9 +4,10 @@ Last updated: 2026-06-30
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12M ALL COMPLETE**  
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12N ALL COMPLETE**  
 > All deep-review blockers, semantic fixes, and diagnostic polish resolved. MIT-016/MIT-017 are fully done.  
-> Remaining pre-existing test failures: 12 in WarrantyExpirationWorkerTest, 1 in WorkerRestoreBarrierIdempotencyGoldenTest — unchanged by this PR.
+> Remaining pre-existing test failures: 12 in WarrantyExpirationWorkerTest, 1 in WorkerRestoreBarrierIdempotencyGoldenTest — unchanged by this PR.  
+> PR12N: Fixed 3 test regressions from PR12J-1 reason-code renaming + removed stale `RestoreDatabaseOpenerImpl` guard exemption.
 
 ---
 
@@ -1400,11 +1401,11 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 ---
 
-# 18. Status (PRs 1–12M — ALL COMPLETE)
+# 18. Status (PRs 1–12N — ALL COMPLETE)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** PRs 1–11 COMPLETE; PR12A–PR12M ALL COMPLETE  
-**Latest implementation commit:** `ea181227`  
+**Status:** PRs 1–11 COMPLETE; PR12A–PR12N ALL COMPLETE  
+**Latest implementation commit:** `26e6beda`  
 **Last updated:** 2026-07-01
 
 ## Summary
@@ -1415,9 +1416,9 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 | Receivers with indirect DB only | 2 (DismissReminderReceiver, SnoozeReminderReceiver) |
 | Non-WorkManager worker with barrier checks | 1 (SourceLinkBackfill) |
 | Worker-related test files | 28 |
-| Worker-related test cases | 270+ |
+| Worker-related test cases | 320+ |
 | DB version | 148 with valid 147→148 migration |
-| New regressions introduced | 0 (all existing tests continue to pass) |
+| New regressions introduced | 0 (PR12N fixed 3 test regressions from PR12J-1) |
 
 ## Architecture Delivered
 
@@ -1581,7 +1582,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 # 19. Final Status PR12 — Deep Review Blocker Resolution
 
-All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation. PR12I-1 through PR12I-5 resolved the 6 remaining blockers from the PR12H deep review: durable terminal fallback diagnostics, complete reason-code persistence, NotificationIntake metrics, static guard hardening, and DailyBriefing idempotency. PR12J made progress on safe structured reason codes and bounded suspend terminal diagnostics. PR12K resolved the final 6 semantic blockers: DataRetention is no longer gated by raw-retention capabilities, ReceiptMatching treats notifications as optional side effects, reason codes are sanitized at every boundary, DataRetention diagnostics use structured `failureCode` + `errorClass`, DailyBriefing post-delivery timeout idempotency is proven with 6 new tests, and static guards use structured allowlists with owner/reason/issue/expiry. PR12L completed the diagnostic polish: `WorkerRunLogger` sanitizes `statusReason`, `retryReason`, and `cancellationReason`, ReceiptMatching auto-link failures use structured `linkFailureCode` mapper, optional notification suppression emits durable `NOTIFICATION_SUPPRESSED` events, and static guard negative fixtures cover optional notification, DataRetention raw capability, and expired allowlist. PR12M finished the final release-hardening: `ReceiptMatchLifecycleService` defensively sanitizes reason strings at the service boundary, `ReceiptMatchingWorker` catches all non-cancellation notification failures durably, dead `DataRetentionWorker` raw-purge helpers are removed, and scanner-based fixture tests exercise the real scan pipeline.
+All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation. PR12I-1 through PR12I-5 resolved the 6 remaining blockers from the PR12H deep review: durable terminal fallback diagnostics, complete reason-code persistence, NotificationIntake metrics, static guard hardening, and DailyBriefing idempotency. PR12J made progress on safe structured reason codes and bounded suspend terminal diagnostics. PR12K resolved the final 6 semantic blockers: DataRetention is no longer gated by raw-retention capabilities, ReceiptMatching treats notifications as optional side effects, reason codes are sanitized at every boundary, DataRetention diagnostics use structured `failureCode` + `errorClass`, DailyBriefing post-delivery timeout idempotency is proven with 6 new tests, and static guards use structured allowlists with owner/reason/issue/expiry. PR12L completed the diagnostic polish: `WorkerRunLogger` sanitizes `statusReason`, `retryReason`, and `cancellationReason`, ReceiptMatching auto-link failures use structured `linkFailureCode` mapper, optional notification suppression emits durable `NOTIFICATION_SUPPRESSED` events, and static guard negative fixtures cover optional notification, DataRetention raw capability, and expired allowlist. PR12M finished the final release-hardening: `ReceiptMatchLifecycleService` defensively sanitizes reason strings at the service boundary, `ReceiptMatchingWorker` catches all non-cancellation notification failures durably, dead `DataRetentionWorker` raw-purge helpers are removed, and scanner-based fixture tests exercise the real scan pipeline. PR12N is a small cleanup PR that fixes the 3 test regressions introduced when PR12J-1 renamed barrier reason codes to `WORKER_WRITE_BARRIER_DENIED` / `WORKER_STOP_REQUESTED` but did not update the corresponding `WorkerBarrierIntegrationTest` assertions, and removes the stale `RestoreDatabaseOpenerImpl` exemption entry from `WriteBarrierArchitectureGuardTest`.
 
 | # | Blocker | PR | Resolution |
 |---|---|---|---|
