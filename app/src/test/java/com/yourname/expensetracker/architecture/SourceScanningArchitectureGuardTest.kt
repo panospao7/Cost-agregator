@@ -2,9 +2,11 @@ package com.yourname.expensetracker.architecture
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.time.LocalDate
 
 /**
  * PR12F — Source-scanning static architecture guards.
@@ -21,6 +23,75 @@ import java.io.File
  *   and the latest exported Room schema JSON
  */
 class SourceScanningArchitectureGuardTest {
+
+    /**
+     * Structured allowlist entry that requires owner, reason, issue tracking, and
+     * expiry date — ensuring no allowlisted entry is left unaccounted for.
+     */
+    data class ArchitectureAllowlistEntry(
+        val fileName: String,
+        val rule: String,
+        val owner: String,
+        val reason: String,
+        val issue: String,
+        val expires: LocalDate
+    )
+
+    /**
+     * Structured allowlist of files excluded from the DIRECT_DAO_IN_WORKER rule.
+     * Each entry records who owns the exception, why it exists, the tracking issue,
+     * and when it expires — forcing periodic review.
+     */
+    private val allowlist = listOf(
+        ArchitectureAllowlistEntry(
+            fileName = "DismissReminderActionWorker.kt",
+            rule = "DIRECT_DAO_IN_WORKER",
+            owner = "WorkerArchitecture",
+            reason = "Action workers enqueue via WorkManager, no guard required",
+            issue = "MIT-016",
+            expires = LocalDate.of(2026, 12, 31)
+        ),
+        ArchitectureAllowlistEntry(
+            fileName = "SnoozeReminderActionWorker.kt",
+            rule = "DIRECT_DAO_IN_WORKER",
+            owner = "WorkerArchitecture",
+            reason = "Action workers enqueue via WorkManager, no guard required",
+            issue = "MIT-016",
+            expires = LocalDate.of(2026, 12, 31)
+        ),
+        ArchitectureAllowlistEntry(
+            fileName = "SourceLinkBackfillWorker.kt",
+            rule = "DIRECT_DAO_IN_WORKER",
+            owner = "WorkerArchitecture",
+            reason = "Non-WM worker uses barrier + time provider, not CoroutineWorker",
+            issue = "MIT-016",
+            expires = LocalDate.of(2026, 12, 31)
+        ),
+        ArchitectureAllowlistEntry(
+            fileName = "DataRetentionWorker.kt",
+            rule = "DIRECT_DAO_IN_WORKER",
+            owner = "WorkerArchitecture",
+            reason = "PR12K-1: cleanup worker reads privacy settings internally; direct DAO for audit only",
+            issue = "PR12K-1",
+            expires = LocalDate.of(2026, 12, 31)
+        ),
+        ArchitectureAllowlistEntry(
+            fileName = "WarrantyExpirationWorker.kt",
+            rule = "DIRECT_DAO_IN_WORKER",
+            owner = "WorkerArchitecture",
+            reason = "Legacy worker with direct DAO; scheduled for refactor",
+            issue = "PR12K-1",
+            expires = LocalDate.of(2026, 12, 31)
+        ),
+        ArchitectureAllowlistEntry(
+            fileName = "NotificationIntakeWorker.kt",
+            rule = "DIRECT_DAO_IN_WORKER",
+            owner = "WorkerArchitecture",
+            reason = "PR12H-2: privacy-split reload requires direct DAO for metadata/payload separation",
+            issue = "PR12H-2",
+            expires = LocalDate.of(2026, 12, 31)
+        )
+    )
 
     // ── Source tree resolution ────────────────────────────────────────────────
 
@@ -81,8 +152,9 @@ class SourceScanningArchitectureGuardTest {
         } while (result != previous)
 
         // Remove line comments // ... (but preserve the newline so line counts stay
-        // roughly aligned for diagnostics).
-        result = result.replace(Regex("//[^\n]*"), "")
+        // roughly aligned for diagnostics). Use negative lookbehind to avoid stripping
+        // URL schemes like https:// or http:// inside string literals.
+        result = result.replace(Regex("(?<!:)//[^\n]*"), "")
 
         return result
     }
@@ -262,22 +334,10 @@ class SourceScanningArchitectureGuardTest {
 
         // Exclude action workers and SourceLinkBackfillWorker — they have
         // explicit architectural reasons for accessing DAOs directly.
-        // PR12I-4: The following workers have direct DAO usage that predates the
-        // architecture guard. They are allowlisted here with a TODO to refactor.
-        // - DataRetentionWorker: uses PrivacyAuditDao directly for retention audit
-        // - WarrantyExpirationWorker: uses WarrantyReminderDeliveryDao directly
-        // - NotificationIntakeWorker: uses NotificationIntakeDao directly (PR12H-2)
-        val allowlist = setOf(
-            "DismissReminderActionWorker.kt",
-            "SnoozeReminderActionWorker.kt",
-            "SourceLinkBackfillWorker.kt",
-            "DataRetentionWorker.kt",
-            "WarrantyExpirationWorker.kt",
-            "NotificationIntakeWorker.kt"
-        )
-
+        // See the class-level [allowlist] for owner, reason, issue, and expiry.
+        val allowedFileNames = allowlist.map { it.fileName }.toSet()
         val violations = workerFiles.filter { file ->
-            if (file.name in allowlist) return@filter false
+            if (file.name in allowedFileNames) return@filter false
             val text = stripComments(file.readText())
             text.contains("Dao") || text.contains("@Inject")
         }
@@ -305,15 +365,34 @@ class SourceScanningArchitectureGuardTest {
             )
         }
 
-        val violations = notificationWorkers.filter { file ->
+        // PR12K-3: ReceiptMatchingWorker treats notifications as optional side effects.
+        // It must NOT require global permission, but MUST locally check before posting.
+        val optionalNotificationWorkers = setOf("ReceiptMatchingWorker.kt")
+
+        val requiredViolations = notificationWorkers.filter { file ->
+            if (file.name in optionalNotificationWorkers) return@filter false
             val text = stripComments(file.readText())
             !text.contains("requiresNotificationPermission = true")
         }
 
+        val optionalViolations = notificationWorkers.filter { file ->
+            if (file.name !in optionalNotificationWorkers) return@filter false
+            val text = stripComments(file.readText())
+            // Optional workers must have requiresNotificationPermission = false
+            // AND must locally check permission before posting
+            text.contains("requiresNotificationPermission = true") ||
+                !text.contains("notificationPermissionChecker.areNotificationsEnabled()")
+        }
+
         assertTrue(
-            "Notification-posting workers missing requiresNotificationPermission = true: " +
-                violations.map { it.relativeTo(sourceRoot).path },
-            violations.isEmpty()
+            "Required notification workers missing requiresNotificationPermission = true: " +
+                requiredViolations.map { it.relativeTo(sourceRoot).path },
+            requiredViolations.isEmpty()
+        )
+        assertTrue(
+            "Optional notification workers missing local permission check (PR12K-3): " +
+                optionalViolations.map { it.relativeTo(sourceRoot).path },
+            optionalViolations.isEmpty()
         )
     }
 
@@ -363,5 +442,144 @@ class SourceScanningArchitectureGuardTest {
                 violations.map { it.relativeTo(sourceRoot).path },
             violations.isEmpty()
         )
+    }
+
+    // ── Structured allowlist validation ───────────────────────────────────────
+
+    @Test
+    fun `structured_allowlist_requires_owner_reason_issue_expiry`() {
+        for (entry in allowlist) {
+            assertTrue("Allowlist entry ${entry.fileName} missing owner", entry.owner.isNotBlank())
+            assertTrue("Allowlist entry ${entry.fileName} missing reason", entry.reason.isNotBlank())
+            assertTrue("Allowlist entry ${entry.fileName} missing issue", entry.issue.isNotBlank())
+            assertNotNull("Allowlist entry ${entry.fileName} missing expiry", entry.expires)
+        }
+    }
+
+    @Test
+    fun `expired_allowlist_entries_fail`() {
+        val today = LocalDate.now()
+        val expired = allowlist.filter { it.expires.isBefore(today) }
+        assertTrue(
+            "Expired allowlist entries found: ${expired.map { it.fileName }}",
+            expired.isEmpty()
+        )
+    }
+
+    // ── Negative fixtures for specific violations ─────────────────────────────
+
+    @Test
+    fun `data_retention_must_not_require_raw_retention_capabilities`() {
+        val dataRetentionFile = kotlinFiles().find { it.name == "DataRetentionWorker.kt" }
+        assertNotNull("DataRetentionWorker.kt not found", dataRetentionFile)
+        val text = stripComments(dataRetentionFile!!.readText())
+        // Only check the WorkerGuardRequest constructor call, not audit-event logging
+        // or other references to these constants elsewhere in the file.
+        val guardRequestRegex = Regex(
+            "WorkerGuardRequest\\s*\\(([^)]*)\\)",
+            RegexOption.DOT_MATCHES_ALL
+        )
+        val guardRequestBlocks = guardRequestRegex.findAll(text).map { it.groupValues[1] }.toList()
+        val hasWrongGating = guardRequestBlocks.any { block ->
+            block.contains("requiredCapabilities") && (
+                block.contains("PrivacyCapability.RAW_NOTIFICATION_RETENTION") ||
+                    block.contains("PrivacyCapability.RAW_OCR_RETENTION")
+            )
+        }
+        assertFalse(
+            "DataRetentionWorker guard request must not require raw-retention capabilities (PR12K-1)",
+            hasWrongGating
+        )
+    }
+
+    @Test
+    fun `receipt_matching_must_not_require_global_notification_permission`() {
+        val receiptMatchingFile = kotlinFiles().find { it.name == "ReceiptMatchingWorker.kt" }
+        assertNotNull("ReceiptMatchingWorker.kt not found", receiptMatchingFile)
+        val text = stripComments(receiptMatchingFile!!.readText())
+        assertFalse(
+            "ReceiptMatchingWorker must not require global notification permission (PR12K-3)",
+            text.contains("requiresNotificationPermission = true")
+        )
+    }
+
+    @Test
+    fun `workers_with_broad_catch_must_rethrow_cancellation`() {
+        // PR12K-6: Existing workers with broad catch that predate this rule.
+        // Each entry must have owner, reason, issue, and expiry.
+        val broadCatchAllowlist = listOf(
+            ArchitectureAllowlistEntry(
+                fileName = "LocationBackfillWorker.kt",
+                rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
+                owner = "WorkerArchitecture",
+                reason = "Legacy worker — CancellationException rethrow to be added",
+                issue = "PR12K-6",
+                expires = LocalDate.of(2026, 9, 30)
+            ),
+            ArchitectureAllowlistEntry(
+                fileName = "MerchantKeyBackfillWorker.kt",
+                rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
+                owner = "WorkerArchitecture",
+                reason = "Legacy worker — CancellationException rethrow to be added",
+                issue = "PR12K-6",
+                expires = LocalDate.of(2026, 9, 30)
+            ),
+            ArchitectureAllowlistEntry(
+                fileName = "ReceiptMatchingWorker.kt",
+                rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
+                owner = "WorkerArchitecture",
+                reason = "Legacy worker — CancellationException rethrow to be added",
+                issue = "PR12K-6",
+                expires = LocalDate.of(2026, 9, 30)
+            ),
+            ArchitectureAllowlistEntry(
+                fileName = "BillReminderWorker.kt",
+                rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
+                owner = "WorkerArchitecture",
+                reason = "Legacy worker — CancellationException rethrow to be added",
+                issue = "PR12K-6",
+                expires = LocalDate.of(2026, 9, 30)
+            ),
+            ArchitectureAllowlistEntry(
+                fileName = "WarrantyExpirationWorker.kt",
+                rule = "BROAD_CATCH_NO_CANCELLATION_RETHROW",
+                owner = "WorkerArchitecture",
+                reason = "Legacy worker — CancellationException rethrow to be added",
+                issue = "PR12K-6",
+                expires = LocalDate.of(2026, 9, 30)
+            )
+        )
+
+        val workerFiles = kotlinFiles().filter { file ->
+            val text = stripComments(file.readText())
+            text.contains(": CoroutineWorker")
+        }
+        val allowedFileNames = broadCatchAllowlist.map { it.fileName }.toSet()
+        val violations = workerFiles.filter { file ->
+            if (file.name in allowedFileNames) return@filter false
+            val text = stripComments(file.readText())
+            val hasBroadCatch = text.contains("catch (e: Exception)") || text.contains("catch (t: Throwable)")
+            val hasCancellationRethrow = text.contains("if (e is CancellationException) throw e") ||
+                text.contains("if (e is kotlinx.coroutines.CancellationException) throw e")
+            hasBroadCatch && !hasCancellationRethrow
+        }
+        assertTrue(
+            "Workers with broad catch missing CancellationException rethrow: " +
+                violations.map { it.relativeTo(sourceRoot).path },
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `urls_in_strings_are_not_mangled_by_comment_stripper`() {
+        val sourceWithUrl = """
+            val url = "https://example.com/path"
+            // this is a comment
+            /* block comment */
+        """.trimIndent()
+        val stripped = stripComments(sourceWithUrl)
+        assertTrue("URL in string must survive comment stripping", stripped.contains("https://example.com/path"))
+        assertFalse("Line comment must be stripped", stripped.contains("this is a comment"))
+        assertFalse("Block comment must be stripped", stripped.contains("block comment"))
     }
 }

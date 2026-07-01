@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -31,6 +32,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
     private val receiptLinkService: ReceiptLinkService,
     private val matchService: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService,
     private val notificationService: com.yourname.expensetracker.domain.service.NotificationService,
+    private val notificationPermissionChecker: NotificationPermissionChecker,
     private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(context, params) {
 
@@ -38,7 +40,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "receipt_matching",
-                requiresNotificationPermission = true,
+                requiresNotificationPermission = false,
                 allowDuringBackupExport = false,
                 blockedPolicy = BlockedPolicy.RETRY,
                 workId = id.toString(),
@@ -95,12 +97,20 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                             if (linkResult.isSuccess) {
                                 autoMatched++
                                 ctx.addRowsUpdated()
-                                notificationService.sendBudgetAlert(
-                                    notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
-                                    title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
-                                    message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
-                                )
-                                ctx.addNotificationsSent()
+                                if (notificationPermissionChecker.areNotificationsEnabled()) {
+                                    try {
+                                        notificationService.sendBudgetAlert(
+                                            notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
+                                            title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
+                                            message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
+                                        )
+                                        ctx.addNotificationsSent()
+                                    } catch (e: SecurityException) {
+                                        Timber.w(e, "Notification permission revoked after check for receipt ${receipt.id}")
+                                    }
+                                } else {
+                                    Timber.d("Notifications disabled — suppressing alert for receipt ${receipt.id}")
+                                }
                             } else {
                                 val linkError = linkResult.exceptionOrNull()
                                 if (linkError is ReceiptAlreadyClaimedException) {

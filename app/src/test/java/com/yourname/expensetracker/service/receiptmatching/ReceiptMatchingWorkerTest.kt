@@ -19,11 +19,13 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycl
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -40,6 +42,7 @@ class ReceiptMatchingWorkerTest {
     private lateinit var receiptRepository: ReceiptRepository
     private lateinit var matcher: ReceiptTransactionMatcher
     private lateinit var notificationService: NotificationService
+    private lateinit var notificationPermissionChecker: NotificationPermissionChecker
     private lateinit var executionGuard: WorkerExecutionGuard
     private lateinit var matchService: ReceiptMatchLifecycleService
     private lateinit var receiptLinkService: ReceiptLinkService
@@ -54,6 +57,8 @@ class ReceiptMatchingWorkerTest {
         receiptRepository = mockk(relaxed = true)
         matcher = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
+        notificationPermissionChecker = mockk(relaxed = true)
+        every { notificationPermissionChecker.areNotificationsEnabled() } returns true
         executionGuard = mockk(relaxed = true)
         matchService = mockk(relaxed = true)
         receiptLinkService = mockk(relaxed = true)
@@ -90,6 +95,7 @@ class ReceiptMatchingWorkerTest {
                         receiptLinkService = receiptLinkService,
                         matchService = matchService,
                         notificationService = notificationService,
+                        notificationPermissionChecker = notificationPermissionChecker,
                         executionGuard = executionGuard
                     )
                 }
@@ -317,17 +323,163 @@ class ReceiptMatchingWorkerTest {
         coVerify(exactly = 0) { matcher.findBestMatch(any(), any()) }
     }
 
+    @Test
+    fun `receipt_matching_runs_when_notification_permission_denied`() = runTest {
+        // The worker must complete successfully even when notification permission is denied.
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(sampleReceipt(id = 100L))
+        coEvery { matcher.findBestMatch(any(), any()) } returns MatchResult.NoMatch
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { matcher.findBestMatch(any(), any()) }
+    }
+
+    @Test
+    fun `receipt_matching_links_receipt_when_notification_permission_denied`() = runTest {
+        // Even when notification permission is denied, auto-match linking must still occur.
+        val receipt = sampleReceipt(id = 101L)
+        val expense = sampleExpense(id = 910L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.95)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 101L, expenseId = 910L))
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) {
+            receiptLinkService.linkReceiptToExpense(
+                receiptId = 101L, expenseId = 910L, linkType = "AUTO_MATCH", source = "MATCHING_WORKER",
+                requireUnmatchedClaim = true, confidence = any(), createdBy = any(),
+                allowRelink = any(), matchStatus = any(), writeSourceLink = any()
+            )
+        }
+    }
+
+    @Test
+    fun `receipt_matching_saves_suggestion_when_notification_permission_denied`() = runTest {
+        // Suggestions must be saved even when notification permission is denied.
+        val receipt = sampleReceipt(id = 102L)
+        val expense = sampleExpense(id = 911L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.Suggested(expense, 0.70)
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { matchService.saveMatchSuggestion(receiptId = 102L, suggestedExpenseId = 911L, confidence = 0.70) }
+    }
+
+    @Test
+    fun `receipt_matching_suppresses_notification_when_permission_denied`() = runTest {
+        // When permission is denied, no notification is sent and no notifications-sent metric.
+        val receipt = sampleReceipt(id = 103L)
+        val expense = sampleExpense(id = 912L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.96)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 103L, expenseId = 912L))
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
+        // Link and metric for rows updated must still happen.
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
+    }
+
+    @Test
+    fun `receipt_matching_permission_revoked_after_check_does_not_fail_worker`() = runTest {
+        // If permission is granted at check time but revoked before sending the notification,
+        // the SecurityException is caught and the worker does not fail.
+        val receipt = sampleReceipt(id = 104L)
+        val expense = sampleExpense(id = 913L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.97)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 104L, expenseId = 913L))
+        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        // Notification was attempted but threw; metric must NOT be incremented.
+        coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
+        // Link still succeeded.
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
+    }
+
+    @Test
+    fun `receipt_matching_permission_allowed_sends_notification`() = runTest {
+        // When permission is allowed, the notification is sent and the metric is incremented.
+        val receipt = sampleReceipt(id = 105L)
+        val expense = sampleExpense(id = 914L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.98)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 105L, expenseId = 914L))
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { ctx.addNotificationsSent() }
+    }
+
+    @Test
+    fun `receipt_matching_notifications_sent_metric_only_when_sent`() = runTest {
+        // The notifications-sent metric must only be incremented when a notification is
+        // actually sent (not when suppressed, not when the SecurityException is caught).
+        val receiptSuppressed = sampleReceipt(id = 106L, parsedMerchant = "SuppressedStore")
+        val receiptSent = sampleReceipt(id = 107L, parsedMerchant = "SentStore")
+        val expense1 = sampleExpense(id = 915L)
+        val expense2 = sampleExpense(id = 916L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returnsMany listOf(false, true)
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receiptSuppressed, receiptSent)
+        coEvery { matcher.findBestMatch(receiptSuppressed, any()) } returns MatchResult.AutoMatch(expense1, 0.95)
+        coEvery { matcher.findBestMatch(receiptSent, any()) } returns MatchResult.AutoMatch(expense2, 0.96)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returnsMany listOf(
+            kotlin.Result.success(sampleLink(receiptId = 106L, expenseId = 915L)),
+            kotlin.Result.success(sampleLink(receiptId = 107L, expenseId = 916L))
+        )
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        // Exactly one notification sent (second receipt allowed), so metric is 1.
+        coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
+        coVerify(exactly = 1) { ctx.addNotificationsSent() }
+        // Both receipts were updated (linked).
+        coVerify(exactly = 2) { ctx.addRowsUpdated() }
+    }
+
     private fun sampleReceipt(
         id: Long,
         documentType: String = "RECEIPT",
-        processingStatus: String = "PARSED"
+        processingStatus: String = "PARSED",
+        parsedMerchant: String = "Store"
     ): ScannedReceipt {
         return ScannedReceipt(
             id = id,
             imagePath = null,
             rawOcrText = "sample",
             parsedTotal = 12.34,
-            parsedMerchant = "Store",
+            parsedMerchant = parsedMerchant,
             parsedDate = 1_700_000_000_000L,
             parsedItems = null,
             parsedTaxAmount = null,

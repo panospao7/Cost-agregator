@@ -38,6 +38,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -50,6 +51,21 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class DailyBriefingWorkerTest {
+
+    /**
+     * Helper to create a real [TimeoutCancellationException] without accessing
+     * the internal constructor. Used by post-delivery timeout tests.
+     */
+    private fun fakeTimeoutCancellationException(): TimeoutCancellationException {
+        return try {
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(10L) }
+            }
+            throw IllegalStateException("Expected TimeoutCancellationException")
+        } catch (e: TimeoutCancellationException) {
+            e
+        }
+    }
 
     private lateinit var context: Context
     private lateinit var generateDashboardBriefingUseCase: GenerateDashboardBriefingUseCase
@@ -537,5 +553,242 @@ class DailyBriefingWorkerTest {
         assertEquals(Result.success(), result2)
         assertEquals("Delivery should have been called twice total", 2, capturedIds.size)
         assertEquals("Retry must use same deterministic notificationId", firstId, capturedIds[1])
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PR12K-5: DailyBriefing post-delivery timeout idempotency tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `timeout_after_delivery_returns_retry`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
+        coEvery { deliverProactiveBriefingNotificationUseCase(
+            dateKey = any(), startedAt = any(), notificationId = any()
+        ) } returns Unit
+
+        // Simulate timeout AFTER delivery by making addNotificationsSent throw.
+        // In the worker, addNotificationsSent() is the last line inside withTimeout,
+        // so a failure there mimics "delivery succeeded, then the pipeline timed out".
+        every { ctx.addNotificationsSent() } throws fakeTimeoutCancellationException()
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.retry(), result)
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(any(), any()) }
+        coVerify(exactly = 1) {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = any()
+            )
+        }
+    }
+
+    @Test
+    fun `timeout_after_delivery_retry_uses_same_notification_id`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
+        // Allow artifact check to return null so both attempts generate+deliver
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+
+        val capturedIds = mutableListOf<Int>()
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)
+            )
+        } returns Unit
+
+        // First attempt times out after delivery; second succeeds.
+        var addNotifCount = 0
+        every { ctx.addNotificationsSent() } answers {
+            addNotifCount++
+            if (addNotifCount == 1) {
+                throw fakeTimeoutCancellationException()
+            }
+        }
+
+        // First attempt → retry after timeout
+        val result1 = buildWorker().doWork()
+        assertEquals(Result.retry(), result1)
+
+        // Second attempt (retry) → complete successfully
+        val result2 = buildWorker().doWork()
+        assertEquals(Result.success(), result2)
+
+        // Both attempts should have called delivery with the same deterministic notificationId
+        assertEquals(2, capturedIds.size)
+        assertEquals(
+            "Retry must use same deterministic notificationId as first attempt",
+            capturedIds[0], capturedIds[1]
+        )
+    }
+
+    @Test
+    fun `timeout_after_delivery_retry_does_not_duplicate_artifact`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
+
+        // First call to getLatest returns null (no existing artifact),
+        // subsequent calls return the artifact generated on first attempt.
+        var getLatestCount = 0
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } answers {
+            getLatestCount++
+            if (getLatestCount == 1) null else freshBriefingArtifact()
+        }
+
+        val capturedIds = mutableListOf<Int>()
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)
+            )
+        } returns Unit
+
+        var addNotifCount = 0
+        every { ctx.addNotificationsSent() } answers {
+            addNotifCount++
+            if (addNotifCount == 1) {
+                throw fakeTimeoutCancellationException()
+            }
+        }
+
+        // First attempt: no artifact → generate → deliver → timeout → retry
+        assertEquals(Result.retry(), buildWorker().doWork())
+
+        // Second attempt: artifact exists (returned by getLatest) → skip → success
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        // Generation must happen exactly once — no duplicate artifact on retry
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(any(), any()) }
+        // Delivery must happen exactly once — the retry finds the existing artifact
+        // and short-circuits before any delivery call.
+        coVerify(exactly = 1) {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = any()
+            )
+        }
+    }
+
+    @Test
+    fun `timeout_after_delivery_retry_marks_artifact_delivered_once`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
+
+        // First call returns null; subsequent calls return the artifact generated
+        // on the first attempt, simulating that the first run stored an artifact.
+        var getLatestCount = 0
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } answers {
+            getLatestCount++
+            if (getLatestCount == 1) null else freshBriefingArtifact()
+        }
+
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = any()
+            )
+        } returns Unit
+
+        every { ctx.addNotificationsSent() } throws fakeTimeoutCancellationException()
+
+        // First attempt: deliver succeeds, then timeout → retry
+        assertEquals(Result.retry(), buildWorker().doWork())
+
+        // Second attempt: artifact exists → skip → complete successfully
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        // The deliver use case was invoked exactly once (first attempt),
+        // marking the notification as delivered. The retry does not re-deliver.
+        coVerify(exactly = 1) {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = any()
+            )
+        }
+        // addNotificationsSent was called exactly once during the first attempt
+        // (before the TimeoutCancellationException), recording the delivery metric.
+        verify(exactly = 1) { ctx.addNotificationsSent() }
+    }
+
+    @Test
+    fun `timeout_after_delivery_retry_replaces_same_notification`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+
+        val capturedIds = mutableListOf<Int>()
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = capture(capturedIds)
+            )
+        } returns Unit
+
+        var addNotifCount = 0
+        every { ctx.addNotificationsSent() } answers {
+            addNotifCount++
+            if (addNotifCount == 1) {
+                throw fakeTimeoutCancellationException()
+            }
+        }
+
+        // First attempt → retry
+        assertEquals(Result.retry(), buildWorker().doWork())
+
+        // Second attempt (retry) → success
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        // Both attempts used the same notificationId; Android NotificationManager
+        // replaces (does not duplicate) notifications with the same ID.
+        assertEquals(2, capturedIds.size)
+        assertEquals(
+            "Both delivery attempts must use the same notification ID so the" +
+                    " Android NotificationManager replaces the existing notification",
+            capturedIds[0], capturedIds[1]
+        )
+        // Exactly one unique ID was used across both attempts
+        assertEquals(1, capturedIds.distinct().size)
+    }
+
+    @Test
+    fun `successful_retry_records_notifications_sent_once`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } returns Unit
+
+        // First call returns null (no artifact), subsequent calls return the artifact
+        var getLatestCount = 0
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } answers {
+            getLatestCount++
+            if (getLatestCount == 1) null else freshBriefingArtifact()
+        }
+
+        coEvery {
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = any(), startedAt = any(), notificationId = any()
+            )
+        } returns Unit
+
+        var addNotifCount = 0
+        every { ctx.addNotificationsSent() } answers {
+            addNotifCount++
+            if (addNotifCount == 1) {
+                throw fakeTimeoutCancellationException()
+            }
+        }
+
+        // First attempt: deliver, timeout → retry (addNotificationsSent was called once)
+        assertEquals(Result.retry(), buildWorker().doWork())
+
+        // Second attempt: artifact exists → skip → success (addNotificationsSent NOT called)
+        assertEquals(Result.success(), buildWorker().doWork())
+
+        // notificationsSent metric recorded exactly once — the count from the
+        // first attempt's successful delivery. The retry skips because the
+        // artifact already exists and is READY.
+        assertEquals(
+            "notificationsSent metric must be recorded exactly once",
+            1, addNotifCount
+        )
     }
 }
