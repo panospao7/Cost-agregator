@@ -4,9 +4,10 @@ Last updated: 2026-06-30
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12K ALL COMPLETE**  
-> All deep-review blockers resolved. MIT-016/MIT-017 are fully done.  
-> Remaining pre-existing test failures: 12 in WarrantyExpirationWorkerTest, 1 in WorkerRestoreBarrierIdempotencyGoldenTest — unchanged by this PR.
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12K ALL COMPLETE; PR12L DIAGNOSTIC POLISH PENDING**  
+> Core architecture is complete. PR12L cleans up remaining diagnostic/sanitization edge cases.  
+> MIT-016/MIT-017: core complete; final hardening tracked in PR12L.  
+> Remaining pre-existing test failures: 12 in WarrantyExpirationWorkerTest, 1 in WorkerRestoreBarrierIdempotencyGoldenTest — unchanged.
 
 ---
 
@@ -1400,11 +1401,11 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 ---
 
-# 18. Status (PRs 1–12K — ALL COMPLETE)
+# 18. Status (PRs 1–12K — Core Complete; PR12L Polish Pending)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** PRs 1–11 COMPLETE; PR12A–PR12K ALL COMPLETE  
-**HEAD commit:** `aba0763b`  
+**Status:** PRs 1–11 COMPLETE; PR12A–PR12K ALL COMPLETE; PR12L DIAGNOSTIC POLISH PENDING  
+**Latest implementation commit:** `aba0763b`  
 **Last updated:** 2026-07-01
 
 ## Summary
