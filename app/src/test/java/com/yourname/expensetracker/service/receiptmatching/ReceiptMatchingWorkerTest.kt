@@ -142,7 +142,7 @@ class ReceiptMatchingWorkerTest {
         coVerify(exactly = 0) { matchService.recordMatchAttempted(any(), any()) }
         coVerify(exactly = 0) { matchService.recordMatchNotFound(any()) }
         coVerify(exactly = 0) { matchService.recordMatchSkippedDocumentType(any(), any()) }
-        coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any()) }
+        coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
         // P9-S4 zero-count: an empty receipt list increments no counters.
         coVerify(exactly = 0) { ctx.addRowsScanned() }
         coVerify(exactly = 0) { ctx.addRowsSkipped() }
@@ -198,8 +198,9 @@ class ReceiptMatchingWorkerTest {
         // P9-P1-08 regression guard: a link failure must emit a durable event,
         // not merely a Timber.w log. This assertion makes the old "only logged"
         // bug unable to recur silently.
+        // PR12L-2: uses structured reason code + error class instead of raw message
         coVerify(exactly = 1) {
-            matchService.recordAutoMatchLinkFailed(30L, 900L, "link failed")
+            matchService.recordAutoMatchLinkFailed(30L, 900L, "RECEIPT_LINK_INVALID_STATE", "IllegalStateException")
         }
         // A failed link must not be treated as an auto-match success notification.
         coVerify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
@@ -224,7 +225,7 @@ class ReceiptMatchingWorkerTest {
 
         assertEquals(Result.success(), result)
         coVerify(exactly = 1) { notificationService.sendBudgetAlert(any(), any(), any()) }
-        coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any()) }
+        coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
         // P9-S4 counts: a successful auto-match scans, updates, and notifies.
         coVerify(exactly = 1) { ctx.addRowsScanned() }
         coVerify(exactly = 1) { ctx.addRowsUpdated() }
@@ -251,8 +252,118 @@ class ReceiptMatchingWorkerTest {
 
         assertEquals(Result.success(), result)
         // Already-claimed is a benign no-op, not a link failure.
-        coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any()) }
+        coVerify(exactly = 0) { matchService.recordAutoMatchLinkFailed(any(), any(), any(), any()) }
         coVerify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+    }
+
+    // ── PR12L-2: structured link-failure diagnostics ─────────────────────────
+
+    @Test
+    fun `link_failure_uses_structured_reason_code`() = runTest {
+        // An IllegalArgumentException must be mapped to RECEIPT_LINK_INVALID_ARGUMENT,
+        // not the raw exception message.
+        val receipt = sampleReceipt(id = 70L)
+        val expense = sampleExpense(id = 920L)
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.98)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.failure(IllegalArgumentException("bad input data"))
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) {
+            matchService.recordAutoMatchLinkFailed(
+                receiptId = 70L,
+                expenseId = 920L,
+                reason = "RECEIPT_LINK_INVALID_ARGUMENT",
+                errorClass = "IllegalArgumentException"
+            )
+        }
+    }
+
+    @Test
+    fun `link_failure_error_class_not_message_persisted`() = runTest {
+        // The raw exception message must NOT be persisted as the reason;
+        // the reason must be the structured code and the errorClass must be
+        // the Java simple name.
+        val receipt = sampleReceipt(id = 71L)
+        val expense = sampleExpense(id = 921L)
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.98)
+        val rawMessage = "some sensitive internal detail"
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.failure(IllegalStateException(rawMessage))
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        // The reason must NOT be the raw message
+        coVerify(exactly = 1) {
+            matchService.recordAutoMatchLinkFailed(
+                receiptId = 71L,
+                expenseId = 921L,
+                reason = "RECEIPT_LINK_INVALID_STATE",
+                errorClass = "IllegalStateException"
+            )
+        }
+    }
+
+    // ── PR12L-3: durable notification-suppression diagnostics ───────────────
+
+    @Test
+    fun `permission_denied_records_suppressed_notification_diagnostic`() = runTest {
+        // When permission is denied, the worker must record a durable
+        // NOTIFICATION_SUPPRESSED event with the appropriate reason code.
+        val receipt = sampleReceipt(id = 80L)
+        val expense = sampleExpense(id = 930L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns false
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.96)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 80L, expenseId = 930L))
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) {
+            matchService.recordNotificationSuppressed(
+                receiptId = 80L,
+                expenseId = 930L,
+                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_DENIED",
+                errorClass = null
+            )
+        }
+    }
+
+    @Test
+    fun `permission_revoked_after_check_records_suppressed_diagnostic`() = runTest {
+        // When permission is granted at check time but revoked before sending,
+        // the SecurityException is caught and a diagnostic is recorded.
+        val receipt = sampleReceipt(id = 81L)
+        val expense = sampleExpense(id = 931L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.97)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 81L, expenseId = 931L))
+        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws SecurityException("notif denied")
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) {
+            matchService.recordNotificationSuppressed(
+                receiptId = 81L,
+                expenseId = 931L,
+                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED",
+                errorClass = "SecurityException"
+            )
+        }
     }
 
     @Test

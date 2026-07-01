@@ -245,7 +245,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 rowsScanned = rowsScanned,
                 rowsUpdated = rowsUpdated,
                 notificationsSent = notificationsSent,
-                statusReason = message,
+                statusReason = safeReason,
                 terminalReasonCode = safeReason,
                 terminalDiagnosticCode = safeReason
             ))
@@ -255,7 +255,7 @@ class WorkerRunLoggerImpl @Inject constructor(
         override suspend fun skipped(reason: String): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("SKIPPED", TerminalArgs(
-                statusReason = reason,
+                statusReason = safeReason,
                 terminalReasonCode = safeReason,
                 terminalDiagnosticCode = safeReason
             ))
@@ -265,7 +265,7 @@ class WorkerRunLoggerImpl @Inject constructor(
         override suspend fun retry(reason: String, error: Throwable?): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("RETRY", TerminalArgs(
-                retryReason = reason,
+                retryReason = safeReason,
                 errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
                 errorClass = error?.javaClass?.simpleName,
                 terminalReasonCode = safeReason,
@@ -277,7 +277,7 @@ class WorkerRunLoggerImpl @Inject constructor(
         override suspend fun failure(reason: String, error: Throwable?): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("FAILED", TerminalArgs(
-                statusReason = reason,
+                statusReason = safeReason,
                 errorMessage = sanitizer.sanitizeExceptionMessage(error?.message),
                 errorClass = error?.javaClass?.simpleName,
                 terminalReasonCode = safeReason,
@@ -289,8 +289,8 @@ class WorkerRunLoggerImpl @Inject constructor(
         override suspend fun cancelled(reason: String): TerminalWriteOutcome {
             val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
             val result = terminal("CANCELLED", TerminalArgs(
-                statusReason = reason,
-                cancellationReason = reason,
+                statusReason = safeReason,
+                cancellationReason = safeReason,
                 terminalReasonCode = safeReason,
                 terminalDiagnosticCode = safeReason
             ))

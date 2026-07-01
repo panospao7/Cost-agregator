@@ -216,7 +216,7 @@ class ReceiptMatchLifecycleService @Inject constructor(
      * P9-P1-08: Previously this path was only logged via Timber.w and produced
      * no durable trace.
      */
-    suspend fun recordAutoMatchLinkFailed(receiptId: Long, expenseId: Long?, reason: String?) {
+    suspend fun recordAutoMatchLinkFailed(receiptId: Long, expenseId: Long?, reason: String?, errorClass: String? = null) {
         writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordAutoMatchLinkFailed")
         val now = timeProvider.now()
         database.withTransaction {
@@ -228,7 +228,32 @@ class ReceiptMatchLifecycleService @Inject constructor(
                 oldStatus = receipt.processingStatus, newStatus = null,
                 actor = "system:match_lifecycle",
                 message = "Auto-match link failed for expense $expenseId",
-                metadata = null, errorDetails = reason
+                metadata = null, errorDetails = if (errorClass != null) "code=$reason, class=$errorClass" else reason
+            ))
+        }
+    }
+
+    // ── PR12L-3: durable notification-suppression diagnostics ────────────────
+
+    /**
+     * Records that a notification was suppressed for [receiptId]'s auto-match.
+     *
+     * PR12L-3: Previously suppression was only logged via Timber; this provides
+     * a durable trace for auditing, debugging, and gap detection.
+     */
+    suspend fun recordNotificationSuppressed(receiptId: Long, expenseId: Long?, reasonCode: String, errorClass: String? = null) {
+        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordNotificationSuppressed")
+        val now = timeProvider.now()
+        database.withTransaction {
+            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = receiptId, sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = ReceiptLifecycleEventTypes.NOTIFICATION_SUPPRESSED, occurredAt = now,
+                oldStatus = receipt.processingStatus, newStatus = null,
+                actor = "system:match_lifecycle",
+                message = "Notification suppressed for expense $expenseId: $reasonCode",
+                metadata = null, errorDetails = if (errorClass != null) "class=$errorClass" else null
             ))
         }
     }

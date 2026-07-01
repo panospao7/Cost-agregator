@@ -577,7 +577,7 @@ class WorkerRunLoggerTest {
             dao.completeTerminal(
                 eq(1L), eq("RETRY"), any(),
                 any(), any(), any(),
-                any(), eq("pipeline timeout"), any(), eq("TimeoutCancellationException"), any(),
+                any(), eq("WORKER_UNHANDLED_EXCEPTION"), any(), eq("TimeoutCancellationException"), any(),
                 eq("WORKER_UNHANDLED_EXCEPTION"), eq("TIMEOUT"), any(), any()
             )
         }
@@ -850,7 +850,7 @@ class WorkerRunLoggerTest {
             dao.completeTerminal(
                 eq(1L), eq("SUCCESS"), any(),
                 rowsScanned = eq(0), rowsUpdated = eq(0), notificationsSent = eq(0),
-                statusReason = eq("NO_WORK"), any(), any(), any(), any(),
+                statusReason = eq("WORKER_NO_WORK"), any(), any(), any(), any(),
                 terminalReasonCode = eq("WORKER_NO_WORK"),
                 terminalDiagnosticCode = eq("WORKER_NO_WORK"),
                 any(), any()

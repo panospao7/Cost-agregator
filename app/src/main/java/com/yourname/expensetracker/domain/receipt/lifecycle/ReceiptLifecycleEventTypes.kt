@@ -48,6 +48,8 @@ object ReceiptLifecycleEventTypes {
     // P9-P1-08: worker-side match-outcome diagnostics (previously silent)
     const val MATCH_SKIPPED_DOCUMENT_TYPE = "MATCH_SKIPPED_DOCUMENT_TYPE"
     const val AUTO_MATCH_LINK_FAILED = "AUTO_MATCH_LINK_FAILED"
+    // PR12L-3: durable notification-suppression diagnostics
+    const val NOTIFICATION_SUPPRESSED = "NOTIFICATION_SUPPRESSED"
     const val MATCH_REJECTED = "MATCH_REJECTED"
     const val MATCH_CLEARED = "MATCH_CLEARED"
     const val MATCH_APPROVED = "MATCH_APPROVED"
