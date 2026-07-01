@@ -4,9 +4,10 @@ Last updated: 2026-06-30
 Scope: MIT-016, MIT-017, MIT-035, MIT-065, MIT-070, MIT-082  
 Goal: every DB-writing/background worker has a full guard, unique lease, durable run ledger, safe diagnostics, and restore-aware execution.
 
-> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12I ALL COMPLETE; PR12J SEMANTIC HARDENING COMPLETE**  
-> All deep-review blockers resolved. MIT-016/MIT-017 are fully done.  
-> Remaining pre-existing test failures: 12 in WarrantyExpirationWorkerTest, 1 in WorkerRestoreBarrierIdempotencyGoldenTest — unchanged by this PR.
+> **Status: PRs 1–11 ALL COMPLETE; PR12A–PR12I ALL COMPLETE; PR12J PARTIAL; PR12K FINAL SEMANTIC FIXES PENDING**  
+> Deep review found 6 remaining semantic blockers that require PR12K.  
+> Do NOT mark MIT-016/MIT-017 fully done until PR12K passes.  
+> Remaining pre-existing test failures: 12 in WarrantyExpirationWorkerTest, 1 in WorkerRestoreBarrierIdempotencyGoldenTest — unchanged.
 
 ---
 
@@ -1400,11 +1401,11 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 ---
 
-# 18. Status (PRs 1–12J — ALL COMPLETE)
+# 18. Status (PRs 1–12J — Partial; PR12K Pending)
 
 **Branch:** `worker-architecture-prs-1-5`  
-**Status:** PRs 1–11 COMPLETE; PR12A–PR12J ALL COMPLETE  
-**HEAD commit:** `b628baf2`  
+**Status:** PRs 1–11 COMPLETE; PR12A–PR12I ALL COMPLETE; PR12J PARTIAL; PR12K FINAL SEMANTIC FIXES PENDING  
+**HEAD commit:** `cfc973bf`  
 **Last updated:** 2026-07-01
 
 ## Summary
@@ -1574,7 +1575,7 @@ Build the shared guard/lease/ledger foundation first, then migrate workers in ri
 
 # 19. Final Status PR12 — Deep Review Blocker Resolution
 
-All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation. PR12I-1 through PR12I-5 resolved the 6 remaining blockers from the PR12H deep review: durable terminal fallback diagnostics, complete reason-code persistence, NotificationIntake metrics, static guard hardening, and DailyBriefing idempotency. PR12J resolved the final 6 semantic hardening blockers: safe structured reason codes (all workers use `DiagnosticReasonCode.WORKER_*` constants), bounded suspend terminal diagnostic sink (500ms timeout with `Dispatchers.IO + NonCancellable`), DataRetention privacy semantics (guard blocks on `RAW_NOTIFICATION_RETENTION`/`RAW_OCR_RETENTION`), ReceiptMatching notification semantics (`requiresNotificationPermission = true`), static guard negative fixtures (4 synthetic violation tests), and DailyBriefing post-delivery timeout idempotency (deterministic notificationId + artifact deduplication).
+All 9 blocking issues identified in the deep review of PRs 1–11 have been resolved across PR12A–PR12H. PR12H-1 through PR12H-6 further hardened timeout handling, checkpoint semantics, privacy-split reload, durable terminal diagnostics, reason codes, and cause preservation. PR12I-1 through PR12I-5 resolved the 6 remaining blockers from the PR12H deep review: durable terminal fallback diagnostics, complete reason-code persistence, NotificationIntake metrics, static guard hardening, and DailyBriefing idempotency. PR12J made progress on safe structured reason codes and bounded suspend terminal diagnostics, but a deep review identified 6 remaining semantic blockers requiring PR12K: DataRetention must not be gated by raw-retention capabilities, ReceiptMatching must treat notifications as optional side effects, reason codes must be sanitized at every boundary, DataRetention diagnostics must not persist raw exception messages, DailyBriefing post-delivery timeout idempotency must be proven with a real test, and static guards need structured allowlists with owner/reason/issue/expiry.
 
 | # | Blocker | PR | Resolution |
 |---|---|---|---|
