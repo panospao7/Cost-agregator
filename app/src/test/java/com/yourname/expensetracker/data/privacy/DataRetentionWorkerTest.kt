@@ -30,8 +30,10 @@ import io.mockk.slot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import java.io.File
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -372,5 +374,22 @@ class DataRetentionWorkerTest {
                 event.metadata.toJson().contains("IllegalArgumentException")
             })
         }
+    }
+
+    // ── PR12M-3: No legacy raw-purge helpers ──────────────────────────
+
+    @Test
+    fun `data_retention_worker_has_no_legacy_raw_purge_helpers`() {
+        val sourceFile = File("src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt")
+        assertTrue("Source file must exist", sourceFile.exists())
+        val content = sourceFile.readText()
+        assertFalse(
+            "purgeRawNotifications must be removed — legacy unsafe helper",
+            content.contains("purgeRawNotifications")
+        )
+        assertFalse(
+            "purgeRawOcrText must be removed — legacy unsafe helper",
+            content.contains("purgeRawOcrText")
+        )
     }
 }

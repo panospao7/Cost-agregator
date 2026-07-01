@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.WorkerReasonCodes
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -217,6 +218,8 @@ class ReceiptMatchLifecycleService @Inject constructor(
      * no durable trace.
      */
     suspend fun recordAutoMatchLinkFailed(receiptId: Long, expenseId: Long?, reason: String?, errorClass: String? = null) {
+        val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
+        val safeErrorClass = errorClass?.take(80)?.filter { it.isLetterOrDigit() || it == '.' || it == '_' }
         writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordAutoMatchLinkFailed")
         val now = timeProvider.now()
         database.withTransaction {
@@ -228,7 +231,7 @@ class ReceiptMatchLifecycleService @Inject constructor(
                 oldStatus = receipt.processingStatus, newStatus = null,
                 actor = "system:match_lifecycle",
                 message = "Auto-match link failed for expense $expenseId",
-                metadata = null, errorDetails = if (errorClass != null) "code=$reason, class=$errorClass" else reason
+                metadata = null, errorDetails = if (safeErrorClass != null) "code=$safeReason, class=$safeErrorClass" else safeReason
             ))
         }
     }
@@ -242,6 +245,8 @@ class ReceiptMatchLifecycleService @Inject constructor(
      * a durable trace for auditing, debugging, and gap detection.
      */
     suspend fun recordNotificationSuppressed(receiptId: Long, expenseId: Long?, reasonCode: String, errorClass: String? = null) {
+        val safeReason = WorkerReasonCodes.sanitizeReasonCode(reasonCode)
+        val safeErrorClass = errorClass?.take(80)?.filter { it.isLetterOrDigit() || it == '.' || it == '_' }
         writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordNotificationSuppressed")
         val now = timeProvider.now()
         database.withTransaction {
@@ -252,8 +257,8 @@ class ReceiptMatchLifecycleService @Inject constructor(
                 eventType = ReceiptLifecycleEventTypes.NOTIFICATION_SUPPRESSED, occurredAt = now,
                 oldStatus = receipt.processingStatus, newStatus = null,
                 actor = "system:match_lifecycle",
-                message = "Notification suppressed for expense $expenseId: $reasonCode",
-                metadata = null, errorDetails = if (errorClass != null) "class=$errorClass" else null
+                message = "Notification suppressed for expense $expenseId: $safeReason",
+                metadata = null, errorDetails = if (safeErrorClass != null) "code=$safeReason, class=$safeErrorClass" else safeReason
             ))
         }
     }

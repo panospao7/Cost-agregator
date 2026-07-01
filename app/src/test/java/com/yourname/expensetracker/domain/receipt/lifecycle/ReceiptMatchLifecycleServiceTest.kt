@@ -17,7 +17,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 private const val FIXED_NOW = 1_710_000_000_000L
@@ -138,14 +138,14 @@ class ReceiptMatchLifecycleServiceTest {
         service.recordAutoMatchLinkFailed(
             receiptId = receiptId,
             expenseId = 555L,
-            reason = "Receipt already linked"
+            reason = "RECEIPT_ALREADY_LINKED"
         )
 
         val events = receiptEventDao.getEventsForReceipt(receiptId)
         assertEquals(1, events.size)
         assertEquals("AUTO_MATCH_LINK_FAILED", events[0].eventType)
         assertEquals(receiptId, events[0].receiptId)
-        assertEquals("Receipt already linked", events[0].errorDetails)
+        assertEquals("RECEIPT_ALREADY_LINKED", events[0].errorDetails)
         assertTrue(events[0].message!!.contains("555"))
     }
 
@@ -180,6 +180,52 @@ class ReceiptMatchLifecycleServiceTest {
         val events = receiptEventDao.getEventsForReceipt(receiptId)
         assertEquals(1, events.size)
         assertEquals("AUTO_MATCH_LINK_FAILED", events[0].eventType)
-        assertNull(events[0].errorDetails)
+        // Null reason is sanitized to the fallback diagnostic code
+        assertEquals("WORKER_UNHANDLED_EXCEPTION", events[0].errorDetails)
+    }
+
+    // ── PR12M-1: defensive sanitization boundaries ───────────────────────────
+
+    @Test
+    fun `recordAutoMatchLinkFailed_sanitizes_raw_reason`() = runTest {
+        val receiptId = insertReceipt()
+
+        // Pass a path-like string that is NOT a valid reason code;
+        // it must be sanitized to the fallback code.
+        service.recordAutoMatchLinkFailed(
+            receiptId = receiptId,
+            expenseId = 555L,
+            reason = "C:\\Users\\foo\\receipt.txt",
+            errorClass = "java.lang.RuntimeException"
+        )
+
+        val events = receiptEventDao.getEventsForReceipt(receiptId)
+        assertEquals(1, events.size)
+        assertEquals("AUTO_MATCH_LINK_FAILED", events[0].eventType)
+        // The path-like reason is replaced by the fallback diagnostic code
+        assertEquals("code=WORKER_UNHANDLED_EXCEPTION, class=java.lang.RuntimeException", events[0].errorDetails)
+    }
+
+    @Test
+    fun `recordNotificationSuppressed_sanitizes_reason_code`() = runTest {
+        val receiptId = insertReceipt()
+
+        // Pass an invalid reason code with characters that are not
+        // alphanumeric or underscore; it must be sanitized.
+        service.recordNotificationSuppressed(
+            receiptId = receiptId,
+            expenseId = 555L,
+            reasonCode = "some invalid code with spaces and \n newlines",
+            errorClass = null
+        )
+
+        val events = receiptEventDao.getEventsForReceipt(receiptId)
+        assertEquals(1, events.size)
+        assertEquals("NOTIFICATION_SUPPRESSED", events[0].eventType)
+        // The invalid reason code is sanitized to the fallback code
+        assertEquals("WORKER_UNHANDLED_EXCEPTION", events[0].errorDetails)
+        // The message also uses the sanitized value (not the raw input)
+        assertTrue(events[0].message!!.contains("WORKER_UNHANDLED_EXCEPTION"))
+        assertFalse(events[0].message!!.contains("some invalid code"))
     }
 }

@@ -106,6 +106,8 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                                             message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
                                         )
                                         ctx.addNotificationsSent()
+                                    } catch (e: CancellationException) {
+                                        throw e
                                     } catch (e: SecurityException) {
                                         Timber.w(e, "Notification permission revoked after check for receipt ${receipt.id}")
                                         // PR12L-3: durable diagnostic for permission-revoked suppression
@@ -114,6 +116,17 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                                                 receiptId = receipt.id,
                                                 expenseId = matchResult.transaction.id,
                                                 reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED",
+                                                errorClass = e.javaClass.simpleName
+                                            )
+                                        }
+                                    } catch (e: Exception) {
+                                        Timber.w(e, "Notification service failure for receipt ${receipt.id}")
+                                        // PR12M-2: durable diagnostic for non-permission notification failures
+                                        safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
+                                            matchService.recordNotificationSuppressed(
+                                                receiptId = receipt.id,
+                                                expenseId = matchResult.transaction.id,
+                                                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_SERVICE_FAILURE",
                                                 errorClass = e.javaClass.simpleName
                                             )
                                         }

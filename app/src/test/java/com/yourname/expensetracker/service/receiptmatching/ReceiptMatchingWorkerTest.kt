@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
+import kotlinx.coroutines.CancellationException
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -364,6 +365,64 @@ class ReceiptMatchingWorkerTest {
                 errorClass = "SecurityException"
             )
         }
+    }
+
+    // ── PR12M-2: suppress all optional notification failures durably ─────────
+
+    @Test
+    fun `notification_service_exception_records_suppression_and_worker_succeeds`() = runTest {
+        // When sendBudgetAlert throws a non-cancellation, non-SecurityException,
+        // the worker must catch it, record a SERVICE_FAILURE suppression diagnostic,
+        // and still succeed.
+        val receipt = sampleReceipt(id = 82L)
+        val expense = sampleExpense(id = 932L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.98)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 82L, expenseId = 932L))
+        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws RuntimeException("notification service unavailable")
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) {
+            matchService.recordNotificationSuppressed(
+                receiptId = 82L,
+                expenseId = 932L,
+                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_SERVICE_FAILURE",
+                errorClass = "RuntimeException"
+            )
+        }
+        // The notification-sent metric must NOT be incremented on failure.
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
+        // The link still succeeded.
+        coVerify(exactly = 1) { ctx.addRowsUpdated() }
+    }
+
+    @Test
+    fun `notification_service_cancellation_rethrows`() = runTest {
+        // When sendBudgetAlert throws CancellationException, it must propagate
+        // through the notification catch, causing the worker to NOT succeed.
+        val receipt = sampleReceipt(id = 83L)
+        val expense = sampleExpense(id = 933L)
+        coEvery { notificationPermissionChecker.areNotificationsEnabled() } returns true
+        coEvery { receiptRepository.getProcessableReceipts() } returns listOf(receipt)
+        coEvery { matcher.findBestMatch(receipt, any()) } returns MatchResult.AutoMatch(expense, 0.98)
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns kotlin.Result.success(sampleLink(receiptId = 83L, expenseId = 933L))
+        coEvery { notificationService.sendBudgetAlert(any(), any(), any()) } throws CancellationException("job cancelled")
+
+        val result = buildWorker().doWork()
+
+        // CancellationException propagates -> worker does NOT succeed.
+        assertEquals(Result.failure(), result)
+        // No suppression diagnostic should be recorded for cancellation.
+        coVerify(exactly = 0) { matchService.recordNotificationSuppressed(any(), any(), any(), any()) }
+        // No notification-sent metric.
+        coVerify(exactly = 0) { ctx.addNotificationsSent() }
     }
 
     @Test

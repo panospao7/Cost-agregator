@@ -40,11 +40,10 @@ import java.util.concurrent.TimeUnit
  * after the retention period configured in [PrivacySettings].
  *
  * ## RCP-10: Raw OCR purge respects retention
- * The [purgeRawOcrText] method nulls out [ScannedReceipt.rawOcrText] and sets
- * [ScannedReceipt.rawOcrTextPurgedAt] for receipts whose `createdAt` is older
- * than the configured retention period AND that have not already been purged.
- * This ensures that raw OCR data is not retained indefinitely and respects
- * the user's privacy retention preferences.
+ * Raw OCR data on [ScannedReceipt.rawOcrText] is nulled out for receipts
+ * whose `createdAt` is older than the configured retention period AND that
+ * have not already been purged. This ensures that raw OCR data is not
+ * retained indefinitely and respects the user's privacy retention preferences.
  *
  * Runs daily via [PeriodicWorkRequest] and is safe to call multiple times:
  * - Only rows whose `rawContentPurgedAt` / `rawOcrTextPurgedAt` IS NULL are candidates.
@@ -252,73 +251,7 @@ class DataRetentionWorker @AssistedInject constructor(
         else -> false
     }
 
-    /**
-     * Nulls out raw content fields of [RawNotification] rows whose
-     * [RawNotification.capturedAt] is older than [cutoff] and that have not
-     * already been purged ([RawNotification.rawContentPurgedAt] IS NULL).
-     *
-     * P2-28: Uses LIMIT-based pagination to avoid loading all candidates into memory.
-     *
-     * @return number of rows updated
-     */
-    private suspend fun purgeRawNotifications(
-        dao: com.yourname.expensetracker.data.database.dao.RawNotificationDao,
-        cutoff: Long,
-        now: Long
-    ): Int {
-        var totalPurged = 0
-        while (true) {
-            val candidates = dao.getUnpurgedRawNotificationsOlderThan(cutoff, PAGE_SIZE)
-            if (candidates.isEmpty()) break
 
-            for (notification in candidates) {
-                executionGuard.checkpoint("data_retention_notifications")
-                dao.updateRawContentPurged(
-                    id = notification.id,
-                    rawContentPurgedAt = now,
-                    title = null,
-                    text = null,
-                    bigText = null,
-                    subText = null,
-                    extrasJson = null,
-                    parseResult = null
-                )
-            }
-            totalPurged += candidates.size
-        }
-        return totalPurged
-    }
-
-    /**
-     * Nulls out [ScannedReceipt.rawOcrText] for rows whose [ScannedReceipt.createdAt]
-     * is older than [cutoff] and that have not already been purged
-     * ([ScannedReceipt.rawOcrTextPurgedAt] IS NULL).
-     *
-     * P2-28: Uses LIMIT-based pagination to avoid loading all candidates into memory.
-     *
-     * @return number of rows updated
-     */
-    private suspend fun purgeRawOcrText(
-        dao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao,
-        cutoff: Long,
-        now: Long
-    ): Int {
-        var totalPurged = 0
-        while (true) {
-            val candidates = dao.getUnpurgedScannedReceiptsOlderThan(cutoff, PAGE_SIZE)
-            if (candidates.isEmpty()) break
-
-            for (receipt in candidates) {
-                executionGuard.checkpoint("data_retention_ocr")
-                dao.updateRawOcrTextPurged(
-                    id = receipt.id,
-                    rawOcrTextPurgedAt = now
-                )
-            }
-            totalPurged += candidates.size
-        }
-        return totalPurged
-    }
 
     // ── P8-PR1 (NEW-P8-002): Checkpoint helpers ──────────────────────
 
@@ -368,8 +301,6 @@ class DataRetentionWorker @AssistedInject constructor(
     companion object {
         const val TAG = "DataRetentionWorker"
         const val WORK_NAME = "data_retention"
-        private const val PAGE_SIZE = 100
-
         private const val PREFS_NAME = "data_retention_checkpoint"
         private const val CHECKPOINT_PREFIX = "completed_"
         private const val PREFS_CLEARED_KEY = "_cleared"
