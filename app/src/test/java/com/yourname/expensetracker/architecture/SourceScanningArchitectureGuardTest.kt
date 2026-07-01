@@ -129,6 +129,44 @@ class SourceScanningArchitectureGuardTest {
         .toList()
 
     /**
+     * Scans a single source string for architecture violations.
+     * Uses the same logic as the production source-tree tests.
+     */
+    private fun scanSource(name: String, text: String): List<String> {
+        val stripped = stripComments(text)
+        val violations = mutableListOf<String>()
+
+        // Rule: CoroutineWorker must have guard call
+        if (stripped.contains(": CoroutineWorker") || stripped.contains("extends CoroutineWorker")) {
+            if (!stripped.contains("runGuarded(") && !stripped.contains("runGuardedWithContext(")) {
+                violations.add("MISSING_GUARD")
+            }
+        }
+
+        // Rule: Optional notification worker must have local permission check
+        if ((stripped.contains("NotificationService") || stripped.contains("sendBudgetAlert")) &&
+            !stripped.contains("requiresNotificationPermission = true")
+        ) {
+            if (!stripped.contains("notificationPermissionChecker.areNotificationsEnabled()")) {
+                violations.add("OPTIONAL_NOTIFICATION_WITHOUT_LOCAL_CHECK")
+            }
+        }
+
+        // Rule: DataRetention must not require raw-retention capabilities
+        if (stripped.contains("WorkerGuardRequest(")) {
+            val guardBlock = stripped.substringAfter("WorkerGuardRequest(").substringBefore(")")
+            if (guardBlock.contains("requiredCapabilities") &&
+                (guardBlock.contains("PrivacyCapability.RAW_NOTIFICATION_RETENTION") ||
+                    guardBlock.contains("PrivacyCapability.RAW_OCR_RETENTION"))
+            ) {
+                violations.add("DATA_RETENTION_RAW_CAPABILITY")
+            }
+        }
+
+        return violations
+    }
+
+    /**
      * Strips line comments (// ...), block comments (/* ... */), and KDoc (/** ... */)
      * from the given source text. This prevents commented-out code from satisfying
      * architecture checks (e.g. `// runGuardedWithContext(`).
@@ -597,9 +635,11 @@ class SourceScanningArchitectureGuardTest {
                 }
             }
         """.trimIndent()
-        val stripped = stripComments(badWorker)
-        val hasLocalCheck = stripped.contains("notificationPermissionChecker.areNotificationsEnabled()")
-        assertTrue("Optional notification worker without local check must be detected", !hasLocalCheck)
+        val violations = scanSource("BadWorker.kt", badWorker)
+        assertTrue(
+            "Scanner must detect OPTIONAL_NOTIFICATION_WITHOUT_LOCAL_CHECK",
+            violations.contains("OPTIONAL_NOTIFICATION_WITHOUT_LOCAL_CHECK")
+        )
     }
 
     @Test
@@ -620,11 +660,11 @@ class SourceScanningArchitectureGuardTest {
                 }
             }
         """.trimIndent()
-        val stripped = stripComments(badWorker)
-        val guardBlock = stripped.substringAfter("WorkerGuardRequest(").substringBefore(")")
-        val hasWrongGating = guardBlock.contains("PrivacyCapability.RAW_NOTIFICATION_RETENTION") ||
-            guardBlock.contains("PrivacyCapability.RAW_OCR_RETENTION")
-        assertTrue("DataRetention with raw-retention capabilities must be detected", hasWrongGating)
+        val violations = scanSource("BadWorker.kt", badWorker)
+        assertTrue(
+            "Scanner must detect DATA_RETENTION_RAW_CAPABILITY",
+            violations.contains("DATA_RETENTION_RAW_CAPABILITY")
+        )
     }
 
     @Test
