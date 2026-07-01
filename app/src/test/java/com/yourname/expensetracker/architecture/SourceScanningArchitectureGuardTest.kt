@@ -582,4 +582,65 @@ class SourceScanningArchitectureGuardTest {
         assertFalse("Line comment must be stripped", stripped.contains("this is a comment"))
         assertFalse("Block comment must be stripped", stripped.contains("block comment"))
     }
+
+    // ── PR12L-5: Additional negative fixtures ───────────────────────────────
+
+    @Test
+    fun `negative_fixture_optional_notification_worker_without_local_check_fails`() {
+        val badWorker = """
+            class BadWorker : CoroutineWorker(context, params) {
+                override suspend fun doWork(): Result {
+                    // requiresNotificationPermission = false (correct)
+                    // BUT no local permission check before posting
+                    notificationService.sendBudgetAlert(...)
+                    return Result.success()
+                }
+            }
+        """.trimIndent()
+        val stripped = stripComments(badWorker)
+        val hasLocalCheck = stripped.contains("notificationPermissionChecker.areNotificationsEnabled()")
+        assertTrue("Optional notification worker without local check must be detected", !hasLocalCheck)
+    }
+
+    @Test
+    fun `negative_fixture_data_retention_with_raw_retention_capability_fails`() {
+        val badWorker = """
+            class BadWorker : CoroutineWorker(context, params) {
+                override suspend fun doWork(): Result {
+                    executionGuard.runGuardedWithContext(
+                        WorkerGuardRequest(
+                            workerName = "data_retention",
+                            requiredCapabilities = listOf(
+                                PrivacyCapability.RAW_NOTIFICATION_RETENTION,
+                                PrivacyCapability.RAW_OCR_RETENTION
+                            )
+                        )
+                    )
+                    return Result.success()
+                }
+            }
+        """.trimIndent()
+        val stripped = stripComments(badWorker)
+        val guardBlock = stripped.substringAfter("WorkerGuardRequest(").substringBefore(")")
+        val hasWrongGating = guardBlock.contains("PrivacyCapability.RAW_NOTIFICATION_RETENTION") ||
+            guardBlock.contains("PrivacyCapability.RAW_OCR_RETENTION")
+        assertTrue("DataRetention with raw-retention capabilities must be detected", hasWrongGating)
+    }
+
+    @Test
+    fun `negative_fixture_expired_allowlist_entry_fails`() {
+        val expiredEntry = ArchitectureAllowlistEntry(
+            fileName = "ExpiredWorker.kt",
+            rule = "DIRECT_DAO_IN_WORKER",
+            owner = "WorkerArchitecture",
+            reason = "Expired entry",
+            issue = "PR12L-5",
+            expires = LocalDate.of(2020, 1, 1)
+        )
+        val today = LocalDate.now()
+        assertTrue(
+            "Expired allowlist entry must be detected: ${expiredEntry.fileName}",
+            expiredEntry.expires.isBefore(today)
+        )
+    }
 }
