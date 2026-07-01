@@ -74,7 +74,13 @@ class FinancialHealthScoreV2 @Inject constructor(
 
     /**
      * Calculate comprehensive financial health score (0-100).
-     * 
+     *
+     * NOTE: This method has a side-effect — it persists the calculated result to
+     * `healthScoreHistoryDao` via [saveToHistory]. Callers that need a pure
+     * read without persistence should use the component methods directly
+     * (calculateSavingsRateScore, calculateRunwayScore, etc.) and avoid
+     * this convenience method.
+     *
      * @param periodStart Start of the evaluation period (inclusive)
      * @param periodEnd End of the evaluation period (inclusive)
      * @return FinancialHealthResult containing the score and all component breakdowns

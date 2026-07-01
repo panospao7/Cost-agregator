@@ -3,6 +3,7 @@ package com.yourname.expensetracker.service
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -21,6 +22,7 @@ class RecommendationDismissalHandler @Inject constructor(
             try {
                 repository.dismiss(recommendation.id)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to persist dismissal for recommendation: ${recommendation.id}")
                 return@withContext
             }
@@ -28,6 +30,7 @@ class RecommendationDismissalHandler @Inject constructor(
             try {
                 stateManager.removeFromState(recommendation.id)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to remove recommendation from state after dismissal: ${recommendation.id}")
                 refreshCurrentUserIfNeeded(recommendation.userId)
             }
@@ -39,6 +42,7 @@ class RecommendationDismissalHandler @Inject constructor(
             try {
                 stateManager.refreshForUser(userId, forceRefresh = true)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to refresh recommendations for user: $userId")
             }
         }

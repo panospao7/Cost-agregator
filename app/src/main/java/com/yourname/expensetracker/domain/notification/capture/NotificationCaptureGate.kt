@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,6 +76,7 @@ class NotificationCaptureGate @Inject constructor(
             notificationCaptureEnabled = settings.notificationCaptureEnabled
             settingsLoaded = true
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.w(e, "CaptureGate: failed to load privacy settings during warmUp")
         }
 
@@ -82,6 +84,7 @@ class NotificationCaptureGate @Inject constructor(
             blockedPackages = blockedPackageDao.getAllPackageNamesOnce().toSet()
             blockedPackagesLoaded = true
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.w(e, "CaptureGate: failed to load blocked packages during warmUp")
         }
 
@@ -185,6 +188,7 @@ class NotificationCaptureGate @Inject constructor(
                     notificationCaptureEnabled = settings.notificationCaptureEnabled
                     true
                 } catch (e: Exception) {
+                    CancellationSafe.rethrowIfCancellation(e)
                     Timber.w(e, "CaptureGate: self-heal settings load failed")
                     false
                 }
@@ -197,6 +201,7 @@ class NotificationCaptureGate @Inject constructor(
                     blockedPackages = blockedPackageDao.getAllPackageNamesOnce().toSet()
                     true
                 } catch (e: Exception) {
+                    CancellationSafe.rethrowIfCancellation(e)
                     Timber.w(e, "CaptureGate: self-heal blocked packages load failed")
                     false
                 }
@@ -227,6 +232,7 @@ class NotificationCaptureGate @Inject constructor(
         val gateDecision = try {
             privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.w(e, "CaptureGate: privacy gate check threw, failing closed")
             return NotificationCaptureDecision.Blocked(
                 reason = NotificationCaptureBlockReason.GATE_ERROR,
@@ -260,6 +266,7 @@ class NotificationCaptureGate @Inject constructor(
                 try {
                     blockedPackageDao.isBlocked(packageName)
                 } catch (e: Exception) {
+                    CancellationSafe.rethrowIfCancellation(e)
                     Timber.w(e, "CaptureGate: one-shot isBlocked query failed for %s", packageName)
                     // Fail closed: treat as blocked if we can't verify
                     true

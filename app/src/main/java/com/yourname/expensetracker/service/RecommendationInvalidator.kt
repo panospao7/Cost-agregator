@@ -2,6 +2,7 @@ package com.yourname.expensetracker.service
 
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -44,6 +45,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Trigger state refresh
                 stateManager.refreshForUser(userId)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to invalidate all recommendations for user=%s", userId)
             }
         }
@@ -66,6 +68,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Trigger state refresh to remove expired from UI
                 stateManager.refreshForUser(userId)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to invalidate stale recommendations for user=%s", userId)
             }
         }
@@ -86,6 +89,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Clear from state
                 stateManager.clearForUser(userId)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to clear recommendations for user=%s", userId)
             }
         }
@@ -105,6 +109,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Delete from database
                 repository.cleanupExpired()
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to cleanup expired recommendations")
                 0
             }

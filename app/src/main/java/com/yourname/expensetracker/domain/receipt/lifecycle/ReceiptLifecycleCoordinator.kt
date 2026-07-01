@@ -480,7 +480,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             // P3-BLOCKER-04: Use resolver for fallback insert.
             val savedId = database.withTransaction {
-                when (val res = receiptInsertResolver.insertOrResolve(updated)) {
+                val insertedId: Long = when (val res = receiptInsertResolver.insertOrResolve(updated)) {
                     is ReceiptInsertResult.Inserted -> {
                         receiptEventDao.insert(ReceiptEvent(
                             receiptId = res.receiptId,
@@ -499,18 +499,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = null)
                     is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(res.reason)
                 }
-            }
 
-            // P3-P1-09: Create PendingReview for batch imports and low-confidence receipts
-            if (options.createReview || parsed.confidence < BATCH_REVIEW_CONFIDENCE_THRESHOLD) {
-                runCatching {
-                    val reviewNow = timeProvider.now()
+                // MIT-041: Create PendingReview inside the same transaction so receipt + event + review are atomic.
+                if (options.createReview || parsed.confidence < BATCH_REVIEW_CONFIDENCE_THRESHOLD) {
                     val review = PendingReview(
-                        scannedReceiptId = savedId,
+                        scannedReceiptId = insertedId,
                         suggestedMerchant = parsed.merchantName ?: "Unknown",
                         suggestedAmount = parsed.total ?: 0.0,
                         suggestedCurrency = parsed.currency ?: FALLBACK_CURRENCY,
-                        suggestedDate = parsed.date ?: reviewNow,
+                        suggestedDate = parsed.date ?: now,
                         confidence = parsed.confidence,
                         suggestedType = TransactionType.PURCHASE.name,
                         rawNotificationId = null,
@@ -518,14 +515,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         notificationTitle = null,
                         notificationText = null,
                         packageName = "",
-                        createdAt = reviewNow,
+                        createdAt = now,
                         extractionState = ExtractionState.REAL_EXTRACTION
                     )
                     pendingReviewDao.insert(review)
-                }.onFailure { error ->
-                    if (error is kotlinx.coroutines.CancellationException) throw error
-                    Timber.w(error, "Failed to create PendingReview for receipt %d", savedId)
                 }
+
+                insertedId
             }
 
             Result.success(updated.copy(id = savedId))
@@ -1003,6 +999,30 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     ),
                     linkedExpenseIds = allLinkedExpenseIds
                 )
+            }
+
+            // MIT-041: Create PendingReview inside the transaction when the email receipt
+            // requires user review (low confidence, validation failure, incomplete parse, etc.).
+            // This ensures receipt + event + review are atomic — a crash after the receipt
+            // commit cannot leave a NeedsReview receipt without a PendingReview row.
+            if (needsReviewReason != null) {
+                val review = PendingReview(
+                    scannedReceiptId = savedId,
+                    suggestedMerchant = emailData.merchant ?: "Unknown",
+                    suggestedAmount = emailData.amount ?: 0.0,
+                    suggestedCurrency = emailData.currency ?: homeCurrency,
+                    suggestedDate = emailData.date ?: now,
+                    confidence = emailData.confidence.toFloat(),
+                    suggestedType = TransactionType.PURCHASE.name,
+                    rawNotificationId = null,
+                    suggestedCategoryId = null,
+                    notificationTitle = null,
+                    notificationText = null,
+                    packageName = provider,
+                    createdAt = now,
+                    extractionState = ExtractionState.REAL_EXTRACTION
+                )
+                pendingReviewDao.insert(review)
             }
         }
 

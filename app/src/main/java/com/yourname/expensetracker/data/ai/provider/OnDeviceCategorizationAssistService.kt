@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import org.json.JSONObject
 import timber.log.Timber
 import javax.inject.Inject
@@ -53,6 +54,7 @@ class OnDeviceCategorizationAssistService @Inject constructor() : Categorization
             )
             null
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.w(e, "OnDeviceCategorizationAssistService: unexpected error")
             null
         }

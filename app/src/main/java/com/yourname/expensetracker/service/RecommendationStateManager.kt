@@ -3,6 +3,7 @@ package com.yourname.expensetracker.service
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -136,6 +137,7 @@ class RecommendationStateManager @Inject constructor(
                 }
                 // --- end lock section 2 ---
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 // Log error but don't crash — emit empty list only if still current
                 synchronized(stateLock) {
                     if (stateGeneration == capturedGeneration) {
@@ -169,6 +171,7 @@ class RecommendationStateManager @Inject constructor(
                 // Refresh to load any additional recommendations
                 userToRefresh?.let { refreshForUser(it, forceRefresh = true) }
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 // Log error
             }
         }
@@ -244,6 +247,7 @@ class RecommendationStateManager @Inject constructor(
                 }
                 // --- end lock section ---
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 // Log error
             }
         }

@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -38,6 +39,7 @@ class RecommendationLifecycleManager @Inject constructor(
                 cacheService.evictExpired()
                 stateManager.refreshForUser(userId)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to check and expire recommendations for user: $userId")
             }
         }
@@ -50,6 +52,7 @@ class RecommendationLifecycleManager @Inject constructor(
                 cacheService.evictExpired()
                 stateManager.getCurrentUserId()?.let { stateManager.refreshForUser(it) }
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to cleanup expired recommendations")
             }
         }
@@ -67,6 +70,7 @@ class RecommendationLifecycleManager @Inject constructor(
                 thresholdCalculator.refreshThreshold()
                 Timber.d("Refreshed adaptive spending threshold")
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to refresh spending threshold")
             }
         }

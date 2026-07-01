@@ -256,7 +256,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 }
             }
 
-            // ── Step 4: Save statement receipt with lifecycle metadata ─────────
+            // ── Steps 4+5: Save receipt + events atomically (MIT-041) ──────────
+            // MIT-041: Wrap receipt insert, run attachment, and initial RECEIPT_SAVED
+            // event in a single database transaction so the receipt never commits
+            // without its lifecycle event.
             // Compute the image hash from the saved file path as a fallback
             // (the pre-OCR hash from computeUriHash is stored when available;
             // this fallback ensures the hash is ALWAYS stored so future re-imports
@@ -290,6 +293,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 updatedAt = timeProvider.now()
             )
 
+            // MIT-041: declared outside transaction so it's visible to Step 6
+            var receiptId: Long = 0L
+            var earlyReturn: Result<BankStatementResult>? = null
+
+            database.withTransaction {
             // NOTE: Directly inserting via receiptRepository.insertReceipt() instead of
             // going through ReceiptLifecycleCoordinator because this processor already
             // writes its own lifecycle events (RECEIPT_SAVED, PROCESSING_COMPLETE) and
@@ -297,7 +305,6 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // coordinator provides.
             // P3-D4B-03: Use typed ReceiptRecordWriter.
             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.writeResults")
-            val receiptId: Long
             when (val write = receiptRecordWriter.insertOrResolve(statementReceipt)) {
                 is ReceiptRecordWriteResult.Inserted -> {
                     receiptId = write.receipt.id
@@ -312,13 +319,17 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         duplicatePendingCount = 0, failedItemCount = 0,
                         errorSummary = "Duplicate statement receipt"
                     )
-                    return Result.success(BankStatementResult(
+                    earlyReturn = Result.success(BankStatementResult(
                         receiptId = write.existingReceipt.id,
                         transactionsFound = 0, reviewsCreated = 0, duplicatesSkipped = 0,
                         duplicateOfReceiptId = write.existingReceipt.id
                     ))
+                    return@withTransaction
                 }
-                is ReceiptRecordWriteResult.Failed -> return Result.failure(IllegalStateException(write.reason))
+                is ReceiptRecordWriteResult.Failed -> {
+                    earlyReturn = Result.failure(IllegalStateException(write.reason))
+                    return@withTransaction
+                }
             }
 
             // ── Step 5: Write RECEIPT_SAVED lifecycle event ────────────────────
@@ -355,6 +366,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     pagesProcessed = pagesProcessed, totalPages = totalPages
                 )
             }
+
+            } // end MIT-041: receipt + events transaction
+
+            // If receipt was a duplicate or failed, return early
+            if (earlyReturn != null) return earlyReturn!!
 
             // ── Step 6: Create a PendingReview for each transaction ────────────
             var reviewsCreated = 0

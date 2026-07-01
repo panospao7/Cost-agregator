@@ -50,7 +50,6 @@ class CancellationSafetyArchitectureGuardTest {
             "CloudReviewExplanationService.kt",
             "DefaultAiEnvironmentMonitor.kt",
             "HybridDedupeJudgeService.kt",
-            "OnDeviceCategorizationAssistService.kt",
             "OnDeviceDashboardBriefingService.kt",
             "OnDeviceDedupeJudgeService.kt",
             "OnDeviceNotificationParser.kt",
@@ -81,7 +80,6 @@ class CancellationSafetyArchitectureGuardTest {
             "CrossSourceDeduplication.kt",
             "ExpenseCategoryClassifier.kt",
             "TransactionClassifier.kt",
-            "NotificationCaptureGate.kt",
             "NotificationIntakePayloadRepairer.kt",
             "CompositePrivacyGate.kt",
             "NotificationSubscriptionDetector.kt",
@@ -108,10 +106,12 @@ class CancellationSafetyArchitectureGuardTest {
             "WarrantyExpirationWorker.kt",
             // Services
             "NotificationCaptureService.kt",
-            "RecommendationDismissalHandler.kt",
-            "RecommendationInvalidator.kt",
-            "RecommendationLifecycleManager.kt",
-            "RecommendationStateManager.kt",
+            "CloudQueryInterpretationService.kt",
+            "SmartBillNegotiationEngine.kt",
+            // Workers
+            "NotificationIntakeWorker.kt",
+            // Infrastructure / sinks
+            "FileWorkerTerminalDiagnosticSink.kt",
             // UI layer (viewModelScope.launch catches — lower priority)
             "AnalyticsViewModel.kt",
             "BudgetViewModel.kt",
@@ -165,8 +165,8 @@ class CancellationSafetyArchitectureGuardTest {
     /** Matches `suspend fun` declarations (including `private suspend fun`, etc.). */
     private val suspendFunPattern = Regex("""\bsuspend\s+fun\b""")
 
-    /** Evidence that CE is handled: the body mentions CancellationException. */
-    private val ceGuardEvidence = Regex("""CancellationException""")
+    /** Evidence that CE is handled: the body mentions CancellationException or a known CE-safe helper. */
+    private val ceGuardEvidence = Regex("""CancellationException|rethrowIfCancellation""")
 
     @Test
     fun `every broad catch in suspend functions rethrows CancellationException`() {

@@ -68,7 +68,7 @@ class BillReminderWorker @AssistedInject constructor(
             }
 
             try {
-                val dueReminders = coordinator.getDueReminders()
+                val dueReminders = coordinator.recoverAndGetDueReminders()
                 if (dueReminders.isEmpty()) {
                     Log.d(TAG, "No due reminders found")
                     return@runGuardedWithContext
