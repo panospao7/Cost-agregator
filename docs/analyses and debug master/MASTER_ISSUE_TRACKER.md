@@ -11,13 +11,13 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: YELLOW-GREEN — PR1–PR18 foundation landed; PR19 final correctness cleanup applied. Core atomicity/cancellation paths fixed; remaining non-core items tracked below.**
+**Overall status: YELLOW-GREEN — PR1–PR19 complete. MIT-031 ✅ DONE. MIT-041 ✅ DONE. MIT-034/043/075 remain PARTIAL for non-core scope.**
 
-PR 1–18 (2026-07-01 through 2026-07-02) have landed foundational atomicity, cancellation, post-commit evidence, consistency checking, and static guard infrastructure. Four MITs are NEAR-COMPLETE; remaining deferred items are low-priority or cross-cutting (MIT-033 schema constraints, P16 network security).
+PR 1–19 (2026-07-01 through 2026-07-02) complete. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are CLOSED — all critical production paths are transaction-scoped and tested. MIT-034/043/075 remain PARTIAL for non-core allowlist entries, DB uniqueness (MIT-033), and by-design no-outbox policy. MIT-033 schema constraints are the next priority.
 
-- MIT-031 (state/event atomicity): ⚠️ PARTIAL → NEAR-COMPLETE — PR13 (DomainTransactionRunner), PR11 (status+event atomicity)
+- MIT-031 (state/event atomicity): ✅ DONE — PR13 (DomainTransactionRunner), PR11+PR19-1 (transaction-scoped state/event)
 - MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)
-- MIT-041 (receipt/review atomicity): ⚠️ PARTIAL → NEAR-COMPLETE — PR11 (final status), PR15 (per-item events, validation)
+- MIT-041 (receipt/review atomicity): ✅ DONE — PR11+PR15+PR19-1 (all bank-statement + receipt paths transaction-scoped)
 - MIT-043 (recurring atomicity): ⚠️ PARTIAL — PR14 (hidden write split, swallowed events fixed)
 - MIT-033 (DB uniqueness constraints): TODO — next priority
 - DB migration chain and schema parity: not yet proven.
@@ -798,7 +798,8 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ⚠️ PARTIAL → NEAR-COMPLETE — PR13 (DomainTransactionRunner migration, TransactionContext hardening), PR19-1 (bank finalization atomicity). Remaining: TransactionalEventWriter still marker-only (PR deferred), context-free writer methods still available (deprecated).  
+**Status:** ✅ **DONE** — PR 1–19 (2026-07-02). DomainTransactionRunner adopted by both BankStatementLifecycleProcessor and ReceiptLifecycleCoordinator (14 call sites). TransactionContext required by event writers. Bank finalization atomic with receipt status/event. All critical production state/event pairs are in the same transaction.  
+Residual (non-blocking): TransactionalEventWriter is marker-only (design choice, not a correctness gap). Deprecated context-free writer kept for backward compat — removed when all callers migrate.
 **Labels:** `transactions`, `events`, `atomicity`
 
 #### Implemented
@@ -975,7 +976,8 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ⚠️ PARTIAL → NEAR-COMPLETE — PR11 (final status/event), PR15 (pre-mutation validation, per-item REVIEW_CREATED), PR19-1 (importRunId non-null, run finalization atomic with receipt status/event, cancellation finalization safe). All critical bank statement paths tested/verified. Remaining: BankApiIntegration.kt stub (non-production).  
+**Status:** ✅ **DONE** — PR 1–19 (2026-07-02). Bank statement: item-level pre-mutation validation (amount/currency/date/merchant), per-item REVIEW_CREATED event atomic with PendingReview+item insert, run finalization atomic with receipt status/event, cancellation finalization bounded and safe. ReceiptLifecycleCoordinator: all 8 transaction blocks use DomainTransactionRunner.  
+Residual (non-blocking): BankApiIntegration.kt (line 285) — low-confidence bank integration stub, not a production pipeline. Non-regression.
 **Labels:** `receipts`, `ocr`, `pending-review`
 
 #### Implemented
