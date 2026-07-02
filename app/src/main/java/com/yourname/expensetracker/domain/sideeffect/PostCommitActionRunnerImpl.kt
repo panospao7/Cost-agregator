@@ -35,7 +35,7 @@ class PostCommitActionRunnerImpl @Inject constructor(
                 action.execute(context)
             } catch (e: CancellationException) {
                 try {
-                    eventWriter.cancelled(action, e.message)
+                    eventWriter.cancelled(action, "cancelled")
                 } catch (emitError: Exception) {
                     Timber.w(emitError, "Failed to emit cancelled event for side effect '${action.name}'")
                 }
@@ -44,7 +44,7 @@ class PostCommitActionRunnerImpl @Inject constructor(
                     SideEffectActionResult(
                         idempotencyKey = action.idempotencyKey,
                         name = action.name,
-                        outcome = SideEffectOutcome.Cancelled(e.message)
+                        outcome = SideEffectOutcome.Cancelled("cancelled")
                     )
                 )
                 // Rethrow cancellation
@@ -52,11 +52,11 @@ class PostCommitActionRunnerImpl @Inject constructor(
             } catch (e: Exception) {
                 Timber.w(e, "Side effect '${action.name}' threw unexpected exception")
                 val failureOutcome = SideEffectOutcome.FailedRetryable(
-                    reason = e.message ?: "Unexpected exception",
-                    errorClass = e.javaClass.name
+                    reason = "side_effect_unexpected_exception",
+                    errorClass = e::class.simpleName
                 )
                 try {
-                    eventWriter.failed(action, retryable = true, reason = e.message ?: "Unexpected exception", error = e)
+                    eventWriter.failed(action, retryable = true, reason = "side_effect_unexpected_exception", error = e)
                 } catch (emitError: Exception) {
                     Timber.w(emitError, "Failed to emit failed event for side effect '${action.name}'")
                 }

@@ -344,3 +344,32 @@ The following existing code paths persist raw exception messages and will be add
 - [ ] Projection generates all rows atomically (PR 6)
 - [ ] `getDueReminders()` split from `recoverStaleClaimedDeliveries()` (PR 7)
 - [ ] `reconcilePlannedVsActual()` split into read/write phases (PR 7)
+
+---
+
+## 12. Post-Commit Side-Effect Durability Decision (PR17)
+
+**Decision: No durable outbox for post-commit side effects.**
+
+**Justification:**
+- Most post-commit side effects are non-critical (budget checks, merchant learning,
+  price protection). Lost effects on crash are inconvenient but not data-corrupting.
+- Critical side effects (receipt-to-expense matching) are already guarded by
+  idempotency keys and can be re-triggered by re-running the matching.
+- A full outbox would require: a `pending_side_effect` Room table, lambda-to-use-case
+  dispatch table, replay worker, and WorkManager registration — estimated 400+ LOC
+  with significant architectural risk.
+- The existing diagnostics pipeline (SideEffectEventWriter, PostCommitSideEffectEvidenceService)
+  provides sufficient observability for monitoring.
+
+**What IS guaranteed:**
+- All side effects execute ONLY after database commit (runBestEffortAfterCommit).
+- Idempotency keys prevent double-execution on retry.
+- CancellationException is properly propagated.
+- FailedRetryable vs FailedFinal distinction enables future retry if needed.
+
+**If outbox becomes necessary in the future:**
+- Add `pending_side_effect` Room table.
+- Replace PostCommitAction.execute lambda with a named use-case dispatch.
+- Add `SideEffectReplayWorker` scheduled via WorkManager.
+- See CANCELLATION_ATOMICITY_BASELINE.md §MIT-075 for tracking.

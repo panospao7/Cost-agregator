@@ -30,6 +30,14 @@ class PostCommitSideEffectEvidenceService @Inject constructor(
     private val diagnosticEventWriter: DiagnosticEventWriter
 ) {
 
+    // PR17: Diagnostic counters for post-commit side-effect observability.
+    @Volatile var actionsDispatched: Int = 0
+        private set
+    @Volatile var actionsCompleted: Int = 0
+        private set
+    @Volatile var actionsFailed: Int = 0
+        private set
+
     /**
      * Runs [batch] through the runner and records the outcome as a durable
      * diagnostic event.
@@ -37,6 +45,7 @@ class PostCommitSideEffectEvidenceService @Inject constructor(
      * @return The [SideEffectBatchResult], identical to [PostCommitActionRunner.run].
      */
     suspend fun runWithEvidence(batch: PostCommitActionBatch): SideEffectBatchResult {
+        actionsDispatched += batch.actions.size
         val result = runner.run(batch)
         recordOutcome(batch, result)
         return result
@@ -52,6 +61,7 @@ class PostCommitSideEffectEvidenceService @Inject constructor(
         targetId: Long? = null
     ) {
         if (batch.actions.isEmpty()) return
+        actionsDispatched += batch.actions.size
 
         try {
             val result = runner.run(batch)
@@ -71,6 +81,8 @@ class PostCommitSideEffectEvidenceService @Inject constructor(
     // --- internal ---
 
     private suspend fun recordOutcome(batch: PostCommitActionBatch, result: SideEffectBatchResult) {
+        actionsCompleted += result.completed
+        actionsFailed += result.failedRetryable + result.failedFinal
         val pipeline = batch.actions.firstOrNull()?.pipeline ?: AppPipeline.WORKER
         val hasFailures = result.failedRetryable > 0 || result.failedFinal > 0
         val outcome = if (hasFailures) EventOutcome.FAILED_RETRYABLE else EventOutcome.SIDE_EFFECT_COMPLETED
@@ -92,6 +104,7 @@ class PostCommitSideEffectEvidenceService @Inject constructor(
     }
 
     private suspend fun recordBatchExecutionFailure(batch: PostCommitActionBatch, error: Exception) {
+        actionsFailed += batch.actions.size
         val pipeline = batch.actions.firstOrNull()?.pipeline ?: AppPipeline.WORKER
         val entityType = batch.actions.firstOrNull()?.targetEntityType
         val metadata = SafeEventMetadata.builder()
