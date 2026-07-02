@@ -11,10 +11,11 @@ package com.yourname.expensetracker.domain.transaction
  * ```kotlin
  * val result = transactionRunner.runInTransaction(
  *     correlationId = UUID.randomUUID().toString(),
+ *     operationId = "receipt.approve",
  *     source = "ReceiptLifecycleCoordinator.approveReceipt"
  * ) { ctx ->
  *     receiptDao.updateStatus(receiptId, "APPROVED")
- *     eventWriter.write(ReceiptEvent(occurredAt = ctx.occurredAt, ...))
+ *     eventWriter.write(ctx, ReceiptEvent(occurredAt = ctx.occurredAt, ...))
  *     MutationResult(Approved, PostCommitActionBatch.empty())
  * }
  * ```
@@ -32,6 +33,8 @@ interface DomainTransactionRunner {
      * @param correlationId Unique identifier for this operation; a new one MUST be
      *   generated per logical operation (UUID or deterministic key).
      * @param causationId Optional upstream correlation ID for causality tracking.
+     * @param operationId Stable operation type identifier
+     *   (e.g. "receipt.saveWithReview", "bank_statement.import").
      * @param source Human-readable source identifier for diagnostics
      *   (e.g. "ReceiptLifecycleCoordinator.approveReceipt").
      * @param metadata Optional key-value pairs for audit context (sanitized only).
@@ -42,6 +45,7 @@ interface DomainTransactionRunner {
     suspend fun <T> runInTransaction(
         correlationId: String,
         causationId: String? = null,
+        operationId: String = "unknown",
         source: String = "unknown",
         metadata: Map<String, String> = emptyMap(),
         block: suspend (TransactionContext) -> T

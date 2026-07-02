@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.domain.diagnostics.EventMetadataSanitizer
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.event.TransactionalEventWriter
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.util.TimeProvider
 import org.json.JSONObject
 import javax.inject.Inject
@@ -21,7 +23,10 @@ data class TransactionLifecycleEvent(
     val reason: String? = null
 )
 
-interface TransactionLifecycleEventWriter {
+interface TransactionLifecycleEventWriter : TransactionalEventWriter {
+    suspend fun write(context: TransactionContext, event: TransactionLifecycleEvent)
+
+    @Deprecated("Use write(context, event) to provide TransactionContext")
     suspend fun write(event: TransactionLifecycleEvent)
 }
 
@@ -32,33 +37,48 @@ class RoomTransactionLifecycleEventWriter @Inject constructor(
     private val timeProvider: TimeProvider
 ) : TransactionLifecycleEventWriter {
 
-    override suspend fun write(event: TransactionLifecycleEvent) {
-        val metaJson = buildMetaJson(event)
+    override suspend fun write(context: TransactionContext, event: TransactionLifecycleEvent) {
         dao.insert(
             TransactionEvent(
                 expenseId = event.expenseId,
                 eventType = event.eventType,
                 source = event.source,
-                actor = event.actor,
-                occurredAt = timeProvider.now(),
+                actor = event.actor ?: context.actor,
+                occurredAt = context.occurredAt,
                 dedupeKey = event.dedupeKey,
                 duplicateExpenseId = event.duplicateExpenseId,
                 beforeSnapshot = null,
                 afterSnapshot = null,
-                metadata = metaJson,
+                metadata = buildMetaJson(event, context),
                 reason = event.reason,
-                correlationId = event.correlationId  // DDL-A8-15: propagate for traceability
+                correlationId = event.correlationId ?: context.correlationId
             )
         )
     }
 
-    private fun buildMetaJson(event: TransactionLifecycleEvent): String? {
+    @Deprecated("Use write(context, event) to provide TransactionContext")
+    override suspend fun write(event: TransactionLifecycleEvent) {
+        write(
+            TransactionContext(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                occurredAt = timeProvider.now(),
+                source = "legacy:TransactionLifecycleEventWriter"
+            ),
+            event
+        )
+    }
+
+    private fun buildMetaJson(event: TransactionLifecycleEvent, context: TransactionContext): String? {
         val base = if (event.metadata.isEmpty()) emptyMap() else
-            org.json.JSONObject(event.metadata.toJson()).let { jo ->
+            JSONObject(event.metadata.toJson()).let { jo ->
                 (0 until jo.length()).associate { jo.names()!!.getString(it) to jo.get(jo.names()!!.getString(it)) }
             }
         val merged = base.toMutableMap()
         event.correlationId?.let { merged["correlationId"] = it }
+        merged["txCorrelationId"] = context.correlationId
+        merged["txOperationId"] = context.operationId
+        merged["txTransactionId"] = context.transactionId
+        context.causationId?.let { merged["txCausationId"] = it }
         return if (merged.isEmpty()) null else JSONObject(merged).toString()
     }
 }

@@ -118,6 +118,7 @@ class DomainTransactionRunnerTest {
         override suspend fun <T> runInTransaction(
             correlationId: String,
             causationId: String?,
+            operationId: String,
             source: String,
             metadata: Map<String, String>,
             block: suspend (TransactionContext) -> T
@@ -125,6 +126,7 @@ class DomainTransactionRunnerTest {
             val context = TransactionContext(
                 correlationId = correlationId,
                 causationId = causationId,
+                operationId = operationId,
                 source = source,
                 occurredAt = timeProvider.now(),
                 metadata = metadata
