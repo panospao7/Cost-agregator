@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
@@ -395,7 +396,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     // ── Recurring rule active check ────────────────────────────
                     // Log whether an active recurring rule exists for this merchant
                     // so users can decide whether to merge with existing subscriptions.
-                    val existingRecurring = runCatching {
+                    val existingRecurring = CancellationSafe.runCatchingCancellable {
                         recurringExpenseRepository.getByMerchantFuzzy(normalizedMerchant)
                     }.getOrNull()
                     if (existingRecurring != null) {
@@ -586,45 +587,49 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // status when the run is not in a failed state.
             val runSucceeded = finalStatus != BankStatementImportRun.STATUS_FAILED
             if (runSucceeded) {
-                // P3-PR2 / P3-P1-05: Write barrier check before direct DAO mutation
-                writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.finalizeStatus")
-                val receiptToUpdate = scannedReceiptDao.getById(receiptId)
-                if (receiptToUpdate != null) {
-                    scannedReceiptDao.update(receiptToUpdate.copy(
-                        processingStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
-                        updatedAt = timeProvider.now()
+                database.withTransaction {
+                    // P3-PR2 / P3-P1-05: Write barrier check before direct DAO mutation
+                    writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.finalizeStatus")
+                    val receiptToUpdate = scannedReceiptDao.getById(receiptId)
+                    if (receiptToUpdate != null) {
+                        scannedReceiptDao.update(receiptToUpdate.copy(
+                            processingStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                            updatedAt = timeProvider.now()
+                        ))
+                    }
+                    receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                        receiptId = receiptId,
+                        sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                        documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                        eventType = "PROCESSING_COMPLETE",
+                        oldStatus = ReceiptProcessingStatus.PARSED.name,
+                        newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                        actor = "system:bank_statement_processor",
+                        message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("transactionsFound", transactionsFound)
+                            .put("reviewsCreated", reviewsCreated)
+                            .put("duplicatesSkipped", duplicatesSkipped)
+                            .build()
                     ))
                 }
-                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                    receiptId = receiptId,
-                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
-                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
-                    eventType = "PROCESSING_COMPLETE",
-                    oldStatus = ReceiptProcessingStatus.PARSED.name,
-                    newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
-                    actor = "system:bank_statement_processor",
-                    message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .put("transactionsFound", transactionsFound)
-                        .put("reviewsCreated", reviewsCreated)
-                        .put("duplicatesSkipped", duplicatesSkipped)
-                        .build()
-                ))
             } else {
-                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                    receiptId = receiptId,
-                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
-                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
-                    eventType = "PROCESSING_FAILED",
-                    oldStatus = ReceiptProcessingStatus.PARSED.name,
-                    newStatus = null,
-                    actor = "system:bank_statement_processor",
-                    message = "Bank statement processing had failures: $finalFailedItemCount failed items",
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .put("transactionsFound", transactionsFound)
-                        .put("failedItemCount", finalFailedItemCount)
-                        .build()
-                ))
+                database.withTransaction {
+                    receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                        receiptId = receiptId,
+                        sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                        documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                        eventType = "PROCESSING_FAILED",
+                        oldStatus = ReceiptProcessingStatus.PARSED.name,
+                        newStatus = null,
+                        actor = "system:bank_statement_processor",
+                        message = "Bank statement processing had failures: $finalFailedItemCount failed items",
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("transactionsFound", transactionsFound)
+                            .put("failedItemCount", finalFailedItemCount)
+                            .build()
+                    ))
+                }
                 return Result.failure(Exception("Bank statement import had $finalFailedItemCount failed items"))
             }
 

@@ -69,6 +69,7 @@ class LegacyDataConsistencyChecker @Inject constructor(
      * (one per inconsistency type) to avoid unbounded metadata.
      */
     suspend fun runConsistencyCheck(): ConsistencyReport {
+        var computedReport: ConsistencyReport? = null
         val elapsed = measureTimeMillis {
             var totalChecked = 0
 
@@ -114,16 +115,12 @@ class LegacyDataConsistencyChecker @Inject constructor(
             )
 
             emitSummaryDiagnostic(report)
-            report
+            computedReport = report
         }
 
-        return ConsistencyReport(
-            receiptsWithoutEvent = 0,
-            pendingReviewsWithoutReceipt = 0,
-            occurrencesWithoutEvent = 0,
-            totalItemsChecked = 0,
-            elapsedMs = elapsed
-        )
+        return requireNotNull(computedReport) {
+            "ConsistencyReport was not computed"
+        }.copy(elapsedMs = elapsed)
     }
 
     // --- internal check methods ---

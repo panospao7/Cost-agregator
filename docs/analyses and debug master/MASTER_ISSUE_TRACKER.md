@@ -13,12 +13,12 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 **Overall status: YELLOW — significantly improved by PR 1–10.**
 
-The app has good architectural direction. PR 1–10 (2026-07-01) have fixed the core atomicity, cancellation, and post-commit evidence issues flagged by MIT-031/034/041/043. Remaining release blockers are in schema constraints (MIT-033), security/network (P16), and CI guard enforcement (P17).
+The app has good architectural direction. PR 1–10 (2026-07-01) landed the foundational atomicity, cancellation, and post-commit evidence infrastructure for MIT-031/034/041/043. These MITs are PARTIAL — immediate correctness regressions remain and are being addressed in PR11–PR18. Remaining release blockers are in schema constraints (MIT-033), security/network (P16), and CI guard enforcement (P17).
 
-- MIT-031 (state/event atomicity): ✅ DONE
-- MIT-034 (cancellation propagation): ✅ DONE
-- MIT-041 (receipt/review atomicity): ✅ DONE
-- MIT-043 (recurring atomicity): ✅ DONE
+- MIT-031 (state/event atomicity): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
+- MIT-034 (cancellation propagation): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
+- MIT-041 (receipt/review atomicity): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
+- MIT-043 (recurring atomicity): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
 - MIT-033 (DB uniqueness constraints): TODO — next priority
 - DB migration chain and schema parity: not yet proven.
 - Restore/reset/import can leave stale singleton DB/DAO consumers alive.
@@ -798,7 +798,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ✅ **DONE** — PR 1–10 (2026-07-01)  
+**Status:** ⚠️ **PARTIAL** — foundation landed PR 1–10; immediate regressions fixed PR11; remaining PR12–PR18 pending  
 **Labels:** `transactions`, `events`, `atomicity`
 
 #### Implemented
@@ -877,7 +877,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P8, P9, P12, P16, P17, P18  
-**Status:** ✅ **DONE** — PR 1–2 (2026-07-01)  
+**Status:** ⚠️ **PARTIAL** — foundation landed PR 1–2; PR11 fixes BankStatement runCatching; full closure pending PR12  
 **Labels:** `coroutines`, `workers`, `correctness`
 
 #### Implemented
@@ -975,7 +975,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ✅ **DONE** — PR 4–5 (2026-07-01)  
+**Status:** ⚠️ **PARTIAL** — foundation landed PR 4–5; PR11 fixes BankStatement final status+event atomicity; full closure pending PR14  
 **Labels:** `receipts`, `ocr`, `pending-review`
 
 #### Implemented
@@ -1021,7 +1021,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P4  
-**Status:** ✅ **DONE** — PR 6–7 (2026-07-01)  
+**Status:** ⚠️ **PARTIAL** — foundation landed PR 6–7; remaining hidden-write cleanup and event atomicity pending PR15  
 **Labels:** `recurring`, `reminders`, `database`
 
 #### Implemented
