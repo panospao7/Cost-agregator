@@ -294,7 +294,8 @@ class LegacyDataConsistencyCheckerTest {
 
         assertTrue("Expected receipt without event count >= 1, got ${report.receiptsWithoutEvent}",
             report.receiptsWithoutEvent >= 1)
-        assertEquals(1, report.totalItemsChecked)
+        // totalItemsChecked counts both receipt scan and merchant scan
+        assertEquals(2, report.totalItemsChecked)
     }
 
     @Test
@@ -359,8 +360,8 @@ class LegacyDataConsistencyCheckerTest {
         val lifecycleEventDao = FakeRecurringLifecycleEventDao()
         val diagnosticWriter = FakeDiagnosticEventWriter()
 
-        // A receipt with its matching lifecycle event — should be clean
-        receiptDao.add(createReceipt(id = 1L))
+        // A receipt with its matching lifecycle event and a parsed merchant — should be clean
+        receiptDao.add(createReceipt(id = 1L).copy(parsedMerchant = "Test Merchant"))
         receiptEventDao.add(createReceiptEvent(receiptId = 1L))
 
         val checker = createChecker(receiptDao, receiptEventDao, pendingReviewDao, occurrenceDao, lifecycleEventDao, diagnosticWriter)
@@ -369,6 +370,8 @@ class LegacyDataConsistencyCheckerTest {
         assertEquals("Expected zero receiptsWithoutEvent", 0, report.receiptsWithoutEvent)
         assertEquals("Expected zero pendingReviewsWithoutReceipt", 0, report.pendingReviewsWithoutReceipt)
         assertEquals("Expected zero occurrencesWithoutEvent", 0, report.occurrencesWithoutEvent)
-        assertEquals(1, report.totalItemsChecked)
+        assertEquals("Expected zero missingMerchants", 0, report.missingMerchants)
+        // totalItemsChecked counts both receipt scan and merchant scan
+        assertEquals(2, report.totalItemsChecked)
     }
 }
