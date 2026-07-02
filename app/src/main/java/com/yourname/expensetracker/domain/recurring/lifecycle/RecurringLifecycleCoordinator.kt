@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationResult
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -508,7 +509,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     is RecurringExpenseReconcileResult.Error -> { failed++; Timber.w("Reconcile error: %s", result.reason) }
                 }
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                CancellationSafe.rethrowIfCancellation(e)
                 failed++
             }
         }
@@ -597,7 +598,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         )
                     )
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    CancellationSafe.rethrowIfCancellation(e)
                     /* best-effort event */
                 }
                 continue
@@ -623,7 +624,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         )
                     )
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    CancellationSafe.rethrowIfCancellation(e)
                     /* best-effort event */
                 }
                 continue
@@ -655,7 +656,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                             )
                         )
                     } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    CancellationSafe.rethrowIfCancellation(e)
                     /* best-effort event */
                 }
                 }

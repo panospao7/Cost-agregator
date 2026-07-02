@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
 import com.yourname.expensetracker.domain.privacy.RetentionTarget
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Module
 import dagger.Provides
@@ -33,7 +34,7 @@ object RetentionModule {
 
         object : RetentionTarget {
             override val name = "raw_notifications"
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val dao = appDatabase.rawNotificationDao()
                 var total = 0
                 val now = timeProvider.now()
@@ -55,7 +56,7 @@ object RetentionModule {
 
         object : RetentionTarget {
             override val name = "scanned_receipts.rawOcrText"
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val dao = appDatabase.scannedReceiptDao()
                 var total = 0
                 val now = timeProvider.now()
@@ -71,7 +72,7 @@ object RetentionModule {
 
         object : RetentionTarget {
             override val name = "ai_artifacts"
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.aiArtifactDao().deleteExpired(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -79,7 +80,7 @@ object RetentionModule {
 
         object : RetentionTarget {
             override val name = "ai_chat_messages"
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.aiChatMessageDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -89,7 +90,7 @@ object RetentionModule {
             override val name = "email_receipt_sources"
             // PRIV-43B-12: Redact sensitive fields, do NOT delete rows (preserves dedup hashes/links)
             // cutoffMs is the email-specific cutoff (now - 30 days), passed by DataRetentionWorker
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.emailReceiptDao().redactSensitiveFieldsOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -101,7 +102,7 @@ object RetentionModule {
             // the retention window — mirrors the raw_notifications target since intake carries
             // the same captured notification content. cutoffMs is the notification cutoff,
             // passed by DataRetentionWorker.
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val dao = appDatabase.notificationIntakeDao()
                 var total = 0
                 val now = timeProvider.now()
@@ -120,7 +121,7 @@ object RetentionModule {
             // P8F-06: Hard-delete old diagnostic rows (free-text message / exceptionMessage /
             // metadataJson can carry PII). cutoffMs is the diagnostics cutoff, passed by
             // DataRetentionWorker.
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.pipelineDiagnosticEventDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -130,7 +131,7 @@ object RetentionModule {
             override val name = "pending_reviews.notificationText"
             // PR5: Redact notification text/title in pending reviews past the notification
             // retention window. Preserves structural fields for review queue functionality.
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.pendingReviewDao().redactNotificationTextOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -140,7 +141,7 @@ object RetentionModule {
             override val name = "background_job_runs.errorMessage"
             // PR5: Redact error messages in background job runs older than 30 days.
             // Error messages may contain PII from exception stack traces.
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.backgroundJobRunDao().redactErrorMessagesOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
@@ -149,7 +150,7 @@ object RetentionModule {
         object : RetentionTarget {
             override val name = "bank_statement_import_items.merchant"
             // U-PRIVACY-01: Redact raw merchant names from bank statement imports past retention window.
-            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = runCatching {
+            override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.bankStatementImportItemDao().redactMerchantOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }

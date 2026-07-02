@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -110,7 +111,7 @@ class WorkerExecutionGuard @Inject constructor(
                         DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
                     )
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    CancellationSafe.rethrowIfCancellation(e)
                     diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                         reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
                     return applyBlockedPolicy(request, DiagnosticReasonCode.RESTORE_BLOCKED.name)
@@ -124,7 +125,7 @@ class WorkerExecutionGuard @Inject constructor(
             try {
                 writeBarrier.checkWritesAllowed(request.workerName)
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                CancellationSafe.rethrowIfCancellation(e)
                 diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                     reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
                 return applyBlockedPolicy(request, DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name)
@@ -255,7 +256,7 @@ class WorkerExecutionGuard @Inject constructor(
         try {
             writeBarrier.checkWritesAllowed(operation)
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.w(e, "Checkpoint '$operation' failed — blocking writes")
             diagnosticSink.recordBlockedOperation(
                 operation,
@@ -289,7 +290,7 @@ class WorkerExecutionGuard @Inject constructor(
                         DatabaseReadPolicy.EXPORT_OR_BACKUP_SNAPSHOT_READ
                     )
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    CancellationSafe.rethrowIfCancellation(e)
                     diagnosticSink.recordBlockedOperation(request.workerName, mode, "P9",
                         reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.RESTORE_IN_PROGRESS)
                     return applyBlockedPolicy(request, DiagnosticReasonCode.RESTORE_BLOCKED.name)
@@ -450,7 +451,7 @@ class WorkerExecutionGuard @Inject constructor(
                 Timber.w("Terminal write timed out after ${TERMINAL_WRITE_TIMEOUT_MS}ms — continuing")
                 null
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.w(e, "Terminal write failed")
                 null
             }
@@ -565,13 +566,12 @@ class WorkerExecutionGuard @Inject constructor(
                 runAttempt = request.runAttemptCount,
                 leaseId = leaseId
             ))
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
         } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
             diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9",
                 reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED)
             StartRunResult.Blocked(DiagnosticReasonCode.WORKER_WRITE_BARRIER_DENIED.name)
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.w(e, "WorkerExecutionGuard: failed to start run for ${request.workerName}")
             diagnosticSink.recordBlockedOperation(request.workerName, restoreMaintenanceMode.currentMode(), "P9")
             if (classifyTransient(e)) StartRunResult.Retry(DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name)

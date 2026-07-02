@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.dao.OperationRunDao
 import com.yourname.expensetracker.data.database.dao.OperationRunEventDao
 import com.yourname.expensetracker.data.database.entity.OperationRun
 import com.yourname.expensetracker.data.database.entity.OperationRunEvent
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -111,7 +112,7 @@ class RoomOperationRunRecorder @Inject constructor(
         )
         val handle = Handle(id, correlationId, operationType, runDao, eventDao, sanitizer, timeProvider, safeSink, restoreMaintenanceMode)
         // DDL-016-03: STARTED failure must not orphan the RUNNING row — best-effort only
-        runCatching {
+        CancellationSafe.runCatchingCancellable {
             handle.event(stage = "STARTED", outcome = EventOutcome.ATTEMPTED, severity = EventSeverity.INFO)
         }.onFailure { Timber.w(it, "Failed to write STARTED event for operation run $id") }
         return handle
@@ -153,7 +154,7 @@ class RoomOperationRunRecorder @Inject constructor(
             )
             if (updated > 0) {
                 // DDL-A8-11: best-effort — event insert failure must not abort startup recovery
-                runCatching {
+                CancellationSafe.runCatchingCancellable {
                     eventDao.insert(OperationRunEvent(
                         operationRunId = run.id,
                         correlationId = run.correlationId,
@@ -170,7 +171,7 @@ class RoomOperationRunRecorder @Inject constructor(
                 }.onFailure { error ->
                     Timber.w(error, "Failed to write stale recovery event for run ${run.id}")
                     // DDL-C67-08: durable safe-sink diagnostic for event insert failure
-                    runCatching {
+                    CancellationSafe.runCatchingCancellable {
                         safeSink.recordDiagnosticEvent(
                             event = DiagnosticEvent(
                                 pipeline = pipelineForOperationType(run.operationType),
@@ -219,7 +220,7 @@ class RoomOperationRunRecorder @Inject constructor(
             isTerminal: Boolean
         ) {
             // DDL-016-02: event() is best-effort — failure must not fail business operation
-            runCatching {
+            CancellationSafe.runCatchingCancellable {
                 eventDao.insert(
                     OperationRunEvent(
                         operationRunId = runId,
@@ -242,7 +243,7 @@ class RoomOperationRunRecorder @Inject constructor(
                 )
             }.onFailure { error ->
                 Timber.w(error, "Failed to write operation event (stage=$stage, operation=$operationType)")
-                runCatching {
+                CancellationSafe.runCatchingCancellable {
                     safeSink.recordDiagnosticEvent(
                         event = DiagnosticEvent(
                             pipeline = pipelineForOperationType(operationType),
@@ -269,11 +270,11 @@ class RoomOperationRunRecorder @Inject constructor(
             skipped: Int, warnings: Int, errors: Int
         ) {
             // DDL-A8-10 / DDL-F876-06: failure durably recorded to safe sink
-            runCatching {
+            CancellationSafe.runCatchingCancellable {
                 runDao.incrementCounters(runId, processed, succeeded, failed, skipped, warnings, errors)
             }.onFailure { error ->
                 Timber.w(error, "Failed to persist operation counters for run $runId")
-                runCatching {
+                CancellationSafe.runCatchingCancellable {
                     safeSink.recordDiagnosticEvent(
                         event = DiagnosticEvent(
                             pipeline = pipelineForOperationType(operationType),

@@ -48,6 +48,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -229,7 +230,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processReceiptInput")
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            CancellationSafe.rethrowIfCancellation(e)
             return Result.failure(e)
         }
 
@@ -308,7 +309,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 try {
                     assetStore.computeFileHash(path).getOrNull()
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    CancellationSafe.rethrowIfCancellation(e)
                     null
                 }
             }
@@ -526,7 +527,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             Result.success(updated.copy(id = savedId))
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            CancellationSafe.rethrowIfCancellation(e)
             Timber.e(e, "processReceiptInput failed")
             Result.failure(e)
         }
@@ -613,8 +614,10 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
                 is ReceiptInsertResult.ConflictUnresolved -> SaveEmailReceiptResult.Failed(result.reason)
             }
         }
-    } catch (e: kotlinx.coroutines.CancellationException) { throw e
-    } catch (e: Exception) { SaveEmailReceiptResult.Failed(e.message ?: "Unknown error") }
+    } catch (e: Exception) {
+        CancellationSafe.rethrowIfCancellation(e)
+        SaveEmailReceiptResult.Failed(e.message ?: "Unknown error")
+    }
 }
 
 @Deprecated("Use saveEmailReceiptTyped() for typed duplicate handling.", level = DeprecationLevel.WARNING)
@@ -709,7 +712,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processEmailReceipt")
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            CancellationSafe.rethrowIfCancellation(e)
             emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null, correlationId)
             return EmailReceiptProcessResult.Error("Database writes blocked: ${e.message}")
         }
@@ -1096,9 +1099,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     .put("reason", reason.take(128))
                     .build()
             ))
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.w(e, "Failed to write email receipt diagnostic event")
         }
     }
@@ -1136,9 +1138,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 entityId = null,
                 metadata = md.build()
             ))
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.w(e, "Failed to write receipt intake diagnostic: %s", eventType)
         }
     }
@@ -1147,7 +1148,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.deleteReceipt")
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            CancellationSafe.rethrowIfCancellation(e)
             return Result.failure(e)
         }
 
@@ -1193,9 +1194,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             receipt.imagePath?.let { path ->
                 try {
                     assetStore.deleteAsset(path)
-                } catch (e: CancellationException) {
-                    throw e
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     // P3-CUR-08: Write durable event when asset deletion fails
                     Timber.e(e, "Failed to delete asset for receipt %d: [REDACTED]", receiptId)
                     receiptEventDao.insert(
@@ -1219,9 +1219,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             // NEW-P3-006: Redact assetPath — never log file system paths
             Timber.d("Receipt deleted: id=%d, assetPath=[REDACTED]", receiptId)
             Result.success(Unit)
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.e(e, "Failed to delete receipt: id=%d", receiptId)
             Result.failure(e)
         }
@@ -1284,7 +1283,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.createExpenseAndLinkReceipt")
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            CancellationSafe.rethrowIfCancellation(e)
             return Result.failure(e)
         }
         val receiptId = request.scannedReceiptId
@@ -1320,9 +1319,8 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                         Pair(Result.failure(IllegalStateException("Expense creation failed")), PostCommitActionBatch.empty("receipt_link_err"))
                 }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e  // S7-66F-005: never swallow cancellation
         } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
             return Result.failure(e)
         }
 

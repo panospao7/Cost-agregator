@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.MaintenanceSafeDiagnosticSink
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
 import timber.log.Timber
@@ -90,7 +91,7 @@ class CompositeOperationRunRecorder @Inject constructor(
             timeProvider = timeProvider
         )
         // DDL-016-04: safe handle must emit STARTED to satisfy STARTED -> terminal contract
-        runCatching {
+        CancellationSafe.runCatchingCancellable {
             handle.event(
                 stage = "STARTED",
                 outcome = EventOutcome.ATTEMPTED,
@@ -195,7 +196,7 @@ class SafeSinkOperationRunHandle(
     override suspend fun cancelled(reason: String?) = terminalOnce(
         stage = "CANCELLED",
         outcome = EventOutcome.CANCELLED,
-        reasonCode = reason?.let { runCatching { DiagnosticReasonCode.valueOf(it) }.getOrNull() }
+        reasonCode = reason?.let { CancellationSafe.runCatchingCancellable { DiagnosticReasonCode.valueOf(it) }.getOrNull() }
             ?: DiagnosticReasonCode.CANCELLED_BY_SYSTEM,
         statusReason = reason
     )
