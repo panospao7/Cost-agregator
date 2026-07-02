@@ -587,79 +587,93 @@ class RecurringLifecycleCoordinator @Inject constructor(
             // Skip past-due reminders
             if (scheduledAt < now) {
                 try {
-                    lifecycleEventDao.insert(
-                        RecurringLifecycleEvent(
-                            occurrenceId = occurrence.id,
-                            eventType = "REMINDER_REGENERATION_SKIPPED",
-                            occurredAt = now,
-                            oldStatus = null,
-                            newStatus = null,
-                            metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due"}"""
+                    database.withTransaction {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = occurrence.id,
+                                eventType = "REMINDER_REGENERATION_SKIPPED",
+                                occurredAt = now,
+                                oldStatus = null,
+                                newStatus = null,
+                                metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due"}"""
+                            )
                         )
-                    )
+                    }
                 } catch (e: Exception) {
                     CancellationSafe.rethrowIfCancellation(e)
-                    /* best-effort event */
+                    // Non-cancellation event write failure is isolated; continue to next window
                 }
                 continue
             }
 
-            val reopened = reminderDeliveryDao.reopenDeliveryForOccurrenceWindow(
-                occurrenceId = occurrence.id,
-                window = window,
-                scheduledAt = scheduledAt,
-                now = now
-            )
-            if (reopened > 0) {
-                restored += reopened
-                try {
-                    lifecycleEventDao.insert(
-                        RecurringLifecycleEvent(
-                            occurrenceId = occurrence.id,
-                            eventType = "REMINDER_REOPENED_AFTER_UNLINK",
-                            occurredAt = now,
-                            oldStatus = "CANCELLED",
-                            newStatus = "SCHEDULED",
-                            metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
-                        )
+            var reopenedInWindow = 0
+            try {
+                reopenedInWindow = database.withTransaction {
+                    val count = reminderDeliveryDao.reopenDeliveryForOccurrenceWindow(
+                        occurrenceId = occurrence.id,
+                        window = window,
+                        scheduledAt = scheduledAt,
+                        now = now
                     )
-                } catch (e: Exception) {
-                    CancellationSafe.rethrowIfCancellation(e)
-                    /* best-effort event */
+                    if (count > 0) {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = occurrence.id,
+                                eventType = "REMINDER_REOPENED_AFTER_UNLINK",
+                                occurredAt = now,
+                                oldStatus = "CANCELLED",
+                                newStatus = "SCHEDULED",
+                                metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                            )
+                        )
+                    }
+                    count
                 }
+            } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
+                // If either reopen or event fails, skip this window entirely
+            }
+            if (reopenedInWindow > 0) {
+                restored += reopenedInWindow
                 continue
             }
 
             val existing = reminderDeliveryDao.getByOccurrenceAndWindow(occurrence.id, window)
             if (existing == null) {
-                val deliveryId = reminderDeliveryDao.insert(
-                    RecurringReminderDelivery(
-                        occurrenceId = occurrence.id,
-                        reminderWindow = window,
-                        scheduledAt = scheduledAt,
-                        status = "SCHEDULED",
-                        createdAt = now,
-                        updatedAt = now
-                    )
-                )
-                if (deliveryId > 0) {
-                    restored++
-                    try {
-                        lifecycleEventDao.insert(
-                            RecurringLifecycleEvent(
+                var inserted = 0L
+                try {
+                    inserted = database.withTransaction {
+                        val deliveryId = reminderDeliveryDao.insert(
+                            RecurringReminderDelivery(
                                 occurrenceId = occurrence.id,
-                                eventType = "REMINDER_SCHEDULED_AFTER_UNLINK",
-                                occurredAt = now,
-                                oldStatus = null,
-                                newStatus = "SCHEDULED",
-                                metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                                reminderWindow = window,
+                                scheduledAt = scheduledAt,
+                                status = "SCHEDULED",
+                                createdAt = now,
+                                updatedAt = now
                             )
                         )
-                    } catch (e: Exception) {
+                        if (deliveryId > 0) {
+                            lifecycleEventDao.insert(
+                                RecurringLifecycleEvent(
+                                    occurrenceId = occurrence.id,
+                                    eventType = "REMINDER_SCHEDULED_AFTER_UNLINK",
+                                    occurredAt = now,
+                                    oldStatus = null,
+                                    newStatus = "SCHEDULED",
+                                    metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                                )
+                            )
+                            deliveryId
+                        } else {
+                            0L
+                        }
+                    }
+                } catch (e: Exception) {
                     CancellationSafe.rethrowIfCancellation(e)
-                    /* best-effort event */
+                    // If insert + event fails, this window is skipped
                 }
-                }
+                if (inserted > 0) restored++
             }
         }
         return restored
@@ -1109,15 +1123,100 @@ class RecurringLifecycleCoordinator @Inject constructor(
     )
 
     /**
+     * Ensures occurrences are generated for the given rule and period.
+     * This is the EXPLICIT WRITE command — callers must do this before getting a report.
+     *
+     * P4-NEW-008: Extracted from reconcilePlannedVsActual to separate write from read.
+     */
+    suspend fun ensureOccurrencesGeneratedForReconciliation(ruleId: Long, monthsBack: Int = 3) {
+        val now = timeProvider.now()
+        val endDate = TimePeriodUtils.getStartOfDay(now)
+        val startDate = TimePeriodUtils.getStartOfMonth(
+            TimePeriodUtils.addMonths(now, -monthsBack)
+        )
+
+        database.withTransaction {
+            generateOccurrences(
+                ruleId = ruleId,
+                startDate = startDate,
+                endDate = endDate,
+                options = OccurrenceGenerationOptions(
+                    createReminderDeliveries = false,
+                    generationSource = OccurrenceGenerationSource.RECONCILIATION_REPORT
+                )
+            )
+        }
+    }
+
+    /**
+     * Calculates planned vs actual spending for a recurring rule over the past N months.
+     *
+     * P4-NEW-008: PURE READ — no DB writes. Callers must call
+     * [ensureOccurrencesGeneratedForReconciliation] first if fresh generation is needed.
+     */
+    suspend fun calculatePlannedVsActualReport(ruleId: Long, monthsBack: Int = 3): ReconciliationReport {
+        val now = timeProvider.now()
+        val endDate = TimePeriodUtils.getStartOfDay(now)
+        val startDate = TimePeriodUtils.getStartOfMonth(
+            TimePeriodUtils.addMonths(now, -monthsBack)
+        )
+
+        val occurrences = occurrenceDao.getByDateRange(startDate, endDate)
+            .filter { it.sourceType == SOURCE_TYPE_RECURRING_RULE && it.sourceId == ruleId }
+
+        var totalPlanned = 0.0
+        var totalActual = 0.0
+        var matchedCount = 0
+        var unmatchedCount = 0
+        var overBudgetCount = 0
+
+        for (occ in occurrences) {
+            when (occ.status) {
+                "PAID" -> {
+                    totalPlanned += occ.expectedAmount
+                    val paid = occ.paidAmount ?: 0.0
+                    totalActual += paid
+                    matchedCount++
+                    if (paid > occ.expectedAmount) {
+                        overBudgetCount++
+                    }
+                }
+                "PLANNED" -> {
+                    totalPlanned += occ.expectedAmount
+                    unmatchedCount++
+                }
+                else -> { /* excluded */ }
+            }
+        }
+
+        val drift = totalActual - totalPlanned
+        val driftPercent = if (totalPlanned > 0.0) {
+            (drift / totalPlanned) * 100.0
+        } else {
+            0.0
+        }
+
+        return ReconciliationReport(
+            totalPlanned = totalPlanned,
+            totalActual = totalActual,
+            drift = drift,
+            driftPercent = driftPercent,
+            matchedCount = matchedCount,
+            unmatchedCount = unmatchedCount,
+            overBudgetCount = overBudgetCount
+        )
+    }
+
+    /**
      * Compares planned vs actual spending for a recurring rule over the past N months.
      *
      * **Note:** This method has write side-effects — it calls [generateOccurrences]
      * internally to ensure the database is up-to-date before computing the report.
      * Despite the query-like name, this is NOT a pure read-only method.
      *
-     * TODO(P4-NEW-008): Split into a pure query method and a separate
-     * "ensureGenerated" method so callers that only need the current snapshot
-     * don't trigger writes.
+     * @deprecated Split into [ensureOccurrencesGeneratedForReconciliation] (explicit write)
+     *             + [calculatePlannedVsActualReport] (pure read).
+     *             Use those two methods instead of this combined one.
      *
      * Logic:
      * 1. Generate occurrences for the past N months via [generateOccurrences].
@@ -1129,6 +1228,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @param ruleId The ID of the recurring rule.
      * @param monthsBack Number of months to look back (default 3).
      */
+    @Deprecated(
+        message = "Split into ensureOccurrencesGeneratedForReconciliation() (explicit write) + calculatePlannedVsActualReport() (pure read)",
+        replaceWith = ReplaceWith("this.ensureOccurrencesGeneratedForReconciliation(ruleId, monthsBack); this.calculatePlannedVsActualReport(ruleId, monthsBack)")
+    )
     suspend fun reconcilePlannedVsActual(ruleId: Long, monthsBack: Int = 3): ReconciliationReport {
         val now = timeProvider.now()
         val endDate = TimePeriodUtils.getStartOfDay(now)
