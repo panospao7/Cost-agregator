@@ -347,6 +347,8 @@ class LegacyDataConsistencyChecker @Inject constructor(
             .put("occurrencesWithoutEvent", report.occurrencesWithoutEvent)
             .put("missingMerchants", report.missingMerchants)
             .put("totalItemsChecked", report.totalItemsChecked)
+            .put("failedChecks", report.failedChecks)
+            .put("failedCheckNames", report.failedCheckNames.joinToString(","))
             .build()
 
         val hasIssues = report.receiptsWithoutEvent > 0 ||
@@ -354,11 +356,17 @@ class LegacyDataConsistencyChecker @Inject constructor(
             report.occurrencesWithoutEvent > 0 ||
             report.missingMerchants > 0
 
+        val outcome = when {
+            report.failedChecks > 0 -> EventOutcome.FAILED_RETRYABLE
+            hasIssues -> EventOutcome.NEEDS_REVIEW
+            else -> EventOutcome.COMPLETED
+        }
+
         diagnosticEventWriter.emit(
             DiagnosticEvent(
                 pipeline = AppPipeline.WORKER,
                 stage = "LEGACY_CONSISTENCY_CHECK",
-                outcome = if (hasIssues) EventOutcome.NEEDS_REVIEW else EventOutcome.COMPLETED,
+                outcome = outcome,
                 reasonCode = DiagnosticReasonCode.INCONSISTENCY_CHECK,
                 metadata = metadata,
                 isTerminal = true

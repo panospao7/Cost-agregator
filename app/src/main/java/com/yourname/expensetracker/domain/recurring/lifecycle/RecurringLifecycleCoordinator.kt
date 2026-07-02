@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationResult
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -56,7 +57,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val eventWriter: RecurringLifecycleEventWriter,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val plannedExpenseDao: PlannedExpenseDao
+    private val plannedExpenseDao: PlannedExpenseDao,
+    private val transactionRunner: DomainTransactionRunner
 ) {
     companion object {
         /** Source type used for manual recurring rules. */
@@ -67,6 +69,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         /** Statuses from which dismiss/snooze are no-ops. */
         val TERMINAL_STATUSES = setOf("DISMISSED", "CANCELLED", "FAILED_FINAL", "SENT")
+
+        /** Stale claim threshold in ms (5 minutes). */
+        const val STALE_CLAIM_THRESHOLD_MS = 300_000L
     }
 
     /**
@@ -631,7 +636,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 }
             } catch (e: Exception) {
                 CancellationSafe.rethrowIfCancellation(e)
-                // If either reopen or event fails, skip this window entirely
+                Timber.w(e, "Skipped reminder regeneration for window $window (occurrence ${occurrence.id})")
             }
             if (reopenedInWindow > 0) {
                 restored += reopenedInWindow
@@ -671,7 +676,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     }
                 } catch (e: Exception) {
                     CancellationSafe.rethrowIfCancellation(e)
-                    // If insert + event fails, this window is skipped
+                    Timber.w(e, "Skipped reminder regeneration for window $window (occurrence ${occurrence.id})")
                 }
                 if (inserted > 0) restored++
             }
@@ -893,12 +898,40 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Made public in PR 7 so callers can explicitly recover stale deliveries before
      * querying due reminders.
      */
-    suspend fun recoverStaleClaimedDeliveries(staleThresholdMs: Long = 300_000) {
-        val now = timeProvider.now()
-        val staleClaimThreshold = now - staleThresholdMs
-        val recovered = reminderDeliveryDao.recoverStaleClaimedDeliveries(staleClaimThreshold, now)
-        if (recovered > 0) {
-            Timber.d("Recovered %d stale CLAIMED reminder deliveries", recovered)
+    suspend fun recoverStaleClaimedDeliveries(
+        correlationId: String = java.util.UUID.randomUUID().toString(),
+        actor: String = "system"
+    ): Int {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.recoverStaleClaimedDeliveries")
+        return transactionRunner.runInTransaction(
+            correlationId = correlationId,
+            operationId = "recurring.recover_stale_claimed_deliveries",
+            source = "RecurringLifecycleCoordinator"
+        ) { context ->
+            val now = context.occurredAt
+            val staleClaimThreshold = now - STALE_CLAIM_THRESHOLD_MS
+            val recovered = reminderDeliveryDao.recoverStaleClaimedDeliveries(
+                staleClaimThreshold = staleClaimThreshold,
+                now = now
+            )
+            if (recovered > 0) {
+                try {
+                    lifecycleEventDao.insert(
+                        RecurringLifecycleEvent(
+                            occurrenceId = 0L,  // aggregate event, no single occurrence
+                            eventType = "STALE_DELIVERIES_RECOVERED",
+                            occurredAt = context.occurredAt,
+                            oldStatus = null,
+                            newStatus = null,
+                            metadata = """{"recoveredCount":$recovered}"""
+                        )
+                    )
+                } catch (e: Exception) {
+                    CancellationSafe.rethrowIfCancellation(e)
+                    Timber.w(e, "Failed to write stale delivery recovery event")
+                }
+            }
+            recovered
         }
     }
 
@@ -1229,78 +1262,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @param monthsBack Number of months to look back (default 3).
      */
     @Deprecated(
-        message = "Split into ensureOccurrencesGeneratedForReconciliation() (explicit write) + calculatePlannedVsActualReport() (pure read)",
-        replaceWith = ReplaceWith("this.ensureOccurrencesGeneratedForReconciliation(ruleId, monthsBack); this.calculatePlannedVsActualReport(ruleId, monthsBack)")
+        message = "Use ensureOccurrencesGeneratedForReconciliation() + calculatePlannedVsActualReport()",
+        replaceWith = ReplaceWith("this.ensureOccurrencesGeneratedForReconciliation(ruleId, monthsBack); this.calculatePlannedVsActualReport(ruleId, monthsBack)"),
+        level = DeprecationLevel.ERROR
     )
     suspend fun reconcilePlannedVsActual(ruleId: Long, monthsBack: Int = 3): ReconciliationReport {
-        val now = timeProvider.now()
-        val endDate = TimePeriodUtils.getStartOfDay(now)
-        val startDate = TimePeriodUtils.getStartOfMonth(
-            TimePeriodUtils.addMonths(now, -monthsBack)
-        )
-
-        // MIT-043: Wrap generate + read in a single transaction so the report
-        // never includes incomplete or stale occurrence data. generateOccurrences
-        // opens its own inner transaction (savepoint), so partial failure inside
-        // generation does not corrupt the outer read.
-        return database.withTransaction {
-            // 1. Generate occurrences so the DB is up to date — must NOT create reminder deliveries
-            generateOccurrences(
-                ruleId = ruleId,
-                startDate = startDate,
-                endDate = endDate,
-                options = OccurrenceGenerationOptions(
-                    createReminderDeliveries = false,
-                    generationSource = OccurrenceGenerationSource.RECONCILIATION_REPORT
-                )
-            )
-
-            // 2. Load all occurrences for this rule in the period
-            val occurrences = occurrenceDao.getByDateRange(startDate, endDate)
-                .filter { it.sourceType == SOURCE_TYPE_RECURRING_RULE && it.sourceId == ruleId }
-
-            var totalPlanned = 0.0
-            var totalActual = 0.0
-            var matchedCount = 0
-            var unmatchedCount = 0
-            var overBudgetCount = 0
-
-            for (occ in occurrences) {
-                when (occ.status) {
-                    "PAID" -> {
-                        totalPlanned += occ.expectedAmount
-                        val paid = occ.paidAmount ?: 0.0
-                        totalActual += paid
-                        matchedCount++
-                        if (paid > occ.expectedAmount) {
-                            overBudgetCount++
-                        }
-                    }
-                    "PLANNED" -> {
-                        totalPlanned += occ.expectedAmount
-                        unmatchedCount++
-                    }
-                    // SKIPPED, CANCELLED, MISSED, IGNORED are excluded from normal totals
-                    else -> { /* excluded from planned vs actual */ }
-                }
-            }
-
-            val drift = totalActual - totalPlanned
-            val driftPercent = if (totalPlanned > 0.0) {
-                (drift / totalPlanned) * 100.0
-            } else {
-                0.0
-            }
-
-            ReconciliationReport(
-                totalPlanned = totalPlanned,
-                totalActual = totalActual,
-                drift = drift,
-                driftPercent = driftPercent,
-                matchedCount = matchedCount,
-                unmatchedCount = unmatchedCount,
-                overBudgetCount = overBudgetCount
-            )
-        }
+        ensureOccurrencesGeneratedForReconciliation(ruleId, monthsBack)
+        return calculatePlannedVsActualReport(ruleId, monthsBack)
     }
 }

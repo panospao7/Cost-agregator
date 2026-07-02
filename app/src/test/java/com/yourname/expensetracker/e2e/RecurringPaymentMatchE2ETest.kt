@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.e2e
 
 import com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
+import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -74,6 +75,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
             plannedExpenseDao = database.plannedExpenseDao(),
+            transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
             eventWriter = mockk(relaxed = true)
         )
 

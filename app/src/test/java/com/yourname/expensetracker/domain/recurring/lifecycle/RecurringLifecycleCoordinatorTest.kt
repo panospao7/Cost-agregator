@@ -84,6 +84,7 @@ class RecurringLifecycleCoordinatorTest {
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
             plannedExpenseDao = plannedExpenseDao,
+            transactionRunner = mockk(relaxed = true),
             eventWriter = mockk(relaxed = true)
         )
     }

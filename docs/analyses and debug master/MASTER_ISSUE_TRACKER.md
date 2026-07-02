@@ -1,6 +1,6 @@
 # Cost Aggregator — Master Issue Tracker for Pipelines 1–18
 
-Last synced: 2026-07-02 (PR 1–18 complete)  
+Last synced: 2026-07-02 (PR19 final correctness cleanup applied)  
 Source docs commit: `886f5aca4a7738b425f2d0247a8f319f0f8f7412`  
 Debug reports primarily audit pinned code around: `83b798e`
 
@@ -11,7 +11,7 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: YELLOW → NEAR-GREEN (PR 1–18 landed; remaining deferred MITs tracked in sections below)**
+**Overall status: YELLOW-GREEN — PR1–PR18 foundation landed; PR19 final correctness cleanup applied. Core atomicity/cancellation paths fixed; remaining non-core items tracked below.**
 
 PR 1–18 (2026-07-01 through 2026-07-02) have landed foundational atomicity, cancellation, post-commit evidence, consistency checking, and static guard infrastructure. Four MITs are NEAR-COMPLETE; remaining deferred items are low-priority or cross-cutting (MIT-033 schema constraints, P16 network security).
 
@@ -798,7 +798,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ⚠️ **PARTIAL → NEAR-COMPLETE** — PR1–PR17 delivered structured TransactionContext, DomainTransactionRunner migration (BankStatement, ReceiptLifecycle), and TransactionalEventWriter implementations. Remaining: TransactionLifecycleCoordinator uses raw withTransaction (low-prio, deferred to P4).  
+**Status:** ⚠️ PARTIAL → NEAR-COMPLETE — PR13 (DomainTransactionRunner migration, TransactionContext hardening), PR19-1 (bank finalization atomicity). Remaining: TransactionalEventWriter still marker-only (PR deferred), context-free writer methods still available (deprecated).  
 **Labels:** `transactions`, `events`, `atomicity`
 
 #### Implemented
@@ -877,7 +877,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P8, P9, P12, P16, P17, P18  
-**Status:** ⚠️ **PARTIAL** — PR12a converted allowlist to structured format with expiry enforcement; PR12b replaced 19 unsafe runCatching in critical suspend paths (RetentionModule, OperationRunRecorder, CompositeOperationRunRecorder). Remaining: ~65 UI ViewModel files in KNOWN_VIOLATIONS (low-prio), ~17 CE-gap sites fixed in PR2.  
+**Status:** ⚠️ PARTIAL — PR12a/b (19 runCatching replaced, structured allowlist), PR19-1 (bank cancellation never masks CE). Core paths fixed. Remaining: ~65 UI ViewModels in allowlist (non-critical), global cancellation closure not proven.  
 **Labels:** `coroutines`, `workers`, `correctness`
 
 #### Implemented
@@ -975,7 +975,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ⚠️ **PARTIAL → NEAR-COMPLETE** — PR11 wrapped BankStatement final status+events in withTransaction; PR15 added per-item lifecycle events and pre-mutation validation (amount/currency/date/merchant). Remaining: BankApiIntegration.kt PendingReviewDao.insert (stub/demo, non-production).  
+**Status:** ⚠️ PARTIAL → NEAR-COMPLETE — PR11 (final status/event), PR15 (pre-mutation validation, per-item REVIEW_CREATED), PR19-1 (importRunId non-null, run finalization atomic with receipt status/event, cancellation finalization safe). All critical bank statement paths tested/verified. Remaining: BankApiIntegration.kt stub (non-production).  
 **Labels:** `receipts`, `ocr`, `pending-review`
 
 #### Implemented
@@ -1021,7 +1021,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P4  
-**Status:** ⚠️ **PARTIAL** — PR14 split reconcilePlannedVsActual into explicit write + pure read, fixed 3 swallowed event inserts in regenerateReminderDeliveries. Remaining: DB-level linkedExpenseId uniqueness (MIT-033), RecurringPlanProjectionService full-atomicity TODO.  
+**Status:** ⚠️ PARTIAL — PR14 (reconciliation split, swallowed events fixed), PR19-2 (stale recovery evented, transaction-wrapped, write-barrier-gated; deprecated reconcile method deactivated with DeprecationLevel.ERROR). Remaining: DB uniqueness (MIT-033), reminder regeneration partial-skip policy (best-effort per-window with Timber logging).  
 **Labels:** `recurring`, `reminders`, `database`
 
 #### Implemented
@@ -1070,6 +1070,17 @@ If the app crashes between DB commit and side-effect execution, effects are sile
   per documented architectural decision (PR17). Critical effects are idempotent-key-guarded;
   non-critical effects tolerate loss on crash.  If guaranteed replay is required later,
   implement pending_side_effect Room table + SideEffectReplayWorker (see §12.7).
+
+---
+
+### PR19 Final Correctness Cleanup (2026-07-02)
+
+PR19-1: BankStatement importRunId non-null, run finalization atomic with receipt status/event, cancellation finalization bounded/safe.
+PR19-2: Recurring stale recovery evented/transactional/write-barrier-gated; deprecated reconcile deactivated (ERROR level); per-window reminder regeneration logged.
+PR19-5: Consistency checker summary diagnostic includes failedChecks metadata; failed subchecks emit FAILED_RETRYABLE not COMPLETED.
+PR19-6: Retention purge errors sanitized — only class name stored, never raw Throwable.message.
+PR19-7: Bank statement per-item lifecycle policy documented (§13).
+PR19-8: Tracker corrected to reflect actual test-proven state.
 
 ---
 

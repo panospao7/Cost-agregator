@@ -51,7 +51,14 @@ object RetentionModule {
                     total += batch.size
                 }
                 RetentionPurgeResult(name, total, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -67,7 +74,14 @@ object RetentionModule {
                     total += batch.size
                 }
                 RetentionPurgeResult(name, total, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -75,7 +89,14 @@ object RetentionModule {
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.aiArtifactDao().deleteExpired(cutoffMs)
                 RetentionPurgeResult(name, count, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -83,7 +104,14 @@ object RetentionModule {
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.aiChatMessageDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -93,7 +121,14 @@ object RetentionModule {
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.emailReceiptDao().redactSensitiveFieldsOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -113,7 +148,14 @@ object RetentionModule {
                     total += batch.size
                 }
                 RetentionPurgeResult(name, total, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -124,7 +166,14 @@ object RetentionModule {
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.pipelineDiagnosticEventDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -134,7 +183,14 @@ object RetentionModule {
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.pendingReviewDao().redactNotificationTextOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -144,7 +200,14 @@ object RetentionModule {
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.backgroundJobRunDao().redactErrorMessagesOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         },
 
         object : RetentionTarget {
@@ -153,7 +216,14 @@ object RetentionModule {
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
                 val count = appDatabase.bankStatementImportItemDao().redactMerchantOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
-            }.getOrElse { RetentionPurgeResult(name, 0, false, it.message) }
+            }.getOrElse {
+                    RetentionPurgeResult(
+                        targetName = name,
+                        rowsPurged = 0,
+                        success = false,
+                        errorMessage = "RETENTION_PURGE_FAILED:${it::class.simpleName}"
+                    )
+                }
         }
     )
 

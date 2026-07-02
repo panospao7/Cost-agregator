@@ -373,3 +373,24 @@ The following existing code paths persist raw exception messages and will be add
 - Replace PostCommitAction.execute lambda with a named use-case dispatch.
 - Add `SideEffectReplayWorker` scheduled via WorkManager.
 - See CANCELLATION_ATOMICITY_BASELINE.md §MIT-075 for tracking.
+
+---
+
+### §13 Bank Statement Per-Item Lifecycle Policy (PR19-7)
+
+**Decision: `BankStatementImportItem` ledger is the per-item audit source for skipped/failed items.**
+
+Receipt lifecycle events are emitted only once a receipt or PendingReview exists:
+  - `REVIEW_CREATED` — emitted atomically with PendingReview + item insert (PR15)
+  - `PROCESSING_COMPLETE` / `PROCESSING_FAILED` — emitted atomically with run finalization + receipt status (PR11, PR19-1)
+
+Validation skips and processing failures only create `BankStatementImportItem` rows with
+structured failure codes (`INVALID_AMOUNT`, `NON_POSITIVE_AMOUNT`, `MISSING_CURRENCY`,
+`UNREASONABLE_DATE`, `DB_INSERT_FAILURE`, `PROCESSING_STATE_ERROR`, `ITEM_PROCESSING_FAILURE`)
+and sanitized error summaries.
+
+Duplicate items also create only `BankStatementImportItem` rows with `STATUS_DUPLICATE_EXPENSE`
+or `STATUS_DUPLICATE_PENDING_REVIEW` and `duplicateReason` populated.
+
+**No receipt lifecycle events are emitted for items that never become receipts/reviews.**
+The `BankStatementImportItem` table serves as the audit ledger for these rows.
