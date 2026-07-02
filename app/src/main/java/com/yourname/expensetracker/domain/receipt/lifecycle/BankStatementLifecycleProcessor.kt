@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 import android.net.Uri
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
 import com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -98,6 +100,7 @@ data class BankStatementResult(
 @Singleton
 class BankStatementLifecycleProcessor @Inject constructor(
     private val database: AppDatabase,
+    private val transactionRunner: DomainTransactionRunner,
     private val receiptRepository: ReceiptRepository,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptLifecycleEventWriter: ReceiptLifecycleEventWriter,
@@ -298,7 +301,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
             var receiptId: Long = 0L
             var earlyReturn: Result<BankStatementResult>? = null
 
-            database.withTransaction {
+            transactionRunner.runInTransaction(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                operationId = "bank_statement.save_receipt",
+                source = "BankStatementLifecycleProcessor"
+            ) { context ->
             // NOTE: Directly inserting via receiptRepository.insertReceipt() instead of
             // going through ReceiptLifecycleCoordinator because this processor already
             // writes its own lifecycle events (RECEIPT_SAVED, PROCESSING_COMPLETE) and
@@ -325,16 +332,16 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         transactionsFound = 0, reviewsCreated = 0, duplicatesSkipped = 0,
                         duplicateOfReceiptId = write.existingReceipt.id
                     ))
-                    return@withTransaction
+                    return@runInTransaction
                 }
                 is ReceiptRecordWriteResult.Failed -> {
                     earlyReturn = Result.failure(IllegalStateException(write.reason))
-                    return@withTransaction
+                    return@runInTransaction
                 }
             }
 
             // ── Step 5: Write RECEIPT_SAVED lifecycle event ────────────────────
-            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+            receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
                 receiptId = receiptId,
                 sourceType = ReceiptSourceType.BANK_STATEMENT.name,
                 documentType = ReceiptDocumentType.BANK_STATEMENT.name,
@@ -348,7 +355,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val pagesProcessed = ocrResult.pagesProcessed
             val totalPages = ocrResult.totalPages
             if (pagesProcessed != null && totalPages != null && pagesProcessed < totalPages) {
-                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
                     receiptId = receiptId,
                     sourceType = ReceiptSourceType.BANK_STATEMENT.name,
                     documentType = ReceiptDocumentType.BANK_STATEMENT.name,
@@ -442,7 +449,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     if (hasExpenseDuplicate) {
                         duplicatesSkipped++
                         // P3-BLOCKER-H2: Wrap duplicate decision + item insert in transaction.
-                        database.withTransaction {
+                        transactionRunner.runInTransaction(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            operationId = "bank_statement.skip_duplicate",
+                            source = "BankStatementLifecycleProcessor"
+                        ) { context ->
                             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.duplicateExpense.tx")
                             bankStatementImportItemDao.insert(
                                 BankStatementImportItem(
@@ -472,7 +483,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     if (duplicateReview != null) {
                         duplicatesSkipped++
                         // P3-BLOCKER-H2: Wrap duplicate decision + item insert in transaction.
-                        database.withTransaction {
+                        transactionRunner.runInTransaction(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            operationId = "bank_statement.skip_duplicate_review",
+                            source = "BankStatementLifecycleProcessor"
+                        ) { context ->
                             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.duplicatePending.tx")
                             bankStatementImportItemDao.insert(
                                 BankStatementImportItem(
@@ -510,7 +525,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
                     // P3-REG-005: Wrap review creation and item row in a single
                     // transaction so neither can exist without the other.
-                    val reviewId = database.withTransaction {
+                    val reviewId = transactionRunner.runInTransaction(
+                        correlationId = java.util.UUID.randomUUID().toString(),
+                        operationId = "bank_statement.create_review",
+                        source = "BankStatementLifecycleProcessor"
+                    ) { context ->
                         writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processItem.tx")
                         val revId = pendingReviewDao.insert(review)
                         require(revId > 0) { "PendingReview insert failed" }
@@ -587,7 +606,11 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // status when the run is not in a failed state.
             val runSucceeded = finalStatus != BankStatementImportRun.STATUS_FAILED
             if (runSucceeded) {
-                database.withTransaction {
+                transactionRunner.runInTransaction(
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    operationId = "bank_statement.finalize_success",
+                    source = "BankStatementLifecycleProcessor"
+                ) { context ->
                     // P3-PR2 / P3-P1-05: Write barrier check before direct DAO mutation
                     writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.finalizeStatus")
                     val receiptToUpdate = scannedReceiptDao.getById(receiptId)
@@ -597,7 +620,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             updatedAt = timeProvider.now()
                         ))
                     }
-                    receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                    receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
                         receiptId = receiptId,
                         sourceType = ReceiptSourceType.BANK_STATEMENT.name,
                         documentType = ReceiptDocumentType.BANK_STATEMENT.name,
@@ -614,8 +637,12 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     ))
                 }
             } else {
-                database.withTransaction {
-                    receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                transactionRunner.runInTransaction(
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    operationId = "bank_statement.finalize_failure",
+                    source = "BankStatementLifecycleProcessor"
+                ) { context ->
+                    receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
                         receiptId = receiptId,
                         sourceType = ReceiptSourceType.BANK_STATEMENT.name,
                         documentType = ReceiptDocumentType.BANK_STATEMENT.name,

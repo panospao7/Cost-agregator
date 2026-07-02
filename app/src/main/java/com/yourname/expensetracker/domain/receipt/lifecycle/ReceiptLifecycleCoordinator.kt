@@ -1,8 +1,9 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
-import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -93,6 +94,8 @@ import javax.inject.Singleton
 @Singleton
 class ReceiptLifecycleCoordinator @Inject constructor(
     private val database: AppDatabase,
+    private val transactionRunner: DomainTransactionRunner,
+    private val receiptLifecycleEventWriter: ReceiptLifecycleEventWriter,
     private val receiptRepository: ReceiptRepository,
     private val receiptLinkService: ReceiptLinkService,
     private val assetStore: ReceiptAssetStore,
@@ -188,6 +191,22 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             }
         }
     }
+
+    /**
+     * Maps a [ReceiptEvent] entity to a [ReceiptLifecycleEvent] data class so
+     * event writes can be routed through the context-aware [ReceiptLifecycleEventWriter].
+     */
+    private fun toLifecycleEvent(event: ReceiptEvent): ReceiptLifecycleEvent = ReceiptLifecycleEvent(
+        receiptId = event.receiptId,
+        sourceType = event.sourceType,
+        documentType = event.documentType,
+        eventType = event.eventType,
+        oldStatus = event.oldStatus,
+        newStatus = event.newStatus,
+        actor = event.actor,
+        message = event.message,
+        errorDetails = null
+    )
 
     /**
      * Options that control receipt processing behaviour.
@@ -341,9 +360,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             receipt.imagePath?.let { assetStore.deleteAsset(it) }
                             Timber.i("Duplicate draft detected by exact hash: existingId=%d", existing.id)
                         } else {
-                            database.withTransaction {
+                            transactionRunner.runInTransaction(
+                                correlationId = java.util.UUID.randomUUID().toString(),
+                                operationId = "receipt.dedup_hash_delete",
+                                source = "ReceiptLifecycleCoordinator"
+                            ) { context ->
                                 pendingReviewDao.deleteByScannedReceiptId(receipt.id)
-                                receiptEventDao.insert(ReceiptEvent(
+                                receiptLifecycleEventWriter.write(context, toLifecycleEvent(ReceiptEvent(
                                     receiptId = receipt.id, sourceType = receipt.sourceType,
                                     documentType = receipt.documentType,
                                     eventType = "DUPLICATE_DETECTED",
@@ -354,7 +377,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                                     message = "Exact-hash duplicate removed (existingId=${existing.id})",
                                     metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"EXACT_HASH\"}",
                                     errorDetails = null
-                                ))
+                                )))
                                 scannedReceiptDao.delete(receipt)
                             }
                             receipt.imagePath?.let { assetStore.deleteAsset(it) }
@@ -405,7 +428,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // The draft path (receipt.id <= 0) does not touch the DB, so its
             // read-only check remains outside the transaction.
             if (receipt.id > 0L) {
-                val existingDuplicate = database.withTransaction {
+                val existingDuplicate = transactionRunner.runInTransaction(
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    operationId = "receipt.dedup_post_ocr",
+                    source = "ReceiptLifecycleCoordinator"
+                ) { context ->
                     val postOcrDup = duplicateDetector.checkDuplicate(
                         imageHash = null,  // already checked above
                         textFingerprint = textFingerprint,
@@ -425,7 +452,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                                 semanticFingerprint = semanticFingerprint
                             ), now).also { it.taxInclusive = taxInclusive }
                             scannedReceiptDao.update(withFingerprints)
-                            receiptEventDao.insert(ReceiptEvent(
+                            receiptLifecycleEventWriter.write(context, toLifecycleEvent(ReceiptEvent(
                                 receiptId = withFingerprints.id,
                                 sourceType = withFingerprints.sourceType,
                                 documentType = withFingerprints.documentType,
@@ -437,7 +464,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                                 message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
                                 metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
                                 errorDetails = null
-                            ))
+                            )))
                             existing
                         }
                     } else null
@@ -480,10 +507,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             ), now).also { it.taxInclusive = taxInclusive }
 
             // P3-BLOCKER-04: Use resolver for fallback insert.
-            val savedId = database.withTransaction {
+            val savedId = transactionRunner.runInTransaction(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                operationId = "receipt.save_with_review",
+                source = "ReceiptLifecycleCoordinator"
+            ) { context ->
                 val insertedId: Long = when (val res = receiptInsertResolver.insertOrResolve(updated)) {
                     is ReceiptInsertResult.Inserted -> {
-                        receiptEventDao.insert(ReceiptEvent(
+                        receiptLifecycleEventWriter.write(context, toLifecycleEvent(ReceiptEvent(
                             receiptId = res.receiptId,
                             sourceType = updated.sourceType,
                             documentType = updated.documentType,
@@ -494,7 +525,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             actor = "system:coordinator",
                             message = "Receipt saved via lifecycle coordinator",
                             metadata = null, errorDetails = null
-                        ))
+                        )))
                         res.receiptId
                     }
                     is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = null)
@@ -595,10 +626,14 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
         rawOcrText = sanitizedOcrText
     ), now)
     return try {
-        database.withTransaction {
+        transactionRunner.runInTransaction(
+            correlationId = java.util.UUID.randomUUID().toString(),
+            operationId = "receipt.save_email_typed",
+            source = "ReceiptLifecycleCoordinator"
+        ) { context ->
             when (val result = receiptInsertResolver.insertOrResolve(updated)) {
                 is ReceiptInsertResult.Inserted -> {
-                    receiptEventDao.insert(ReceiptEvent(
+                    receiptLifecycleEventWriter.write(context, toLifecycleEvent(ReceiptEvent(
                         receiptId = result.receiptId,
                         sourceType = ReceiptSourceType.EMAIL.name,
                         documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
@@ -607,7 +642,7 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
                         actor = "system:email_ingestion",
                         message = "Email receipt saved via lifecycle coordinator",
                         metadata = null, errorDetails = null
-                    ))
+                    )))
                     SaveEmailReceiptResult.Inserted(result.receiptId)
                 }
                 is ReceiptInsertResult.Duplicate -> SaveEmailReceiptResult.Duplicate(result.existingReceipt.id)
@@ -633,31 +668,32 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             processingStatus = ReceiptProcessingStatus.PARSED.name,
             rawOcrText = sanitizedOcrText
         ), now)
-        var id = 0L
-        database.withTransaction {
+        val id: Long = transactionRunner.runInTransaction(
+            correlationId = java.util.UUID.randomUUID().toString(),
+            operationId = "receipt.save_email_deprecated",
+            source = "ReceiptLifecycleCoordinator"
+        ) { context ->
             when (val result = receiptInsertResolver.insertOrResolve(updated)) {
                 is ReceiptInsertResult.Inserted -> {
-                    id = result.receiptId
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = id,
-                            sourceType = ReceiptSourceType.EMAIL.name,
-                            documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
-                            eventType = "RECEIPT_SAVED",
-                            occurredAt = now,
-                            oldStatus = null,
-                            newStatus = ReceiptProcessingStatus.PARSED.name,
-                            actor = "system:email_ingestion",
-                            message = "Email receipt saved via lifecycle coordinator",
-                            metadata = null,
-                            errorDetails = null
-                        )
-                    )
+                    receiptLifecycleEventWriter.write(context, toLifecycleEvent(ReceiptEvent(
+                        receiptId = result.receiptId,
+                        sourceType = ReceiptSourceType.EMAIL.name,
+                        documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+                        eventType = "RECEIPT_SAVED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = ReceiptProcessingStatus.PARSED.name,
+                        actor = "system:email_ingestion",
+                        message = "Email receipt saved via lifecycle coordinator",
+                        metadata = null,
+                        errorDetails = null
+                    )))
+                    result.receiptId
                 }
                 is ReceiptInsertResult.Duplicate -> {
-                    // P3-994-02: Return -1 without writing any event
+                    // P3-994-02: Return 0 without writing any event
                     Timber.d("saveEmailReceipt: duplicate detected, existingId=%d", result.existingReceipt.id)
-                    return@withTransaction
+                    0L
                 }
                 is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(result.reason)
             }
@@ -781,7 +817,11 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
 
         try {
-        database.withTransaction {
+        transactionRunner.runInTransaction(
+            correlationId = java.util.UUID.randomUUID().toString(),
+            operationId = "receipt.process_email",
+            source = "ReceiptLifecycleCoordinator"
+        ) { context ->
             val receipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(
                 imagePath = null,
                 rawOcrText = effectiveOcrText,
@@ -878,7 +918,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 )
             }
 
-            receiptEventDao.insert(ReceiptEvent(
+            receiptLifecycleEventWriter.write(context, toLifecycleEvent(ReceiptEvent(
                 receiptId = savedId,
                 sourceType = ReceiptSourceType.EMAIL.name,
                 documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
@@ -890,7 +930,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 message = "Email receipt saved via lifecycle coordinator",
                 metadata = null,
                 errorDetails = null
-            ))
+            )))
 
             // Create expense (and link) first so the planner below can see the linked state.
             // P11-P1-08: low-confidence receipts route to NeedsReview (not auto-expense).
@@ -1157,7 +1197,11 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
 
         return try {
             // Database operations inside a single transaction
-            database.withTransaction {
+            transactionRunner.runInTransaction(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                operationId = "receipt.delete",
+                source = "ReceiptLifecycleCoordinator"
+            ) { context ->
                 // NEW-P3-007: Guard — verify the receipt still exists inside the
                 // transaction before writing the RECEIPT_DELETED event.  The earlier
                 // getById check outside the transaction cannot prevent a concurrent
@@ -1167,21 +1211,19 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 }
 
                 // 2. Write delete event for audit trail
-                receiptEventDao.insert(
-                    ReceiptEvent(
-                        receiptId = receiptId,
-                        sourceType = receipt.sourceType,
-                        documentType = receipt.documentType,
-                        eventType = "RECEIPT_DELETED",
-                        occurredAt = timeProvider.now(),
-                        oldStatus = receipt.processingStatus,
-                        newStatus = "DELETED",
-                        actor = "system:coordinator",
-                        message = "Receipt deleted with asset cleanup",
-                        metadata = null,
-                        errorDetails = null
-                    )
-                )
+                receiptLifecycleEventWriter.write(context, toLifecycleEvent(ReceiptEvent(
+                    receiptId = receiptId,
+                    sourceType = receipt.sourceType,
+                    documentType = receipt.documentType,
+                    eventType = "RECEIPT_DELETED",
+                    occurredAt = timeProvider.now(),
+                    oldStatus = receipt.processingStatus,
+                    newStatus = "DELETED",
+                    actor = "system:coordinator",
+                    message = "Receipt deleted with asset cleanup",
+                    metadata = null,
+                    errorDetails = null
+                )))
 
                 // 3. Delete all receipt-expense links
                 receiptExpenseLinkDao.deleteAllLinksForReceipt(receiptId)
@@ -1292,7 +1334,11 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         // S7-66F-001: Use createExpenseDbOnlyV2 so side effects are NOT dispatched inside the transaction.
         // If linking fails and the transaction rolls back, no side effects will have run.
         val txResult: Pair<Result<Long>, PostCommitActionBatch> = try {
-            database.withTransaction {
+            transactionRunner.runInTransaction(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                operationId = "receipt.create_expense_link",
+                source = "ReceiptLifecycleCoordinator"
+            ) { _ ->
                 val mutation = transactionLifecycleCoordinator.createExpenseDbOnlyV2(request)
                 when (val result = mutation.value) {
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {

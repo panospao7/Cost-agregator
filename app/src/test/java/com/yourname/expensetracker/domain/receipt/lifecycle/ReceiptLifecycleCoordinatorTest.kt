@@ -33,6 +33,7 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectCategory
 import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -142,6 +143,8 @@ class ReceiptLifecycleCoordinatorTest {
             pendingReviewDao = mockk(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
             receiptInsertResolver = receiptInsertResolver,
+            transactionRunner = mockk(relaxed = true),
+            receiptLifecycleEventWriter = mockk(relaxed = true),
             effectiveCloudAiPolicyResolver = mockk(relaxed = true)
         )
     }
