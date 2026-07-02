@@ -1,6 +1,6 @@
 # Cost Aggregator — Master Issue Tracker for Pipelines 1–18
 
-Last synced: 2026-07-01 (PR 1–10 complete)  
+Last synced: 2026-07-02 (PR 1–18 complete)  
 Source docs commit: `886f5aca4a7738b425f2d0247a8f319f0f8f7412`  
 Debug reports primarily audit pinned code around: `83b798e`
 
@@ -11,14 +11,14 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: YELLOW — significantly improved by PR 1–10.**
+**Overall status: YELLOW → NEAR-GREEN (PR 1–18 landed; remaining deferred MITs tracked in sections below)**
 
-The app has good architectural direction. PR 1–10 (2026-07-01) landed the foundational atomicity, cancellation, and post-commit evidence infrastructure for MIT-031/034/041/043. These MITs are PARTIAL — immediate correctness regressions remain and are being addressed in PR11–PR18. Remaining release blockers are in schema constraints (MIT-033), security/network (P16), and CI guard enforcement (P17).
+PR 1–18 (2026-07-01 through 2026-07-02) have landed foundational atomicity, cancellation, post-commit evidence, consistency checking, and static guard infrastructure. Four MITs are NEAR-COMPLETE; remaining deferred items are low-priority or cross-cutting (MIT-033 schema constraints, P16 network security).
 
-- MIT-031 (state/event atomicity): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
-- MIT-034 (cancellation propagation): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
-- MIT-041 (receipt/review atomicity): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
-- MIT-043 (recurring atomicity): ⚠️ PARTIAL — foundation landed; PR11–PR18 pending
+- MIT-031 (state/event atomicity): ⚠️ PARTIAL → NEAR-COMPLETE — PR13 (DomainTransactionRunner), PR11 (status+event atomicity)
+- MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)
+- MIT-041 (receipt/review atomicity): ⚠️ PARTIAL → NEAR-COMPLETE — PR11 (final status), PR15 (per-item events, validation)
+- MIT-043 (recurring atomicity): ⚠️ PARTIAL — PR14 (hidden write split, swallowed events fixed)
 - MIT-033 (DB uniqueness constraints): TODO — next priority
 - DB migration chain and schema parity: not yet proven.
 - Restore/reset/import can leave stale singleton DB/DAO consumers alive.
@@ -798,7 +798,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ⚠️ **PARTIAL** — foundation landed PR 1–10; immediate regressions fixed PR11; remaining PR12–PR18 pending  
+**Status:** ⚠️ **PARTIAL → NEAR-COMPLETE** — PR1–PR17 delivered structured TransactionContext, DomainTransactionRunner migration (BankStatement, ReceiptLifecycle), and TransactionalEventWriter implementations. Remaining: TransactionLifecycleCoordinator uses raw withTransaction (low-prio, deferred to P4).  
 **Labels:** `transactions`, `events`, `atomicity`
 
 #### Implemented
@@ -877,7 +877,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P8, P9, P12, P16, P17, P18  
-**Status:** ⚠️ **PARTIAL** — foundation landed PR 1–2; PR11 fixes BankStatement runCatching; full closure pending PR12  
+**Status:** ⚠️ **PARTIAL** — PR12a converted allowlist to structured format with expiry enforcement; PR12b replaced 19 unsafe runCatching in critical suspend paths (RetentionModule, OperationRunRecorder, CompositeOperationRunRecorder). Remaining: ~65 UI ViewModel files in KNOWN_VIOLATIONS (low-prio), ~17 CE-gap sites fixed in PR2.  
 **Labels:** `coroutines`, `workers`, `correctness`
 
 #### Implemented
@@ -975,7 +975,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ⚠️ **PARTIAL** — foundation landed PR 4–5; PR11 fixes BankStatement final status+event atomicity; full closure pending PR14  
+**Status:** ⚠️ **PARTIAL → NEAR-COMPLETE** — PR11 wrapped BankStatement final status+events in withTransaction; PR15 added per-item lifecycle events and pre-mutation validation (amount/currency/date/merchant). Remaining: BankApiIntegration.kt PendingReviewDao.insert (stub/demo, non-production).  
 **Labels:** `receipts`, `ocr`, `pending-review`
 
 #### Implemented
@@ -1021,7 +1021,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P4  
-**Status:** ⚠️ **PARTIAL** — foundation landed PR 6–7; remaining hidden-write cleanup and event atomicity pending PR15  
+**Status:** ⚠️ **PARTIAL** — PR14 split reconcilePlannedVsActual into explicit write + pure read, fixed 3 swallowed event inserts in regenerateReminderDeliveries. Remaining: DB-level linkedExpenseId uniqueness (MIT-033), RecurringPlanProjectionService full-atomicity TODO.  
 **Labels:** `recurring`, `reminders`, `database`
 
 #### Implemented
@@ -1046,6 +1046,30 @@ Choose one:
 
 - DB-level `linkedExpenseId` uniqueness (MIT-033) is separate and not yet implemented.
 - `RecurringPlanProjectionService.projectFromRule` TODO for full atomicity (lower priority).
+
+---
+
+### MIT-075: Post-Commit Side-Effect Failure Evidence
+
+**Priority:** P1 (High)
+**Domain:** Side Effect Pipeline
+**Source:** CANCELLATION_ATOMICITY_BASELINE.md §4.2, MASTER_ISSUE_TRACKER_SUPPLEMENT_2.md
+
+**Issue:** Post-commit side effects run in-memory only, with no durability guarantee.
+If the app crashes between DB commit and side-effect execution, effects are silently lost.
+
+**Resolution summary:**
+- PR 8: Implemented PostCommitSideEffectEvidenceService with DiagnosticEvent emission.
+- PR17: Added Volatile diagnostic counters (actionsDispatched, actionsCompleted, actionsFailed).
+- PR17: Documented architectural decision — no durable outbox at this time
+  (justified in TRANSACTIONAL_EVENT_POLICY.md §12).
+- Side effects are non-critical (budget checks, merchant learning) or re-triggerable
+  (receipt matching via idempotency keys).
+
+**Status:** ⚠️ PARTIAL — evidence service operational; no durable outbox
+  per documented architectural decision (PR17). Critical effects are idempotent-key-guarded;
+  non-critical effects tolerate loss on crash.  If guaranteed replay is required later,
+  implement pending_side_effect Room table + SideEffectReplayWorker (see §12.7).
 
 ---
 

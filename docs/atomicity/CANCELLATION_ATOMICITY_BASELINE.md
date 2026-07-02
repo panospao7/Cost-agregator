@@ -7,6 +7,25 @@ Format: Full inventory of cancellation risks, atomicity gaps, event consistency 
 
 ---
 
+## Post-PR18 Status Update (2026-07-02)
+
+This document reflects the baseline state at commit `e56a7a6` (PR 1–10). As of PR18,
+significant progress has been made. Key changes:
+
+| Area | Baseline State | Post-PR18 State |
+|------|---------------|-----------------|
+| **MIT-031** (State/Event atomicity) | ❌ TODO | ✅ NEAR-COMPLETE — DomainTransactionRunner adopted by BankStatementLifecycleProcessor and ReceiptLifecycleCoordinator (PR13). TransactionContext hardened (PR13a). Event writers require TransactionContext (PR13a). |
+| **MIT-034** (Cancellation propagation) | ⚠️ 17 gaps in 14 files | ⚠️ PARTIAL — 19 unsafe runCatching replaced in critical paths (PR12b). Structured allowlist with expiry enforcement (PR12a). ~65 UI ViewModels remain (low-priority). |
+| **MIT-041** (Receipt/review atomicity) | ❌ TODO | ✅ NEAR-COMPLETE — Bank statement final status+event atomic (PR11). Per-item lifecycle events + pre-mutation validation (PR15). Only stub code remains |
+| **MIT-043** (Recurring atomicity) | ❌ TODO | ⚠️ PARTIAL — Hidden writes split (PR14). Swallowed events fixed (PR14). DB uniqueness deferred |
+| **MIT-075** (Side-effect evidence) | ❌ TODO | ⚠️ PARTIAL — Evidence service operational (PR8). No-outbox decision documented (PR17) |
+| **Hidden writes** | 3+ un-named queries with writes | ✅ RESOLVED — reconcilePlannedVsActual split, getDueReminders renamed to recoverAndGetDueReminders |
+| **runCatching sites** | ~100 unsafe | ✅ CRITICAL PATH CLEAN — 19 replaced in RetentionModule, OperationRunRecorder, CompositeOperationRunRecorder (PR12b) |
+| **CE-gap sites** | 17 in 14 files | ✅ RESOLVED — All 17 fixed in PR2 |
+| **Guard tests** | 3 guard tests | ✅ 14 guard tests (PR12a, PR16, et al) |
+
+---
+
 ## Executive Summary
 
 The codebase has made significant progress on cancellation safety (U-PR1 landed — 146 CE guards across 38 files). However, gaps remain:
