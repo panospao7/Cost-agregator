@@ -421,3 +421,59 @@ The `BankStatementImportItem` table serves as the audit ledger for these rows.
 **No receipt event guarantee:**
 - No `PROCESSING_CANCELLED` or equivalent receipt lifecycle event is emitted for cancelled bank statements.
 - This is intentional and documented here.
+
+---
+
+### §15 MIT-043 Recurring / Reminder Atomicity — Closure Decision (PR23)
+
+**Decision: MIT-043 remains PARTIAL by design. Full closure requires MIT-033 (DB uniqueness constraints).**
+
+**Current state (PR21):**
+- `reconcilePlannedVsActual()` deprecated at `DeprecationLevel.ERROR`, split into
+  `ensureOccurrencesGeneratedForReconciliation()` (explicit write) + `calculatePlannedVsActualReport()` (pure read).
+- `recoverStaleClaimedDeliveries()` runs in a transaction with optional lifecycle event.
+- `regenerateReminderDeliveriesForOccurrence()` uses per-window best-effort with Timber logging.
+- `linkedExpenseId` uniqueness is not enforced at DB level (depends on MIT-033).
+
+**Remaining blockers:**
+1. MIT-033: DB uniqueness constraints on `linkedExpenseId` prevent duplicate actual-expense linkages.
+2. Regeneration policy: per-window best-effort is acceptable for reminder delivery (non-critical),
+   but prevents full "all-or-nothing" atomicity.
+3. Stale recovery event policy: event failure does not rollback recovery (Option B — operational
+   diagnostic, non-critical lifecycle).
+
+**Follow-up:**
+- After MIT-033 lands, create MIT-043B for duplicate fulfillment conflict resolution
+  and full atomicity hardening.
+- Best-effort regeneration is accepted as product policy for reminder delivery windows.
+
+---
+
+### §16 MIT-075 Post-Commit Side-Effect Outbox — Closure Decision (PR24)
+
+**Decision: MIT-075 is PARTIAL by explicit architectural decision. No durable outbox will be implemented.**
+
+**Current state (PR21):**
+- `PostCommitSideEffectEvidenceService` provides diagnostic counters (dispatched, completed, failed).
+- 11 side-effect code paths use bounded reason codes (no raw `Throwable.message`).
+- `TRANSACTIONAL_EVENT_POLICY.md` §12 documents the no-outbox decision.
+
+**Justification for no outbox:**
+- Most post-commit side effects are non-critical: budget checks, merchant learning, price protection.
+  Lost effects on crash are inconvenient but not data-corrupting.
+- Critical side effects (receipt-to-expense matching) are guarded by idempotency keys and can be
+  re-triggered by re-running the matching pipeline.
+- A full outbox (Room table, dispatch table, replay worker, WorkManager registration) would be ~400+ LOC
+  with significant architectural risk and maintenance burden.
+- The existing diagnostics provide sufficient observability for monitoring.
+
+**Guarantees:**
+- All side effects execute ONLY after database commit (`runBestEffortAfterCommit`).
+- Idempotency keys prevent double-execution on retry.
+- `CancellationException` is properly propagated.
+
+**If replay guarantee is required in the future:**
+- Add `pending_side_effect` Room table.
+- Replace `PostCommitAction.execute` lambda with named use-case dispatch.
+- Add `SideEffectReplayWorker` scheduled via WorkManager.
+- This is tracked as a future architectural decision, not a current defect.

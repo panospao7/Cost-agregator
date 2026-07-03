@@ -1023,7 +1023,7 @@ Residual: CI must be green. BankApiIntegration.kt stub only.
 
 **Severity:** S0  
 **Pipelines:** P4  
-**Status:** ⚠️ PARTIAL — PR14 (reconciliation split, swallowed events fixed), PR19-2 (stale recovery evented, transaction-wrapped, write-barrier-gated; deprecated reconcile method deactivated with DeprecationLevel.ERROR). Remaining: DB uniqueness (MIT-033), reminder regeneration partial-skip policy (best-effort per-window with Timber logging).  
+**Status:** ⚠️ **PARTIAL by design** — PR 1–23 (2026-07-02). Hidden writes split (PR14), swallowed events fixed (PR14), stale recovery transactional with event attempt (PR19-2), deprecated reconcile at DeprecationLevel.ERROR. Remaining: DB uniqueness (MIT-033), best-effort regeneration accepted as product policy, stale recovery designated as operational diagnostic (non-critical lifecycle). Full closure depends on MIT-033. See TRANSACTIONAL_EVENT_POLICY.md §15.  
 **Labels:** `recurring`, `reminders`, `database`
 
 #### Implemented
@@ -1068,10 +1068,7 @@ If the app crashes between DB commit and side-effect execution, effects are sile
 - Side effects are non-critical (budget checks, merchant learning) or re-triggerable
   (receipt matching via idempotency keys).
 
-**Status:** ⚠️ PARTIAL — evidence service operational; no durable outbox
-  per documented architectural decision (PR17). Critical effects are idempotent-key-guarded;
-  non-critical effects tolerate loss on crash.  If guaranteed replay is required later,
-  implement pending_side_effect Room table + SideEffectReplayWorker (see §12.7).
+**Status:** ⚠️ **PARTIAL by design** — PR 1–24 (2026-07-02). PostCommitSideEffectEvidenceService operational (PR8), 11 bounded reason codes (PR17), Volatile diagnostic counters (PR17). No durable outbox: explicit architectural decision per TRANSACTIONAL_EVENT_POLICY.md §12 and §16. Non-critical effects tolerate loss on crash; critical effects are idempotent-key-guarded.
 
 ---
 
