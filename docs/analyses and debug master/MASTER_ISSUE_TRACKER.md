@@ -1,6 +1,6 @@
 # Cost Aggregator — Master Issue Tracker for Pipelines 1–18
 
-Last synced: 2026-07-02 (PR19 final correctness cleanup applied)  
+Last synced: 2026-07-03 (PR24 final correctness cleanup applied)  
 Source docs commit: `886f5aca4a7738b425f2d0247a8f319f0f8f7412`  
 Debug reports primarily audit pinned code around: `83b798e`
 
@@ -11,9 +11,9 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: GREEN-YELLOW — PR1–PR22 complete. MIT-031 ✅ DONE. MIT-041 ✅ DONE. MIT-034 PARTIAL (97 entries, burn-down active). MIT-043 PARTIAL by design. MIT-075 PARTIAL by design.**
+**Overall status: GREEN-YELLOW — PR1–PR24 complete. MIT-031 ✅ DONE. MIT-041 ✅ DONE. MIT-034 PARTIAL (97 entries, burn-down active). MIT-043 PARTIAL by design. MIT-075 PARTIAL by design.**
 
-PR 1–22 (2026-07-01 through 2026-07-03) complete. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are CLOSED — all critical production paths are transaction-scoped, provenance-guarded, and tested. MIT-034 remains PARTIAL with 97 allowlist entries and active burn-down guard. MIT-043 and MIT-075 remain PARTIAL by documented architectural decision (TRANSACTIONAL_EVENT_POLICY.md §§15–17). MIT-033 schema constraints are the next priority.
+PR 1–24 (2026-07-01 through 2026-07-03) complete. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are CLOSED — all critical production paths are transaction-scoped, provenance-guarded, and tested. MIT-034 remains PARTIAL with 97 allowlist entries and active burn-down guard. MIT-043 and MIT-075 remain PARTIAL by documented architectural decision (TRANSACTIONAL_EVENT_POLICY.md §§15–17). MIT-033 schema constraints are the next priority.
 
 - MIT-031 (state/event atomicity): ✅ DONE — PR13+PR20+PR21 (DomainTransactionRunner, provenance guard, 0 manual contexts)
 - MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)
@@ -798,7 +798,7 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ✅ **DONE** — PR 1–22 (2026-07-03). DomainTransactionRunner (14 call sites). TransactionContext hardened with internal token, provenance guard (6 allowlist entries, broader regex). All production writers require context. Direct event DAO guard structured (8 legacy repos on 45-day expiry). Stale recovery transactional/evented (Option A).  
+**Status:** ✅ **DONE** — PR 1–24 (2026-07-03). DomainTransactionRunner (14 call sites). TransactionContext hardened with internal token, provenance guard (6 allowlist entries, broader regex). All production writers require context. Direct event DAO guard structured (8 legacy repos on 75-day expiry). Stale recovery transactional/evented (Option A).  
 Residual (accepted, non-blocking): Deprecated context-free writer APIs (DeprecationLevel.ERROR, §17.1). Warranty events classified as non-critical (§17.3). CI: Hilt exclusion documented (§17.5).
 **Labels:** `transactions`, `events`, `atomicity`
 
@@ -976,7 +976,7 @@ Residual (accepted, non-blocking): Deprecated context-free writer APIs (Deprecat
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ✅ **DONE** — PR 1–22 (2026-07-03). Bank: importRunId non-null, pre-mutation validation (amount/currency/date/merchant), per-item REVIEW_CREATED event atomic with PendingReview, run finalization atomic with receipt PROCESSING_COMPLETE/PROCESSING_FAILED event, cancellation never masks CE (addSuppressed), non-cancellation cleanup rethrows CE, unexpected failure after receipt writes run+event atomically. 7 BankStatementItemAudit tests. Cancellation terminal policy documented (TRANSACTIONAL_EVENT_POLICY.md §14).  
+**Status:** ✅ **DONE** — PR 1–24 (2026-07-03). Bank: importRunId non-null, pre-mutation validation (amount/currency/date/merchant), per-item REVIEW_CREATED event atomic with PendingReview, run finalization atomic with receipt PROCESSING_COMPLETE/PROCESSING_FAILED event, cancellation never masks CE (addSuppressed), non-cancellation cleanup rethrows CE, unexpected failure after receipt writes run+event atomically. 7 BankStatementItemAudit tests. Cancellation terminal policy documented (TRANSACTIONAL_EVENT_POLICY.md §14).  
 Residual (non-blocking): BankApiIntegration.kt low-confidence stub (non-production). CI: Hilt exclusion documented (§17.5).
 **Labels:** `receipts`, `ocr`, `pending-review`
 
@@ -1023,7 +1023,7 @@ Residual (non-blocking): BankApiIntegration.kt low-confidence stub (non-producti
 
 **Severity:** S0  
 **Pipelines:** P4  
-**Status:** ⚠️ **PARTIAL by design** — PR 1–23 (2026-07-02). Hidden writes split (PR14), swallowed events fixed (PR14), stale recovery transactional with event attempt (PR19-2), deprecated reconcile at DeprecationLevel.ERROR. Remaining: DB uniqueness (MIT-033), best-effort regeneration accepted as product policy, stale recovery designated as operational diagnostic (non-critical lifecycle). Full closure depends on MIT-033. See TRANSACTIONAL_EVENT_POLICY.md §15.  
+**Status:** ⚠️ **PARTIAL by design** — PR 1–24 (2026-07-03). Hidden writes split (PR14), swallowed events fixed (PR14), stale recovery transactional with event attempt (PR19-2), deprecated reconcile at DeprecationLevel.ERROR. Remaining: DB uniqueness (MIT-033), best-effort regeneration accepted as product policy, stale recovery designated as operational diagnostic (non-critical lifecycle). Full closure depends on MIT-033. See TRANSACTIONAL_EVENT_POLICY.md §15.  
 **Labels:** `recurring`, `reminders`, `database`
 
 #### Implemented
@@ -1068,7 +1068,7 @@ If the app crashes between DB commit and side-effect execution, effects are sile
 - Side effects are non-critical (budget checks, merchant learning) or re-triggerable
   (receipt matching via idempotency keys).
 
-**Status:** ⚠️ **PARTIAL by design** — PR 1–24 (2026-07-02). PostCommitSideEffectEvidenceService operational (PR8), 11 bounded reason codes (PR17), Volatile diagnostic counters (PR17). No durable outbox: explicit architectural decision per TRANSACTIONAL_EVENT_POLICY.md §12 and §16. Non-critical effects tolerate loss on crash; critical effects are idempotent-key-guarded.
+**Status:** ⚠️ **PARTIAL by design** — PR 1–24 (2026-07-03). PostCommitSideEffectEvidenceService operational (PR8), 11 bounded reason codes (PR17), Volatile diagnostic counters (PR17). No durable outbox: explicit architectural decision per TRANSACTIONAL_EVENT_POLICY.md §12 and §16. Non-critical effects tolerate loss on crash; critical effects are idempotent-key-guarded.
 
 ---
 

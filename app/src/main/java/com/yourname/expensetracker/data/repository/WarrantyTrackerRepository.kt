@@ -171,7 +171,6 @@ class WarrantyTrackerRepository @Inject constructor(
                     put("extractionSource", warrantyWithTimestamps.extractionSource)
                 }.toString()
                 val auditMetadata = JSONObject().apply {
-                    put("productName", warrantyWithTimestamps.productName)
                     put("warrantyDurationMonths", warrantyWithTimestamps.warrantyDurationMonths)
                     put("warrantyType", warrantyWithTimestamps.warrantyType.name)
                 }.toString()
@@ -191,7 +190,6 @@ class WarrantyTrackerRepository @Inject constructor(
                                 actor = "system:ai_warranty_extraction",
                                 message = auditMessage,
                                 metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                    .put("productName", warrantyWithTimestamps.productName)
                                     .put("warrantyDurationMonths", warrantyWithTimestamps.warrantyDurationMonths)
                                     .put("warrantyType", warrantyWithTimestamps.warrantyType.name)
                                     .build()

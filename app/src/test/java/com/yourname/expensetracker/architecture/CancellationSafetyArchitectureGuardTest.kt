@@ -35,6 +35,20 @@ class CancellationSafetyArchitectureGuardTest {
         val expires: LocalDate
     )
 
+    /**
+     * Structured allowlist for raw runCatching in suspend paths (PR23, MIT-034).
+     * Each entry requires owner, reason, issue tracking, and expiry.
+     * This list must only shrink — never grow.
+     */
+    private data class RawRunCatchingAllowlistEntry(
+        val fileName: String,
+        val category: String,
+        val owner: String,
+        val reason: String,
+        val issue: String,
+        val expires: LocalDate
+    )
+
     private val sourceRoot: File by lazy { resolveSourceRoot() }
 
     private fun resolveSourceRoot(): File {
@@ -167,20 +181,19 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("MutationState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31))
         )
 
-        val RAW_RUN_CATCHING_KNOWN_VIOLATIONS = setOf(
-            // Non-critical analytics/diagnostics — deferred to MIT-034 burn-down
-            "RestoreJournalImporter.kt",
-            "DefaultCloudPayloadPolicy.kt",
-            "AnalyticsRepository.kt",
-            "DatabaseBackupRepositoryImpl.kt",
-            "ValidateBankStatementTransactionsUseCase.kt",
-            "AdvancedAnalyticsEngine.kt",
-            "CarbonFootprintCalculator.kt",
-            "DiagnosticsRepository.kt",
-            "FinancialStressForecastEngine.kt",
-            "NetCashflowBalanceProvider.kt",
-            "InvestmentTracker.kt",
-            "SubscriptionManagerEngine.kt",
+        val RAW_RUN_CATCHING_ALLOWLIST = listOf(
+            RawRunCatchingAllowlistEntry("RestoreJournalImporter.kt", "LEGACY_REPOSITORY", "Backup", "Non-critical backup restore utility", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("DefaultCloudPayloadPolicy.kt", "NETWORK_PROVIDER", "Privacy", "Non-critical cloud payload formatting", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("AnalyticsRepository.kt", "LEGACY_REPOSITORY", "Analytics", "Non-critical analytics repository", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("DatabaseBackupRepositoryImpl.kt", "LEGACY_REPOSITORY", "Backup", "Non-critical backup repository", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("ValidateBankStatementTransactionsUseCase.kt", "LEGACY_REPOSITORY", "AI", "Non-critical bank validation use case", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("AdvancedAnalyticsEngine.kt", "LEGACY_REPOSITORY", "Analytics", "Non-critical analytics engine", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("CarbonFootprintCalculator.kt", "LEGACY_REPOSITORY", "Carbon", "Non-critical carbon footprint calculator", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("DiagnosticsRepository.kt", "LEGACY_REPOSITORY", "Diagnostics", "Non-critical diagnostics repository", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("FinancialStressForecastEngine.kt", "LEGACY_REPOSITORY", "Forecasting", "Non-critical financial stress engine", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("NetCashflowBalanceProvider.kt", "LEGACY_REPOSITORY", "Forecasting", "Non-critical cashflow provider", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("InvestmentTracker.kt", "LEGACY_REPOSITORY", "Investment", "Non-critical investment tracker", "MIT-034", LocalDate.of(2026, 10, 1)),
+            RawRunCatchingAllowlistEntry("SubscriptionManagerEngine.kt", "LEGACY_REPOSITORY", "Subscription", "Non-critical subscription engine", "MIT-034", LocalDate.of(2026, 10, 1)),
         )
     }
 
@@ -253,11 +266,12 @@ class CancellationSafetyArchitectureGuardTest {
             }
         }
 
+        val rawRunCatchingAllowlistNames = RAW_RUN_CATCHING_ALLOWLIST.map { it.fileName }.toSet()
+
         val runCatchingFiltered = runCatchingViolations.filter { v ->
-            // Extract filename from violation string like "path\to\File.kt:84 — raw..."
             val pathPart = v.substringBefore(" — ").substringBeforeLast(":")
             val fileName = pathPart.substringAfterLast("\\").substringAfterLast("/")
-            fileName !in RAW_RUN_CATCHING_KNOWN_VIOLATIONS
+            fileName !in rawRunCatchingAllowlistNames
         }
 
         val allViolations = violations + runCatchingFiltered
@@ -386,6 +400,22 @@ class CancellationSafetyArchitectureGuardTest {
         println("  SERVICE: ${KNOWN_VIOLATIONS.count { it.category == "SERVICE" }}")
         println("  BACKUP_DATA: ${KNOWN_VIOLATIONS.count { it.category == "BACKUP_DATA" }}")
         println("  Soft targets with long expiry: ${softTargetsWithLongExpiry.size}")
+    }
+
+    @Test
+    fun `raw runCatching allowlist requires owner reason issue expiry`() {
+        for (entry in RAW_RUN_CATCHING_ALLOWLIST) {
+            assertTrue("${entry.fileName}: missing owner", entry.owner.isNotBlank())
+            assertTrue("${entry.fileName}: missing reason", entry.reason.isNotBlank())
+            assertTrue("${entry.fileName}: missing issue", entry.issue.isNotBlank())
+            assertNotNull("${entry.fileName}: missing expiry", entry.expires)
+        }
+    }
+
+    @Test
+    fun `no duplicate raw runCatching allowlist entries`() {
+        val dupes = RAW_RUN_CATCHING_ALLOWLIST.groupBy { it.fileName }.filter { it.value.size > 1 }
+        assertTrue("Duplicate entries: ${dupes.keys}", dupes.isEmpty())
     }
 
     @Test

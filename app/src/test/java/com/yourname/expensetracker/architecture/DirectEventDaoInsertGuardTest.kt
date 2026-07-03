@@ -398,11 +398,12 @@ class DirectEventDaoInsertGuardTest {
     @Test
     fun `legacy repository entries have short expiry`() {
         val legacyRepos = APPROVED_ENTRIES.filter { it.category == "LEGACY_REPOSITORY" }
+        val maxExpiry = LocalDate.now().plusDays(75)
         val longExpiry = legacyRepos.filter {
-            it.expires.isAfter(LocalDate.of(2026, 10, 1))
+            it.expires.isAfter(maxExpiry)
         }
         assertTrue(
-            "LEGACY_REPOSITORY entries must expire within 75 days. Long-expiry: ${longExpiry.map { it.fileName }}",
+            "LEGACY_REPOSITORY entries must expire within 75 days (by $maxExpiry). Long-expiry: ${longExpiry.map { it.fileName }}",
             longExpiry.isEmpty()
         )
     }
