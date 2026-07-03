@@ -127,7 +127,7 @@ class WarrantyTrackerRepository @Inject constructor(
                     warrantyId = warrantyId,
                     eventType = WarrantyLifecycleEventTypes.CREATED,
                     occurredAt = now,
-                    description = "Warranty created for ${warranty.productName}"
+                        description = "WARRANTY_CREATED"
                 )
             )
         } catch (e: Exception) {
@@ -156,7 +156,7 @@ class WarrantyTrackerRepository @Inject constructor(
                         warrantyId = id,
                         eventType = WarrantyLifecycleEventTypes.CREATED,
                         occurredAt = now,
-                        description = "Warranty created for ${warrantyWithTimestamps.productName}"
+                        description = "WARRANTY_CREATED"
                     )
                 )
             } catch (e: Exception) {
@@ -217,7 +217,7 @@ class WarrantyTrackerRepository @Inject constructor(
                     warrantyId = warranty.id,
                     eventType = WarrantyLifecycleEventTypes.UPDATED,
                     occurredAt = timeProvider.now(),
-                    description = "Warranty updated for ${warranty.productName}"
+                    description = "WARRANTY_UPDATED"
                 )
             )
         } catch (e: Exception) {
@@ -235,7 +235,7 @@ class WarrantyTrackerRepository @Inject constructor(
                     warrantyId = warranty.id,
                     eventType = WarrantyLifecycleEventTypes.DELETED,
                     occurredAt = timeProvider.now(),
-                    description = "Warranty deleted for ${warranty.productName}"
+                    description = "WARRANTY_DELETED"
                 )
             )
         } catch (e: Exception) {
@@ -264,7 +264,7 @@ class WarrantyTrackerRepository @Inject constructor(
                         warrantyId = warranty.id,
                         eventType = WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED,
                         occurredAt = timeProvider.now(),
-                        description = "Auto-detected warranty rejected by user: ${warranty.productName}"
+                        description = "WARRANTY_AI_EXTRACTION_DISCARDED"
                     )
                 )
             } catch (e: Exception) {
