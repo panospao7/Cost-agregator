@@ -394,3 +394,30 @@ or `STATUS_DUPLICATE_PENDING_REVIEW` and `duplicateReason` populated.
 
 **No receipt lifecycle events are emitted for items that never become receipts/reviews.**
 The `BankStatementImportItem` table serves as the audit ledger for these rows.
+
+---
+
+### §14 Bank Statement Cancellation Terminal Policy (PR21)
+
+**Decision: Bank statement cancellation is import-run-ledger-only. No receipt lifecycle cancellation event is emitted.**
+
+**Justification:**
+- Cancellation is an operational event (worker stopped, timeout, user abort), not a receipt lifecycle state transition.
+- The `BankStatementImportRun` record with `status = CANCELLED` and `errorSummary = "WORKER_CANCELLED"`
+  is the authoritative audit record of the cancelled import.
+- If a receipt was created before cancellation, it remains in its last persisted state
+  (typically `PARSED` or `REVIEW_CREATED`). The receipt is not reverted — it represents
+  real data already extracted from the bank statement.
+- Writing a receipt `PROCESSING_CANCELLED` event would imply a receipt lifecycle transition
+  that did not actually occur (the receipt was not re-parsed and did not change state).
+
+**Guarantees:**
+- `BankStatementImportRun.finalize(CANCELLED, ...)` always runs inside `withContext(NonCancellable)`
+  to ensure the run ledger is updated even under cancellation (PR19-1, PR20-1).
+- If finalization fails, the error is added as a suppressed exception to the original
+  `CancellationException` — the original CE is never masked (PR20-1, PR21-1).
+- Run ledger counts (`processedItems`, `failedItems`) reflect the state at cancellation time.
+
+**No receipt event guarantee:**
+- No `PROCESSING_CANCELLED` or equivalent receipt lifecycle event is emitted for cancelled bank statements.
+- This is intentional and documented here.

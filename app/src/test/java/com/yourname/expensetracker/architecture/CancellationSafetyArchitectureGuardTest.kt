@@ -28,6 +28,7 @@ class CancellationSafetyArchitectureGuardTest {
     data class ArchitectureAllowlistEntry(
         val fileName: String,
         val rule: String,
+        val category: String = "UNCATEGORIZED",
         val owner: String,
         val reason: String,
         val issue: String,
@@ -58,114 +59,113 @@ class CancellationSafetyArchitectureGuardTest {
          */
         val KNOWN_VIOLATIONS = listOf(
             // ── AI service providers ──────────────────────────────────────
-            ArchitectureAllowlistEntry("CloudCategorizationAssistService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CloudDashboardBriefingService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CloudDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CloudReceiptItemCategorizationService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CloudReviewExplanationService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DefaultAiEnvironmentMonitor.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("HybridDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceDashboardBriefingService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceNotificationParser.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceQueryInterpretationService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceReceiptItemCategorizationService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OnDeviceReviewExplanationService.kt", "CATCH_WITHOUT_CE_RETHROW", "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CloudCategorizationAssistService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CloudDashboardBriefingService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CloudDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CloudReceiptItemCategorizationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CloudReviewExplanationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("DefaultAiEnvironmentMonitor.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("HybridDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("OnDeviceDashboardBriefingService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("OnDeviceDedupeJudgeService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("OnDeviceNotificationParser.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("OnDeviceQueryInterpretationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("OnDeviceReceiptItemCategorizationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("OnDeviceReviewExplanationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "AI", owner = "AI", "AI provider with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Backup / data infrastructure ──────────────────────────────
-            ArchitectureAllowlistEntry("DataStoreMaintenanceSafeDiagnosticSink.kt", "CATCH_WITHOUT_CE_RETHROW", "BackupData", "Backup infrastructure with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AndroidForegroundLocationProvider.kt", "CATCH_WITHOUT_CE_RETHROW", "BackupData", "Location provider with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("NominatimGeocodingService.kt", "CATCH_WITHOUT_CE_RETHROW", "BackupData", "Geocoding service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("DataStoreMaintenanceSafeDiagnosticSink.kt", "CATCH_WITHOUT_CE_RETHROW", category = "BACKUP_DATA", owner = "BackupData", "Backup infrastructure with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("AndroidForegroundLocationProvider.kt", "CATCH_WITHOUT_CE_RETHROW", category = "BACKUP_DATA", owner = "BackupData", "Location provider with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("NominatimGeocodingService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "BACKUP_DATA", owner = "BackupData", "Geocoding service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Repositories ──────────────────────────────────────────────
-            ArchitectureAllowlistEntry("CategoryRepository.kt", "CATCH_WITHOUT_CE_RETHROW", "Repository", "Repository with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CurrencySettingsRepositoryImpl.kt", "CATCH_WITHOUT_CE_RETHROW", "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("GroupsRepositoryImpl.kt", "CATCH_WITHOUT_CE_RETHROW", "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ManualRecurringExpenseRepository.kt", "CATCH_WITHOUT_CE_RETHROW", "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ManualExpenseRepository.kt", "CATCH_WITHOUT_CE_RETHROW", "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("RecurringExpenseRepository.kt", "CATCH_WITHOUT_CE_RETHROW", "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CategoryRepository.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "Repository", "Repository with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CurrencySettingsRepositoryImpl.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("GroupsRepositoryImpl.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ManualRecurringExpenseRepository.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ManualExpenseRepository.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("RecurringExpenseRepository.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "Repository", "Repository with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Domain / use-cases ────────────────────────────────────────
-            ArchitectureAllowlistEntry("CategorizationAssistInputBuilder.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DedupeJudgeInputBuilder.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SuggestCategoryFallbackUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AnomalyAlertOrchestrator.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain orchestrator with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CurrencySettingsRepository.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain interface with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptDebugExporter.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain exporter with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("NotificationDiagnosticEmitter.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain diagnostics with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("OperationRunRecorder.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain recorder with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("FinancialHealthScoreV2.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain calculator with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CrossSourceDeduplication.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain dedup with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ExpenseCategoryClassifier.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain classifier with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("TransactionClassifier.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain classifier with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("NotificationIntakePayloadRepairer.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain repairer with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CompositePrivacyGate.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain privacy gate with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("NotificationSubscriptionDetector.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain detector with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DefaultExpenseCategoryAssignmentService.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain assignment service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DebugExpenseAuditWriter.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain audit writer with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ComputeDashboardWidgetsUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ComputeMoneyRadarUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("MonthlySavingsSweepUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AutoCreateWarrantyFromReceiptUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CategorizationAssistInputBuilder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("DedupeJudgeInputBuilder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SuggestCategoryFallbackUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("AnomalyAlertOrchestrator.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain orchestrator with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CurrencySettingsRepository.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain interface with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptDebugExporter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain exporter with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("NotificationDiagnosticEmitter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain diagnostics with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("OperationRunRecorder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain recorder with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("FinancialHealthScoreV2.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain calculator with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CrossSourceDeduplication.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain dedup with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ExpenseCategoryClassifier.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain classifier with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("TransactionClassifier.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain classifier with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("NotificationIntakePayloadRepairer.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain repairer with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CompositePrivacyGate.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain privacy gate with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("NotificationSubscriptionDetector.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain detector with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("DefaultExpenseCategoryAssignmentService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain assignment service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("DebugExpenseAuditWriter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain audit writer with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ComputeDashboardWidgetsUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ComputeMoneyRadarUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("MonthlySavingsSweepUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("AutoCreateWarrantyFromReceiptUseCase.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "Domain", "Domain use-case with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Infrastructure (false positives from regex — catches preceded by CE catch) ──
-            ArchitectureAllowlistEntry("CompositeSideEffectEventWriter.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CompositeDiagnosticEventWriter.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CompositeOperationRunRecorder.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("PostCommitActionRunnerImpl.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("BankStatementLifecycleProcessor.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — PR20-1 inner cleanup catches inside CancellationException handler (lines 860, 908, 928). Outer CE catch at line 850.", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("GroupTransactionCoordinator.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("MerchantKeyBackfillWorker.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("NotificationProcessingPipeline.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptRepository.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReviewQueueRepository.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptOcrService.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptMatchingWorker.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("WarrantyExpirationWorker.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("TransactionLifecycleCoordinator.kt", "FALSE_POSITIVE_CE_RETHROW", "Infrastructure", "False positive — broad catch at L239 preceded by sibling CE catch at L237", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CompositeSideEffectEventWriter.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CompositeDiagnosticEventWriter.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CompositeOperationRunRecorder.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("PostCommitActionRunnerImpl.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("BankStatementLifecycleProcessor.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — PR20-1 inner cleanup catches inside CancellationException handler (lines 860, 908, 928). Outer CE catch at line 850.", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("GroupTransactionCoordinator.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("MerchantKeyBackfillWorker.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("NotificationProcessingPipeline.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptRepository.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReviewQueueRepository.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptOcrService.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptMatchingWorker.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("WarrantyExpirationWorker.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("TransactionLifecycleCoordinator.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch at L239 preceded by sibling CE catch at L237", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Services ──────────────────────────────────────────────────
-            ArchitectureAllowlistEntry("NotificationCaptureService.kt", "CATCH_WITHOUT_CE_RETHROW", "Service", "Service with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CloudQueryInterpretationService.kt", "CATCH_WITHOUT_CE_RETHROW", "Service", "Cloud service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SmartBillNegotiationEngine.kt", "CATCH_WITHOUT_CE_RETHROW", "Service", "Service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("NotificationCaptureService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "SERVICE", owner = "Service", "Service with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CloudQueryInterpretationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "SERVICE", owner = "Service", "Cloud service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SmartBillNegotiationEngine.kt", "CATCH_WITHOUT_CE_RETHROW", category = "SERVICE", owner = "Service", "Service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Workers ───────────────────────────────────────────────────
-            ArchitectureAllowlistEntry("NotificationIntakeWorker.kt", "CATCH_WITHOUT_CE_RETHROW", "Worker", "Worker with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── Infrastructure / sinks ────────────────────────────────────
-            ArchitectureAllowlistEntry("FileWorkerTerminalDiagnosticSink.kt", "CATCH_WITHOUT_CE_RETHROW", "Infrastructure", "Diagnostic sink with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("FileWorkerTerminalDiagnosticSink.kt", "CATCH_WITHOUT_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "Diagnostic sink with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             // ── UI layer (viewModelScope.launch catches — lower priority) ──
-            ArchitectureAllowlistEntry("AnalyticsViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("BudgetViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("BudgetForecastingViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DebugDataStorage.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel/debug storage with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SourceLinkDebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("HomeViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SpendingMapViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("NaturalLanguageSearchViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptScanViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("TransactionsViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AddExpenseViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AiSettingsViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("AssistantViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("BackupRestoreViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CarbonFootprintViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CashFlowCalendarViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SpendingChallengesViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("CurrencyManagementViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SharedExpenseGroupsViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("InvestmentViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("LifestyleInflationViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("BillNegotiationViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("PriceProtectionViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("PrivacySettingsViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptMatchingViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("RecurringExpensesScreen.kt", "LAUNCH_CE_NO_RETHROW", "UI", "Screen composable with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ManualRecurringExpenseViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("BillRemindersViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReviewViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("SubscriptionManagementViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("TaxConfigurationViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("WarrantyTrackerViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ExportOptionsScreen.kt", "LAUNCH_CE_NO_RETHROW", "UI", "Screen composable with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ExportOptionsViewModel.kt", "LAUNCH_CE_NO_RETHROW", "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("LocationSearchPicker.kt", "LAUNCH_CE_NO_RETHROW", "UI", "UI component with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("LoadableUiState.kt", "LAUNCH_CE_NO_RETHROW", "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("MutationState.kt", "LAUNCH_CE_NO_RETHROW", "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31))
+            ArchitectureAllowlistEntry("AnalyticsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("BudgetViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("BudgetForecastingViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("DebugDataStorage.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel/debug storage with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("DebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SourceLinkDebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("HomeViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SpendingMapViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("NaturalLanguageSearchViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptScanViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("TransactionsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("AddExpenseViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("AiSettingsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("AssistantViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("BackupRestoreViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CarbonFootprintViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CashFlowCalendarViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SpendingChallengesViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CurrencyManagementViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SharedExpenseGroupsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("InvestmentViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("LifestyleInflationViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("BillNegotiationViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("PriceProtectionViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("PrivacySettingsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptMatchingViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("RecurringExpensesScreen.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "Screen composable with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ManualRecurringExpenseViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("BillRemindersViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReviewViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SubscriptionManagementViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("TaxConfigurationViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("WarrantyTrackerViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ExportOptionsScreen.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "Screen composable with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ExportOptionsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("LocationSearchPicker.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI component with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("LoadableUiState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("MutationState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31))
         )
     }
 
@@ -287,6 +287,10 @@ class CancellationSafetyArchitectureGuardTest {
                 "Allowlist entry ${entry.fileName} missing expiry",
                 entry.expires
             )
+            assertTrue(
+                "Allowlist entry ${entry.fileName} missing non-blank category",
+                entry.category.isNotBlank()
+            )
         }
     }
 
@@ -307,6 +311,42 @@ class CancellationSafetyArchitectureGuardTest {
             "Duplicate allowlist entries found: ${dupes.keys}. Each file must appear exactly once.",
             dupes.isEmpty()
         )
+    }
+
+    @Test
+    fun `cancellation allowlist burn-down targets`() {
+        // MIT-034 burn-down: core categories must be empty.
+        val forbiddenCoreCategories = setOf("WORKER", "COORDINATOR", "RECEIVER")
+        val coreViolations = KNOWN_VIOLATIONS.filter { it.category in forbiddenCoreCategories }
+
+        val softTargetCategories = setOf("REPOSITORY", "DOMAIN")
+        val softTargets = KNOWN_VIOLATIONS.filter { it.category in softTargetCategories }
+
+        // Hard requirement: no core files in allowlist
+        assertTrue(
+            "MIT-034 burn-down: core categories (WORKER, COORDINATOR, RECEIVER) must be empty. " +
+                "Found: ${coreViolations.map { "${it.fileName} (${it.category})" }}",
+            coreViolations.isEmpty()
+        )
+
+        // Soft target: repositories and domain files should be under count or short-expiry
+        val softTargetsWithLongExpiry = softTargets.filter {
+            it.expires.isAfter(LocalDate.of(2026, 10, 1))
+        }
+        val uiCount = KNOWN_VIOLATIONS.count { it.category == "UI" }
+
+        // Document the current state for burn-down tracking
+        println("MIT-034 burn-down state:")
+        println("  Total allowlist: ${KNOWN_VIOLATIONS.size}")
+        println("  UI: $uiCount")
+        println("  AI: ${KNOWN_VIOLATIONS.count { it.category == "AI" }}")
+        println("  INFRASTRUCTURE: ${KNOWN_VIOLATIONS.count { it.category == "INFRASTRUCTURE" }}")
+        println("  DOMAIN: ${KNOWN_VIOLATIONS.count { it.category == "DOMAIN" }}")
+        println("  REPOSITORY: ${KNOWN_VIOLATIONS.count { it.category == "REPOSITORY" }}")
+        println("  WORKER: ${KNOWN_VIOLATIONS.count { it.category == "WORKER" }}")
+        println("  SERVICE: ${KNOWN_VIOLATIONS.count { it.category == "SERVICE" }}")
+        println("  BACKUP_DATA: ${KNOWN_VIOLATIONS.count { it.category == "BACKUP_DATA" }}")
+        println("  Soft targets with long expiry: ${softTargetsWithLongExpiry.size}")
     }
 
     // ── Inline fixture tests ────────────────────────────────────────

@@ -11,9 +11,9 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: YELLOW-GREEN — PR1–PR20 in progress. MIT-031/041 NEAR-COMPLETE (pending final enforcement + CI). MIT-034/043/075 remain PARTIAL.**
+**Overall status: YELLOW-GREEN — PR1–PR21 in progress. MIT-031/041 NEAR-COMPLETE (provenance guard, bank cleanup, item audit tests added). MIT-034/043/075 remain PARTIAL with defined closure paths.**
 
-PR 1–19 (2026-07-01 through 2026-07-02) complete. PR20 in progress. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are NEAR-COMPLETE — critical production paths are transaction-scoped but enforcement needs final hardening (context-free writer removal, transaction token, CI green). MIT-034/043/075 remain PARTIAL. MIT-033 schema constraints are the next priority.
+PR 1–21 (2026-07-01 through 2026-07-02) complete. MIT-031 (state/event atomicity) has TransactionContext provenance guard (10 allowlist entries, 4 on 45-day expiry). MIT-041 receipts: bank cancellation terminal policy documented (run-ledger-only), non-cancellation cleanup rethrows CE, skipped-item audit ledger tests added. MIT-034/043/075 remain PARTIAL per closure checklists. MIT-033 schema constraints are the next priority.
 
 - MIT-031 (state/event atomicity): ⚠️ NEAR-COMPLETE — PR13+PR19-1+PR20 (DomainTransactionRunner, transaction token, writer enforcement)
 - MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)
@@ -798,8 +798,8 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–20 (2026-07-02). DomainTransactionRunner (14 call sites). TransactionContext hardened with internal token (PR20-2). Context-free writer methods at DeprecationLevel.ERROR. Remaining: CI must be green; direct event DAO guard needs structured allowlist.  
-Residual (non-blocking): TransactionalEventWriter is marker-only (design choice).
+**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–21 (2026-07-02). TransactionContext provenance guard (TransactionContextProvenanceGuardTest) bans manual construction. 4 callers (GroupTransactionCoordinator, NotificationProcessingPipeline, WarrantyTrackerRepository, ReceiptLinkService) on 45-day DomainTransactionRunner migration expiry. Direct event DAO guard structured with rule classification.  
+Residual: 4 callers must migrate to DomainTransactionRunner before 2026-08-15 or guard fails.
 **Labels:** `transactions`, `events`, `atomicity`
 
 #### Implemented
@@ -976,8 +976,8 @@ Residual (non-blocking): TransactionalEventWriter is marker-only (design choice)
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–20 (2026-07-02). Bank statement: pre-mutation validation, per-item REVIEW_CREATED, run finalization atomic with receipt event, cancellation never masks CE (PR20-1), unexpected failure writes receipt event (PR20-1). ReceiptLifecycleCoordinator: 8 blocks migrated. Remaining: CI must be green.  
-Residual (non-blocking): BankApiIntegration.kt low-confidence stub (non-production).
+**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–21 (2026-07-02). Bank: cancellation never masks CE (addSuppressed), non-cancellation cleanup rethrows CE (PR21-3), unexpected failure writes receipt event atomically (PR20-1), cancellation terminal policy documented as run-ledger-only (PR21). Skipped/failed item audit tests added (BankStatementItemAuditTest, 7 tests).  
+Residual: CI must be green. BankApiIntegration.kt stub only.
 **Labels:** `receipts`, `ocr`, `pending-review`
 
 #### Implemented

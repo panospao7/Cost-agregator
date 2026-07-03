@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.notification.capture.NotificationTransientPayloadCrypto
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -346,6 +347,7 @@ class NotificationIntakeWorker @AssistedInject constructor(
                 Timber.d("IntakeWorker: cancelled intakeId=$intakeId")
                 throw e
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 if (intentionalFailure) {
                     throw e
                 }
