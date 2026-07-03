@@ -13,7 +13,7 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 **Overall status: YELLOW-GREEN — PR1–PR21 in progress. MIT-031/041 NEAR-COMPLETE (provenance guard, bank cleanup, item audit tests added). MIT-034/043/075 remain PARTIAL with defined closure paths.**
 
-PR 1–21 (2026-07-01 through 2026-07-02) complete. MIT-031 (state/event atomicity) has TransactionContext provenance guard (10 allowlist entries, 4 on 45-day expiry). MIT-041 receipts: bank cancellation terminal policy documented (run-ledger-only), non-cancellation cleanup rethrows CE, skipped-item audit ledger tests added. MIT-034/043/075 remain PARTIAL per closure checklists. MIT-033 schema constraints are the next priority.
+PR 1–21 (2026-07-01 through 2026-07-02) complete. MIT-031 (state/event atomicity) has TransactionContext provenance guard (6 allowlist entries: 4 canonical production, 2 deprecated writer impls). MIT-041 receipts: bank cancellation terminal policy documented (run-ledger-only), non-cancellation cleanup rethrows CE, skipped-item audit ledger tests added. MIT-034/043/075 remain PARTIAL per closure checklists. MIT-033 schema constraints are the next priority.
 
 - MIT-031 (state/event atomicity): ⚠️ NEAR-COMPLETE — PR13+PR19-1+PR20 (DomainTransactionRunner, transaction token, writer enforcement)
 - MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)

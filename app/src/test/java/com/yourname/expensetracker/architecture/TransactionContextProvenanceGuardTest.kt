@@ -83,14 +83,12 @@ class TransactionContextProvenanceGuardTest {
      * Main guard: scans all production .kt files for `TransactionContext(` constructor
      * calls outside the allowlist.
      *
-     * The regex matches the constructor call pattern `TransactionContext(correlationId`
-     * which is the canonical form used in constructor calls. It does NOT match
-     * type references or KDoc mentions that lack the opening parenthesis.
+     * Matches any TransactionContext( constructor call.
      */
     @Test
     fun `manual TransactionContext construction outside allowlist fails`() {
         val mainDir = sourceRoot
-        val pattern = Regex("""TransactionContext\(\s*correlationId""")
+        val pattern = Regex("""\bTransactionContext\s*\(""")
 
         val allKtFiles = mainDir.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }

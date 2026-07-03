@@ -1290,7 +1290,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     put("amount", preDb.parsed.amount)
                     put("merchant", preDb.correctedMerchant)
                 }.toString()
-                runCatching {
+                try {
                     transactionRunner.runInTransaction(
                         operationId = "notification.auto_accept",
                         correlationId = java.util.UUID.randomUUID().toString(),
@@ -1311,8 +1311,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                             )
                         )
                     }
-                }.onFailure { error ->
-                    Timber.w(error, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
                 }
 
                 // AID-9 Gap 3: Notify user via log (visible in debug viewer)

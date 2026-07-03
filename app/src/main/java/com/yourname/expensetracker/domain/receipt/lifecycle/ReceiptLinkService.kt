@@ -283,7 +283,7 @@ class ReceiptLinkService @Inject constructor(
 
             // RCP-30: Propagate item majority category to expense if the expense
             // currently has no categoryId. Failures are logged but do not break linking.
-            runCatching {
+            try {
                 val categorizations = receiptItemCategorizationDao.getByReceiptId(receiptId)
                 if (categorizations.isNotEmpty()) {
                     val bestCategoryId = categorizations
@@ -314,8 +314,10 @@ class ReceiptLinkService @Inject constructor(
                         receiptId, expenseId, categoryFrequencies
                     )
                 }
-            }.onFailure { error ->
-                Timber.w(error, "RCP-30: Failed to propagate item category for receipt %d", receiptId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "RCP-30: Failed to propagate item category for receipt %d", receiptId)
             }
 
             // 5. Write lifecycle event
