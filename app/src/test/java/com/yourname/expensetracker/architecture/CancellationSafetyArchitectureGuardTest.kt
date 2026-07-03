@@ -166,6 +166,22 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("LoadableUiState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("MutationState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31))
         )
+
+        val RAW_RUN_CATCHING_KNOWN_VIOLATIONS = setOf(
+            // Non-critical analytics/diagnostics — deferred to MIT-034 burn-down
+            "RestoreJournalImporter.kt",
+            "DefaultCloudPayloadPolicy.kt",
+            "AnalyticsRepository.kt",
+            "DatabaseBackupRepositoryImpl.kt",
+            "ValidateBankStatementTransactionsUseCase.kt",
+            "AdvancedAnalyticsEngine.kt",
+            "CarbonFootprintCalculator.kt",
+            "DiagnosticsRepository.kt",
+            "FinancialStressForecastEngine.kt",
+            "NetCashflowBalanceProvider.kt",
+            "InvestmentTracker.kt",
+            "SubscriptionManagerEngine.kt",
+        )
     }
 
     /**
@@ -195,6 +211,10 @@ class CancellationSafetyArchitectureGuardTest {
         )
 
         val violations = mutableListOf<String>()
+        val runCatchingViolations = mutableListOf<String>()
+
+        // PR23: also check for raw runCatching in suspend paths
+        val rawRunCatchingPattern = Regex("""(?<!CancellationSafe\.)\brunCatching\s*\{""")
 
         for (file in ktFiles) {
             val content = file.readText()
@@ -219,12 +239,32 @@ class CancellationSafetyArchitectureGuardTest {
                     violations.add("$relativePath:$lineNum — broad catch without CancellationException guard")
                 }
             }
+
+            // PR23: also scan for raw runCatching in suspend paths
+            for (match in rawRunCatchingPattern.findAll(content)) {
+                val matchPos = match.range.first
+                if (suspendFunRanges.any { matchPos in it }) {
+                    val lineNum = content.substring(0, matchPos).count { it == '\n' } + 1
+                    val relativePath = file.relativeTo(sourceRoot).path
+                    runCatchingViolations.add(
+                        "$relativePath:$lineNum — raw runCatching in suspend function"
+                    )
+                }
+            }
         }
 
+        val runCatchingFiltered = runCatchingViolations.filter { v ->
+            // Extract filename from violation string like "path\to\File.kt:84 — raw..."
+            val pathPart = v.substringBefore(" — ").substringBeforeLast(":")
+            val fileName = pathPart.substringAfterLast("\\").substringAfterLast("/")
+            fileName !in RAW_RUN_CATCHING_KNOWN_VIOLATIONS
+        }
+
+        val allViolations = violations + runCatchingFiltered
         assertTrue(
             "CANCEL-01 violations: broad catch blocks in suspend functions that do NOT " +
-                "rethrow CancellationException:\n${violations.joinToString("\n")}",
-            violations.isEmpty()
+                "rethrow CancellationException, plus raw runCatching in suspend paths:\n${allViolations.joinToString("\n")}",
+            allViolations.isEmpty()
         )
     }
 
@@ -273,7 +313,7 @@ class CancellationSafetyArchitectureGuardTest {
                 "Allowlist entry ${entry.fileName} missing rule",
                 entry.rule.isNotBlank()
             )
-            val validRules = setOf("CATCH_WITHOUT_CE_RETHROW", "FALSE_POSITIVE_CE_RETHROW", "LAUNCH_CE_NO_RETHROW")
+            val validRules = setOf("CATCH_WITHOUT_CE_RETHROW", "FALSE_POSITIVE_CE_RETHROW", "LAUNCH_CE_NO_RETHROW", "RAW_RUN_CATCHING_IN_SUSPEND_PATH")
             assertTrue(
                 "Allowlist entry ${entry.fileName} has invalid rule '${entry.rule}'. Must be one of: $validRules",
                 entry.rule in validRules
@@ -346,6 +386,56 @@ class CancellationSafetyArchitectureGuardTest {
         println("  SERVICE: ${KNOWN_VIOLATIONS.count { it.category == "SERVICE" }}")
         println("  BACKUP_DATA: ${KNOWN_VIOLATIONS.count { it.category == "BACKUP_DATA" }}")
         println("  Soft targets with long expiry: ${softTargetsWithLongExpiry.size}")
+    }
+
+    @Test
+    fun `raw runCatching in suspend paths is detected`() {
+        val badSource = """
+            package test
+            class BadRepo {
+                suspend fun fetchData() {
+                    val result = runCatching {
+                        Thread.sleep(100)
+                    }.getOrElse {
+                        println("Failed")
+                    }
+                }
+            }
+        """.trimIndent()
+
+        val runCatchingPattern = Regex("""\brunCatching\s*\{""")
+        val matches = runCatchingPattern.findAll(badSource).count()
+
+        assertTrue(
+            "RAW_RUN_CATCHING: raw runCatching in suspend function must be detected. Found $matches occurrences.",
+            matches > 0
+        )
+    }
+
+    @Test
+    fun `CancellationSafe runCatchingCancellable passes detection`() {
+        val goodSource = """
+            package test
+            import com.yourname.expensetracker.domain.util.CancellationSafe
+            class GoodRepo {
+                suspend fun fetchData() {
+                    val result = CancellationSafe.runCatchingCancellable {
+                        Thread.sleep(100)
+                    }.getOrElse {
+                        println("Safe")
+                    }
+                }
+            }
+        """.trimIndent()
+
+        // CancellationSafe.runCatchingCancellable should NOT be flagged as raw runCatching
+        val rawPattern = Regex("""(?<!CancellationSafe\.)\brunCatching\s*\{""")
+        val badMatches = rawPattern.findAll(goodSource).count()
+
+        assertTrue(
+            "CancellationSafe.runCatchingCancellable should NOT be detected as raw runCatching, got $badMatches matches",
+            badMatches == 0
+        )
     }
 
     // ── Inline fixture tests ────────────────────────────────────────
