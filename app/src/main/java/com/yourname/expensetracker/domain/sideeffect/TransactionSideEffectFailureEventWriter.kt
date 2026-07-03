@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.sideeffect
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import javax.inject.Inject
@@ -27,6 +28,11 @@ class TransactionSideEffectFailureEventWriter @Inject constructor(
         if (!shouldMirrorToTransactionEvents(action)) return
 
         transactionEventWriter.write(
+            TransactionContext(
+                correlationId = action.correlationId ?: java.util.UUID.randomUUID().toString(),
+                occurredAt = System.currentTimeMillis(),
+                source = "post_commit_action_runner"
+            ),
             TransactionLifecycleEvent(
                 expenseId = action.targetEntityId.takeIf {
                     action.targetEntityType.equals("Expense", ignoreCase = true)

@@ -145,6 +145,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
         val startTime = timeProvider.now()
         val parsingLogs = mutableListOf<String>()
         var runId: Long? = null
+        var statementReceiptId: Long? = null
 
         return try {
             // ── Step 1: Pre-OCR duplicate detection via file hash ──────────────
@@ -320,6 +321,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             when (val write = receiptRecordWriter.insertOrResolve(statementReceipt)) {
                 is ReceiptRecordWriteResult.Inserted -> {
                     receiptId = write.receipt.id
+                    statementReceiptId = receiptId
                     bankStatementImportRunDao.attachReceipt(runId = importRunId, receiptId = receiptId)
                 }
                 is ReceiptRecordWriteResult.Duplicate -> {
@@ -839,49 +841,94 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     try {
                         withContext(NonCancellable) {
                             withTimeout(2000L) {
-                                val ec = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
-                                val ed = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
-                                val ep = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
-                                val ef = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
-                                val es = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_SKIPPED)
-                                // P3-0D5-05: Use actual item counts on cancellation; include SKIPPED items
+                                val processedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                                val failedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
                                 bankStatementImportRunDao.finalize(
-                                    runId = rid, status = BankStatementImportRun.STATUS_CANCELLED,
+                                    runId = rid,
+                                    status = BankStatementImportRun.STATUS_CANCELLED,
                                     completedAt = timeProvider.now(),
-                                    totalItems = ec + ed + ep + ef + es,
-                                    processedItems = ec + ed + ep + ef + es,
-                                    createdReviewCount = ec, duplicateExpenseCount = ed,
-                                    duplicatePendingCount = ep, failedItemCount = ef + es,
-                                    errorSummary = "Cancelled during processing"
+                                    totalItems = processedItems + failedItems,
+                                    processedItems = processedItems,
+                                    createdReviewCount = processedItems,
+                                    duplicateExpenseCount = 0,
+                                    duplicatePendingCount = 0,
+                                    failedItemCount = failedItems,
+                                    errorSummary = "WORKER_CANCELLED"
                                 )
                             }
                         }
-                    } catch (finalizeError: Exception) {
-                        CancellationSafe.rethrowIfCancellation(finalizeError)
-                        Timber.w(finalizeError, "Failed to finalize cancelled bank statement import run $rid")
+                    } catch (cleanupError: Throwable) {
+                        // NEVER rethrow from cancellation cleanup. Add as suppressed for diagnostics.
+                        cancellation.addSuppressed(cleanupError)
+                        Timber.w(cleanupError, "Failed to finalize cancelled bank statement import run $rid")
                     }
                 }
                 throw cancellation
             }
             Timber.e(e, "BankStatementLifecycleProcessor failed")
             runId?.let { rid ->
-                val ec = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
-                val ed = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
-                val ep = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
-                val ef = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
-                val es = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_SKIPPED)
-                // P3-0D5-06: processedItems includes all item rows; include SKIPPED items
-                bankStatementImportRunDao.finalize(
-                    runId = rid, status = BankStatementImportRun.STATUS_FAILED,
-                    completedAt = timeProvider.now(),
-                    totalItems = ec + ed + ep + ef + es,
-                    processedItems = ec + ed + ep + ef + es,
-                    createdReviewCount = ec,
-                    duplicateExpenseCount = ed,
-                    duplicatePendingCount = ep,
-                    failedItemCount = ef + es,
-                    errorSummary = "Bank statement processing failed"
-                )
+                val receiptId = statementReceiptId
+                if (receiptId != null) {
+                    // Receipt was created — finalize run + write PROCESSING_FAILED event atomically
+                    try {
+                        transactionRunner.runInTransaction(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            operationId = "bank_statement.finalize_unexpected_failure",
+                            source = "BankStatementLifecycleProcessor"
+                        ) { context ->
+                            val processedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                            val failedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
+                            bankStatementImportRunDao.finalize(
+                                runId = rid,
+                                status = BankStatementImportRun.STATUS_FAILED,
+                                completedAt = timeProvider.now(),
+                                totalItems = processedItems + failedItems,
+                                processedItems = processedItems,
+                                createdReviewCount = processedItems,
+                                duplicateExpenseCount = 0,
+                                duplicatePendingCount = 0,
+                                failedItemCount = failedItems,
+                                errorSummary = "WORKER_UNHANDLED_EXCEPTION"
+                            )
+                            receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
+                                receiptId = receiptId,
+                                sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                                documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                                eventType = "PROCESSING_FAILED",
+                                oldStatus = ReceiptProcessingStatus.PARSED.name,
+                                newStatus = null,
+                                actor = "system:bank_statement_processor",
+                                message = "Bank statement processing failed unexpectedly",
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .put("reason", "WORKER_UNHANDLED_EXCEPTION")
+                                    .put("errorClass", e::class.simpleName ?: "Unknown")
+                                    .build()
+                            ))
+                        }
+                    } catch (finalizeError: Exception) {
+                        Timber.w(finalizeError, "Failed to finalize bank statement import run $rid")
+                    }
+                } else {
+                    // No receipt created — finalize run as ledger-only
+                    try {
+                        val processedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                        val failedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
+                        bankStatementImportRunDao.finalize(
+                            runId = rid,
+                            status = BankStatementImportRun.STATUS_FAILED,
+                            completedAt = timeProvider.now(),
+                            totalItems = processedItems + failedItems,
+                            processedItems = processedItems,
+                            createdReviewCount = processedItems,
+                            duplicateExpenseCount = 0,
+                            duplicatePendingCount = 0,
+                            failedItemCount = failedItems,
+                            errorSummary = "WORKER_UNHANDLED_EXCEPTION"
+                        )
+                    } catch (finalizeError: Exception) {
+                        Timber.w(finalizeError, "Failed to finalize bank statement import run $rid")
+                    }
+                }
             }
             Result.failure(e)
         }

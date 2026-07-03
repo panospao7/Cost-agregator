@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.transaction.ExpenseCategoryAssignmentPort
 import com.yourname.expensetracker.domain.transaction.CategoryAssignmentOutcome
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
@@ -313,14 +314,20 @@ class ReceiptLinkService @Inject constructor(
             }
 
             // 5. Write lifecycle event
-            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                receiptId = receiptId,
-                sourceType = receipt.sourceType,
-                documentType = receipt.documentType,
-                eventType = "RECEIPT_LINKED_TO_EXPENSE",
-                actor = createdBy ?: "system",
-                message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated."
-            ))
+            receiptLifecycleEventWriter.write(
+                TransactionContext(
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    occurredAt = System.currentTimeMillis()
+                ),
+                ReceiptLifecycleEvent(
+                    receiptId = receiptId,
+                    sourceType = receipt.sourceType,
+                    documentType = receipt.documentType,
+                    eventType = "RECEIPT_LINKED_TO_EXPENSE",
+                    actor = createdBy ?: "system",
+                    message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated."
+                )
+            )
 
             // PR4: Write source link for provenance when enabled
             if (writeSourceLink) {
@@ -429,14 +436,20 @@ class ReceiptLinkService @Inject constructor(
                 if (affectedRows > 0) {
                     val sourceType = receipt?.sourceType ?: "UNKNOWN"
                     val documentType = receipt?.documentType ?: "UNKNOWN"
-                    receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                        receiptId = receiptId,
-                        sourceType = sourceType,
-                        documentType = documentType,
-                        eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
-                        actor = "system",
-                        message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
-                    ))
+                    receiptLifecycleEventWriter.write(
+                        TransactionContext(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            occurredAt = System.currentTimeMillis()
+                        ),
+                        ReceiptLifecycleEvent(
+                            receiptId = receiptId,
+                            sourceType = sourceType,
+                            documentType = documentType,
+                            eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
+                            actor = "system",
+                            message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
+                        )
+                    )
                 }
             }
 

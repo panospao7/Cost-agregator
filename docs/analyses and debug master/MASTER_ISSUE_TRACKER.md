@@ -11,13 +11,13 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: YELLOW-GREEN — PR1–PR19 complete. MIT-031 ✅ DONE. MIT-041 ✅ DONE. MIT-034/043/075 remain PARTIAL for non-core scope.**
+**Overall status: YELLOW-GREEN — PR1–PR20 in progress. MIT-031/041 NEAR-COMPLETE (pending final enforcement + CI). MIT-034/043/075 remain PARTIAL.**
 
-PR 1–19 (2026-07-01 through 2026-07-02) complete. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are CLOSED — all critical production paths are transaction-scoped and tested. MIT-034/043/075 remain PARTIAL for non-core allowlist entries, DB uniqueness (MIT-033), and by-design no-outbox policy. MIT-033 schema constraints are the next priority.
+PR 1–19 (2026-07-01 through 2026-07-02) complete. PR20 in progress. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are NEAR-COMPLETE — critical production paths are transaction-scoped but enforcement needs final hardening (context-free writer removal, transaction token, CI green). MIT-034/043/075 remain PARTIAL. MIT-033 schema constraints are the next priority.
 
-- MIT-031 (state/event atomicity): ✅ DONE — PR13 (DomainTransactionRunner), PR11+PR19-1 (transaction-scoped state/event)
+- MIT-031 (state/event atomicity): ⚠️ NEAR-COMPLETE — PR13+PR19-1+PR20 (DomainTransactionRunner, transaction token, writer enforcement)
 - MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)
-- MIT-041 (receipt/review atomicity): ✅ DONE — PR11+PR15+PR19-1 (all bank-statement + receipt paths transaction-scoped)
+- MIT-041 (receipt/review atomicity): ⚠️ NEAR-COMPLETE — PR11+PR15+PR19-1+PR20 (all paths transaction-scoped, cancellation safe, failure finalization)
 - MIT-043 (recurring atomicity): ⚠️ PARTIAL — PR14 (hidden write split, swallowed events fixed)
 - MIT-033 (DB uniqueness constraints): TODO — next priority
 - DB migration chain and schema parity: not yet proven.
@@ -798,8 +798,8 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ✅ **DONE** — PR 1–19 (2026-07-02). DomainTransactionRunner adopted by both BankStatementLifecycleProcessor and ReceiptLifecycleCoordinator (14 call sites). TransactionContext required by event writers. Bank finalization atomic with receipt status/event. All critical production state/event pairs are in the same transaction.  
-Residual (non-blocking): TransactionalEventWriter is marker-only (design choice, not a correctness gap). Deprecated context-free writer kept for backward compat — removed when all callers migrate.
+**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–20 (2026-07-02). DomainTransactionRunner (14 call sites). TransactionContext hardened with internal token (PR20-2). Context-free writer methods at DeprecationLevel.ERROR. Remaining: CI must be green; direct event DAO guard needs structured allowlist.  
+Residual (non-blocking): TransactionalEventWriter is marker-only (design choice).
 **Labels:** `transactions`, `events`, `atomicity`
 
 #### Implemented
@@ -976,8 +976,8 @@ Residual (non-blocking): TransactionalEventWriter is marker-only (design choice,
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ✅ **DONE** — PR 1–19 (2026-07-02). Bank statement: item-level pre-mutation validation (amount/currency/date/merchant), per-item REVIEW_CREATED event atomic with PendingReview+item insert, run finalization atomic with receipt status/event, cancellation finalization bounded and safe. ReceiptLifecycleCoordinator: all 8 transaction blocks use DomainTransactionRunner.  
-Residual (non-blocking): BankApiIntegration.kt (line 285) — low-confidence bank integration stub, not a production pipeline. Non-regression.
+**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–20 (2026-07-02). Bank statement: pre-mutation validation, per-item REVIEW_CREATED, run finalization atomic with receipt event, cancellation never masks CE (PR20-1), unexpected failure writes receipt event (PR20-1). ReceiptLifecycleCoordinator: 8 blocks migrated. Remaining: CI must be green.  
+Residual (non-blocking): BankApiIntegration.kt low-confidence stub (non-production).
 **Labels:** `receipts`, `ocr`, `pending-review`
 
 #### Implemented

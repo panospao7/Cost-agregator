@@ -14,9 +14,9 @@ significant progress has been made. Key changes:
 
 | Area | Baseline State | Post-PR18 State | Post-PR19 State |
 |------|---------------|-----------------|-----------------|
-| **MIT-031** (State/Event atomicity) | ❌ TODO | ✅ NEAR-COMPLETE | ✅ DONE — DomainTransactionRunner (14 call sites), TransactionContext (required by writers), bank/receipt finalization atomic |
+| **MIT-031** (State/Event atomicity) | ❌ TODO | ✅ NEAR-COMPLETE | ⚠️ NEAR-COMPLETE — PR20 token/writer enforcement; CI pending |
 | **MIT-034** (Cancellation propagation) | ⚠️ 17 gaps in 14 files | ⚠️ PARTIAL — 19 unsafe runCatching replaced in critical paths (PR12b). Structured allowlist with expiry enforcement (PR12a). ~65 UI ViewModels remain (low-priority). | — |
-| **MIT-041** (Receipt/review atomicity) | ❌ TODO | ✅ NEAR-COMPLETE | ✅ DONE — BankStatement: pre-mutation validation, per-item REVIEW_CREATED, run finalization atomic, cancellation safe. ReceiptLifecycleCoordinator: 8 transaction blocks migrated. |
+| **MIT-041** (Receipt/review atomicity) | ❌ TODO | ✅ NEAR-COMPLETE | ⚠️ NEAR-COMPLETE — PR20 cancellation safe, failure event atomic; CI pending |
 | **MIT-043** (Recurring atomicity) | ❌ TODO | ⚠️ PARTIAL — Hidden writes split (PR14). Swallowed events fixed (PR14). DB uniqueness deferred | ⚠️ PARTIAL — PR19-2: stale recovery evented, reconcile deprecated at ERROR level |
 | **MIT-075** (Side-effect evidence) | ❌ TODO | ⚠️ PARTIAL — Evidence service operational (PR8). No-outbox decision documented (PR17) | — |
 | **Hidden writes** | 3+ un-named queries with writes | ✅ RESOLVED — reconcilePlannedVsActual split, getDueReminders renamed to recoverAndGetDueReminders | — |

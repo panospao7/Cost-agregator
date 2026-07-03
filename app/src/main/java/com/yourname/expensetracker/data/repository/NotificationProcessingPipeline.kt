@@ -15,6 +15,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -1289,6 +1290,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 }.toString()
                 runCatching {
                     transactionLifecycleEventWriter.write(
+                        TransactionContext(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            occurredAt = System.currentTimeMillis()
+                        ),
                         com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
                             expenseId = expenseId,
                             eventType = "AI_AUTO_ACCEPT",

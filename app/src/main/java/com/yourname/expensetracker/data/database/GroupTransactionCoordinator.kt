@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
@@ -1068,6 +1069,10 @@ class GroupTransactionCoordinator @Inject constructor(
 
             // Write BULK_UPDATED event atomically inside the transaction
             transactionLifecycleEventWriter.write(
+                TransactionContext(
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    occurredAt = System.currentTimeMillis()
+                ),
                 com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
                     expenseId = null,
                     eventType = LifecycleEventType.BULK_UPDATED.name,

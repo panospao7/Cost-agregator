@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -169,6 +170,10 @@ class WarrantyTrackerRepository @Inject constructor(
                 }.toString()
                 runCatching {
                     receiptLifecycleEventWriter.write(
+                        TransactionContext(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            occurredAt = System.currentTimeMillis()
+                        ),
                         com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent(
                             receiptId = warrantyWithTimestamps.receiptId,
                             sourceType = warrantyWithTimestamps.extractionSource,

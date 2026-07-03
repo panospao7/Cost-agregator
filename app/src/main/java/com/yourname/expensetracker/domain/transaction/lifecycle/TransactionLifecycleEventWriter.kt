@@ -26,7 +26,14 @@ data class TransactionLifecycleEvent(
 interface TransactionLifecycleEventWriter : TransactionalEventWriter {
     suspend fun write(context: TransactionContext, event: TransactionLifecycleEvent)
 
-    @Deprecated("Use write(context, event) to provide TransactionContext")
+    @Deprecated(
+        message = "Use write(context, event) inside DomainTransactionRunner.runInTransaction",
+        replaceWith = ReplaceWith(
+            "write(TransactionContext(correlationId = java.util.UUID.randomUUID().toString(), " +
+                "occurredAt = System.currentTimeMillis()), event)"
+        ),
+        level = DeprecationLevel.ERROR
+    )
     suspend fun write(event: TransactionLifecycleEvent)
 }
 
@@ -56,7 +63,15 @@ class RoomTransactionLifecycleEventWriter @Inject constructor(
         )
     }
 
-    @Deprecated("Use write(context, event) to provide TransactionContext")
+    @Suppress("DEPRECATION_ERROR")
+    @Deprecated(
+        message = "Use write(context, event) inside DomainTransactionRunner.runInTransaction",
+        replaceWith = ReplaceWith(
+            "write(TransactionContext(correlationId = java.util.UUID.randomUUID().toString(), " +
+                "occurredAt = System.currentTimeMillis()), event)"
+        ),
+        level = DeprecationLevel.ERROR
+    )
     override suspend fun write(event: TransactionLifecycleEvent) {
         write(
             TransactionContext(
