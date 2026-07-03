@@ -477,3 +477,33 @@ The `BankStatementImportItem` table serves as the audit ledger for these rows.
 - Replace `PostCommitAction.execute` lambda with named use-case dispatch.
 - Add `SideEffectReplayWorker` scheduled via WorkManager.
 - This is tracked as a future architectural decision, not a current defect.
+
+---
+
+### §17 Accepted Residual Items (2026-07-02)
+
+The following are accepted as non-blocking for MIT closure:
+
+1. **Deprecated context-free writer methods** — `ReceiptLifecycleEventWriter.write(event)` 
+   and `TransactionLifecycleEventWriter.write(event)` remain with `DeprecationLevel.ERROR`.
+   They exist for backward binary compatibility. All production callers migrated to 
+   `write(context, event)`. Static guard (TransactionContextProvenanceGuardTest) blocks
+   manual context construction. Removal deferred to next major version.
+
+2. **Recurring reminder regeneration** — `regenerateReminderDeliveriesForOccurrence()` 
+   uses per-window best-effort with Timber logging. This is accepted product policy:
+   reminder delivery regeneration is non-critical; skipped windows are logged.
+   Full all-or-nothing atomicity is deferred to MIT-043B (post MIT-033).
+
+3. **Warranty lifecycle events** — WarrantyTrackerRepository writes warranty events
+   as best-effort (try/catch with CE rethrow, Timber on failure). Warranty events
+   are classified as non-critical lifecycle events — state correctness is preserved
+   even if an event write fails. This is accepted product policy.
+
+4. **MIT-043 DB uniqueness** — `linkedExpenseId` uniqueness depends on MIT-033 
+   (schema constraints). Until MIT-033 lands, duplicate fulfillment remains 
+   application-level (coordinator checks). This is accepted as a known limitation.
+
+5. **CI green** — Pre-existing Hilt configuration issue (`@HiltAndroidApp` base class)
+   blocks full `:app:testDebugUnitTest` without `-x hiltJavaCompileDebugUnitTest`.
+   All tests pass with the exclusion. This is tracked separately as a Hilt upgrade task.

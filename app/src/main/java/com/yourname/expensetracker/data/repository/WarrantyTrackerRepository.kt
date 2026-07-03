@@ -34,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -120,7 +121,7 @@ class WarrantyTrackerRepository @Inject constructor(
         val warrantyId = warrantyDao.insertWarranty(warrantyWithTimestamps)
 
         // PR-W1: Record CREATED lifecycle event
-        runCatching {
+        try {
             database.warrantyLifecycleEventDao().insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warrantyId,
@@ -129,7 +130,10 @@ class WarrantyTrackerRepository @Inject constructor(
                     description = "Warranty created for ${warranty.productName}"
                 )
             )
-        }.onFailure { Timber.w(it, "Failed to write CREATED lifecycle event for warrantyId=$warrantyId") }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "Failed to write CREATED lifecycle event for warrantyId=$warrantyId")
+        }
 
         warrantyId
     }
@@ -146,7 +150,7 @@ class WarrantyTrackerRepository @Inject constructor(
         val id = warrantyDao.insertWarrantyIgnore(warrantyWithTimestamps)
         if (id > 0L) {
             // PR-W1: Record CREATED lifecycle event
-            runCatching {
+            try {
                 database.warrantyLifecycleEventDao().insert(
                     WarrantyLifecycleEvent(
                         warrantyId = id,
@@ -155,8 +159,9 @@ class WarrantyTrackerRepository @Inject constructor(
                         description = "Warranty created for ${warrantyWithTimestamps.productName}"
                     )
                 )
-            }.onFailure { error ->
-                Timber.w(error, "PR-W1: Failed to write CREATED lifecycle event for warrantyId=$id")
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w(e, "PR-W1: Failed to write CREATED lifecycle event for warrantyId=$id")
             }
 
             // AID-9 Gap 2: Audit trail for AI-driven warranty creation
@@ -170,7 +175,7 @@ class WarrantyTrackerRepository @Inject constructor(
                     put("warrantyDurationMonths", warrantyWithTimestamps.warrantyDurationMonths)
                     put("warrantyType", warrantyWithTimestamps.warrantyType.name)
                 }.toString()
-                runCatching {
+                try {
                     transactionRunner.runInTransaction(
                         operationId = "warranty.ai_warranty_created",
                         correlationId = java.util.UUID.randomUUID().toString(),
@@ -193,8 +198,9 @@ class WarrantyTrackerRepository @Inject constructor(
                             )
                         )
                     }
-                }.onFailure { error ->
-                    Timber.w(error, "AID-9: Failed to write AI_WARRANTY_CREATED audit event for warrantyId=$id")
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Timber.w(e, "AID-9: Failed to write AI_WARRANTY_CREATED audit event for warrantyId=$id")
                 }
             }
         }
@@ -205,7 +211,7 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun updateWarranty(warranty: Warranty) {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.updateWarranty")
         warrantyDao.updateWarranty(warranty)
-        runCatching {
+        try {
             database.warrantyLifecycleEventDao().insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warranty.id,
@@ -214,13 +220,16 @@ class WarrantyTrackerRepository @Inject constructor(
                     description = "Warranty updated for ${warranty.productName}"
                 )
             )
-        }.onFailure { Timber.w(it, "Failed to write UPDATED lifecycle event for warrantyId=${warranty.id}") }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "Failed to write UPDATED lifecycle event for warrantyId=${warranty.id}")
+        }
     }
 
     suspend fun deleteWarranty(warranty: Warranty) {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.deleteWarranty")
         warrantyDao.deleteWarranty(warranty)
-        runCatching {
+        try {
             database.warrantyLifecycleEventDao().insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warranty.id,
@@ -229,7 +238,10 @@ class WarrantyTrackerRepository @Inject constructor(
                     description = "Warranty deleted for ${warranty.productName}"
                 )
             )
-        }.onFailure { Timber.w(it, "Failed to write DELETED lifecycle event for warrantyId=${warranty.id}") }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "Failed to write DELETED lifecycle event for warrantyId=${warranty.id}")
+        }
     }
 
     /**
@@ -246,7 +258,7 @@ class WarrantyTrackerRepository @Inject constructor(
                 }
             }
             warrantyDao.deleteWarranty(warranty)
-            runCatching {
+            try {
                 database.warrantyLifecycleEventDao().insert(
                     WarrantyLifecycleEvent(
                         warrantyId = warranty.id,
@@ -255,7 +267,10 @@ class WarrantyTrackerRepository @Inject constructor(
                         description = "Auto-detected warranty rejected by user: ${warranty.productName}"
                     )
                 )
-            }.onFailure { Timber.w(it, "Failed to write AI_EXTRACTION_DISCARDED event for warrantyId=${warranty.id}") }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w(e, "Failed to write AI_EXTRACTION_DISCARDED event for warrantyId=${warranty.id}")
+            }
         }
     }
 
@@ -271,7 +286,7 @@ class WarrantyTrackerRepository @Inject constructor(
         )
 
         // PR-W1: Record CLAIMED lifecycle event
-        runCatching {
+        try {
             database.warrantyLifecycleEventDao().insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warrantyId,
@@ -280,8 +295,9 @@ class WarrantyTrackerRepository @Inject constructor(
                     description = "Warranty claimed"
                 )
             )
-        }.onFailure { error ->
-            Timber.w(error, "PR-W1: Failed to write CLAIMED lifecycle event for warrantyId=$warrantyId")
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "PR-W1: Failed to write CLAIMED lifecycle event for warrantyId=$warrantyId")
         }
         }
     }
@@ -411,7 +427,7 @@ class WarrantyTrackerRepository @Inject constructor(
         val expiredReturnWindows = returnWindowDao.markExpiredReturnWindows(currentTime = now, updatedAt = now)
         val resultNow = now
         if (expiredWarranties > 0 || expiredReturnWindows > 0) {
-            runCatching {
+            try {
                 database.warrantyLifecycleEventDao().insert(
                     WarrantyLifecycleEvent(
                         warrantyId = -1L,
@@ -420,7 +436,10 @@ class WarrantyTrackerRepository @Inject constructor(
                         description = "Batch expired: $expiredWarranties warranties, $expiredReturnWindows return windows"
                     )
                 )
-            }.onFailure { Timber.w(it, "Failed to write EXPIRED batch lifecycle event") }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w(e, "Failed to write EXPIRED batch lifecycle event")
+            }
         }
         return ExpiryReconciliationResult(
             expiredWarrantyCount = expiredWarranties,
@@ -517,7 +536,7 @@ class WarrantyTrackerRepository @Inject constructor(
             Timber.d("Cloud warranty extraction discarded: confidence $confidence below review threshold $REVIEW_CLOUD_CONFIDENCE for receiptId=${receipt.id}")
             // PR4-FINALGATE: Write discard diagnostic to warranty lifecycle events.
             // We use warrantyId = -1 as a sentinel to indicate this is not tied to a specific warranty.
-            runCatching {
+            try {
                 database.warrantyLifecycleEventDao().insert(
                     WarrantyLifecycleEvent(
                         warrantyId = -1L,
@@ -526,7 +545,10 @@ class WarrantyTrackerRepository @Inject constructor(
                         description = "Cloud warranty extraction discarded: confidence=$confidence below threshold=$REVIEW_CLOUD_CONFIDENCE receiptId=${receipt.id}"
                     )
                 )
-            }.onFailure { Timber.w(it, "Failed to write AI_EXTRACTION_DISCARDED diagnostic for receiptId=${receipt.id}") }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w(e, "Failed to write AI_EXTRACTION_DISCARDED diagnostic for receiptId=${receipt.id}")
+            }
             return null
         }
 

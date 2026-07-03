@@ -192,14 +192,13 @@ class NotificationProcessingPipeline @Inject constructor(
                 val outcome = processInternal(notification, storageNotification, initializeClassifier = true, correlationId = cid, persistenceContext = persistenceContext)
                 writePipelineDiagnosticEvent(outcome, notification.packageName, correlationId = cid)
                 outcome
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, cid, e)
-                // DDL-F876-08: use the same cid so exceptions are traceable from listener
-                writePipelineDiagnosticEvent(errorOutcome, notification.packageName, correlationId = cid)
-                errorOutcome
-            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, cid, e)
+            // DDL-F876-08: use the same cid so exceptions are traceable from listener
+            writePipelineDiagnosticEvent(errorOutcome, notification.packageName, correlationId = cid)
+            errorOutcome
+        }
         }
     }
 
@@ -220,14 +219,13 @@ class NotificationProcessingPipeline @Inject constructor(
                     val outcome = processInternal(notification, initializeClassifier = false)
                     writePipelineDiagnosticEvent(outcome, notification.packageName)
                     results += outcome
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
-                    val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, null, e)
-                    writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
-                    results += errorOutcome
-                }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
+            val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, null, e)
+            writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
+            results += errorOutcome
+        }
             }
         }
         return results
@@ -1311,9 +1309,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                             )
                         )
                     }
-                } catch (e: CancellationException) {
-                    throw e
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     Timber.w(e, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
                 }
 
@@ -1604,11 +1601,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                             recommendationRepository.saveAll(recommendations)
                         }
                     } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Timber.w(e, "Recommendation generation failed for expenseId=${expense.id}")
-                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w(e, "Recommendation generation failed for expenseId=${expense.id}")
+            }
             }
         }
     }
@@ -1620,22 +1616,20 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 withTimeoutOrNull(SUBSCRIPTION_DETECTION_TIMEOUT_MS) {
                     detectAndSaveSubscriptionCandidate(merchant, categoryId)
                 } ?: Timber.w("Subscription detection timed out after ${SUBSCRIPTION_DETECTION_TIMEOUT_MS}ms")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w(e, "Subscription detection failed for merchant: $merchant")
-            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "Subscription detection failed for merchant: $merchant")
+        }
         }
     }
 
     private suspend fun runPostCommitSafely(action: String, block: suspend () -> Unit) {
         try {
             block()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Timber.e(e, "Post-commit action failed: $action")
-        }
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        Timber.e(e, "Post-commit action failed: $action")
+    }
     }
 
     /**
@@ -1699,6 +1693,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 )
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.w(e, "Error detecting subscription candidate for: $merchant")
         }
     }
