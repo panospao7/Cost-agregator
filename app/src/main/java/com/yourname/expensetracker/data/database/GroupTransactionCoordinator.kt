@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
@@ -157,7 +158,8 @@ class GroupTransactionCoordinator @Inject constructor(
     private val postCommitActionRunner: PostCommitActionRunner,
     private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val transactionRunner: DomainTransactionRunner
 ) : DomainCoordinator {
 
     private data class GroupMutationTxOutcome(
@@ -1068,25 +1070,28 @@ class GroupTransactionCoordinator @Inject constructor(
             }
 
             // Write BULK_UPDATED event atomically inside the transaction
-            transactionLifecycleEventWriter.write(
-                TransactionContext(
-                    correlationId = java.util.UUID.randomUUID().toString(),
-                    occurredAt = System.currentTimeMillis()
-                ),
-                com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
-                    expenseId = null,
-                    eventType = LifecycleEventType.BULK_UPDATED.name,
-                    source = "GROUP_HARD_DELETE",
-                    actor = "system:group_transaction_coordinator",
-                    correlationId = correlationId,
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .put("groupId", groupId.toString())
-                        .put("count", linkedExpenseIds.size)
-                        .put("source", "GROUP_HARD_DELETE")
-                        .build(),
-                    reason = "Group hard-delete cleared shared expense flags for ${linkedExpenseIds.size} expenses"
+            transactionRunner.runInTransaction(
+                operationId = "group.bulk_update",
+                correlationId = java.util.UUID.randomUUID().toString(),
+                source = "GroupTransactionCoordinator"
+            ) { ctx ->
+                transactionLifecycleEventWriter.write(
+                    ctx,
+                    com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
+                        expenseId = null,
+                        eventType = LifecycleEventType.BULK_UPDATED.name,
+                        source = "GROUP_HARD_DELETE",
+                        actor = "system:group_transaction_coordinator",
+                        correlationId = correlationId,
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("groupId", groupId.toString())
+                            .put("count", linkedExpenseIds.size)
+                            .put("source", "GROUP_HARD_DELETE")
+                            .build(),
+                        reason = "Group hard-delete cleared shared expense flags for ${linkedExpenseIds.size} expenses"
+                    )
                 )
-            )
+            }
 
             onInsideTransaction()
         }

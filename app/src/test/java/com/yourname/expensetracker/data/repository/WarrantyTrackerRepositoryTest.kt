@@ -18,6 +18,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import dagger.Lazy
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,7 +62,8 @@ class WarrantyTrackerRepositoryTest {
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
-            receiptLifecycleEventWriter = mockk(relaxed = true)
+            receiptLifecycleEventWriter = mockk(relaxed = true),
+            transactionRunner = mockk(relaxed = true)
         )
 
         every { aiSettingsRepository.settings() } returns settingsFlow
@@ -349,7 +351,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarrantyIgnoreConflicts sets createdAt and updatedAt when zero`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        // withTransaction inline mock removed ï¿½ mockk(relaxed=true) handles underlying RoomDatabase methods
         val fixedNow = timeProvider.now()
         val warranty = Warranty(
             receiptId = 1,
@@ -374,7 +376,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarrantyIgnoreConflicts preserves existing createdAt`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        // withTransaction inline mock removed ï¿½ mockk(relaxed=true) handles underlying RoomDatabase methods
         val existingCreatedAt = 1_000_000L
         val existingUpdatedAt = 2_000_000L
         val warranty = Warranty(
@@ -400,7 +402,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarrantyIgnoreConflicts writes created event after insert`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        // withTransaction inline mock removed ï¿½ mockk(relaxed=true) handles underlying RoomDatabase methods
         val warranty = Warranty(
             receiptId = 3,
             productName = "Event Test",
@@ -757,7 +759,7 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `addWarranty_lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        // withTransaction inline mock removed ï¿½ mockk(relaxed=true) handles underlying RoomDatabase methods
         val testWarranty = Warranty(
             receiptId = 4,
             productName = "Test Product",

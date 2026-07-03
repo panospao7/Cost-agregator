@@ -13,6 +13,8 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -84,7 +86,7 @@ class RecurringLifecycleCoordinatorTest {
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
             plannedExpenseDao = plannedExpenseDao,
-            transactionRunner = mockk(relaxed = true),
+            transactionRunner = FakeDomainTransactionRunner(now),
             eventWriter = mockk(relaxed = true)
         )
     }
@@ -273,5 +275,28 @@ class RecurringLifecycleCoordinatorTest {
             thrown = t
         }
         assertTrue(thrown is IllegalArgumentException)
+    }
+
+    // ── Fake transaction runner that executes the block synchronously ──────
+
+    private class FakeDomainTransactionRunner(val now: Long) : DomainTransactionRunner {
+        override suspend fun <T> runInTransaction(
+            correlationId: String,
+            causationId: String?,
+            operationId: String,
+            source: String,
+            metadata: Map<String, String>,
+            block: suspend (TransactionContext) -> T
+        ): T {
+            return block(
+                TransactionContext(
+                    correlationId = correlationId,
+                    causationId = causationId,
+                    operationId = operationId,
+                    source = source,
+                    occurredAt = now
+                )
+            )
+        }
     }
 }

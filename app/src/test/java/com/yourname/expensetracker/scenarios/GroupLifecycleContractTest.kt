@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.Result
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
@@ -104,7 +105,8 @@ class GroupLifecycleContractTest {
             database, groupDao, memberDao, database.groupExpenseDao(), expenseDao,
             mockk(relaxed = true), txLifecycle,
             mockk(relaxed = true), mockk<PostCommitActionRunner>(relaxed = true),
-            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined,
+            transactionRunner = mockk(relaxed = true)
         )
 
         lifecycle = GroupLifecycleCoordinator(

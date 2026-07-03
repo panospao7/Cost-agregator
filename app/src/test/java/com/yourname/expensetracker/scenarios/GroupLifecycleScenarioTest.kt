@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.Result
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
@@ -109,7 +110,8 @@ class GroupLifecycleScenarioTest {
             database, groupDao, memberDao, database.groupExpenseDao(), expenseDao,
             mockk(relaxed = true), txLifecycle,
             mockk(relaxed = true), mockk<PostCommitActionRunner>(relaxed = true),
-            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO,
+            transactionRunner = mockk(relaxed = true)
         )
 
         // Stub balanceCalculator to return a settled balance for removeMember tests

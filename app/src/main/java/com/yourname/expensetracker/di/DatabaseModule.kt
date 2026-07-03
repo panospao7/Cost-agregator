@@ -55,6 +55,7 @@ object DatabaseModule {
         postCommitActionRunner: PostCommitActionRunner,
         writeBarrier: DatabaseWriteBarrier,
         timeProvider: TimeProvider,
+        transactionRunner: DomainTransactionRunner,
         @IoDispatcher ioDispatcher: CoroutineDispatcher
     ): GroupTransactionCoordinatorInterface {
         return GroupTransactionCoordinator(
@@ -69,7 +70,8 @@ object DatabaseModule {
             postCommitActionRunner = postCommitActionRunner,
             writeBarrier = writeBarrier,
             timeProvider = timeProvider,
-            ioDispatcher = ioDispatcher
+            ioDispatcher = ioDispatcher,
+            transactionRunner = transactionRunner
         )
     }
 

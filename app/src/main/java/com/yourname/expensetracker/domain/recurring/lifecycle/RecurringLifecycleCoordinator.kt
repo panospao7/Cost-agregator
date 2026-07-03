@@ -915,21 +915,16 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 now = now
             )
             if (recovered > 0) {
-                try {
-                    lifecycleEventDao.insert(
-                        RecurringLifecycleEvent(
-                            occurrenceId = 0L,  // aggregate event, no single occurrence
-                            eventType = "STALE_DELIVERIES_RECOVERED",
-                            occurredAt = context.occurredAt,
-                            oldStatus = null,
-                            newStatus = null,
-                            metadata = """{"recoveredCount":$recovered}"""
-                        )
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = 0L,  // aggregate event, no single occurrence
+                        eventType = "STALE_DELIVERIES_RECOVERED",
+                        occurredAt = context.occurredAt,
+                        oldStatus = null,
+                        newStatus = null,
+                        metadata = """{"recoveredCount":$recovered}"""
                     )
-                } catch (e: Exception) {
-                    CancellationSafe.rethrowIfCancellation(e)
-                    Timber.w(e, "Failed to write stale delivery recovery event")
-                }
+                )
             }
             recovered
         }

@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
@@ -157,6 +158,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val sourceLinkWriter: SourceLinkWriter,
     private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
+    private val transactionRunner: DomainTransactionRunner,
     private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter,
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
@@ -1289,23 +1291,26 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     put("merchant", preDb.correctedMerchant)
                 }.toString()
                 runCatching {
-                    transactionLifecycleEventWriter.write(
-                        TransactionContext(
-                            correlationId = java.util.UUID.randomUUID().toString(),
-                            occurredAt = System.currentTimeMillis()
-                        ),
-                        com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
-                            expenseId = expenseId,
-                            eventType = "AI_AUTO_ACCEPT",
-                            source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
-                            actor = "system:ai_auto_accept",
-                            correlationId = correlationId,  // DDL-512-05
-                            dedupeKey = preDb.dedupeKey,
-                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                .putHashed("packageName", notification.packageName)
-                                .build()
+                    transactionRunner.runInTransaction(
+                        operationId = "notification.auto_accept",
+                        correlationId = java.util.UUID.randomUUID().toString(),
+                        source = "NotificationProcessingPipeline"
+                    ) { ctx ->
+                        transactionLifecycleEventWriter.write(
+                            ctx,
+                            com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
+                                expenseId = expenseId,
+                                eventType = "AI_AUTO_ACCEPT",
+                                source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
+                                actor = "system:ai_auto_accept",
+                                correlationId = correlationId,  // DDL-512-05
+                                dedupeKey = preDb.dedupeKey,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("packageName", notification.packageName)
+                                    .build()
+                            )
                         )
-                    )
+                    }
                 }.onFailure { error ->
                     Timber.w(error, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
                 }

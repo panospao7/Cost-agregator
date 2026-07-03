@@ -63,27 +63,7 @@ class TransactionContextProvenanceGuardTest {
             "Side-effect failure writer migrated in PR20",
             "MIT-031", LocalDate.of(2026, 12, 31)
         ),
-        // PR20 manual-context callers — must migrate to DomainTransactionRunner
-        ProvenanceAllowlistEntry(
-            "GroupTransactionCoordinator.kt", "Transaction",
-            "PR20 manual context — must migrate to DomainTransactionRunner",
-            "MIT-031", LocalDate.of(2026, 8, 15)
-        ),
-        ProvenanceAllowlistEntry(
-            "NotificationProcessingPipeline.kt", "Transaction",
-            "PR20 manual context — must migrate to DomainTransactionRunner",
-            "MIT-031", LocalDate.of(2026, 8, 15)
-        ),
-        ProvenanceAllowlistEntry(
-            "WarrantyTrackerRepository.kt", "Transaction",
-            "PR20 manual context — must migrate to DomainTransactionRunner",
-            "MIT-031", LocalDate.of(2026, 8, 15)
-        ),
-        ProvenanceAllowlistEntry(
-            "ReceiptLinkService.kt", "Transaction",
-            "PR20 manual context — must migrate to DomainTransactionRunner",
-            "MIT-031", LocalDate.of(2026, 8, 15)
-        ),
+
     )
 
     private val sourceRoot: File by lazy { resolveSourceRoot() }

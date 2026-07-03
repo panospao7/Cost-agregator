@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -61,7 +62,8 @@ class WarrantyTrackerRepository @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val receiptLifecycleEventWriter: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter
+    private val receiptLifecycleEventWriter: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEventWriter,
+    private val transactionRunner: DomainTransactionRunner
 ) {
     private companion object {
         private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
@@ -169,25 +171,28 @@ class WarrantyTrackerRepository @Inject constructor(
                     put("warrantyType", warrantyWithTimestamps.warrantyType.name)
                 }.toString()
                 runCatching {
-                    receiptLifecycleEventWriter.write(
-                        TransactionContext(
-                            correlationId = java.util.UUID.randomUUID().toString(),
-                            occurredAt = System.currentTimeMillis()
-                        ),
-                        com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent(
-                            receiptId = warrantyWithTimestamps.receiptId,
-                            sourceType = warrantyWithTimestamps.extractionSource,
-                            documentType = "WARRANTY_EXTRACTION",
-                            eventType = "AI_WARRANTY_CREATED",
-                            actor = "system:ai_warranty_extraction",
-                            message = auditMessage,
-                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                .put("productName", warrantyWithTimestamps.productName)
-                                .put("warrantyDurationMonths", warrantyWithTimestamps.warrantyDurationMonths)
-                                .put("warrantyType", warrantyWithTimestamps.warrantyType.name)
-                                .build()
+                    transactionRunner.runInTransaction(
+                        operationId = "warranty.ai_warranty_created",
+                        correlationId = java.util.UUID.randomUUID().toString(),
+                        source = "WarrantyTrackerRepository"
+                    ) { ctx ->
+                        receiptLifecycleEventWriter.write(
+                            ctx,
+                            com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent(
+                                receiptId = warrantyWithTimestamps.receiptId,
+                                sourceType = warrantyWithTimestamps.extractionSource,
+                                documentType = "WARRANTY_EXTRACTION",
+                                eventType = "AI_WARRANTY_CREATED",
+                                actor = "system:ai_warranty_extraction",
+                                message = auditMessage,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .put("productName", warrantyWithTimestamps.productName)
+                                    .put("warrantyDurationMonths", warrantyWithTimestamps.warrantyDurationMonths)
+                                    .put("warrantyType", warrantyWithTimestamps.warrantyType.name)
+                                    .build()
+                            )
                         )
-                    )
+                    }
                 }.onFailure { error ->
                     Timber.w(error, "AID-9: Failed to write AI_WARRANTY_CREATED audit event for warrantyId=$id")
                 }

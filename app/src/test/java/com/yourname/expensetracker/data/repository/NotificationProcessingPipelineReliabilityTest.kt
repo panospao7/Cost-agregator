@@ -45,6 +45,7 @@ import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.subscription.SubscriptionCandidateResult
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -130,8 +131,9 @@ class NotificationProcessingPipelineReliabilityTest {
         postCommitActionRunner = mockk(relaxed = true),
         pendingReviewSourceLinkService = mockk(relaxed = true),
         sourceLinkWriter = mockk(relaxed = true),
-        transactionLifecycleEventWriter = mockk(relaxed = true),
-            diagnosticEmitter = mockk(relaxed = true),
+            transactionLifecycleEventWriter = mockk(relaxed = true),
+            transactionRunner = mockk(relaxed = true),
+                diagnosticEmitter = mockk(relaxed = true),
         writeBarrier = writeBarrier,
         privacySettingsRepository = mockk(relaxed = true),
         userCurrencyProvider = mockk(relaxed = true),
