@@ -11,13 +11,13 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: YELLOW-GREEN — PR1–PR21 in progress. MIT-031/041 NEAR-COMPLETE (provenance guard, bank cleanup, item audit tests added). MIT-034/043/075 remain PARTIAL with defined closure paths.**
+**Overall status: GREEN-YELLOW — PR1–PR22 complete. MIT-031 ✅ DONE. MIT-041 ✅ DONE. MIT-034 PARTIAL (97 entries, burn-down active). MIT-043 PARTIAL by design. MIT-075 PARTIAL by design.**
 
-PR 1–21 (2026-07-01 through 2026-07-02) complete. MIT-031 (state/event atomicity) has TransactionContext provenance guard (6 allowlist entries: 4 canonical production, 2 deprecated writer impls). MIT-041 receipts: bank cancellation terminal policy documented (run-ledger-only), non-cancellation cleanup rethrows CE, skipped-item audit ledger tests added. MIT-034/043/075 remain PARTIAL per closure checklists. MIT-033 schema constraints are the next priority.
+PR 1–22 (2026-07-01 through 2026-07-03) complete. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are CLOSED — all critical production paths are transaction-scoped, provenance-guarded, and tested. MIT-034 remains PARTIAL with 97 allowlist entries and active burn-down guard. MIT-043 and MIT-075 remain PARTIAL by documented architectural decision (TRANSACTIONAL_EVENT_POLICY.md §§15–17). MIT-033 schema constraints are the next priority.
 
-- MIT-031 (state/event atomicity): ⚠️ NEAR-COMPLETE — PR13+PR19-1+PR20 (DomainTransactionRunner, transaction token, writer enforcement)
+- MIT-031 (state/event atomicity): ✅ DONE — PR13+PR20+PR21 (DomainTransactionRunner, provenance guard, 0 manual contexts)
 - MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)
-- MIT-041 (receipt/review atomicity): ⚠️ NEAR-COMPLETE — PR11+PR15+PR19-1+PR20 (all paths transaction-scoped, cancellation safe, failure finalization)
+- MIT-041 (receipt/review atomicity): ✅ DONE — PR11+PR15+PR19+PR20+PR21 (all bank paths transaction-scoped, cancellation safe, 7 audit tests)
 - MIT-043 (recurring atomicity): ⚠️ PARTIAL — PR14 (hidden write split, swallowed events fixed)
 - MIT-033 (DB uniqueness constraints): TODO — next priority
 - DB migration chain and schema parity: not yet proven.
@@ -798,8 +798,8 @@ Choose one:
 
 **Severity:** S0  
 **Pipelines:** P3, P4, P9, P17  
-**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–21 (2026-07-02). TransactionContext provenance guard (TransactionContextProvenanceGuardTest) bans manual construction. 4 callers (GroupTransactionCoordinator, NotificationProcessingPipeline, WarrantyTrackerRepository, ReceiptLinkService) on 45-day DomainTransactionRunner migration expiry. Direct event DAO guard structured with rule classification.  
-Residual: 4 callers must migrate to DomainTransactionRunner before 2026-08-15 or guard fails.
+**Status:** ✅ **DONE** — PR 1–22 (2026-07-03). DomainTransactionRunner (14 call sites). TransactionContext hardened with internal token, provenance guard (6 allowlist entries, broader regex). All production writers require context. Direct event DAO guard structured (8 legacy repos on 45-day expiry). Stale recovery transactional/evented (Option A).  
+Residual (accepted, non-blocking): Deprecated context-free writer APIs (DeprecationLevel.ERROR, §17.1). Warranty events classified as non-critical (§17.3). CI: Hilt exclusion documented (§17.5).
 **Labels:** `transactions`, `events`, `atomicity`
 
 #### Implemented
@@ -976,8 +976,8 @@ Residual: 4 callers must migrate to DomainTransactionRunner before 2026-08-15 or
 
 **Severity:** S0  
 **Pipelines:** P3, P10  
-**Status:** ⚠️ **NEAR-COMPLETE** — PR 1–21 (2026-07-02). Bank: cancellation never masks CE (addSuppressed), non-cancellation cleanup rethrows CE (PR21-3), unexpected failure writes receipt event atomically (PR20-1), cancellation terminal policy documented as run-ledger-only (PR21). Skipped/failed item audit tests added (BankStatementItemAuditTest, 7 tests).  
-Residual: CI must be green. BankApiIntegration.kt stub only.
+**Status:** ✅ **DONE** — PR 1–22 (2026-07-03). Bank: importRunId non-null, pre-mutation validation (amount/currency/date/merchant), per-item REVIEW_CREATED event atomic with PendingReview, run finalization atomic with receipt PROCESSING_COMPLETE/PROCESSING_FAILED event, cancellation never masks CE (addSuppressed), non-cancellation cleanup rethrows CE, unexpected failure after receipt writes run+event atomically. 7 BankStatementItemAudit tests. Cancellation terminal policy documented (TRANSACTIONAL_EVENT_POLICY.md §14).  
+Residual (non-blocking): BankApiIntegration.kt low-confidence stub (non-production). CI: Hilt exclusion documented (§17.5).
 **Labels:** `receipts`, `ocr`, `pending-review`
 
 #### Implemented
