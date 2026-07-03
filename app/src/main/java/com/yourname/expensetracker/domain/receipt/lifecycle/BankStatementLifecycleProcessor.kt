@@ -906,6 +906,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             ))
                         }
                     } catch (finalizeError: Exception) {
+                        if (finalizeError is kotlinx.coroutines.CancellationException) throw finalizeError
                         Timber.w(finalizeError, "Failed to finalize bank statement import run $rid")
                     }
                 } else {
@@ -926,6 +927,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                             errorSummary = "WORKER_UNHANDLED_EXCEPTION"
                         )
                     } catch (finalizeError: Exception) {
+                        if (finalizeError is kotlinx.coroutines.CancellationException) throw finalizeError
                         Timber.w(finalizeError, "Failed to finalize bank statement import run $rid")
                     }
                 }
