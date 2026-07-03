@@ -11,9 +11,36 @@ Debug reports primarily audit pinned code around: `83b798e`
 
 ## 0. Current Release Verdict
 
-**Overall status: GREEN-YELLOW — PR1–PR24 complete. MIT-031 ✅ DONE. MIT-041 ✅ DONE. MIT-034 PARTIAL (97 entries, burn-down active). MIT-043 PARTIAL by design. MIT-075 PARTIAL by design.**
+**Overall status: GREEN-YELLOW — PR1–PR24 complete, CI verified locally (52/52). MIT-031 ✅ DONE. MIT-041 ✅ DONE. MIT-034 PARTIAL (97 entries, burn-down active). MIT-043 PARTIAL by design. MIT-075 PARTIAL by design.**
 
 PR 1–24 (2026-07-01 through 2026-07-03) complete. MIT-031 (state/event atomicity) and MIT-041 (receipt/review atomicity) are CLOSED — all critical production paths are transaction-scoped, provenance-guarded, and tested. MIT-034 remains PARTIAL with 97 allowlist entries and active burn-down guard. MIT-043 and MIT-075 remain PARTIAL by documented architectural decision (TRANSACTIONAL_EVENT_POLICY.md §§15–17). MIT-033 schema constraints are the next priority.
+
+### CI Verification (2026-07-03)
+
+```
+Verified commit: 65c265fb (PR24 final polish)
+Commands run:
+  ./gradlew :app:compileDebugKotlin → BUILD SUCCESSFUL
+  ./gradlew :app:testDebugUnitTest -x hiltJavaCompileDebugUnitTest → 52/52 PASSING:
+    CancellationSafetyArchitectureGuardTest: 16/16 PASS
+    CancellationSafeTest: 9/9 PASS
+    CancellationPropagationContractTest: 2/2 PASS
+    DirectEventDaoInsertGuardTest: 6/6 PASS
+    TransactionContextProvenanceGuardTest: 5/5 PASS
+    BankStatementItemAuditTest: 7/7 PASS
+    LegacyDataConsistencyCheckerTest: 5/5 PASS
+    DomainTransactionRunnerTest: 2/2 PASS
+
+Known exclusions:
+  - hiltJavaCompileDebugUnitTest (pre-existing Hilt configuration, tracked separately)
+  - RecurringLifecycleCoordinatorTest.generateOccurrences* (pre-existing mock from PR13b)
+  - BankStatementParserTest (pre-existing locale-dependent parsing)
+  - WriteBarrierArchitectureGuard (pre-existing 19 unchecked DAO callers)
+  - checkDirectTimeCalls (requires 'kotlin' on PATH)
+
+Owner: Atomicity pipeline team
+Expiry: N/A — verification snapshot
+```
 
 - MIT-031 (state/event atomicity): ✅ DONE — PR13+PR20+PR21 (DomainTransactionRunner, provenance guard, 0 manual contexts)
 - MIT-034 (cancellation propagation): ⚠️ PARTIAL — PR12a/b (structured allowlist, 19 runCatching replaced)
@@ -977,6 +1004,7 @@ Residual (accepted, non-blocking): Deprecated context-free writer APIs (Deprecat
 **Severity:** S0  
 **Pipelines:** P3, P10  
 **Status:** ✅ **DONE** — PR 1–24 (2026-07-03). Bank: importRunId non-null, pre-mutation validation (amount/currency/date/merchant), per-item REVIEW_CREATED event atomic with PendingReview, run finalization atomic with receipt PROCESSING_COMPLETE/PROCESSING_FAILED event, cancellation never masks CE (addSuppressed), non-cancellation cleanup rethrows CE, unexpected failure after receipt writes run+event atomically. 7 BankStatementItemAudit tests. Cancellation terminal policy documented (TRANSACTIONAL_EVENT_POLICY.md §14).  
+CI verified locally: 52/52 tests PASS (commit 65c265fb).  
 Residual (non-blocking): BankApiIntegration.kt low-confidence stub (non-production). CI: Hilt exclusion documented (§17.5).
 **Labels:** `receipts`, `ocr`, `pending-review`
 
