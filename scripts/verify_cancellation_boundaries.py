@@ -243,6 +243,10 @@ def scan_file(
             # Broad catch outside suspend and outside worker path — not a violation
             continue
 
+        # Check allowlist
+        if is_allowlisted(rel_for_allowlist, "", allowlist):
+            continue
+
         # Check if cancellation is handled nearby
         if _has_safe_pattern_in_window(lines, i, window=15):
             continue
@@ -307,6 +311,10 @@ def scan_file(
         # Only flag in context
         in_suspend = _line_in_suspend_range(line_no, suspend_ranges)
         if not in_suspend and not is_worker:
+            continue
+
+        # Check allowlist
+        if is_allowlisted(rel_for_allowlist, "", allowlist):
             continue
 
         # Check if cancellation handling is nearby

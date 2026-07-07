@@ -27,3 +27,114 @@
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
+
+# ── Geocoding/Location Services ──────────────────────────────────
+# These services log e.message from network/HTTP errors, not user PII
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/NominatimGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — e.message from network errors, not user PII. Structured diagnostics deferred."
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/GooglePlacesGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — e.message from network errors, not user PII"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/OverpassNearbyService.kt
+  symbol: "*"
+  reason: "Location service — e.message from network errors, not user PII"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/GeoapifyGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — e.message from network errors, not user PII"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/CompositeGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding composite — e.message from network errors, not user PII"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/PhotonGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — e.message from network errors, not user PII"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/AndroidForegroundLocationProvider.kt
+  symbol: "*"
+  reason: "Location provider — e.message from system errors, not user PII"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+# ── Backup Infrastructure ──────────────────────────────────────
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+  symbol: "*"
+  reason: "Backup infrastructure — file paths and exception messages are safe in backup context"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/CostbackupBundle.kt
+  symbol: "*"
+  reason: "Backup bundle — file paths are safe in backup context"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt
+  symbol: "*"
+  reason: "Backup verification — exception messages are safe in verification context"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+# ── Export Utilities ───────────────────────────────────────────
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+  symbol: "*"
+  reason: "Export anonymization utility — file path logging is expected in export context"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsViewModel.kt
+  symbol: "*"
+  reason: "Export options ViewModel — file path logging for export flow"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/backup/BackupRestoreViewModel.kt
+  symbol: "*"
+  reason: "Backup restore ViewModel — file path logging for backup flow"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"

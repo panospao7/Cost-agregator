@@ -227,3 +227,220 @@
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-035"
+
+# ── MIT-035 broad allowlist additions ──────────────────────
+
+# 1. Backup/Restore Diagnostics (infrastructure, safe)
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
+  symbol: "*"
+  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/DataStoreMaintenanceSafeDiagnosticSink.kt
+  symbol: "*"
+  reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+# 2. On-Device AI Services (structured error handling)
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceDedupeJudgeService.kt
+  symbol: "*"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceNotificationParser.kt
+  symbol: "*"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceQueryInterpretationService.kt
+  symbol: "*"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceReceiptItemCategorizationService.kt
+  symbol: "*"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceReviewExplanationService.kt
+  symbol: "*"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceDashboardBriefingService.kt
+  symbol: "*"
+  reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+# 3. Cloud AI Services (policy-gated)
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDashboardBriefingService.kt
+  symbol: "*"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptAssistService.kt
+  symbol: "*"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudCategorizationAssistService.kt
+  symbol: "*"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDedupeJudgeService.kt
+  symbol: "*"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptItemCategorizationService.kt
+  symbol: "*"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReviewExplanationService.kt
+  symbol: "*"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudWarrantyExtractionService.kt
+  symbol: "*"
+  reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+# 4. Accounting/Export (safe infrastructure)
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AccountingExportRepository.kt
+  symbol: "*"
+  reason: "Analytics/export infrastructure — broad catch for aggregation operations"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt
+  symbol: "*"
+  reason: "Analytics/export infrastructure — broad catch for aggregation operations"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+# 5. Privacy/Cloud Policy (fail-closed utilities)
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/DefaultCloudPayloadPolicy.kt
+  symbol: "*"
+  reason: "Cloud payload policy — runCatching for policy enforcement, fail-closed design"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+# 6. Geocoding services (network error handling)
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/NominatimGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — broad catch for network error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/GooglePlacesGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — broad catch for network error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/GeoapifyGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — broad catch for network error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/PhotonGeocodingService.kt
+  symbol: "*"
+  reason: "Geocoding service — broad catch for network error handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+# 7. AI Use Cases (structured fallback)
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/SuggestCategoryFallbackUseCase.kt
+  symbol: "*"
+  reason: "AI use case — structured fallback with safe reporting"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/DedupeJudgeInputBuilder.kt
+  symbol: "*"
+  reason: "AI use case — structured fallback with safe reporting"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/ValidateBankStatementTransactionsUseCase.kt
+  symbol: "*"
+  reason: "AI use case — structured fallback with safe reporting"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/CategorizationAssistInputBuilder.kt
+  symbol: "*"
+  reason: "AI use case — structured fallback with safe reporting"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
