@@ -2,11 +2,14 @@
 test_verify_di_release_boundaries.py
 Acceptance tests for the DI/Release Binding Guard (G-DI-01).
 
-4 test cases:
+7 test cases:
   1. @Provides returning Mock type — FAILS
   2. @Provides with BuildConfig.DEBUG guard — PASSES
   3. http:// URL in DI module — FAILS
   4. Allowlisted file — PASSES
+  5. http:// URL in production code (non-DI) — FAILS
+  6. Log.d with requestBody — FAILS
+  7. https:// URL — PASSES
 
 Run with: python -m pytest scripts/test_verify_di_release_boundaries.py -v
 """
@@ -27,6 +30,8 @@ _spec.loader.exec_module(_mod)
 
 scan_di_file = _mod.scan_di_file
 scan_gradle_file = _mod.scan_gradle_file
+scan_full_codebase_http = _mod.scan_full_codebase_http
+scan_log_body_payload = _mod.scan_log_body_payload
 load_allowlist = _mod.load_allowlist
 is_allowlisted = _mod.is_allowlisted
 RULE_ID = _mod.RULE_ID
@@ -293,4 +298,102 @@ android {
     )
     assert any("isMinifyEnabled" in v for v in violations), (
         f"Violation message should mention isMinifyEnabled, got: {violations}"
+    )
+
+
+# ── Test 5: http:// URL IN PRODUCTION CODE (non-DI) FAILS ────────────────────
+
+def test_http_url_in_production_code_fails(tmp_path, monkeypatch):
+    """http:// URL in non-DI, non-@Module production code → violation."""
+    monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+
+    kt_file = _write_kt(
+        tmp_path,
+        "SomeUtil.kt",
+        """package com.example.util
+
+// This is not a DI module — just utility code
+object NetworkConfig {
+    const val BASE_URL = "http://legacy-api.example.com/v2"
+}
+""",
+    )
+
+    allowlist = load_allowlist(
+        _make_allowlist(tmp_path, "# empty allowlist\n")
+    )
+    violations, fatal = scan_full_codebase_http(kt_file, allowlist)
+
+    assert not fatal
+    assert len(violations) >= 1, (
+        f"Expected violation for http:// URL in production code, got: {violations}"
+    )
+    assert any("http://" in v or "non-SSL" in v for v in violations), (
+        f"Violation message should mention http:// or non-SSL, got: {violations}"
+    )
+
+
+# ── Test 6: Log.d with requestBody FAILS ─────────────────────────────────────
+
+def test_log_body_payload_detected(tmp_path, monkeypatch):
+    """Log.d with requestBody variable → violation."""
+    monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+
+    kt_file = _write_kt(
+        tmp_path,
+        "NetworkClient.kt",
+        """package com.example.network
+
+import android.util.Log
+
+object NetworkClient {
+    private const val TAG = "NetworkClient"
+
+    fun sendRequest(requestBody: String) {
+        Log.d(TAG, "Sending request: requestBody=$requestBody")
+    }
+}
+""",
+    )
+
+    allowlist = load_allowlist(
+        _make_allowlist(tmp_path, "# empty allowlist\n")
+    )
+    violations, fatal = scan_log_body_payload(kt_file, allowlist)
+
+    assert not fatal
+    assert len(violations) >= 1, (
+        f"Expected violation for Log.d with requestBody, got: {violations}"
+    )
+    assert any("requestBody" in v for v in violations), (
+        f"Violation message should mention requestBody, got: {violations}"
+    )
+
+
+# ── Test 7: https:// URL PASSES ──────────────────────────────────────────────
+
+def test_https_url_passes(tmp_path, monkeypatch):
+    """https:// URL in production code → no violation (SSL is acceptable)."""
+    monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+
+    kt_file = _write_kt(
+        tmp_path,
+        "SecureConfig.kt",
+        """package com.example.config
+
+object SecureConfig {
+    const val API_BASE = "https://api.example.com/v3"
+    const val CDN_URL = "https://cdn.example.com/assets"
+}
+""",
+    )
+
+    allowlist = load_allowlist(
+        _make_allowlist(tmp_path, "# empty allowlist\n")
+    )
+    violations, fatal = scan_full_codebase_http(kt_file, allowlist)
+
+    assert not fatal
+    assert violations == [], (
+        f"Expected NO violations for https:// URLs, got: {violations}"
     )

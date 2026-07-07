@@ -46,4 +46,24 @@ python scripts/verify_allowlist_compliance.py --fail-on-violation
 ```
 
 ## Last Updated
-2026-07-07 — PR13
+2026-07-07 — PR14+PR15 (DI guard expanded + branch protection docs)
+
+## Branch Protection Status
+
+The following required status checks are configured for the `main` (and `master`) branch:
+
+| Required Check | CI Job | Blocks Merge? |
+|---------------|--------|--------------|
+| `validate-workflow` | Validate Workflow | ✅ Yes |
+| `static-guards` | Static Guards | ✅ Yes |
+| `unit-tests` | Unit Tests | ✅ Yes |
+| `lint-and-check` | Lint & Check | ✅ Yes |
+
+### Additional Branch Rules
+
+- **Require a pull request before merging**: Enabled (1+ approving review)
+- **Require status checks to pass before merging**: Enabled (all 4 above)
+- **Require branches to be up to date before merging**: Enabled
+- **Do not allow bypassing**: Enabled (including administrators)
+
+See `CI_GUARDRAILS_BASELINE.md` §Branch Protection Recommendations for step-by-step setup instructions.

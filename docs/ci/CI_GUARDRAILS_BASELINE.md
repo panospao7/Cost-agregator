@@ -14,7 +14,7 @@
 
 > **PR 6 update**: New Guards Batch A — 5 high-risk architecture guard scripts wired into CI: `verify_cancellation_boundaries.py` (G-CANCEL-01, warning mode — 248 pre-existing violations), `verify_ui_dao_boundaries.py` (G-UI-DAO-01), `verify_worker_boundaries.py` (G-WORKER-01), `verify_receipt_link_boundaries.py` (G-RCPT-LINK-01), `verify_import_lifecycle_boundaries.py` (G-IMPORT-01). All 5 guards run as blocking steps in the `static-guards` job (cancellation guard in warning mode only pending backlog migration).
 
-> **PR 7 update**: New Guards Batch B — 3 privacy/money/release guard scripts wired into CI: `verify_cloud_payload_boundaries.py` (G-CLOUD-01, blocking with `--fail-on-violation`), `verify_pii_logging_boundaries.py` (G-PII-01, warning mode — 52 pre-existing violations), `verify_di_release_boundaries.py` (G-DI-01, warning mode — scaffold guard). Cloud payload guard is production-clean; PII logging and DI/release run in warning mode initially pending backlog migration.
+> **PR 7 update**: New Guards Batch B — 3 privacy/money/release guard scripts wired into CI: `verify_cloud_payload_boundaries.py` (G-CLOUD-01, blocking with `--fail-on-violation`), `verify_pii_logging_boundaries.py` (G-PII-01, warning mode — 52 pre-existing violations), `verify_di_release_boundaries.py` (G-DI-01, warning mode). Cloud payload guard is production-clean; PII logging and DI/release run in warning mode initially pending backlog migration.
 
 > **PR 8 update**: Ignored Test Budget — `verify_ignored_test_budget.py` (G-IGNORE-01) validates `@Ignore` annotations have non-empty reasons, categorizes them (stress, jvm_incompatible, removed_api, vat_logic, truth_boxing, negative_id, rewrite_needed, other), and checks against the `release_block_denylist.yml`. Runs in warning mode initially (31 pre-existing).
 
@@ -67,7 +67,7 @@
   13. Verify import lifecycle boundaries: `python3 scripts/verify_import_lifecycle_boundaries.py --fail-on-violation`
   14. Verify cloud payload boundaries: `python3 scripts/verify_cloud_payload_boundaries.py --fail-on-violation`
   15. Verify PII logging boundaries (warning mode — 52 pre-existing violations): `python3 scripts/verify_pii_logging_boundaries.py`
-  16. Verify DI/release boundaries (warning mode — scaffold guard): `python3 scripts/verify_di_release_boundaries.py`
+  16. Verify DI/release boundaries: `python3 scripts/verify_di_release_boundaries.py`
   17. Verify allowlist compliance: `python3 scripts/verify_allowlist_compliance.py --fail-on-violation`
   18. Verify migration matrix: `python3 scripts/verify_migration_matrix.py --fail-on-violation`
   19. Verify ignored test budget (warning mode — 31 pre-existing): `python3 scripts/verify_ignored_test_budget.py`
@@ -170,7 +170,7 @@ All located in `scripts/`:
 | `verify_import_lifecycle_boundaries.py` | G-IMPORT-01: import paths (CSV, JSON, backup/restore) bypassing lifecycle coordinators | `--fail-on-violation` | ✅ `scripts/test_verify_import_lifecycle_boundaries.py` | `static-guards` |
 | `verify_cloud_payload_boundaries.py` | G-CLOUD-01: cloud payload boundaries (AiSettings.redactBeforeCloud, CloudPayloadPolicy enforcement) | `--fail-on-violation` | ✅ `scripts/test_verify_cloud_payload_boundaries.py` | `static-guards` |
 | `verify_pii_logging_boundaries.py` | G-PII-01: PII/sensitive data in log statements, error messages, or exception fields (warning mode — 52 pre-existing violations) | `--fail-on-violation` (CI runs in warning mode) | ✅ `scripts/test_verify_pii_logging_boundaries.py` | `static-guards` |
-| `verify_di_release_boundaries.py` | G-DI-01: DI/release binding boundaries (scaffold guard, warning mode) | `--fail-on-violation` (CI runs in warning mode) | ✅ `scripts/test_verify_di_release_boundaries.py` | `static-guards` |
+| `verify_di_release_boundaries.py` | G-DI-01: DI/release binding boundaries (full-codebase detection) | `--fail-on-violation` | ✅ `scripts/test_verify_di_release_boundaries.py` | `static-guards` |
 | `verify_ignored_test_budget.py` | G-IGNORE-01: validates @Ignore annotations have reasons, categorizes them, checks release-block denylist (warning mode — 31 pre-existing) | `--fail-on-violation` (CI runs in warning mode) | ✅ `scripts/test_verify_ignored_test_budget.py` | `static-guards` |
 | `test_verify_db_access_boundaries.py` | pytest tests for DB access boundary guard | N/A | N/A | `static-guards` (via pytest) |
 
@@ -447,10 +447,19 @@ All paths are owned by `@panospao7`.
 ### How to Enable Branch Protection
 
 1. Go to repository **Settings → Branches**
-2. Under "Branch protection rules", click **Add rule**
-3. Set "Branch name pattern" to `main`
-4. Enable the checks listed above
-5. Save changes
+2. Under "Branch protection rules", click **Add rule** (or **Add classic branch protection rule**)
+3. Set **"Branch name pattern"** to `main`
+4. Also add a second rule with pattern `master` (if used)
+5. Check **"Require a pull request before merging"** (requires at least 1 approving review)
+6. Check **"Require status checks to pass before merging"**
+7. Search and select these required checks:
+   - `validate-workflow`
+   - `static-guards`
+   - `unit-tests`
+   - `lint-and-check`
+8. Check **"Require branches to be up to date before merging"**
+9. Check **"Do not allow bypassing the above settings"** (includes administrators)
+10. Click **Save changes**
 
 These settings are enforced by GitHub and cannot be modified via the repository's CI workflow file — they must be configured manually by a repository administrator.
 
@@ -467,6 +476,6 @@ The following is the planned sequencing for the remaining PRs in the CI Static G
 | 4 | Guard Framework Standardization | Rule ID format, allowlist owner/reason/expiry validation, guard fixture pattern, guard docs | 🔄 **IN REVIEW** — tests pending |
 | 5 | Migration Matrix MVP | Minimum supported version decision, representative migration fixtures, fresh-vs-migrated schema parity | 🔄 **IN REVIEW** — `verify_migration_matrix.py` created; test suite added; CI integration complete |
 | 6 | New Guards Batch A: High-Risk Architecture | Cancellation guard, UI/ViewModel DAO guard, worker full guard, receipt link ownership guard, import lifecycle guard | 🔄 **IN REVIEW** — 5 guard scripts created; CI steps wired; documentation updated |
-| 7 | New Guards Batch B: Privacy/Money/Release | Cloud payload guard, PII logging/error guard, raw money sum guard improvements, DI/release binding guard scaffold | 🔄 **IN REVIEW** |
+| 7 | New Guards Batch B: Privacy/Money/Release | Cloud payload guard, PII logging/error guard, raw money sum guard improvements, DI/release binding guard (expanded to full-codebase in PR14) | 🔄 **IN REVIEW** |
 | 8 | Ignored Test Budget | Ignored-test scanner, current baseline, release-critical denylist, fail-on-increase policy | 🔄 **IN REVIEW** — `verify_ignored_test_budget.py` created; denylist created; test suite added; CI integration complete |
 | 9 | Branch Protection and Documentation | Required check configuration, CODEOWNERS updates, guard ownership docs, developer quickstart | 🔄 **IN REVIEW** — `CODEOWNERS` created; developer quickstart written; docs cross-linked |

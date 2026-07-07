@@ -19,3 +19,11 @@
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
+
+- rule: G-DI-01
+  path: CurrencyRatesRepositoryImpl.kt
+  symbol: "*"
+  reason: "XML namespace URIs (http://javax.xml.XMLConstants) are not network URLs — standard XML security configuration"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"

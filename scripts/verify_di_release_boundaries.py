@@ -2,14 +2,18 @@
 """
 verify_di_release_boundaries.py — G-DI-01: DI/Release Binding Guard
 
-Scaffold guard that detects DI (dependency injection) bindings that could leak
-debug/development behavior into release builds.
+Detects DI (dependency injection) bindings and production code patterns that
+could leak debug/development behavior or insecure data into release builds.
 
 Detection patterns:
   1. @Provides or @Binds methods returning mock/stub/fake/noop/debug types
      in non-debug modules, without a BuildConfig.DEBUG guard.
-  2. Hardcoded http:// (non-SSL) URLs in production DI modules.
-  3. isMinifyEnabled = false in release build variants (from build.gradle.kts).
+  2. Hardcoded http:// (non-SSL) URLs anywhere in production code.
+  3. Debug/demo/stub types (Mock, Stub, Fake, NoOp, Debug, Demo) in
+     non-DI production packages without BuildConfig.DEBUG guard.
+  4. Log statements (Log.d/e/w/i/v) referencing request/response body or
+     payload variables (requestBody, responseBody, body, payload, jsonBody).
+  5. isMinifyEnabled = false / isDebuggable = true in release build variants.
 
 Exit codes:
   0 — no violations (or warning mode without --fail-on-violation)
@@ -35,7 +39,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # ── Configuration ────────────────────────────────────────────────────────────
 RULE_ID = "G-DI-01"
-DESCRIPTION = "DI/Release Binding Guard — scaffold guard for debug-leak bindings"
+DESCRIPTION = "DI/Release Binding Guard — detects debug-leak bindings and insecure patterns in production code"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -43,6 +47,7 @@ DI_SRC_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java",
                           "com", "yourname", "expensetracker", "di")
 GRADLE_FILE = os.path.join(PROJECT_ROOT, "app", "build.gradle.kts")
 ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "di_release_allowlist.yml")
+SRC_MAIN_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java")
 
 # ── Suspicious type patterns ─────────────────────────────────────────────────
 # PascalCase variants that suggest debug/test-only types leaking into DI modules.
@@ -55,6 +60,19 @@ SUSPICIOUS_TYPE_PATTERNS = [
     (re.compile(r'\bNo.Op[A-Z]'),    'No-Op'),
     (re.compile(r'\bDebug[A-Z]'),    'Debug'),
 ]
+
+# ── Body/payload logging patterns ────────────────────────────────────────────
+# Detect Log.d/e/w/i/v calls that reference request/response body or payload
+# variable names, which may leak sensitive data into production logs.
+BODY_PAYLOAD_VAR_PATTERNS = [
+    re.compile(r'\brequestBody\b'),
+    re.compile(r'\bresponseBody\b'),
+    re.compile(r'\bjsonBody\b'),
+    re.compile(r'\bpayload\b'),
+    re.compile(r'(?<!\w)body(?!\w)'),
+]
+
+LOG_STATEMENT_PATTERN = re.compile(r'Log\.(d|e|w|i|v)\s*\(')
 
 # ── Allowlist ────────────────────────────────────────────────────────────────
 
@@ -175,6 +193,161 @@ def scan_di_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]
     return violations, False
 
 
+# ── Full-codebase HTTP scanning ───────────────────────────────────────────────
+
+def scan_full_codebase_http(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]:
+    """Scan any production .kt file for http:// (non-SSL) URLs.
+
+    Unlike scan_di_file, this does NOT require an @Module annotation.
+    Every production .kt file is checked. Comment lines and import lines
+    are excluded. https:// URLs are allowed.
+
+    Returns (violations, had_fatal_error).
+    """
+    violations: List[str] = []
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        print(f"ERROR reading {filepath}: {e}", file=sys.stderr)
+        return violations, True
+
+    lines = content.splitlines()
+    rel_path = os.path.relpath(filepath, PROJECT_ROOT)
+
+    if is_allowlisted(rel_path, allowlist):
+        return violations, False
+
+    http_pattern = re.compile(r'http://[^\s\'\"\)\],;]+')
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("//") or stripped.startswith("*"):
+            continue
+        if stripped.startswith("import "):
+            continue
+        if "https://" in line:
+            continue
+        match = http_pattern.search(line)
+        if match:
+            violations.append(
+                f"{RULE_ID} {rel_path}:{i} "
+                f"http:// (non-SSL) URL in production code — use https:// in release builds: "
+                f"{match.group()}"
+            )
+
+    return violations, False
+
+
+# ── Suspicious types in non-DI production code ────────────────────────────────
+
+def scan_suspicious_types_production(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]:
+    """Scan non-DI, non-@Module production .kt files for Mock/Stub/Fake/NoOp/Debug/Demo
+    type references without a BuildConfig.DEBUG guard.
+
+    DI module files (under the di/ directory) are handled by scan_di_file.
+    This function catches debug/test types leaking into general production code.
+
+    Returns (violations, had_fatal_error).
+    """
+    violations: List[str] = []
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        print(f"ERROR reading {filepath}: {e}", file=sys.stderr)
+        return violations, True
+
+    lines = content.splitlines()
+    rel_path = os.path.relpath(filepath, PROJECT_ROOT)
+
+    if is_allowlisted(rel_path, allowlist):
+        return violations, False
+
+    # Skip @Module files — already handled by scan_di_file
+    if re.search(r'@Module', content):
+        return violations, False
+
+    has_buildconfig_debug = 'BuildConfig.DEBUG' in content
+
+    if not has_buildconfig_debug:
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("//") or stripped.startswith("*"):
+                continue
+            if stripped.startswith("import "):
+                continue
+            for pattern, label in SUSPICIOUS_TYPE_PATTERNS:
+                if pattern.search(line):
+                    violations.append(
+                        f"{RULE_ID} {rel_path}:{i} "
+                        f"{label} type referenced in production code without BuildConfig.DEBUG guard — "
+                        f"may leak debug/development behavior into release builds"
+                    )
+                    break  # one violation per line
+
+    return violations, False
+
+
+# ── Body/payload logging scanning ────────────────────────────────────────────
+
+def scan_log_body_payload(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]:
+    """Scan any production .kt file for Log.d/e/w/i/v calls that reference
+    request/response body or payload variable names.
+
+    Detects variables like requestBody, responseBody, body, payload, jsonBody
+    being logged, which may leak sensitive request/response data into
+    production logcat output.
+
+    Returns (violations, had_fatal_error).
+    """
+    violations: List[str] = []
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        print(f"ERROR reading {filepath}: {e}", file=sys.stderr)
+        return violations, True
+
+    lines = content.splitlines()
+    rel_path = os.path.relpath(filepath, PROJECT_ROOT)
+
+    if is_allowlisted(rel_path, allowlist):
+        return violations, False
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("//") or stripped.startswith("*"):
+            continue
+        if stripped.startswith("import "):
+            continue
+
+        # Check if line contains a Log.d/e/w/i/v call
+        if not LOG_STATEMENT_PATTERN.search(line):
+            continue
+
+        # Check if line references body/payload variable names
+        for pattern in BODY_PAYLOAD_VAR_PATTERNS:
+            match = pattern.search(line)
+            if match:
+                violations.append(
+                    f"{RULE_ID} {rel_path}:{i} "
+                    f"Body/payload logging detected — Log statement references "
+                    f"'{match.group()}' which may leak request/response data into production logs"
+                )
+                break  # one violation per line
+
+    return violations, False
+
+
 # ── Gradle file scanning ─────────────────────────────────────────────────────
 
 def scan_gradle_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]:
@@ -261,7 +434,8 @@ def main():
         sys.exit(2)
 
     allowlist = load_allowlist(args.allowlist)
-    all_violations: List[str] = []
+    all_violations: List[str] = []        # blocking violations
+    advisory_violations: List[str] = []    # non-blocking advisory violations
     fatal_errors: List[str] = []
 
     # ── Scan DI module files ─────────────────────────────────────────────────
@@ -279,6 +453,45 @@ def main():
             all_violations.extend(violations)
     print(f"  Scanned {di_files_scanned} DI module file(s)")
 
+    # ── Scan all production code (expanded checks) ────────────────────────────
+    src_main = os.path.join(root, "app", "src", "main", "java")
+    if os.path.isdir(src_main):
+        print(f"Scanning all production code for http:// URLs, body/payload logging, "
+              f"and debug types: {src_main}")
+        full_files_scanned = 0
+        for dirpath, _, filenames in os.walk(src_main):
+            for filename in filenames:
+                if not filename.endswith(".kt"):
+                    continue
+                filepath = os.path.join(dirpath, filename)
+                full_files_scanned += 1
+
+                # Full codebase http:// scan — all production files (advisory)
+                violations, had_fatal = scan_full_codebase_http(filepath, allowlist)
+                if had_fatal:
+                    fatal_errors.append(filepath)
+                advisory_violations.extend(violations)
+
+                # Body/payload logging scan — all production files (advisory)
+                violations, had_fatal = scan_log_body_payload(filepath, allowlist)
+                if had_fatal:
+                    fatal_errors.append(filepath)
+                advisory_violations.extend(violations)
+
+                # Suspicious debug/test types in non-DI packages (advisory)
+                rel = os.path.relpath(filepath, root).replace("\\", "/").lower()
+                path_parts = rel.split("/")
+                is_in_di = "di" in path_parts
+                if not is_in_di:
+                    violations, had_fatal = scan_suspicious_types_production(filepath, allowlist)
+                    if had_fatal:
+                        fatal_errors.append(filepath)
+                    advisory_violations.extend(violations)
+
+        print(f"  Scanned {full_files_scanned} production file(s) with expanded checks")
+    else:
+        print(f"WARNING: Production source directory not found at {src_main}", file=sys.stderr)
+
     # ── Scan build.gradle.kts ─────────────────────────────────────────────────
     if os.path.isfile(gradle_file):
         print(f"Scanning build config: {os.path.relpath(gradle_file, root)}")
@@ -295,20 +508,32 @@ def main():
             print(f"FATAL: Could not read file: {fp}", file=sys.stderr)
         sys.exit(2)
 
+    # Print blocking violations
     if all_violations:
         for v in all_violations:
-            print(v)
-        print(f"\nFound {len(all_violations)} violation(s).")
+            print(f"[BLOCKING] {v}")
+        print(f"\nFound {len(all_violations)} blocking violation(s).")
 
+    # Print advisory violations
+    if advisory_violations:
+        for v in advisory_violations:
+            print(f"[ADVISORY] {v}")
+        print(f"\nFound {len(advisory_violations)} advisory violation(s).")
+
+    # Determine exit code — only blocking violations can fail CI
+    if all_violations:
         if args.fail_on_violation:
-            print(f"FAIL: {RULE_ID} violations (--fail-on-violation set)", file=sys.stderr)
+            print(f"FAIL: {RULE_ID} blocking violations (--fail-on-violation set)", file=sys.stderr)
             sys.exit(1)
         else:
-            print(f"WARNING: {RULE_ID} violations (pass --fail-on-violation to fail CI)",
+            print(f"WARNING: {RULE_ID} blocking violations (pass --fail-on-violation to fail CI)",
                   file=sys.stderr)
             sys.exit(0)
     else:
-        print(f"PASS: {RULE_ID} — no release-binding violations found")
+        if advisory_violations:
+            print(f"PASS: {RULE_ID} — no blocking violations found ({len(advisory_violations)} advisory)")
+        else:
+            print(f"PASS: {RULE_ID} — no release-binding violations found")
         sys.exit(0)
 
 
