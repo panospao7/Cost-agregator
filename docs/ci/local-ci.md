@@ -63,8 +63,7 @@ python3 scripts/verify_import_lifecycle_boundaries.py --fail-on-violation
 python3 scripts/verify_cloud_payload_boundaries.py --fail-on-violation
 # WARNING MODE — no --fail-on-violation (52 pre-existing violations):
 python3 scripts/verify_pii_logging_boundaries.py
-# WARNING MODE — no --fail-on-violation (scaffold guard):
-python3 scripts/verify_di_release_boundaries.py
+python3 scripts/verify_di_release_boundaries.py --fail-on-violation
 python3 scripts/verify_allowlist_compliance.py --fail-on-violation
 python3 scripts/verify_migration_matrix.py --fail-on-violation
 # WARNING MODE — no --fail-on-violation (31 pre-existing @Ignore annotations):

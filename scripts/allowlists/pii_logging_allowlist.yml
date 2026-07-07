@@ -19,3 +19,11 @@
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugDataStorage.kt
+  symbol: "*"
+  reason: "Debug-only data storage utility — safe to log file paths and exception messages in debug context"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
