@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'atomicity-**']
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -36,11 +36,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download actionlint
-        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-
-      - name: Lint workflows
-        run: ./actionlint -color
+      - name: Lint workflows (actionlint v1.7.7)
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
 
   # ── Static Guard Scripts ─────────────────────────────────────────
   # Runs all Python-based architecture guard scripts and their pytest
@@ -140,6 +139,11 @@ jobs:
 
       - name: Run guard script tests
         run: python -m pytest scripts/test_*.py -v
+
+      - name: Print guard summary
+        if: always()
+        run: |
+          echo "Static guard run complete. Check individual step outputs above."
 
       - name: Upload guard output
         if: failure()
