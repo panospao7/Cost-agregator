@@ -1,0 +1,21 @@
+# di_release_allowlist.yml
+# G-DI-01: Known-safe exemptions from the DI/Release Binding Guard.
+#
+# Every entry MUST have:
+#   - rule: G-DI-01
+#   - path: Kotlin filename (e.g. "DebugExpenseRepository.kt")
+#   - symbol: "*" (wildcard) or specific symbol name
+#   - reason: why this file is safe despite using debug/mock types
+#   - owner: @github-handle
+#   - expires: YYYY-MM-DD or "permanent"
+#   - linked_issue: MIT-### (recommended)
+#
+# Keep this list minimal. The guard is the rule; allowlist is the exception.
+
+- rule: G-DI-01
+  path: DebugExpenseRepository.kt
+  symbol: "*"
+  reason: "Debug-only repository — guarded by BuildConfig.DEBUG at callsite"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"

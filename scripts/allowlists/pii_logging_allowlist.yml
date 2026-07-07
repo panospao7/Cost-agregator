@@ -1,0 +1,21 @@
+# PII Logging Boundary Allowlist
+# Guard: verify_pii_logging_boundaries.py
+# Rule: G-PII-01
+#
+# Entries here are exempt from PII logging guard violations.
+# Format: rule, path, symbol, reason, owner, expires, linked_issue
+#
+# `path`   — relative path from the project root or from app/src/main/java/
+# `symbol` — optional class or function name for precise targeting; "*" for all
+# `reason` — required explanation of why this is safe
+# `owner`  — GitHub handle of the exemption owner
+# `expires`— "permanent" or "YYYY-MM-DD" for temporary exemptions
+# `linked_issue` — associated MIT issue or PR number
+
+- rule: G-PII-01
+  path: PrivacyGuard.kt
+  symbol: "*"
+  reason: "Privacy enforcement utility — needs to inspect and sanitize PII-bearing data before logging"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"

@@ -352,7 +352,7 @@ tasks.named("check") {
     dependsOn("verifyRoomSchemaSnapshots")
 }
 
-// HIGH-6: Ignored-test count guard — fails if @Ignore annotations grow
+// HIGH-6: Ignored-test count guard — fails if @Ignore annotations grow (wired to :app:check in PR 2)
 tasks.register("verifyNoIgnoredGrowth") {
     group = "verification"
     description = "Fails if the number of @Ignore-annotated test methods grows beyond the threshold"
@@ -552,4 +552,5 @@ tasks.register("verifyDbAccessBoundaries") {
 
 tasks.named("check") {
     dependsOn("verifyDbAccessBoundaries")
+    dependsOn("verifyNoIgnoredGrowth")
 }

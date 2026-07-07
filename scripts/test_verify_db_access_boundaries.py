@@ -143,5 +143,5 @@ def test_production_codebase_has_no_violations():
     violations = scan(source_dir, approved)
     assert violations == [], (
         f"Production codebase has {len(violations)} unauthorized DAO mutation(s):\n"
-        + "\n".join(f"  {p}:{n}  {t.strip()}" for p, n, t in violations)
+        + "\n".join(f"  {p}:{n}  {t.strip()}" for p, n, t, *_ in violations)
     )

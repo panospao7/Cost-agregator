@@ -1,0 +1,21 @@
+# ui_dao_allowlist.yml
+# G-UI-DAO-01: Entries that allow specific UI-layer DAO usage with documented justification.
+#
+# Every entry MUST have:
+#   - rule: G-UI-DAO-01
+#   - path: relative path from project root
+#   - reason: why this is safe
+#   - owner: @github-handle
+#   - expires: YYYY-MM-DD or "permanent"
+#
+# Add entries sparingly — the default state should be NO UI-layer DAO usage.
+
+# NOTE: BankConnectionsViewModel injects BankConnectionDao directly (not through a
+# repository) and calls disconnect() on it. Add it here when the guard is active.
+# Currently, the guard will flag this file until it is allowlisted or refactored.
+
+# - rule: G-UI-DAO-01
+#   path: app/src/main/java/com/yourname/expensetracker/ui/screens/bank/BankConnectionsViewModel.kt
+#   reason: "BankConnectionsViewModel directly uses BankConnectionDao for read-only queries (getAllConnections, getById) and disconnect — pending repository extraction (MIT-xxx)"
+#   owner: "@panospao7"
+#   expires: "permanent"

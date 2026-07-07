@@ -1,0 +1,229 @@
+# Cancellation Boundary Allowlist
+# Guard: verify_cancellation_boundaries.py
+# Rule: G-CANCEL-01
+#
+# Entries here are exempt from cancellation guard violations.
+# Format: rule, path, symbol, reason, owner, expires, linked_issue
+#
+# `path`   — relative path from the project root (e.g. app/src/main/java/...)
+# `symbol` — optional class or function name for precise targeting
+# `reason` — required explanation of why this is safe
+# `owner`  — GitHub handle of the exemption owner
+# `expires`— "permanent" or "YYYY-MM-DD" for temporary exemptions
+# `linked_issue` — associated MIT issue or PR number
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/util/CancellationSafe.kt
+  symbol: CancellationSafe
+  reason: "Purpose-built cancellation safety helper — provides runCatchingCancellable and rethrowIfCancellation"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt
+  symbol: WorkerExecutionGuard
+  reason: "Canonical worker execution guard with built-in CancellationException handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt
+  symbol: "*"
+  reason: "Worker guard utility — safe by design for cancellation boundaries"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
+  symbol: WorkerRunLogger
+  reason: "Worker diagnostic logging with explicit cancellation/timeout handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerReasonCodes.kt
+  symbol: WorkerReasonCodes
+  reason: "Cancellation-to-reason-code mapper — by definition handles CE"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/RetryableWorkerException.kt
+  symbol: RetryableWorkerException
+  reason: "Exception wrapper that documents CE propagation in its contract"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerSpecScheduler.kt
+  symbol: WorkerSpecScheduler
+  reason: "Worker scheduling with explicit CE rethrow in catch blocks"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/FileWorkerTerminalDiagnosticSink.kt
+  symbol: FileWorkerTerminalDiagnosticSink
+  reason: "Terminal diagnostic sink with explicit timeout cancellation handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerLeaseRegistryImpl.kt
+  symbol: WorkerLeaseRegistryImpl
+  reason: "Explicitly throws CancellationException for drain events — designed for cancellation"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/email/EmailReceiptIngestionService.kt
+  symbol: EmailReceiptIngestionService
+  reason: "All broad catch blocks include inline CE rethrow via `if (e is CancellationException) throw e`"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
+  symbol: DataRetentionWorker
+  reason: "Worker with explicit CE rethrow in all catch(Exception) blocks"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  symbol: GroupTransactionCoordinator
+  reason: "Explicitly catches CancellationException in separate catch handlers before broad catch"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/database/RoomDomainTransactionRunner.kt
+  symbol: RoomDomainTransactionRunner
+  reason: "Transactional runner that documents and guarantees CE propagation"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/worker/DailyBriefingWorker.kt
+  symbol: DailyBriefingWorker
+  reason: "Daily briefing worker with explicit timeout cancellation handling"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudQueryInterpretationService.kt
+  symbol: CloudQueryInterpretationService
+  reason: "Cloud query service with explicit CancellationException catch block"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  symbol: RestoreJournalImporter
+  reason: "Restore journal importer with explicit CE rethrow in catch blocks"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/OverpassNearbyService.kt
+  symbol: OverpassNearbyService
+  reason: "Network service with explicit CancellationException catch handler"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/NominatimGeocodingService.kt
+  symbol: NominatimGeocodingService
+  reason: "Geocoding service with explicit CancellationException catch handler"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/MerchantKeyBackfillWorker.kt
+  symbol: MerchantKeyBackfillWorker
+  reason: "Worker with explicit CancellationException catch handlers"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/LocationBackfillWorker.kt
+  symbol: LocationBackfillWorker
+  reason: "Worker with explicit CE rethrow in catch blocks"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/CompositeGeocodingService.kt
+  symbol: CompositeGeocodingService
+  reason: "Composite geocoding with explicit CancellationException catch handlers and rethrow"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/internal/CancellableHttpCall.kt
+  symbol: CancellableHttpCall
+  reason: "Low-level cancellation helper that constructs CancellationException instances"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetMonitor.kt
+  symbol: BudgetMonitor
+  reason: "Budget monitor with explicit CancellationException catch handlers and rethrows"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
+  symbol: BudgetForecastingEngine
+  reason: "Forecasting engine with documented CE propagation policy"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/intelligence/ml/HybridExpenseClassifier.kt
+  symbol: HybridExpenseClassifier
+  reason: "ML classifier with explicit CE rethrow in catch block"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt
+  symbol: BankApiIntegration
+  reason: "Bank API integration with documented CE propagation"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"
+
+- rule: G-CANCEL-01
+  path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  symbol: NotificationIntakeWorker
+  reason: "Notification worker with comprehensive CE handling, separate CancellationException catch, and CancellationSafe.rethrowIfCancellation in general catch"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-035"

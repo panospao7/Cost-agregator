@@ -19,17 +19,20 @@ allowed_writers:
       - transactionEventDao
     requires_write_barrier: false
     reason: "canonical transaction lifecycle writer — guards at entry via withTransaction"
+    owner: "@panospao7"
 
   - class: ExpenseWriteStore
     daos:
       - expenseDao
     requires_write_barrier: false
     reason: "write facade — calls check() inline before every DAO mutation"
+    owner: "@panospao7"
 
   - class: ExpenseRepository
     daos:
       - expenseDao
     reason: "approved maintenance/backfill methods — each calls writeBarrier"
+    owner: "@panospao7"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
   # ── Notifications ───────────────────────────────────────────────
@@ -41,6 +44,7 @@ allowed_writers:
       - pendingReviewDao
       - pipelineDiagnosticEventDao
     reason: "canonical notification writer"
+    owner: "@panospao7"
 
   - class: DataRetentionWorker
     requires_write_barrier: false
@@ -49,6 +53,7 @@ allowed_writers:
       - pendingReviewDao
       - expenseDao
     reason: "purge owner — must call WorkerExecutionGuard checkpoints"
+    owner: "@panospao7"
     allowed_until: "migrate to RetentionCoordinator"
 
   # ── Receipts / OCR / Email ──────────────────────────────────────
@@ -62,6 +67,7 @@ allowed_writers:
       - pendingReviewDao
       - receiptExpenseLinkDao
     reason: "canonical receipt lifecycle writer"
+    owner: "@panospao7"
 
   - class: ReceiptLinkService
     requires_write_barrier: false
@@ -69,6 +75,7 @@ allowed_writers:
       - receiptExpenseLinkDao
       - scannedReceiptDao
     reason: "guarded link/unlink — must use DatabaseWriteBarrier not RestoreMaintenanceMode directly"
+    owner: "@panospao7"
     allowed_until: "refactor to use writeBarrier (PR 7)"
 
   - class: ReceiptRepository
@@ -76,6 +83,7 @@ allowed_writers:
     daos:
       - scannedReceiptDao
     reason: "receipt status updates — must call writeBarrier"
+    owner: "@panospao7"
     allowed_until: "route all writes through ReceiptLifecycleCoordinator (PR 7)"
 
   - class: NotificationProcessingPipeline
@@ -84,6 +92,7 @@ allowed_writers:
       - transactionEventDao
       - subscriptionCandidateDao
     reason: "notification processing pipeline — must call writeBarrier at entry (PR 7)"
+    owner: "@panospao7"
     allowed_until: "add writeBarrier at pipeline entry (PR 7)"
 
   # ── Recurring / Reminders ───────────────────────────────────────
@@ -93,12 +102,14 @@ allowed_writers:
       - recurringExpenseDao
       - recurringLifecycleEventDao
     reason: "canonical recurring rule writer"
+    owner: "@panospao7"
 
   - class: RecurringLifecycleCoordinator
     daos:
       - recurringOccurrenceDao
       - recurringLifecycleEventDao
     reason: "canonical recurring occurrence writer"
+    owner: "@panospao7"
 
   - class: RecurringOccurrenceMaterializer
     requires_write_barrier: false
@@ -106,17 +117,20 @@ allowed_writers:
       - recurringOccurrenceDao
       - expenseDao
     reason: "occurrence generation — must call writeBarrier"
+    owner: "@panospao7"
 
   - class: ReminderDeliveryCoordinator
     daos:
       - recurringReminderDeliveryDao
     reason: "canonical reminder delivery writer"
+    owner: "@panospao7"
 
   - class: ManualRecurringExpenseRepository
     daos:
       - manualRecurringExpenseDao
       - recurringLifecycleEventDao
     reason: "manual recurring expense writes — must call writeBarrier"
+    owner: "@panospao7"
     allowed_until: "route through RecurringRuleLifecycleCoordinator (PR 7)"
 
   # ── Budget / Forecast / Planned ─────────────────────────────────
@@ -126,16 +140,19 @@ allowed_writers:
       - budgetDao
       - budgetAdjustmentDao
     reason: "canonical budget writer — notification timestamp updates must call writeBarrier"
+    owner: "@panospao7"
 
   - class: BudgetForecastingEngine
     daos:
       - budgetForecastDao
     reason: "forecast generation — must call writeBarrier"
+    owner: "@panospao7"
 
   - class: PlannedExpenseRepository
     daos:
       - plannedExpenseDao
     reason: "canonical planned expense writer — must call writeBarrier on all paths"
+    owner: "@panospao7"
 
   # ── Backup / Restore ────────────────────────────────────────────
 
@@ -143,6 +160,7 @@ allowed_writers:
     daos: []
     requires_write_barrier: false
     reason: "file-level backup/restore operations under maintenance mode — restore-internal DAO writes use fresh Room"
+    owner: "@panospao7"
 
   # ── Workers ─────────────────────────────────────────────────────
   # Workers must NOT write DAOs directly.
@@ -156,6 +174,7 @@ allowed_writers:
       - conditionallySetLocation
       - clearExpenseLocation
     reason: "location backfill — routes through ExpenseRepository guarded methods"
+    owner: "@panospao7"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
   - class: MerchantKeyBackfillWorker
@@ -165,6 +184,7 @@ allowed_writers:
       - updateMerchantKey
       - incrementBackfillAttempts
     reason: "merchant key backfill — routes through ExpenseRepository guarded methods"
+    owner: "@panospao7"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
   # ── Bank ────────────────────────────────────────────────────────
@@ -173,6 +193,7 @@ allowed_writers:
     daos:
       - bankConnectionDao
     reason: "canonical bank connection writer"
+    owner: "@panospao7"
     allowed_until: "create BankConnectionLifecycleCoordinator (PR 7)"
 
   - class: BankSyncCoordinator
@@ -180,6 +201,7 @@ allowed_writers:
       - bankConnectionDao
       - expenseDao
     reason: "canonical bank sync writer — routes through TransactionLifecycleCoordinator for expenses"
+    owner: "@panospao7"
     allowed_until: "create BankSyncCoordinator (PR 7)"
 
   # ── Export / Import ─────────────────────────────────────────────
@@ -189,6 +211,7 @@ allowed_writers:
       - expenseDao
       - categoryDao
     reason: "canonical import writer — routes through TransactionLifecycleCoordinator"
+    owner: "@panospao7"
 
   # ── Diagnostics / Logging ───────────────────────────────────────
 
@@ -196,12 +219,14 @@ allowed_writers:
     daos:
       - backgroundJobRunDao
     reason: "worker run logging — write barrier checked by WorkerExecutionGuard before entry"
+    owner: "@panospao7"
 
   - class: BillReminderWorker
     requires_write_barrier: false
     daos:
       - pipelineDiagnosticEventDao
     reason: "diagnostic insert inside WorkerExecutionGuard.runGuarded — barrier already checked at entry"
+    owner: "@panospao7"
 
   - class: WarrantyTrackerRepository
     daos:
@@ -209,6 +234,7 @@ allowed_writers:
       - warrantyLifecycleEventDao
       - receiptEventDao
     reason: "canonical warranty writer — must call writeBarrier (PR 7 sweep)"
+    owner: "@panospao7"
     allowed_until: "add writeBarrier at public method entrypoints"
 
   - class: SubscriptionManagerEngine
@@ -216,6 +242,7 @@ allowed_writers:
       - priceHistoryDao
       - usageDao
     reason: "subscription price history and usage — writeBarrier already called at validateAndCreate; remaining methods need guard (PR 7)"
+    owner: "@panospao7"
     allowed_until: "add writeBarrier to recordPriceChange, recordUsage, updateSubscription"
 
   - class: SubscriptionManagementRepository
@@ -224,6 +251,7 @@ allowed_writers:
       - subscriptionPriceHistoryDao
       - subscriptionUsageDao
     reason: "subscription management — writeBarrier already called on insertUsage, updateSubscription, deleteSubscriptionById"
+    owner: "@panospao7"
 
   - class: InvestmentTracker
     daos:
@@ -231,6 +259,7 @@ allowed_writers:
       - investmentValueDao
       - investmentTransactionDao
     reason: "canonical investment writer — must call writeBarrier"
+    owner: "@panospao7"
     allowed_until: "add writeBarrier at public method entrypoints"
 
   - class: BankStatementLifecycleProcessor
@@ -239,6 +268,7 @@ allowed_writers:
       - pendingReviewDao
       - scannedReceiptDao
     reason: "bank statement processing — writeBarrier checked at processBankStatement entry (PR 7)"
+    owner: "@panospao7"
 
   - class: ReceiptSideEffectDispatcher
     requires_write_barrier: false
@@ -246,74 +276,87 @@ allowed_writers:
       - scannedReceiptDao
       - receiptEventDao
     reason: "receipt side effects — writeBarrier already injected and called on some paths; remaining paths need guard"
+    owner: "@panospao7"
     allowed_until: "add writeBarrier to all write paths (PR 7)"
 
   - class: SettlementCalculator
     daos:
       - groupSettlementDao
     reason: "settlement recording — writeBarrier checked at recordSettlement (PR 7)"
+    owner: "@panospao7"
 
   - class: FinancialHealthScoreV2
     requires_write_barrier: false
     daos:
       - healthScoreHistoryDao
     reason: "health score history — writeBarrier checked at saveToHistory (PR 7)"
+    owner: "@panospao7"
 
   - class: BudgetMonitor
     daos:
       - pipelineDiagnosticEventDao
     reason: "budget monitoring diagnostics — writeBarrier checked before each insert (PR 7)"
+    owner: "@panospao7"
 
   - class: RecurringExpenseRepository
     daos:
       - recurringLifecycleEventDao
     reason: "recurring lifecycle events — writeBarrier checked at writeLifecycleEvent (PR 7)"
+    owner: "@panospao7"
 
   - class: DismissReminderReceiver
     daos:
       - recurringReminderDeliveryDao
       - recurringLifecycleEventDao
     reason: "reminder dismiss — writeBarrier checked at onReceive entry (PR 7)"
+    owner: "@panospao7"
 
   - class: SnoozeReminderReceiver
     daos:
       - recurringReminderDeliveryDao
       - recurringLifecycleEventDao
     reason: "reminder snooze — writeBarrier checked at onReceive entry (PR 7)"
+    owner: "@panospao7"
 
   - class: ReviewQueueRepository
     daos:
       - userCorrectionDao
     reason: "user correction recording — must call writeBarrier"
+    owner: "@panospao7"
     allowed_until: "add writeBarrier to correction write paths (PR 7)"
 
   - class: SharedExpenseDataPortAdapter
     daos:
       - groupMemberDao
     reason: "group member management — writeBarrier already called at removeMember and addExpense"
+    owner: "@panospao7"
 
   - class: LegacyDataMigrationService
     daos:
       - categoryDao
     requires_write_barrier: false
     reason: "debug-only legacy data migration"
+    owner: "@panospao7"
 
   - class: CsvExpenseImporter
     requires_write_barrier: false
     daos:
       - categoryDao
     reason: "CSV import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
+    owner: "@panospao7"
 
   - class: JsonExpenseImporter
     requires_write_barrier: false
     daos:
       - categoryDao
     reason: "JSON import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
+    owner: "@panospao7"
 
   - class: PipelineDiagnosticEventRepository
     daos:
       - pipelineDiagnosticEventDao
     reason: "pipeline diagnostics — must use MaintenanceSafeDiagnosticSink during blocked modes (PR 9)"
+    owner: "@panospao7"
     allowed_until: "route through MaintenanceSafeDiagnosticSink (PR 9)"
 
   # ── AI / Assistant ──────────────────────────────────────────────
@@ -324,6 +367,7 @@ allowed_writers:
       - aiChatMessageDao
       - aiChatSessionDao
     reason: "AI artifact persistence — read-heavy; writes must call writeBarrier"
+    owner: "@panospao7"
 
   - class: AiChatRepositoryImpl
     requires_write_barrier: false
@@ -331,11 +375,13 @@ allowed_writers:
       - aiChatSessionDao
       - aiChatMessageDao
     reason: "AI chat session persistence"
+    owner: "@panospao7"
 
   - class: AnomalyAlertRepositoryImpl
     daos:
       - anomalyAlertDao
     reason: "anomaly alert persistence"
+    owner: "@panospao7"
 
   # ── Investments ─────────────────────────────────────────────────
 
@@ -345,11 +391,13 @@ allowed_writers:
       - investmentTransactionDao
       - investmentValueDao
     reason: "canonical investment writer"
+    owner: "@panospao7"
 
   - class: BusinessExpenseRepository
     daos:
       - mileageTrackingDao
     reason: "business mileage tracking — must call writeBarrier"
+    owner: "@panospao7"
 
   # ── Savings ─────────────────────────────────────────────────────
 
@@ -358,6 +406,7 @@ allowed_writers:
       - savingsGoalDao
       - savingsSweepPlanDao
     reason: "canonical savings writer"
+    owner: "@panospao7"
 
   # ── Subscriptions ───────────────────────────────────────────────
 
@@ -367,6 +416,7 @@ allowed_writers:
       - subscriptionPriceHistoryDao
       - subscriptionUsageDao
     reason: "canonical subscription writer"
+    owner: "@panospao7"
 
   # ── Warranties ──────────────────────────────────────────────────
 
@@ -375,6 +425,7 @@ allowed_writers:
       - warrantyDao
       - warrantyLifecycleEventDao
     reason: "canonical warranty writer"
+    owner: "@panospao7"
 
   # ── Groups ──────────────────────────────────────────────────────
 
@@ -386,6 +437,7 @@ allowed_writers:
       - groupSettlementDao
       - groupLifecycleEventDao
     reason: "canonical group lifecycle writer"
+    owner: "@panospao7"
 
   - class: GroupTransactionCoordinator
     requires_write_barrier: false
@@ -395,6 +447,7 @@ allowed_writers:
       - groupExpenseDao
       - transactionEventDao
     reason: "atomic group-expense creation within outer transaction"
+    owner: "@panospao7"
 
   - class: GroupsRepositoryImpl
     requires_write_barrier: false
@@ -402,6 +455,7 @@ allowed_writers:
       - expenseGroupDao
       - groupMemberDao
     reason: "group membership management — must call writeBarrier"
+    owner: "@panospao7"
     allowed_until: "migrate to GroupLifecycleCoordinator (PR 7)"
 
   # ── Categories / Merchants ──────────────────────────────────────
@@ -410,6 +464,7 @@ allowed_writers:
     daos:
       - categoryDao
     reason: "canonical category writer"
+    owner: "@panospao7"
 
   - class: MerchantCategoryRepository
     daos:
@@ -417,6 +472,7 @@ allowed_writers:
       - merchantNormalizationDao
       - merchantLocationDao
     reason: "canonical merchant writer"
+    owner: "@panospao7"
 
   # ── Spending Challenges ─────────────────────────────────────────
 
@@ -424,6 +480,7 @@ allowed_writers:
     daos:
       - spendingChallengeDao
     reason: "canonical challenge writer"
+    owner: "@panospao7"
 
   # ── Exchange Rates ──────────────────────────────────────────────
 
@@ -431,6 +488,7 @@ allowed_writers:
     daos:
       - exchangeRateDao
     reason: "canonical exchange rate writer — network fetch, not user data"
+    owner: "@panospao7"
 
 debug_only_writers:
   # These classes may write DAOs only in DEBUG builds.
@@ -441,21 +499,27 @@ debug_only_writers:
       - deleteAllExpenses
       - restoreDebugSnapshot
     reason: "debug-only data management"
+    owner: "@panospao7"
 
   - class: BudgetRepository
     debug_only: true
     reason: "debug-only budget snapshot restore"
+    owner: "@panospao7"
 
   - class: DatabaseBackupRepositoryImpl
     methods_only:
       - importDatabase
     reason: "legacy .db import is debug-only in production"
+    owner: "@panospao7"
 
 migration_only_writers:
   # Room migration classes are exempt from the static guard.
   - pattern: "app/src/main/java/**/database/migration/**"
     reason: "Room schema migrations run before app code"
+    owner: "@panospao7"
   - pattern: "app/src/main/java/**/database/AppDatabase.kt"
     reason: "Room database builder and migration registration"
+    owner: "@panospao7"
   - pattern: "app/src/main/java/**/database/dao/ExpenseGroupDao.kt"
     reason: "DAO-level helper method that calls memberDao.insertAll — Room infrastructure"
+    owner: "@panospao7"

@@ -1,0 +1,78 @@
+# Import Lifecycle Guard Allowlist
+# Guard: verify_import_lifecycle_boundaries.py
+# Rule: G-IMPORT-01
+#
+# Files approved for direct DAO access in import paths and backup/restore flows.
+#
+# Every entry MUST have:
+#   - rule: G-IMPORT-01
+#   - path: Kotlin class name (without .kt extension)
+#   - reason: why this class is allowed to bypass lifecycle coordinators
+#   - owner: @github-handle or team name
+#   - expires: YYYY-MM-DD or "permanent"
+#
+# The guard enforces that import files go through TransactionLifecycleCoordinator
+# for expense creation rather than calling expenseDao/categoryDao directly.
+
+- rule: G-IMPORT-01
+  path: ImportCoordinator
+  symbol: "*"
+  reason: "Top-level import coordinator that delegates to CsvExpenseImporter or JsonExpenseImporter. Owns format detection and routing."
+  owner: "@import-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: CsvExpenseImporter
+  symbol: "*"
+  reason: "CSV import path. Uses categoryDao.insert for category creation but routes expense creation through TransactionLifecycleCoordinator.createExpense(). Must NOT call expenseDao.insert directly — must use TransactionLifecycleCoordinator. Must propagate fileImportRunId to CreateExpenseRequest for provenance."
+  owner: "@import-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: JsonExpenseImporter
+  symbol: "*"
+  reason: "JSON import path. Same pattern as CsvExpenseImporter — creates categories directly but routes expense creation through coordinator. Must NOT call expenseDao.insert directly — must use TransactionLifecycleCoordinator. Must propagate fileImportRunId to CreateExpenseRequest for provenance."
+  owner: "@import-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: DatabaseBackupRepositoryImpl
+  symbol: "*"
+  reason: "Backup/restore infrastructure. Uses raw SQLite operations for database file swap — does not go through per-row lifecycle coordinators. Full DB replacement is acceptable for restore flows. Only allowed for backup/restore operations — not for individual row imports. Import verification must run post-restore."
+  owner: "@backup-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: TransactionLifecycleCoordinator
+  symbol: "*"
+  reason: "Canonical expense creation path. All importers must ultimately route through this coordinator."
+  owner: "@data-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: BankStatementLifecycleProcessor
+  symbol: "*"
+  reason: "Bank statement import path creates import runs and processes statements via lifecycle coordinator infrastructure."
+  owner: "@receipt-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: SourceLinkWriterImpl
+  symbol: "*"
+  reason: "Writes importBatchId and importRunId provenance fields during source link creation."
+  owner: "@provenance-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: ImportSourceLinkPayloadFactory
+  symbol: "*"
+  reason: "Factory for creating source link payloads from import runs. Writes importRunId provenance."
+  owner: "@provenance-team"
+  expires: "permanent"
+
+- rule: G-IMPORT-01
+  path: CreateExpenseSourceLinkMapper
+  symbol: "*"
+  reason: "Maps CreateExpenseRequest to source link payloads, propagating csvImportBatchId and fileImportRunId."
+  owner: "@provenance-team"
+  expires: "permanent"

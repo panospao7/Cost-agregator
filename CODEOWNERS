@@ -1,0 +1,26 @@
+# CODEOWNERS — Automated review assignments for the Cost Agregator project
+# Last updated: PR 9 (CI Static Guardrails)
+
+# ── CI / Guard Infrastructure ──────────────────────────────────────
+.github/workflows/                              @panospao7
+scripts/verify_*.py                             @panospao7
+scripts/test_verify_*.py                        @panospao7
+scripts/allowlists/                             @panospao7
+scripts/guard_template.py                       @panospao7
+config/release_block_denylist.yml               @panospao7
+docs/ci/                                        @panospao7
+
+# ── Database / Migrations ─────────────────────────────────────────
+app/src/main/java/**/database/                  @panospao7
+app/schemas/                                    @panospao7
+
+# ── Lifecycle / Architecture Boundaries ───────────────────────────
+app/src/main/java/**/lifecycle/                 @panospao7
+app/src/main/java/**/coordinator/               @panospao7
+
+# ── Workers ───────────────────────────────────────────────────────
+app/src/main/java/**/workers/                   @panospao7
+
+# ── Privacy / Security ────────────────────────────────────────────
+app/src/main/java/**/privacy/                   @panospao7
+app/src/main/java/**/security/                  @panospao7

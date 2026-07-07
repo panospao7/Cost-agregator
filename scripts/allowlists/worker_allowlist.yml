@@ -1,0 +1,20 @@
+# worker_allowlist.yml
+# G-WORKER-01: Known-safe worker exemptions from the WorkerExecutionGuard requirement.
+#
+# Every entry MUST have:
+#   - rule: G-WORKER-01
+#   - worker_class: the simple class name of the worker
+#   - reason: why this worker is safe without the guard
+#   - owner: @github-handle
+#   - expires: YYYY-MM-DD or "permanent"
+#
+# Keep this list minimal. The guard is the rule; allowlist is the exception.
+#
+# Note: As of the guard's creation, ALL 10 production CoroutineWorkers use
+# WorkerExecutionGuard. No entries are currently needed.
+
+# - rule: G-WORKER-01
+#   worker_class: SomeLegacyWorker
+#   reason: "Legacy fire-and-forget worker that does not write to the DB and is scheduled externally — refactoring tracked in MIT-xxx"
+#   owner: "@panospao7"
+#   expires: "2026-12-31"

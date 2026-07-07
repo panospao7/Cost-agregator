@@ -13,14 +13,146 @@ concurrency:
 
 env:
   GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError" -Dorg.gradle.caching=true -Dorg.gradle.parallel=true
-  GRADLE_BUILD_ACTION_CACHE_KEY_ENVIRONMENT: ${{ runner.os }}-jdk17
 
 defaults:
   run:
     shell: bash
 
 jobs:
+  # ── Workflow Validation ──────────────────────────────────────────
+  # Runs actionlint to validate all workflow YAML files before any
+  # expensive build/test jobs start. Catches syntax errors, invalid
+  # action references, and common mistakes early.
+  #
+  # Reproduce locally:
+  #   brew install actionlint   # macOS
+  #   actionlint                # lint all workflows
+  validate-workflow:
+    name: Validate Workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download actionlint
+        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+
+      - name: Lint workflows
+        run: ./actionlint -color
+
+  # ── Static Guard Scripts ─────────────────────────────────────────
+  # Runs all Python-based architecture guard scripts and their pytest
+  # test suites. These enforce project-specific rules that Gradle-based
+  # checks cannot easily express (privacy boundaries, DAO ownership,
+  # event provenance, money rules, source link safety).
+  #
+  # Reproduce locally:
+  #   python3 scripts/verify_privacy_boundaries.py --root .
+  #   python3 scripts/verify_db_access_boundaries.py --fail-on-violation
+  #   python3 scripts/verify_event_writers.py --fail-on-violation
+  #   python3 scripts/verify_money_boundaries.py --root .
+  #   python3 scripts/verify_source_provenance_boundaries.py --root .
+  #   python3 scripts/verify_cancellation_boundaries.py
+  #   python3 scripts/verify_ui_dao_boundaries.py --fail-on-violation
+  #   python3 scripts/verify_worker_boundaries.py --fail-on-violation
+  #   python3 scripts/verify_receipt_link_boundaries.py --fail-on-violation
+  #   python3 scripts/verify_import_lifecycle_boundaries.py --fail-on-violation
+  #   python3 scripts/verify_cloud_payload_boundaries.py --fail-on-violation
+  #   python3 scripts/verify_pii_logging_boundaries.py
+  #   python3 scripts/verify_di_release_boundaries.py
+  #   python3 scripts/verify_allowlist_compliance.py --fail-on-violation
+  #   python3 scripts/verify_migration_matrix.py --fail-on-violation
+  #   python3 scripts/verify_ignored_test_budget.py
+  #   python -m pytest scripts/test_*.py -v
+  static-guards:
+    needs: validate-workflow
+    name: Static Guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: pip install pytest pyyaml
+
+      - name: Verify privacy boundaries
+        run: python3 scripts/verify_privacy_boundaries.py --root .
+
+      - name: Verify DB access boundaries
+        run: python3 scripts/verify_db_access_boundaries.py --fail-on-violation
+
+      - name: Verify event writer boundaries
+        run: python3 scripts/verify_event_writers.py --fail-on-violation
+
+      - name: Verify money boundaries
+        run: python3 scripts/verify_money_boundaries.py --root .
+
+      - name: Verify source provenance boundaries
+        run: python3 scripts/verify_source_provenance_boundaries.py --root .
+
+      # G-CANCEL-01 — runs in warning mode only (no --fail-on-violation).
+      # There are ~248 pre-existing violations that need gradual migration.
+      # Will be promoted to --fail-on-violation once the backlog is cleared.
+      - name: Verify cancellation boundaries (warning mode — 248 pre-existing violations)
+        run: python3 scripts/verify_cancellation_boundaries.py
+
+      - name: Verify UI/ViewModel DAO boundaries
+        run: python3 scripts/verify_ui_dao_boundaries.py --fail-on-violation
+
+      - name: Verify worker boundaries
+        run: python3 scripts/verify_worker_boundaries.py --fail-on-violation
+
+      - name: Verify receipt link boundaries
+        run: python3 scripts/verify_receipt_link_boundaries.py --fail-on-violation
+
+      - name: Verify import lifecycle boundaries
+        run: python3 scripts/verify_import_lifecycle_boundaries.py --fail-on-violation
+
+      - name: Verify cloud payload boundaries
+        run: python3 scripts/verify_cloud_payload_boundaries.py --fail-on-violation
+
+      - name: Verify PII logging boundaries (warning mode — 52 pre-existing violations)
+        run: python3 scripts/verify_pii_logging_boundaries.py
+
+      - name: Verify DI/release boundaries (warning mode — scaffold guard)
+        run: python3 scripts/verify_di_release_boundaries.py
+
+      - name: Verify allowlist compliance
+        run: python3 scripts/verify_allowlist_compliance.py --fail-on-violation
+
+      - name: Verify migration matrix
+        run: python3 scripts/verify_migration_matrix.py --fail-on-violation
+
+      # G-IGNORE-01 — runs in warning mode only (no --fail-on-violation).
+      # There are 31 pre-existing @Ignore annotations that need classification.
+      # Will be promoted to --fail-on-violation once the backlog is addressed.
+      - name: Verify ignored test budget (warning mode — 31 pre-existing)
+        run: python3 scripts/verify_ignored_test_budget.py
+
+      - name: Run guard script tests
+        run: python -m pytest scripts/test_*.py -v
+
+      - name: Upload guard output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-guard-output
+          path: |
+            scripts/*.log
+            scripts/output/
+          retention-days: 7
+
   unit-tests:
+    needs: validate-workflow
     name: Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -50,15 +182,6 @@ jobs:
       - name: Verify no ignored-test growth
         run: ./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=310 --no-daemon --stacktrace
 
-      - name: Verify event writer boundaries
-        run: python3 scripts/verify_event_writers.py --fail-on-violation
-
-      - name: Verify privacy boundaries
-        run: python3 scripts/verify_privacy_boundaries.py --root .
-
-      - name: Verify money boundaries
-        run: python3 scripts/verify_money_boundaries.py --root .
-
       - name: Run currency guardrails
         shell: pwsh
         run: pwsh scripts/currency_guardrails.ps1 -SourceDir app/src/main/java -ProjectRoot ${{ github.workspace }}
@@ -80,9 +203,10 @@ jobs:
           retention-days: 7
 
   lint-and-check:
-    name: Lint
+    needs: validate-workflow
+    name: Lint & Check
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -94,6 +218,9 @@ jobs:
           java-version: 17
           distribution: temurin
 
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x gradlew
 
@@ -103,8 +230,8 @@ jobs:
       - name: Assemble debug build
         run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Verify DB access boundaries
-        run: ./gradlew :app:verifyDbAccessBoundaries --stacktrace
+      - name: Run Gradle check (all wired verification tasks)
+        run: ./gradlew :app:check --stacktrace
 
       - name: Upload lint results
         if: always()
@@ -115,6 +242,7 @@ jobs:
           retention-days: 7
 
   instrumented-tests:
+    needs: validate-workflow
     name: Instrumented Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60

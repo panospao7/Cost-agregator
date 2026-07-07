@@ -1,0 +1,26 @@
+# cloud_payload_allowlist.yml
+# G-CLOUD-01: Known-safe exemptions for cloud payload boundary detection.
+#
+# Every entry MUST have:
+#   - rule: G-CLOUD-01
+#   - path:  relative file path suffix (e.g. "CloudPayloadPolicy.kt")
+#   - symbol: class/method or "*" for whole-file exemptions
+#   - reason: why this file is safe without the standard policy check
+#   - owner: @github-handle
+#   - expires: YYYY-MM-DD or "permanent"
+#   - linked_issue: "MIT-###" (recommended)
+#
+# Keep this list minimal. The guard is the rule; allowlist is the exception.
+#
+# Canonical policy authority — this file defines the CloudPayloadPolicy
+# contract and is the sole authority for cloud payload construction patterns.
+# It does not construct HTTP request bodies directly, but serve as the
+# architectural anchor for all cloud payload paths.
+
+- rule: G-CLOUD-01
+  path: CloudPayloadPolicy.kt
+  symbol: "*"
+  reason: "Central fail-closed policy — canonical cloud payload construction"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"

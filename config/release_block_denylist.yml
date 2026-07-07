@@ -1,0 +1,35 @@
+# Release Block Denylist — these test classes must pass before release
+# Tests listed here must NOT have @Ignore annotations.
+# CI fails if any of these classes contain @Ignore.
+#
+# Guard: scripts/verify_ignored_test_budget.py
+# RULE_ID: G-IGNORE-01
+
+release_block_tests:
+  - class: TransactionLifecycleCoordinatorTest
+    reason: "Critical: transaction lifecycle correctness"
+    owner: "@panospao7"
+
+  - class: MoneyTest
+    reason: "Critical: money/currency math correctness"
+    owner: "@panospao7"
+
+  - class: DatabaseMigrationTest
+    reason: "Critical: database migration integrity"
+    owner: "@panospao7"
+
+  - class: WorkerExecutionGuardTest
+    reason: "Critical: worker guard enforcement"
+    owner: "@panospao7"
+
+  - class: ExportImportRoundtripTest
+    reason: "Critical: backup/restore roundtrip integrity"
+    owner: "@panospao7"
+
+  - class: ReceiptMatchingWorkerTest
+    reason: "Critical: receipt matching pipeline"
+    owner: "@panospao7"
+
+  - class: RecurringExpenseEngineTest
+    reason: "Critical: recurring expense engine"
+    owner: "@panospao7"
