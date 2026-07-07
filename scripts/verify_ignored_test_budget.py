@@ -2,13 +2,15 @@
 """
 G-IGNORE-01 — Ignored Test Budget Guard
 
-Scans `app/src/test/` and `app/src/androidTest/` for @Ignore annotations,
+Scans `app/src/test/` and `app/src/androidTest/` for @Ignore and @Disabled annotations,
 validates each has a non-empty reason string, categorizes them, counts total
-and per-category, and checks against a release-block denylist.
+and per-category, checks against a release-block denylist, and enforces a
+configurable budget baseline.
 
 Output format:
-  G-IGNORE-01 path/to/File.kt:line category reason_snippet
-  Total ignored: N  Categories: stress=X, jvm_incompatible=Y, ...
+  G-IGNORE-01 path/to/File.kt:line category category_name annotation=@Ignore reason="..."
+  Total ignored: N  (@Ignore=X, @Disabled=Y)
+  Baseline: Z  Current total: N
 
 Exit codes:
   0 = pass (no violations, or violations in warning mode)
@@ -56,12 +58,13 @@ def categorize_reason(reason: str) -> str:
 
 # ── Scanning ──────────────────────────────────────────────────
 
-def scan_ignored_tests(root_dir: Path) -> List[Tuple[str, int, str, str]]:
-    """Scan test directories for @Ignore annotations.
+def scan_ignored_tests(root_dir: Path) -> List[Tuple[str, int, str, str, str]]:
+    """Scan test directories for @Ignore and @Disabled annotations.
 
-    Returns list of (filepath, line_number, reason_string, category) tuples.
+    Returns list of (filepath, line_number, reason_string, category, annotation_type) tuples.
+    annotation_type is "Ignore" or "Disabled".
     """
-    results: List[Tuple[str, int, str, str]] = []
+    results: List[Tuple[str, int, str, str, str]] = []
 
     for scope_dir in SCOPE_DIRS:
         scan_dir = root_dir / scope_dir
@@ -88,37 +91,41 @@ def scan_ignored_tests(root_dir: Path) -> List[Tuple[str, int, str, str]]:
 
 def _scan_file(
     filepath: str, content: str
-) -> Tuple[List[Tuple[str, int, str, str]], bool]:
-    """Scan a single file's content for @Ignore annotations.
+) -> Tuple[List[Tuple[str, int, str, str, str]], bool]:
+    """Scan a single file's content for @Ignore and @Disabled annotations.
 
     Returns (results, had_fatal_error).
     """
-    results: List[Tuple[str, int, str, str]] = []
+    results: List[Tuple[str, int, str, str, str]] = []
     had_fatal = False
 
     lines = content.splitlines()
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
 
-        # Skip commented-out @Ignore lines
-        if stripped.startswith("//") and "@Ignore" in stripped:
+        # Skip commented-out @Ignore/@Disabled lines
+        if stripped.startswith("//") and ("@Ignore" in stripped or "@Disabled" in stripped):
             continue
 
-        # Match @Ignore with an optional parenthesized reason string
+        # Match @Ignore or @Disabled with an optional parenthesized reason string
         # Patterns:
         #   @Ignore("reason")
         #   @Ignore
         #   @Ignore(value = "reason")
-        m = re.match(r'@Ignore\s*(?:\((?:(?:value\s*=\s*)?\s*"([^"]*)"\s*)?\))?', stripped)
+        #   @Disabled("reason")
+        #   @Disabled
+        #   @Disabled(value = "reason")
+        m = re.match(r'@(Ignore|Disabled)\s*(?:\((?:(?:value\s*=\s*)?\s*"([^"]*)"\s*)?\))?', stripped)
         if not m:
             continue
 
-        reason = m.group(1)
+        annotation_type = m.group(1)  # "Ignore" or "Disabled"
+        reason = m.group(2)
         if reason is None:
             reason = ""
 
         category = categorize_reason(reason) if reason else "missing_reason"
-        results.append((filepath, i, reason, category))
+        results.append((filepath, i, reason, category, annotation_type))
 
     return results, had_fatal
 
@@ -159,7 +166,7 @@ def load_release_denylist(path: Path) -> List[dict]:
 
 
 def check_denylist(
-    results: List[Tuple[str, int, str, str]],
+    results: List[Tuple[str, int, str, str, str]],
     denylist: List[dict],
 ) -> List[str]:
     """Cross-reference ignored test results against the release-block denylist.
@@ -172,7 +179,7 @@ def check_denylist(
     if not denylist_classes:
         return violations
 
-    for filepath, line, reason, category in results:
+    for filepath, line, reason, category, _annotation_type in results:
         # Extract the Kotlin class name from the file path
         # Example: app/src/test/.../MoneyTest.kt → MoneyTest
         filename = Path(filepath).stem
@@ -194,9 +201,10 @@ def check_denylist(
 # ── Reporting ──────────────────────────────────────────────────
 
 def report(
-    results: List[Tuple[str, int, str, str]],
+    results: List[Tuple[str, int, str, str, str]],
     denylist_violations: List[str],
     fail_on_violation: bool,
+    baseline: int,
 ) -> int:
     """Print report and exit with appropriate code.
 
@@ -204,27 +212,39 @@ def report(
     """
     # Count categories
     category_counts: Dict[str, int] = {}
-    for _, _, _, category in results:
+    ignore_count = 0
+    disabled_count = 0
+    for _, _, _, category, annotation_type in results:
         category_counts[category] = category_counts.get(category, 0) + 1
+        if annotation_type == "Ignore":
+            ignore_count += 1
+        else:
+            disabled_count += 1
 
     # Print per-entry output
-    for filepath, line, reason, category in results:
+    for filepath, line, reason, category, annotation_type in results:
         # Truncate long reasons for display
         reason_snippet = reason[:80] + "..." if len(reason) > 80 else reason
         if reason_snippet:
-            print(f"{RULE_ID} {filepath}:{line} category={category} reason=\"{reason_snippet}\"")
+            print(f"{RULE_ID} {filepath}:{line} category={category} annotation=@{annotation_type} reason=\"{reason_snippet}\"")
         else:
-            print(f"{RULE_ID} {filepath}:{line} category={category} reason=\"\" (MISSING REASON)")
+            print(f"{RULE_ID} {filepath}:{line} category={category} annotation=@{annotation_type} reason=\"\" (MISSING REASON)")
 
     # Print category summary
-    print(f"\nTotal ignored: {len(results)}")
+    print(f"\nTotal ignored: {len(results)}  (@Ignore={ignore_count}, @Disabled={disabled_count})")
     print("Categories:")
     for cat in sorted(category_counts.keys()):
         print(f"  {cat}: {category_counts[cat]}")
 
     # Check for missing reasons
     missing_count = category_counts.get("missing_reason", 0)
-    has_violations = missing_count > 0 or len(denylist_violations) > 0
+
+    # Baseline check: total count growth above baseline is a violation
+    total_count = len(results)
+    budget_exceeded = total_count > baseline
+
+    # Denylist violations are always violations regardless of baseline
+    has_violations = missing_count > 0 or len(denylist_violations) > 0 or budget_exceeded
 
     # Print denylist violations
     if denylist_violations:
@@ -232,12 +252,18 @@ def report(
         for v in denylist_violations:
             print(v)
 
+    # Print budget info
+    print(f"\nBaseline: {baseline}  Current total: {total_count}")
+    if budget_exceeded:
+        print(f"BUDGET EXCEEDED: total ignored tests ({total_count}) exceeds baseline ({baseline})")
+
     if has_violations:
         if fail_on_violation:
             print(
                 f"\nVIOLATIONS FOUND: "
                 f"missing_reason={missing_count}, "
-                f"denylist_violations={len(denylist_violations)}",
+                f"denylist_violations={len(denylist_violations)}, "
+                f"budget_exceeded={budget_exceeded}",
                 file=sys.stderr,
             )
             return 1
@@ -245,13 +271,14 @@ def report(
             print(
                 f"\nWARNING: "
                 f"missing_reason={missing_count}, "
-                f"denylist_violations={len(denylist_violations)} "
+                f"denylist_violations={len(denylist_violations)}, "
+                f"budget_exceeded={budget_exceeded} "
                 f"(--fail-on-violation not set)",
                 file=sys.stderr,
             )
             return 0
     else:
-        print(f"\nPASS: {RULE_ID} — all @Ignore annotations have reasons, no denylist violations")
+        print(f"\nPASS: {RULE_ID} — all @Ignore/@Disabled annotations have reasons, no denylist violations, within budget")
         return 0
 
 
@@ -273,6 +300,12 @@ def main():
         "--denylist",
         default=DENYLIST_PATH,
         help="Path to release-block denylist YAML",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=int,
+        default=29,
+        help="Maximum allowed total @Ignore + @Disabled count (default: 29)",
     )
     args = parser.parse_args()
 
@@ -300,7 +333,7 @@ def main():
     denylist_violations = check_denylist(results, denylist)
 
     # Report
-    exit_code = report(results, denylist_violations, args.fail_on_violation)
+    exit_code = report(results, denylist_violations, args.fail_on_violation, args.baseline)
     sys.exit(exit_code)
 
 

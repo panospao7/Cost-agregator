@@ -67,11 +67,13 @@ def test_all_ignores_have_reasons(tmp_path):
     results = guard.scan_ignored_tests(tmp_path)
     assert len(results) == 2, f"Expected 2 ignored tests, got {len(results)}"
 
-    for filepath, line, reason, category in results:
+    for filepath, line, reason, category, annotation_type in results:
         assert reason != "", \
             f"@Ignore at {filepath}:{line} has empty reason"
         assert category != "missing_reason", \
             f"@Ignore at {filepath}:{line} categorized as missing_reason: {reason!r}"
+        assert annotation_type == "Ignore", \
+            f"Expected annotation_type=Ignore, got {annotation_type}"
 
 
 # ── Test: missing reason is detected ────────────────────────────────────────
@@ -98,10 +100,12 @@ def test_missing_reason_fails(tmp_path):
     results = guard.scan_ignored_tests(tmp_path)
     assert len(results) == 1, f"Expected 1 ignored test, got {len(results)}"
 
-    filepath, line, reason, category = results[0]
+    filepath, line, reason, category, annotation_type = results[0]
     assert reason == "", f"Expected empty reason, got {reason!r}"
     assert category == "missing_reason", \
         f"Expected missing_reason category, got {category}"
+    assert annotation_type == "Ignore", \
+        f"Expected annotation_type=Ignore, got {annotation_type}"
 
 
 # ── Test: release-block violation detected ──────────────────────────────────
@@ -278,9 +282,81 @@ def test_commented_ignore_is_skipped(tmp_path):
     assert len(results) == 1, \
         f"Commented-out @Ignore should not be counted. Got {len(results)}: {results}"
 
-    filepath, line, reason, category = results[0]
+    filepath, line, reason, category, annotation_type = results[0]
     assert reason == "Valid ignore", \
         f"Expected 'Valid ignore', got {reason!r}"
+    assert annotation_type == "Ignore", \
+        f"Expected annotation_type=Ignore, got {annotation_type}"
+
+
+# ── Test: @Disabled annotation detection ──────────────────────────────────────
+
+def test_disabled_annotation_detected(tmp_path):
+    """@Disabled annotations are detected alongside @Ignore with separate counts."""
+    _write_test_file(
+        tmp_path,
+        "app/src/test/java/com/example/DisabledTest.kt",
+        textwrap.dedent("""\
+            package com.example
+
+            import org.junit.jupiter.api.Disabled
+            import org.junit.Ignore
+            import org.junit.Test
+
+            class DisabledTest {
+                @Disabled("Flaky in CI — works locally")
+                @Test
+                fun flakyTest() {}
+
+                @Ignore("Stress test: may hang in CI")
+                @Test
+                fun stressTest() {}
+
+                @Disabled
+                @Test
+                fun noReasonDisabled() {}
+
+                // @Disabled("was blocking, now fixed")
+                @Test
+                fun nowActive() {}
+            }
+        """),
+    )
+
+    results = guard.scan_ignored_tests(tmp_path)
+    assert len(results) == 3, \
+        f"Expected 3 ignored tests (1 @Ignore + 2 @Disabled, commented-out skipped), got {len(results)}"
+
+    # Separate by annotation type
+    ignore_results = [r for r in results if r[4] == "Ignore"]
+    disabled_results = [r for r in results if r[4] == "Disabled"]
+
+    assert len(ignore_results) == 1, \
+        f"Expected 1 @Ignore, got {len(ignore_results)}"
+    assert len(disabled_results) == 2, \
+        f"Expected 2 @Disabled, got {len(disabled_results)}"
+
+    # Check @Ignore entry
+    _, _, ignore_reason, ignore_cat, ignore_type = ignore_results[0]
+    assert ignore_type == "Ignore"
+    assert ignore_cat == "stress"
+    assert "Stress test" in ignore_reason
+
+    # Check @Disabled with reason
+    with_reason = [r for r in disabled_results if r[2] != ""]
+    without_reason = [r for r in disabled_results if r[2] == ""]
+    assert len(with_reason) == 1, f"Expected 1 @Disabled with reason, got {len(with_reason)}"
+    assert len(without_reason) == 1, f"Expected 1 @Disabled without reason, got {len(without_reason)}"
+
+    _, _, dr_reason, dr_cat, dr_type = with_reason[0]
+    assert dr_type == "Disabled"
+    assert dr_cat == "other"
+    assert "Flaky" in dr_reason
+
+    _, _, nr_reason, nr_cat, nr_type = without_reason[0]
+    assert nr_type == "Disabled"
+    assert nr_cat == "missing_reason"
+    assert nr_reason == ""
 
 
 # ── Test: edge case — @Ignore(\"value: empty string\") ────────────────────────
@@ -308,7 +384,9 @@ def test_empty_string_reason_is_detected(tmp_path):
     results = guard.scan_ignored_tests(tmp_path)
     assert len(results) == 1, f"Expected 1 result, got {len(results)}"
 
-    filepath, line, reason, category = results[0]
+    filepath, line, reason, category, annotation_type = results[0]
     assert reason == "", f"Expected empty string reason, got {reason!r}"
     assert category == "missing_reason", \
         f"Expected missing_reason for empty string, got {category}"
+    assert annotation_type == "Ignore", \
+        f"Expected annotation_type=Ignore, got {annotation_type}"

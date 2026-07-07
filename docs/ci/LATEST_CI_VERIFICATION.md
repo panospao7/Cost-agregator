@@ -33,7 +33,7 @@
 | pii_logging_boundaries | Warning | ~52 |
 | di_release_boundaries | Warning | 1 |
 | migration_matrix | Blocking | 0 |
-| ignored_test_budget | Warning | 31 |
+| ignored_test_budget | Blocking | baseline 29 |
 | allowlist_compliance | Blocking | — |
 
 ## Verification Commands
