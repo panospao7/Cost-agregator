@@ -22,6 +22,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.TimeZone
 
+@Suppress("DEPRECATION_ERROR")
 @RunWith(AndroidJUnit4::class)
 class ExpenseDaoTest {
     private lateinit var database: AppDatabase
