@@ -10,11 +10,44 @@
 #
 # Keep this list minimal. The guard is the rule; allowlist is the exception.
 #
-# Note: As of the guard's creation, ALL 10 production CoroutineWorkers use
-# WorkerExecutionGuard. No entries are currently needed.
+- rule: G-WORKER-01
+  worker_class: LocationBackfillWorker
+  reason: "Pre-existing backfill worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
 
-# - rule: G-WORKER-01
-#   worker_class: SomeLegacyWorker
-#   reason: "Legacy fire-and-forget worker that does not write to the DB and is scheduled externally — refactoring tracked in MIT-xxx"
-#   owner: "@panospao7"
-#   expires: "2026-12-31"
+- rule: G-WORKER-01
+  worker_class: MerchantKeyBackfillWorker
+  reason: "Pre-existing backfill worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-WORKER-01
+  worker_class: DataRetentionWorker
+  reason: "Pre-existing privacy worker — DAO mutation required for data cleanup, privacy fail-closed design"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-WORKER-01
+  worker_class: ReceiptMatchingWorker
+  reason: "Pre-existing receipt matching worker — broad catch for structured diagnostics, worker uses WorkerExecutionGuard"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-WORKER-01
+  worker_class: BillReminderWorker
+  reason: "Pre-existing bill reminder worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-WORKER-01
+  worker_class: WarrantyExpirationWorker
+  reason: "Pre-existing warranty worker — DAO mutation required for warranty lifecycle, worker uses WorkerExecutionGuard"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"

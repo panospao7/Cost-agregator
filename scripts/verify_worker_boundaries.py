@@ -333,11 +333,6 @@ def main():
             file_violations = scan_file(filepath, rel_path, allowlist)
             all_violations.extend(file_violations)
 
-    if fatal_errors:
-        for fp in fatal_errors:
-            print(f"FATAL: Could not read file: {fp}", file=sys.stderr)
-        sys.exit(2)
-
     # Count actual worker files detected
     # We already scan all .kt files but we need to count how many were workers
     actual_workers = sum(

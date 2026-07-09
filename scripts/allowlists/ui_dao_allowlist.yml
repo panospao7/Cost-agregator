@@ -10,12 +10,10 @@
 #
 # Add entries sparingly — the default state should be NO UI-layer DAO usage.
 
-# NOTE: BankConnectionsViewModel injects BankConnectionDao directly (not through a
-# repository) and calls disconnect() on it. Add it here when the guard is active.
-# Currently, the guard will flag this file until it is allowlisted or refactored.
-
-# - rule: G-UI-DAO-01
-#   path: app/src/main/java/com/yourname/expensetracker/ui/screens/bank/BankConnectionsViewModel.kt
-#   reason: "BankConnectionsViewModel directly uses BankConnectionDao for read-only queries (getAllConnections, getById) and disconnect — pending repository extraction (MIT-xxx)"
-#   owner: "@panospao7"
-#   expires: "permanent"
+- rule: G-UI-DAO-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/bank/BankConnectionsViewModel.kt
+  symbol: "*"
+  reason: "Bank connections ViewModel — pre-existing pattern, requires DAO access for bank integration. Reviewed P2-18."
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"

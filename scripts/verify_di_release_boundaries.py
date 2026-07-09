@@ -358,6 +358,10 @@ def scan_gradle_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], b
     violations: List[str] = []
     rel_path = os.path.relpath(filepath, PROJECT_ROOT)
 
+    # Skip allowlisted files entirely
+    if is_allowlisted(rel_path, allowlist):
+        return violations, False
+
     try:
         with open(filepath, encoding="utf-8") as f:
             content = f.read()

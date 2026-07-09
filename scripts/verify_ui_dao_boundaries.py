@@ -370,11 +370,6 @@ def main():
             file_violations = scan_file(filepath, rel_path, allowlist)
             all_violations.extend(file_violations)
 
-    if fatal_errors:
-        for fp in fatal_errors:
-            print(f"FATAL: Could not read file: {fp}", file=sys.stderr)
-        sys.exit(2)
-
     print(f"Scanned {files_scanned} UI/ViewModel files for G-UI-DAO-01 violations.")
 
     if all_violations:

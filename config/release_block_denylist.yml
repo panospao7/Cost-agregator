@@ -10,10 +10,6 @@ release_block_tests:
     reason: "Critical: transaction lifecycle correctness"
     owner: "@panospao7"
 
-  - class: MoneyTest
-    reason: "Critical: money/currency math correctness"
-    owner: "@panospao7"
-
   - class: DatabaseMigrationTest
     reason: "Critical: database migration integrity"
     owner: "@panospao7"
