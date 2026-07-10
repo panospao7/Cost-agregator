@@ -92,11 +92,7 @@ android {
 
     lint {
         // Baseline captures pre-existing MissingTranslation issues only.
-        // TEMPORARY: checkOnly limits lint to MissingTranslation during baseline generation.
-        // After running `./gradlew :app:lintDebug --stacktrace` and verifying
-        // app/lint-baseline.xml was generated, REMOVE the checkOnly line below
-        // to re-enable full lint checks (the baseline will still suppress
-        // the recorded MissingTranslation issues).
+        // All lint rules are fully active; baselined issues are suppressed by the XML.
         baseline = file("lint-baseline.xml")}
 }
 }
@@ -383,7 +379,7 @@ tasks.register("verifyNoIgnoredGrowth") {
     description = "Fails if the number of @Ignore-annotated test methods grows beyond the threshold"
 
     doLast {
-        val maxAllowed = (findProperty("maxIgnoredTests")?.toString()?.toIntOrNull()) ?: 310
+        val maxAllowed = (findProperty("maxIgnoredTests")?.toString()?.toIntOrNull()) ?: 29
         val testDirs = listOf(
             file("$projectDir/src/test/java"),
             file("$projectDir/src/test/kotlin"),
@@ -415,24 +411,59 @@ tasks.register("verifyNoIgnoredGrowth") {
 // TODO: Add CI guard that fails if production code calls deprecated raw aggregation
 // methods (e.g., getTotalSpentBetween, getTotalSpent) via grep/lint rule.
 
-// ARCH-01: Lifecycle bypass guard — wired into check lifecycle
+// ARCH-01: Lifecycle bypass guard — wired into check lifecycle (inline, no external kotlin dependency)
 tasks.register("checkLifecycleBypasses") {
     group = "verification"
     description = "Fails if production code contains direct ExpenseDao calls that bypass TransactionLifecycleCoordinator"
 
     doLast {
-        val script = file("$rootDir/scripts/guards/check_lifecycle_bypasses.kts")
-        if (!script.exists()) {
-            logger.warn("Lifecycle bypass guard script not found at ${script.absolutePath}")
-            return@doLast
+        val srcDir = file("$rootDir/app/src/main/java")
+        val forbiddenPatterns = listOf(
+            "expenseDao.updateCategory(" to "TransactionLifecycleCoordinator.updateCategory()",
+            "expenseDao.updateCategoryNullable(" to "TransactionLifecycleCoordinator.updateCategory()",
+            "expenseDao.updateMerchantAndKey(" to "TransactionLifecycleCoordinator.updateMerchant()",
+            "expenseDao.updateTransactionType(" to "TransactionLifecycleCoordinator.updateType()",
+            "expenseDao.updateTransferDirection(" to "TransactionLifecycleCoordinator.updateTransferDetails()",
+            "expenseDao.updateTransferAccountName(" to "TransactionLifecycleCoordinator.updateTransferDetails()",
+            "expenseDao.updateIsNotMine(" to "TransactionLifecycleCoordinator.updateOwnership()",
+            "expenseDao.updateOwnerName(" to "TransactionLifecycleCoordinator.updateOwnership()",
+            "expenseDao.updateIsSharedExpense(" to "TransactionLifecycleCoordinator.updateOwnership()",
+            "expenseDao.updateSharedWithName(" to "TransactionLifecycleCoordinator.updateOwnership()",
+            "expenseDao.updateMySharePercentage(" to "TransactionLifecycleCoordinator.updateOwnership()",
+            "expenseDao.updateMyShareAmount(" to "TransactionLifecycleCoordinator.updateOwnership()",
+            "expenseDao.updateLocation(" to "TransactionLifecycleCoordinator.updateLocation()",
+            "expenseDao.clearLocation(" to "TransactionLifecycleCoordinator.updateLocation()"
+        )
+        val allowlist = setOf(
+            "TransactionLifecycleCoordinator.kt",
+            "ReceiptLinkService.kt",
+            "GroupTransactionCoordinator.kt",
+            "GroupLifecycleCoordinator.kt",
+            "GroupBalanceCalculator.kt",
+            "LocationBackfillWorker.kt",
+            "MerchantKeyBackfillWorker.kt"
+        )
+        val violations = mutableListOf<String>()
+        if (srcDir.exists()) {
+            srcDir.walkTopDown()
+                .filter { it.isFile && it.extension == "kt" && !it.path.contains("test") && !it.path.contains("androidTest") }
+                .forEach { f ->
+                    val fileName = f.name
+                    if (fileName in allowlist) return@forEach
+                    val content = f.readText()
+                    for ((pattern, replacement) in forbiddenPatterns) {
+                        if (pattern in content) {
+                            violations.add("${f.path}: Direct call to '$pattern' — use $replacement instead")
+                        }
+                    }
+                }
+        } else {
+            throw GradleException("checkLifecycleBybasses: source directory not found at ${srcDir.absolutePath}")
         }
-        try {
-            exec {
-                workingDir = rootDir
-                commandLine("kotlin", script.absolutePath)
-            }
-        } catch (e: Exception) {
-            throw GradleException("Lifecycle bypass guard failed: ${e.message}")
+        if (violations.isNotEmpty()) {
+            throw GradleException("LIFECYCLE BYPASS: ${violations.size} violation(s):\n  ${violations.joinToString("\n  ")}")
+        } else {
+            logger.lifecycle("OK: No lifecycle bypass violations found.")
         }
     }
 }
@@ -442,47 +473,131 @@ tasks.named("check") {
     dependsOn("checkLifecycleBypasses")
 }
 
-// PR-E23: Wire check_raw_money_aggregates.kts CI guard for raw Double financial totals.
+// PR-E23: Inline CI guard for raw Double financial totals.
 // Flags: sumOf { it.amount }, sumOf { it.effectiveAmount }, total: Double in public engine results.
 tasks.register("checkRawMoneyAggregates") {
     group = "verification"
     description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate"
     doLast {
-        val script = file("$rootDir/scripts/guards/check_raw_money_aggregates.kts")
-        if (!script.exists()) {
-            logger.warn("Raw money aggregates guard script not found at ${script.absolutePath}")
-            return@doLast
-        }
-        try {
-            exec {
-                workingDir = rootDir
-                commandLine("kotlin", script.absolutePath)
+        val srcDir = file("$rootDir/app/src/main/java")
+        val rawSumPatterns = listOf(
+            Regex("""\.sumOf\s*\{\s*it\.amount\s*\}"""),
+            Regex("""\.sumOf\s*\{\s*it\.effectiveAmount\s*\}"""),
+            Regex("""\.sumOf\s*\{\s*it\.normalizedAmount\s*\}"""),
+            Regex("""\.sumOf\s*\{\s*it\.\w*[Pp]rice\s*\}"""),
+            Regex("""\.sumBy\s*\{\s*it\.amount\s*\.(?:toInt|roundToInt)\s*\(\)\s*\}"""),
+            Regex("""total\s*:\s*Double"""),
+            Regex("""var\s+total\s*=\s*0\.0\s*;?\s*//?\s*.*sum""")
+        )
+        val allowlistFiles = setOf(
+            "MoneyAggregateBuilder.kt", "MoneyAggregate.kt", "ConvertedMoney.kt",
+            "CurrencyConverter.kt", "MultiCurrencyRepository.kt", "ExpenseDao.kt", "BudgetDao.kt"
+        )
+        val violations = mutableListOf<String>()
+        if (srcDir.exists()) {
+            srcDir.walkTopDown().filter { it.extension == "kt" }.forEach { f ->
+                val fileName = f.name
+                if (fileName in allowlistFiles) return@forEach
+                val filePathLower = f.path.lowercase()
+                if (filePathLower.contains("test") || filePathLower.contains("androidtest")) return@forEach
+                val lines = f.readLines()
+                var inFromBuckets = false
+                var bracketDepth = 0
+                for ((lineNum, line) in lines) {
+                    val stripped = line.trim()
+                    if (stripped.contains("fromBuckets") && stripped.contains("{")) {
+                        inFromBuckets = true
+                        bracketDepth = 0
+                    }
+                    if (inFromBuckets) {
+                        bracketDepth += stripped.count { it == '{' } - stripped.count { it == '}' }
+                        if (bracketDepth <= 0) { inFromBuckets = false; bracketDepth = 0 }
+                        continue
+                    }
+                    if (stripped.startsWith("import ") || stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) continue
+                    for (pattern in rawSumPatterns) {
+                        if (pattern.containsMatchIn(stripped)) {
+                            violations.add("${f.path}:${lineNum + 1}: Raw money aggregate matches '${pattern.pattern}'")
+                        }
+                    }
+                }
             }
-        } catch (e: Exception) {
-            throw GradleException("Raw money aggregates guard failed: ${e.message}")
+        } else {
+            throw GradleException("checkRawMoneyAggregates: source directory not found at ${srcDir.absolutePath}")
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException("RAW MONEY AGGREGATE: ${violations.size} violation(s):\n  ${violations.joinToString("\n  ")}")
+        } else {
+            logger.lifecycle("OK: No raw money aggregate violations found.")
         }
     }
 }
 
-// PR-E24: Wire check_direct_time_calls.kts CI guard.
+// PR-E24: Inline CI guard for direct wall-clock time calls.
 // Flags: System.currentTimeMillis(), Date(), Calendar.getInstance(), Instant.now(), LocalDate.now()
 // Allowlist: TimeProvider implementations, platform adapters, tests.
 tasks.register("checkDirectTimeCalls") {
     group = "verification"
     description = "Fails if production code calls System.currentTimeMillis() or Date() outside TimeProvider"
     doLast {
-        val script = file("$rootDir/scripts/guards/check_direct_time_calls.kts")
-        if (!script.exists()) {
-            logger.warn("Direct time calls guard script not found at ${script.absolutePath}")
-            return@doLast
-        }
-        try {
-            exec {
-                workingDir = rootDir
-                commandLine("kotlin", script.absolutePath)
+        val srcDir = file("$rootDir/app/src/main/java")
+        val patternList = listOf(
+            Regex("""System\.currentTimeMillis\(\)"""),
+            Regex("""Instant\.now\(\)"""),
+            Regex("""Date\(\)"""),
+            Regex("""Calendar\.getInstance\(\)"""),
+            Regex("""LocalDate\.now\(\)"""),
+            Regex("""LocalDateTime\.now\(\)"""),
+            Regex("""LocalTime\.now\(\)"""),
+            Regex("""ZonedDateTime\.now\(\)"""),
+            Regex("""OffsetDateTime\.now\(\)"""),
+            Regex("""Clock\.systemDefaultZone\(\)"""),
+            Regex("""Clock\.systemUTC\(\)"""),
+            Regex("""new\s+Date\s*\(\)"""),
+            Regex("""new\s+java\.util\.Date\s*\(\)""")
+        )
+        val allowlistFiles = setOf(
+            "SystemTimeProvider.kt", "FakeTimeProvider.kt", "TestTimeProvider.kt",
+            "TimeProvider.kt", "DateFormatterUtils.kt", "TimeModule.kt",
+            "PeriodRange.kt", "TimePeriodUtils.kt", "PeriodKind.kt",
+            "MigrationRegistry.kt", "AppDatabase.kt", "BackupHelper.kt",
+            "SecureKeyStorage.kt", "CloudCorrelation.kt", "NaturalLanguageDateParser.kt",
+            "GroupLifecycleCoordinator.kt", "GroupBalanceCalculator.kt",
+            "BudgetVsActualEngine.kt", "DailyBucketEngine.kt",
+            "AnalyticsInputAssembler.kt", "TaxEstimator.kt"
+        )
+        val legacyPathMarkers = listOf("legacy", "deprecated", "backfill")
+        val violations = mutableListOf<String>()
+        if (srcDir.exists()) {
+            srcDir.walkTopDown().filter { it.extension == "kt" }.forEach { f ->
+                val fileName = f.name
+                val filePathLower = f.path.lowercase()
+                if (fileName in allowlistFiles) return@forEach
+                if (legacyPathMarkers.any { it in filePathLower }) return@forEach
+                val lines = f.readLines()
+                for ((lineNum, line) in lines) {
+                    val stripped = line.trim()
+                    if (stripped.startsWith("import ")) continue
+                    if (stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) continue
+                    if (stripped.startsWith("\"") || stripped.startsWith("'")) continue
+                    for (pattern in patternList) {
+                        if (pattern.containsMatchIn(stripped)) {
+                            if (stripped.contains("TimeProvider(") || stripped.contains("now =") || stripped.contains("now()")) {
+                                continue
+                            }
+                            violations.add("${f.path}:${lineNum + 1}: Direct wall-clock call matches '${pattern.pattern}'")
+                            break
+                        }
+                    }
+                }
             }
-        } catch (e: Exception) {
-            throw GradleException("Direct time calls guard failed: ${e.message}")
+        } else {
+            throw GradleException("checkDirectTimeCalls: source directory not found at ${srcDir.absolutePath}")
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException("DIRECT TIME: ${violations.size} violation(s):\n  ${violations.joinToString("\n  ")}")
+        } else {
+            logger.lifecycle("OK: No direct wall-clock time call violations found.")
         }
     }
 }

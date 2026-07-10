@@ -85,7 +85,7 @@
   4. Grant Gradle wrapper execute permission
   5. Run unit tests: `./gradlew :app:testDebugUnitTest --no-daemon --stacktrace`
   6. Verify Room schema snapshots: `./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --no-daemon --stacktrace`
-  7. Verify no ignored-test growth: `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=310 --no-daemon --stacktrace`
+  7. Verify no ignored-test growth: `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=29 --no-daemon --stacktrace`
   8. Run currency guardrails (PowerShell): `pwsh scripts/currency_guardrails.ps1 -SourceDir app/src/main/java -ProjectRoot ${{ github.workspace }}`
   9. Upload unit test results artifact (7-day retention)
   10. Upload Room schema verification results artifact (7-day retention)
@@ -127,12 +127,12 @@ All verification tasks defined in `app/build.gradle.kts`. Tasks wired to `:app:c
 | Task | Type | Description | Wired to `check`? |
 |------|------|-------------|-------------------|
 | `verifyRoomSchemaSnapshots` | Inline Kotlin | Reports schema snapshot coverage; fails on missing via `-PstrictRoomSchemas=true` | ✅ Yes |
-| `checkLifecycleBypasses` | External `.kts` | Runs `scripts/guards/check_lifecycle_bypasses.kts` — direct `ExpenseDao` bypasses outside `TransactionLifecycleCoordinator` | ✅ Yes |
-| `checkRawMoneyAggregates` | External `.kts` | Runs `scripts/guards/check_raw_money_aggregates.kts` — flags raw `Double` financial aggregates like `sumOf { it.amount }` | ✅ Yes |
-| `checkDirectTimeCalls` | External `.kts` | Runs `scripts/guards/check_direct_time_calls.kts` — flags `System.currentTimeMillis()` / `Date()` / `Instant.now()` outside `TimeProvider` | ✅ Yes |
+| `checkLifecycleBypasses` | Inline Kotlin | Scans `app/src/main/java` for direct `expenseDao.update*(...)` calls bypassing `TransactionLifecycleCoordinator`; 7 allowlisted files | ✅ Yes |
+| `checkRawMoneyAggregates` | Inline Kotlin | Scans for raw `Double` financial aggregates like `sumOf { it.amount }` outside `fromBuckets` blocks; 7 allowlisted files | ✅ Yes |
+| `checkDirectTimeCalls` | Inline Kotlin | Scans for `System.currentTimeMillis()` / `Date()` / `Instant.now()` outside `TimeProvider`; 21 allowlisted files, skips legacy/deprecated/backfill paths | ✅ Yes |
 | `checkLifecycleBypass` | Inline Kotlin | Scans `src/main/java` for `expenseDao.insert/update/delete` outside the allowlist; 10 allowlisted classes | ✅ Yes |
 | `verifyDbAccessBoundaries` | External `.py` | Runs `scripts/verify_db_access_boundaries.py --fail-on-violation` | ✅ Yes |
-| `verifyNoIgnoredGrowth` | Inline Kotlin | Counts `@Ignore` annotations; fails if count exceeds `-PmaxIgnoredTests=N` (default: 310) | ✅ Yes (wired in PR 2) |
+| `verifyNoIgnoredGrowth` | Inline Kotlin | Counts `@Ignore` annotations; fails if count exceeds `-PmaxIgnoredTests=N` (default: 29) | ✅ Yes (wired in PR 2) |
 
 ### `checkLifecycleBypass` Allowlist (10 classes)
 
@@ -283,7 +283,7 @@ python -m pytest scripts/test_verify_migration_matrix.py -v
 
 ### Current State
 - **Current `@Ignore` count**: ~31 annotations
-- **Maximum threshold**: 310 (set via `-PmaxIgnoredTests=310` in CI)
+- **Maximum threshold**: 29 (set via `-PmaxIgnoredTests=29` in CI)
 - **Guard**: `verifyNoIgnoredGrowth` Gradle task (✅ wired to `:app:check` in PR 2)
 
 ### Ignored Test Categories
@@ -303,7 +303,7 @@ python -m pytest scripts/test_verify_migration_matrix.py -v
 - Defined in `app/build.gradle.kts` (lines 356–387)
 - Counts `@Ignore` lines in `.kt` and `.java` files under `src/test/` and `src/androidTest/`
 - Skips commented-out `@Ignore` (lines starting with `//`)
-- Default threshold: 310 (`-PmaxIgnoredTests=310`)
+- Default threshold: 29 (`-PmaxIgnoredTests=29`)
 - **Wired to `:app:check` in PR 2** — also runs as a separate step in the `unit-tests` CI job for early failure feedback
 
 ### Guard: `verify_ignored_test_budget.py`

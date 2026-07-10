@@ -125,7 +125,7 @@ jobs:
         run: ./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --no-daemon --stacktrace
 
       - name: Verify no ignored-test growth
-        run: ./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=310 --no-daemon --stacktrace
+        run: ./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=29 --no-daemon --stacktrace
 
       - name: Run currency guardrails
         shell: pwsh
@@ -184,6 +184,16 @@ jobs:
         with:
           name: lint-results
           path: app/build/reports/lint-results-*.html
+          retention-days: 7
+
+      - name: Upload Gradle build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-logs
+          path: |
+            app/build/reports/
+            app/build/test-results/
           retention-days: 7
 
   release-check:

@@ -93,7 +93,7 @@ pwsh scripts/currency_guardrails.ps1 -SourceDir app/src/main/java -ProjectRoot .
 
 ```bash
 # Gradle guard (checks count doesn't exceed threshold)
-./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=310 --stacktrace
+./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=29 --stacktrace
 
 # Python guard (validates reasons, categorizes, checks denylist)
 python3 scripts/verify_ignored_test_budget.py
@@ -150,7 +150,7 @@ python -m pytest scripts/test_*.py -v
 | `validate-workflow` | `actionlint` |
 | `unit-tests` (Gradle) | `./gradlew :app:testDebugUnitTest --stacktrace` |
 | `unit-tests` (Schema) | `./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --stacktrace` |
-| `unit-tests` (Ignored tests) | `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=310 --stacktrace` |
+| `unit-tests` (Ignored tests) | `./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=29 --stacktrace` |
 | `unit-tests` (PowerShell) | See **PowerShell guardrails** section above |
 | `static-guards` | See **Python guard scripts** section above |
 | `lint-and-check` | `./gradlew :app:lintDebug :app:assembleDebug :app:check --stacktrace` |
