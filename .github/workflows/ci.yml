@@ -218,7 +218,7 @@ jobs:
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x gradlew
 
-      - name: Build release APK
+      - name: Build release
         run: ./gradlew :app:assembleRelease --stacktrace
 
       - name: Verify release artifact

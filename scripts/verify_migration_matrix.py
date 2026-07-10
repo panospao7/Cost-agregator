@@ -406,9 +406,13 @@ def main():
                     parts.append(f"v{end} schema")
                 schema_info = f" (schema JSONs exist: {', '.join(parts)})"
 
+            # Ratchet-compatible format: rule_id + synthetic path.kt:line
+            # The synth path encodes the missing version so each gap has a
+            # unique fingerprint for growth enforcement.
+            synth_path = f"migration_{start}_{end}.kt"
             print(
-                f"  {RULE_ID} {mig_rel}: "
-                f"MISSING MIGRATION v{start} -> v{end}{schema_info}"
+                f"{RULE_ID} {synth_path}:0 "
+                f"MISSING MIGRATION v{start} -> v{end} in {mig_rel}{schema_info}"
             )
             print(
                 f"    Hint: Create MIGRATION_{start}_{end} in {mig_rel} "

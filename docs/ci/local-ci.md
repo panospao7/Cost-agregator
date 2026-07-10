@@ -133,6 +133,30 @@ Requires a running Android emulator (API 34, Google APIs):
 ./gradlew :app:connectedDebugAndroidTest --stacktrace
 ```
 
+### Migration tests on emulator
+
+The `DatabaseMigrationMatrixTest` requires an emulator. See the full procedure at:
+- **`docs/ci/MIGRATION_TEST_PROCEDURE.md`**
+
+---
+
+## Release verification
+
+Requires Android SDK build-tools (aapt2 + apksigner):
+
+```bash
+# Build and verify the release APK
+./gradlew :app:assembleRelease --stacktrace
+python3 scripts/verify_release_artifact.py --fail-on-violation
+```
+
+Or verify a specific APK:
+```bash
+python3 scripts/verify_release_artifact.py --apk path/to/release.apk --fail-on-violation
+```
+
+The script auto-detects aapt2/apksigner from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or common SDK paths. Requires build-tools 34+.
+
 ---
 
 ## DB access boundary tests

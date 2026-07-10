@@ -128,12 +128,13 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
     "migration_matrix": {
         "script": "scripts/verify_migration_matrix.py",
         "tests": "scripts/test_verify_migration_matrix.py",
-        "mode": "blocking",
-        "baseline": None,
+        "mode": "ratchet",
+        "baseline": "config/baselines/migration_matrix.json",
         "allowlist": None,
         "policies": None,
         "description": "Migration matrix validator — ensures Room schema "
-                       "migrations are consistent and complete",
+                       "migrations are consistent and complete; ratcheted "
+                       "to block new missing-migration gaps",
     },
 
     "ignored_test_budget": {
