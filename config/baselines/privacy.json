@@ -1,7 +1,7 @@
 {
   "guard": "privacy",
-  "generated": "2026-07-10T20:14:37.344307+00:00",
+  "generated": "2026-07-10T22:03:52.090035+00:00",
   "fingerprints": [
-    "G5 app/src/main/java/com/yourname/expensetracker/domain/transaction/TransactionContext.kt:96"
+    "G5 app/src/main/java/com/yourname/expensetracker/domain/transaction/TransactionContext.kt"
   ]
 }

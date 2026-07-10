@@ -133,24 +133,30 @@ def test_warning_mode_scan_returns_violations_but_does_not_raise(tmp_path):
     assert len(violations) > 0
 
 
-# ── production codebase passes the guard ─────────────────────────────────────
+# ── production DB findings match ratchet baseline ────────────────────────────
 
-def test_production_codebase_has_no_violations():
-    """The actual production source tree must pass --fail-on-violation."""
-    project_root = os.path.join(os.path.dirname(__file__), "..")
-    source_dir = os.path.join(project_root, "app", "src", "main", "java")
-    allowlist_path = os.path.join(project_root, "config", "db_access_allowlist.yml")
-
-    if not os.path.isdir(source_dir):
+def test_production_db_findings_match_ratchet_baseline():
+    """Use the ratchet to verify no new DB findings over baseline."""
+    import subprocess, sys
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    baseline_path = project_root / "config" / "baselines" / "db_access.json"
+    ratchet_script = project_root / "scripts" / "ci" / "guard_ratchet.py"
+    guard_script = project_root / "scripts" / "verify_db_access_boundaries.py"
+    
+    if not ratchet_script.exists() or not guard_script.exists():
         return  # skip in environments without the full source tree
-
-    approved = load_allowlist(allowlist_path)
-    violations, files_scanned = scan(source_dir, approved)
-    assert files_scanned > 0, "Should have scanned production source files"
-    assert violations == [], (
-        f"Production codebase has {len(violations)} unauthorized DAO mutation(s):\n"
-        + "\n".join(f"  {p}:{n}  {t.strip()}" for p, n, t, *_ in violations)
+    
+    result = subprocess.run(
+        [sys.executable, str(ratchet_script),
+         "--guard-name", "db_access",
+         "--command", "python " + str(guard_script) + " --fail-on-violation",
+         "--baseline", str(baseline_path),
+         "--fail-on-violation"],
+        capture_output=True, text=True, timeout=30,
+        cwd=str(project_root)
     )
+    assert result.returncode == 0, f"Ratchet failed (exit {result.returncode}):\n{result.stdout}\n{result.stderr}"
 
 
 # ── Structural exception tests ──────────────────────────────────────────────

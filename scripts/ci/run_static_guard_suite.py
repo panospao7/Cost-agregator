@@ -114,7 +114,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     ),
 
     # Pytest — always runs
-    ("guard_tests", ["python3", "-m", "pytest", "scripts/test_verify_*.py", "-v", "--tb=short"], "blocking"),
+    ("guard_tests", ["python3", "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
 ]
 
 # Per-guard timeout in seconds

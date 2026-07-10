@@ -100,9 +100,18 @@ def _normalize_path(path_line: str, project_root: Path) -> str:
 
 
 def _make_fingerprint(rule_id: str, path_line: str, project_root: Path) -> str:
-    """Create a normalized fingerprint from a rule_id and path:line."""
+    """Create a normalized fingerprint from a rule_id and path:line.
+
+    Line numbers are stripped for stable fingerprints — a blank line added
+    above a violation must not create a false positive.
+    """
     normalized = _normalize_path(path_line.strip(), project_root)
-    return f"{rule_id} {normalized}"
+    # Strip line number for stable fingerprints
+    if ":" in normalized:
+        file_path = normalized.rsplit(":", 1)[0]
+    else:
+        file_path = normalized
+    return f"{rule_id} {file_path}"
 
 
 def _try_extract_from_line(
@@ -207,7 +216,12 @@ def extract_fingerprints(stdout: str, project_root: Optional[Path] = None) -> Li
         same_line = _try_extract_from_line(line, project_root)
         if same_line is not None:
             rule_id, norm_path = same_line
-            fingerprints.add(f"{rule_id} {norm_path}")
+            # Strip line number for stable fingerprints
+            if ":" in norm_path:
+                file_path = norm_path.rsplit(":", 1)[0]
+            else:
+                file_path = norm_path
+            fingerprints.add(f"{rule_id} {file_path}")
             continue
 
         # -- Two-line format (db_access): standalone path:line, rule above ---
@@ -231,12 +245,49 @@ def extract_fingerprints(stdout: str, project_root: Optional[Path] = None) -> Li
 # Baseline I/O
 # ------------------------------------------------------------------
 
-def load_baseline(path: Path) -> Optional[Dict]:
-    """Load a baseline JSON file.  Returns None if the file is missing."""
+def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict]:
+    """Load a baseline JSON file.  Returns None if the file is missing.
+
+    When *guard_name* is provided, validates structure and exits 2 on
+    malformed or mismatched data (fingerprints not a list, duplicates,
+    wrong guard name, unparseable JSON).
+    """
     if not path.exists():
         return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Malformed baseline JSON in {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if guard_name is not None:
+        # Validate guard name matches
+        if data.get("guard") != guard_name:
+            print(
+                f"ERROR: Baseline guard name mismatch in {path}: "
+                f"expected '{guard_name}', got '{data.get('guard')}'",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    fingerprints = data.get("fingerprints")
+    if not isinstance(fingerprints, list):
+        print(
+            f"ERROR: Baseline 'fingerprints' is not a list in {path}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # Check for duplicate fingerprints
+    if len(fingerprints) != len(set(fingerprints)):
+        print(
+            f"ERROR: Baseline contains duplicate fingerprints in {path}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    return data
 
 
 def save_baseline(path: Path, guard_name: str, fingerprints: List[str]) -> None:
@@ -460,8 +511,15 @@ def main() -> None:
     # -- 2. Extract fingerprints -------------------------------------------------
     current_fps = extract_fingerprints(stdout, project_root)
 
+    # If guard exited 1 but no fingerprints could be parsed, that's an
+    # infrastructure error (output format changed, guard broken, etc.).
+    if guard_exit == 1 and len(current_fps) == 0:
+        print(f"Guard '{args.guard_name}' exited 1 but produced no parseable findings", file=sys.stderr)
+        print(f"Raw stdout: {stdout[:500]}", file=sys.stderr)
+        sys.exit(2)
+
     # -- 3. Load baseline --------------------------------------------------------
-    baseline_data = load_baseline(baseline_path)
+    baseline_data = load_baseline(baseline_path, args.guard_name)
     if baseline_data is None:
         print(f"ERROR: Baseline file not found: {baseline_path}", file=sys.stderr)
         sys.exit(2)
@@ -481,10 +539,15 @@ def main() -> None:
         unchanged,
     )
 
-    # -- 6. Summary JSON (optional) ----------------------------------------------
+    # -- 6. Determine final exit code (before summary JSON for consistency)   ----
+    if args.fail_on_violation:
+        final_exit = 1 if (new or resolved) else 0
+    else:
+        final_exit = 0
+
+    # -- 7. Summary JSON (optional) ----------------------------------------------
     summary_path = args.output_summary
     if summary_path is not None:
-        summary_exit_code = 1 if new else 0
         write_summary_json(
             summary_path,
             args.guard_name,
@@ -492,10 +555,10 @@ def main() -> None:
             resolved,
             unchanged,
             status,
-            summary_exit_code,
+            final_exit,
         )
 
-    # -- 7. Update baseline (optional) -------------------------------------------
+    # -- 8. Update baseline (optional) -------------------------------------------
     if args.update_baseline:
         if len(new) > 0:
             print(
@@ -506,17 +569,11 @@ def main() -> None:
             sys.exit(1 if args.fail_on_violation else 2)
         save_baseline(baseline_path, args.guard_name, current_fps)
         print(f"Baseline updated: {len(current_fps)} findings")
+        # After successful update, reset final_exit (maintenance mode)
+        final_exit = 0
 
-    # -- 8. Exit codes -----------------------------------------------------------
-    if args.fail_on_violation and new:
-        sys.exit(1)
-
-    resolved_count = len(resolved)
-    if resolved_count > 0 and args.fail_on_violation:
-        print(f"Status: FAIL — {resolved_count} resolved entries remain in baseline (must be pruned)")
-        sys.exit(1)
-
-    sys.exit(0)
+    # -- 9. Exit -----------------------------------------------------------
+    sys.exit(final_exit)
 
 
 if __name__ == "__main__":

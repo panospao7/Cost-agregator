@@ -110,8 +110,8 @@ def test_no_new_findings_exits_zero(tmp_path: Path) -> None:
         "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20 another description\n"
     )
     fingerprints = [
-        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
-        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20",
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt",
+        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt",
     ]
 
     guard_py = tmp_path / "mock_guard.py"
@@ -141,7 +141,7 @@ def test_new_finding_detected_exits_one(tmp_path: Path) -> None:
         "G-CANCEL-03 app/src/main/java/com/example/Baz.kt:30 new violation\n"
     )
     baseline_fps = [
-        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt",
     ]
 
     guard_py = tmp_path / "mock_guard.py"
@@ -213,8 +213,8 @@ def test_resolved_findings_reported(tmp_path: Path) -> None:
     """Resolved findings are correctly identified and reported."""
     guard_out = "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10 desc\n"
     baseline_fps = [
-        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
-        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20",
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt",
+        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt",
     ]
 
     guard_py = tmp_path / "mock_guard.py"
@@ -244,8 +244,8 @@ def test_update_baseline_on_decreased_succeeds(tmp_path: Path) -> None:
     """--update-baseline succeeds when count decreases; baseline is rewritten."""
     guard_out = "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10 desc\n"
     baseline_fps = [
-        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
-        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20",
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt",
+        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt",
     ]
 
     guard_py = tmp_path / "mock_guard.py"
@@ -272,7 +272,7 @@ def test_update_baseline_on_decreased_succeeds(tmp_path: Path) -> None:
     with open(baseline, "r", encoding="utf-8") as f:
         updated = json.load(f)
     assert len(updated["fingerprints"]) == 1
-    assert updated["fingerprints"][0] == "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10"
+    assert updated["fingerprints"][0] == "G-CANCEL-01 app/src/main/java/com/example/Foo.kt"
 
 
 def test_update_baseline_on_increased_fails(tmp_path: Path) -> None:
@@ -282,7 +282,7 @@ def test_update_baseline_on_increased_fails(tmp_path: Path) -> None:
         "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20 desc\n"
     )
     baseline_fps = [
-        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt",
     ]
 
     guard_py = tmp_path / "mock_guard.py"
@@ -321,10 +321,10 @@ def test_fingerprints_sorted(tmp_path: Path) -> None:
     # Add extra fingerprint to baseline (should resolve)
     baseline = tmp_path / "baseline.json"
     _write_baseline(baseline, "test", [
-        "G-CANCEL-01 app/src/main/java/com/example/Aaa.kt:10",
-        "G-CANCEL-02 app/src/main/java/com/example/Bbb.kt:20",
-        "G-CANCEL-03 app/src/main/java/com/example/Ccc.kt:30",
-        "G-CANCEL-04 app/src/main/java/com/example/Ddd.kt:40",
+        "G-CANCEL-01 app/src/main/java/com/example/Aaa.kt",
+        "G-CANCEL-02 app/src/main/java/com/example/Bbb.kt",
+        "G-CANCEL-03 app/src/main/java/com/example/Ccc.kt",
+        "G-CANCEL-04 app/src/main/java/com/example/Ddd.kt",
     ])
 
     result = _run_ratchet(
@@ -453,8 +453,8 @@ def test_resolved_entry_exits_one(tmp_path: Path) -> None:
     """Resolved entries with --fail-on-violation should exit 1 (policy violation)."""
     guard_out = "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10 desc\n"
     baseline_fps = [
-        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
-        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20",
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt",
+        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt",
     ]
 
     guard_py = tmp_path / "mock_guard.py"
@@ -475,6 +475,5 @@ def test_resolved_entry_exits_one(tmp_path: Path) -> None:
         f"Expected exit 1, got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert "FAIL" in result.stdout
-    assert "resolved entries remain in baseline" in result.stdout
+    assert "DECREASED" in result.stdout
     assert "RESOLVED: 1" in result.stdout

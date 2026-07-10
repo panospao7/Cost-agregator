@@ -665,6 +665,9 @@ tasks.named("check") {
 // calls outside approved TimeProvider implementations
 
 // PR 10 — DB access boundary guard in CI failure mode.
+// DB guard runs raw in Gradle for full visibility (53 known debt).
+// Growth enforcement is handled by the ratchet in Static Guards.
+// Both paths are required — Gradle shows all findings, ratchet blocks new ones.
 tasks.register("verifyDbAccessBoundaries") {
     group = "verification"
     description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer allowlist"

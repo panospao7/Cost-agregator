@@ -1,4 +1,4 @@
-package com.yourname.expensetracker.ui.screens.backup
+ï»¿package com.yourname.expensetracker.ui.screens.backup
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -127,7 +127,7 @@ fun BackupRestoreScreen(
                                 uiState.lastBackupDate ?: stringResource(R.string.backup_restore_no_backup)),
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        // File path removed from UI state — safe diagnostics only
+                        // File path removed from UI state ï¿½ safe diagnostics only
                     }
                 }
             }
