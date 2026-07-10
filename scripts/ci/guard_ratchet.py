@@ -434,6 +434,19 @@ def main() -> None:
             print(stderr, file=sys.stderr)
         sys.exit(2)
 
+    # Guard exited non-zero but produced no output → likely crashed or
+    # failed to execute (e.g. script not found, syntax error, etc.).
+    # A legitimate guard that finds violations will always print them.
+    if guard_exit != 0 and not stdout.strip():
+        print(
+            f"Guard '{args.guard_name}' exited with code {guard_exit} "
+            f"and produced no output -- possible infrastructure error",
+            file=sys.stderr,
+        )
+        if stderr:
+            print(stderr, file=sys.stderr)
+        sys.exit(2)
+
     # Print guard stdout for logging (but strip trailing newlines)
     if stdout.strip():
         print(stdout.strip())

@@ -392,13 +392,22 @@ def test_zero_violations_empty_baseline(tmp_path: Path) -> None:
 
 
 def test_infra_error_on_command_not_found(tmp_path: Path) -> None:
-    """Non-existent command produces exit 2."""
+    """Guard that exits non-zero with empty output should exit 2.
+
+    A guard that crashes or fails to execute (e.g. script not found,
+    syntax error) may produce no violation output while still returning
+    a non-zero exit code.  The ratchet must treat this as an
+    infrastructure error, not as "zero violations".
+    """
     baseline = tmp_path / "baseline.json"
     _write_baseline(baseline, "test", [])
 
+    # python -c "import sys; sys.exit(1)" exits 1 with empty stdout
+    # This simulates a guard that failed to run properly.
+    command = f'{sys.executable} -c "import sys; sys.exit(1)"'
     result = _run_ratchet(
         "test",
-        "nonexistent_command_xyz_123",
+        command,
         baseline,
         cwd=tmp_path,
     )

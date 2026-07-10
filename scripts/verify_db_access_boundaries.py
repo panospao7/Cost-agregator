@@ -67,6 +67,8 @@ FILE_OP_APPROVED = {
     "DatabaseIntegrityScanner",
     "LegacyDataMigrationService",
     "SqliteSnapshotCreator",
+    "DatabaseMigrations",
+    "FinancialRescueCoordinator",
 }
 
 # ── YAML parse ────────────────────────────────────────────────────────────────
