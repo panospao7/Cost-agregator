@@ -11,7 +11,7 @@ package com.yourname.expensetracker.data.database
  */
 object DatabaseSchemaPolicy {
     /** The current latest database schema version. */
-    const val CURRENT_VERSION = AppDatabase.APP_DATABASE_SCHEMA_VERSION
+    const val CURRENT_VERSION = APP_DATABASE_SCHEMA_VERSION
 
     /** The minimum version from which supported migration is guaranteed. */
     const val MIGRATION_BASELINE = 145

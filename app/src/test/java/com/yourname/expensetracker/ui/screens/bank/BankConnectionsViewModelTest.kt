@@ -1,138 +1,69 @@
 package com.yourname.expensetracker.ui.screens.bank
 
-import com.yourname.expensetracker.data.database.dao.BankConnectionDao
-import com.yourname.expensetracker.data.database.entity.BankConnection
-import com.yourname.expensetracker.data.database.entity.SyncStatus
-import com.yourname.expensetracker.domain.bank.BankApiIntegration
+import com.yourname.expensetracker.domain.bank.BankConnectionLifecycleCoordinator
+import com.yourname.expensetracker.domain.bank.BankConnectionSummary
+import com.yourname.expensetracker.domain.bank.ConnectionDisconnectResult
+import com.yourname.expensetracker.domain.bank.ConnectionSyncResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
-import io.mockk.just
 import io.mockk.mockk
-import io.mockk.runs
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class BankConnectionsViewModelTest {
 
-    private val testDispatcher = UnconfinedTestDispatcher()
-    private lateinit var bankConnectionDao: BankConnectionDao
-    private lateinit var bankApiIntegration: BankApiIntegration
+    private val coordinator: BankConnectionLifecycleCoordinator = mockk(relaxed = true)
     private lateinit var viewModel: BankConnectionsViewModel
 
-    @Before
-    fun setup() {
-        Dispatchers.setMain(testDispatcher)
-
-        bankConnectionDao = mockk(relaxed = true)
-        bankApiIntegration = mockk(relaxed = true)
-
-        // Default: DAO returns an empty flow
-        every { bankConnectionDao.getAllConnections() } returns flowOf(emptyList())
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
-    }
-
-    // ── P10-P0-02: ViewModel wiring ───────────────────────────────────────────
-
     @Test
-    fun `init collects connections from dao`() = runTest {
+    fun `init observes coordinator connections`() = runTest {
         val connections = listOf(
-            BankConnection(
-                bankId = "revolut", bankName = "Revolut",
+            BankConnectionSummary(
+                id = 1L, bankId = "revolut", bankName = "Revolut",
                 countryCode = "EU", isConnected = true, isActive = true,
-                createdAt = 1000L
+                lastSync = null, lastSyncStatus = null, syncFrequency = "MANUAL"
             )
         )
-        every { bankConnectionDao.getAllConnections() } returns flowOf(connections)
+        every { coordinator.observeConnections() } returns flowOf(connections)
 
-        viewModel = BankConnectionsViewModel(bankConnectionDao, bankApiIntegration)
+        viewModel = BankConnectionsViewModel(coordinator)
 
         assertEquals(connections, viewModel.connections.value)
     }
 
     @Test
-    fun `init falls back to supported banks when dao returns empty`() = runTest {
-        every { bankConnectionDao.getAllConnections() } returns flowOf(emptyList())
+    fun `init handles empty flow gracefully`() = runTest {
+        every { coordinator.observeConnections() } returns emptyFlow()
 
-        viewModel = BankConnectionsViewModel(bankConnectionDao, bankApiIntegration)
+        viewModel = BankConnectionsViewModel(coordinator)
 
-        val connections = viewModel.connections.value
-        assertTrue("Should show supported banks as placeholder", connections.isNotEmpty())
-        connections.forEach { conn ->
-            assertFalse("Placeholder connections must be disconnected", conn.isConnected)
-            assertFalse("Placeholder connections must be inactive", conn.isActive)
-        }
+        assertTrue(viewModel.connections.value.isEmpty())
     }
 
-    // ── P10-P0-02: syncConnection ─────────────────────────────────────────────
-
     @Test
-    fun `syncConnection calls api sync for existing connection`() = runTest {
-        val connection = BankConnection(
-            id = 1L, bankId = "revolut", bankName = "Revolut",
-            countryCode = "EU", isConnected = true, isActive = true,
-            createdAt = 1000L
-        )
-        every { bankConnectionDao.getAllConnections() } returns flowOf(listOf(connection))
-        coEvery { bankConnectionDao.getById(1L) } returns connection
-        coEvery { bankApiIntegration.syncTransactions(connection, any()) } returns mockk()
+    fun `syncConnection calls coordinator sync`() = runTest {
+        every { coordinator.observeConnections() } returns flowOf(emptyList())
+        coEvery { coordinator.syncConnection(1L) } returns ConnectionSyncResult.Success
 
-        viewModel = BankConnectionsViewModel(bankConnectionDao, bankApiIntegration)
+        viewModel = BankConnectionsViewModel(coordinator)
         viewModel.syncConnection(1L)
 
-        coVerify { bankConnectionDao.getById(1L) }
-        coVerify { bankApiIntegration.syncTransactions(connection, any()) }
+        coVerify { coordinator.syncConnection(1L) }
     }
 
     @Test
-    fun `syncConnection skips api call when connection not found`() = runTest {
-        every { bankConnectionDao.getAllConnections() } returns flowOf(emptyList())
-        coEvery { bankConnectionDao.getById(99L) } returns null
+    fun `disconnect calls coordinator disconnect`() = runTest {
+        every { coordinator.observeConnections() } returns flowOf(emptyList())
+        coEvery { coordinator.disconnectConnection(1L) } returns ConnectionDisconnectResult.Success
 
-        viewModel = BankConnectionsViewModel(bankConnectionDao, bankApiIntegration)
-        viewModel.syncConnection(99L)
-
-        coVerify { bankConnectionDao.getById(99L) }
-        coVerify(inverse = true) { bankApiIntegration.syncTransactions(any(), any()) }
-    }
-
-    // ── P10-P0-02: disconnect ─────────────────────────────────────────────────
-
-    @Test
-    fun `disconnect calls dao disconnect`() = runTest {
-        every { bankConnectionDao.getAllConnections() } returns flowOf(emptyList())
-        coEvery { bankConnectionDao.disconnect(1L) } just runs
-
-        viewModel = BankConnectionsViewModel(bankConnectionDao, bankApiIntegration)
+        viewModel = BankConnectionsViewModel(coordinator)
         viewModel.disconnect(1L)
 
-        coVerify { bankConnectionDao.disconnect(1L) }
-    }
-
-    // ── P10-P0-02: isDemoMode ─────────────────────────────────────────────────
-
-    @Test
-    fun `isDemoMode is false when repository is wired`() {
-        every { bankConnectionDao.getAllConnections() } returns flowOf(emptyList())
-
-        viewModel = BankConnectionsViewModel(bankConnectionDao, bankApiIntegration)
-
-        assertFalse("isDemoMode must be false when DAO is injected", viewModel.isDemoMode)
+        coVerify { coordinator.disconnectConnection(1L) }
     }
 }
