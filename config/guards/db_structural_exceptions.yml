@@ -1,0 +1,85 @@
+# DB Structural Exceptions — intrinsically low-level operations only
+#
+# These are NOT architectural debt — they are proven structural necessities
+# that cannot be routed through the ownership policy because they operate
+# at the database infrastructure level (migrations, rescue, maintenance,
+# backup/restore, diagnostics, privacy export).
+#
+# Each entry requires: path, class, method_pattern, operation, reason, owner.
+# - method_pattern: regex matching the method/object name (e.g., "MIGRATION_\\d+_\\d+")
+# - operation: the exact file/SQL operation type (execSQL, raw_sqlite, writableDatabase, etc.)
+#   "raw_" prefix acts as a wildcard matching any file operation in the approved class/method.
+
+entries:
+
+  # ── Room migrations ─────────────────────────────────────────────
+  - path: DatabaseMigrations.kt
+    class: DatabaseMigrations
+    method_pattern: "MIGRATION_\\d+_\\d+"
+    operation: execSQL
+    reason: "Room migration SQL — canonical migration file"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Room database builder ──────────────────────────────────────
+  - path: AppDatabase.kt
+    class: AppDatabase
+    method_pattern: ".*"
+    operation: execSQL
+    reason: "Room database builder — migration callbacks and initialisation SQL"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Financial rescue ────────────────────────────────────────────
+  - path: FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: ".*"
+    operation: raw_sqlite
+    reason: "Exclusive maintenance rescue — all file-level SQLite operations in this class"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Backup / restore infrastructure ─────────────────────────────
+  - path: DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: ".*"
+    operation: raw_db_file
+    reason: "File-level backup/restore operations — canonical backup infrastructure"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: AppStartupCoordinator.kt
+    class: AppStartupCoordinator
+    method_pattern: ".*"
+    operation: raw_db_file
+    reason: "Startup database checks — intrinsic infrastructure"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Diagnostics / integrity ─────────────────────────────────────
+  - path: DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: ".*"
+    operation: raw_db_file
+    reason: "Database integrity diagnostics — intrinsic low-level operation"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Privacy / export ────────────────────────────────────────────
+  - path: ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: ".*"
+    operation: raw_db_file
+    reason: "Privacy export anonymization — intrinsic low-level SQL operations"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Legacy data migration (debug-only) ──────────────────────────
+  - path: LegacyDataMigrationService.kt
+    class: LegacyDataMigrationService
+    method_pattern: ".*"
+    operation: raw_db_file
+    reason: "Debug-only legacy data migration — intrinsic low-level operation"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+

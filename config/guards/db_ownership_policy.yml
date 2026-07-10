@@ -1,0 +1,242 @@
+# DB Ownership Policy — canonical legal writers
+# 
+# This file defines the EXACT set of classes, DAOs, and operations that
+# are allowed to perform database writes. Every direct DAO mutation call
+# in the codebase MUST match an entry here, a structural exception, or
+# be recorded as unresolved debt in the ratchet baseline.
+#
+# Each entry requires: path, class, method, daos, operation, 
+# barrier_required, reason, owner, linked_issue.
+#
+# - method: "*" means the class owns all write methods for the listed DAOs.
+# - operation: "write" means all mutation operations (insert, update, delete, etc.).
+# - barrier_required: true means the method must call writeBarrier.checkWritesAllowed()
+#   before the DAO mutation. Set false for lifecycle coordinators that handle
+#   their own guarding (e.g., withTransaction).
+
+entries:
+
+  # ── Expenses / Transaction events ──────────────────────────────
+  - path: TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "*"
+    daos: [expenseDao, transactionEventDao]
+    operation: write
+    barrier_required: false
+    reason: "Canonical transaction lifecycle writer — guards at entry via withTransaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Notifications ───────────────────────────────────────────────
+  - path: NotificationRepository.kt
+    class: NotificationRepository
+    method: "*"
+    daos: [rawNotificationDao, pendingReviewDao, pipelineDiagnosticEventDao, blockedPackageDao, expenseDao, userCorrectionDao, sourceStatsDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical notification writer — includes purge/restore DAOs needed for maintenance"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Receipts / OCR / Email ──────────────────────────────────────
+  - path: ReceiptLifecycleCoordinator.kt
+    class: ReceiptLifecycleCoordinator
+    method: "*"
+    daos: [scannedReceiptDao, receiptEventDao, emailReceiptDao, pendingReviewDao, receiptExpenseLinkDao]
+    operation: write
+    barrier_required: false
+    reason: "Canonical receipt lifecycle writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Recurring / Reminders ───────────────────────────────────────
+  - path: RecurringRuleLifecycleCoordinator.kt
+    class: RecurringRuleLifecycleCoordinator
+    method: "*"
+    daos: [manualRecurringExpenseDao, occurrenceDao, reminderDeliveryDao, plannedExpenseDao, lifecycleEventDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical recurring rule writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: RecurringLifecycleCoordinator.kt
+    class: RecurringLifecycleCoordinator
+    method: "*"
+    daos: [occurrenceDao, expenseDao, manualRecurringExpenseDao, reminderDeliveryDao, lifecycleEventDao, plannedExpenseDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical recurring occurrence writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: ReminderDeliveryCoordinator.kt
+    class: ReminderDeliveryCoordinator
+    method: "*"
+    daos: [recurringReminderDeliveryDao, reminderDeliveryDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical reminder delivery writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Budget / Forecast / Planned ─────────────────────────────────
+  - path: BudgetRepository.kt
+    class: BudgetRepository
+    method: "*"
+    daos: [budgetDao, budgetAdjustmentDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical budget writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: PlannedExpenseRepository.kt
+    class: PlannedExpenseRepository
+    method: "*"
+    daos: [plannedExpenseDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical planned expense writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Bank ────────────────────────────────────────────────────────
+  - path: BankConnectionLifecycleCoordinator.kt
+    class: BankConnectionLifecycleCoordinator
+    method: "*"
+    daos: [bankConnectionDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical bank connection writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: BankSyncCoordinator.kt
+    class: BankSyncCoordinator
+    method: "*"
+    daos: [bankConnectionDao, expenseDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical bank sync writer — routes expenses through TransactionLifecycleCoordinator"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Import ─────────────────────────────────────────────────────
+  - path: ImportCoordinator.kt
+    class: ImportCoordinator
+    method: "*"
+    daos: [expenseDao, categoryDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical import writer — routes through TransactionLifecycleCoordinator"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Investments ─────────────────────────────────────────────────
+  - path: InvestmentTracker.kt
+    class: InvestmentTracker
+    method: "*"
+    daos: [investmentDao, investmentValueDao, investmentTransactionDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical investment writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: InvestmentRepository.kt
+    class: InvestmentRepository
+    method: "*"
+    daos: [investmentDao, investmentTransactionDao, investmentValueDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical investment writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Groups ──────────────────────────────────────────────────────
+  - path: GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "*"
+    daos: [groupDao, groupExpenseDao, memberDao, settlementDao, lifecycleEventDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical group lifecycle writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Categories / Merchants ──────────────────────────────────────
+  - path: CategoryRepository.kt
+    class: CategoryRepository
+    method: "*"
+    daos: [categoryDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical category writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: MerchantCategoryRepository.kt
+    class: MerchantCategoryRepository
+    method: "*"
+    daos: [merchantCategoryDao, merchantNormalizationDao, merchantLocationDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical merchant writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Spending Challenges ─────────────────────────────────────────
+  - path: SpendingChallengeRepository.kt
+    class: SpendingChallengeRepository
+    method: "*"
+    daos: [spendingChallengeDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical challenge writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Savings ─────────────────────────────────────────────────────
+  - path: SavingsGoalRepository.kt
+    class: SavingsGoalRepository
+    method: "*"
+    daos: [savingsGoalDao, savingsSweepPlanDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical savings writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Subscriptions ───────────────────────────────────────────────
+  - path: SubscriptionRepository.kt
+    class: SubscriptionRepository
+    method: "*"
+    daos: [subscriptionCandidateDao, subscriptionPriceHistoryDao, subscriptionUsageDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical subscription writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Warranties ──────────────────────────────────────────────────
+  - path: WarrantyRepository.kt
+    class: WarrantyRepository
+    method: "*"
+    daos: [warrantyDao, warrantyLifecycleEventDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical warranty writer"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Exchange Rates ──────────────────────────────────────────────
+  - path: ExchangeRateRepository.kt
+    class: ExchangeRateRepository
+    method: "*"
+    daos: [exchangeRateDao]
+    operation: write
+    barrier_required: true
+    reason: "Canonical exchange rate writer — network fetch, not user data"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"

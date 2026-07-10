@@ -1,6 +1,9 @@
 """
 test_verify_db_access_boundaries.py
-PR 10 acceptance tests for the static DAO mutation guard.
+PR H2 acceptance tests for the static DAO mutation guard.
+
+Updated for H2: tests now use the ownership policy and structural exceptions
+instead of the legacy allowlist.
 
 Run with: python -m pytest scripts/test_verify_db_access_boundaries.py -v
 """
@@ -30,10 +33,18 @@ def _write_kt(tmp_path, filename, content):
     return tmp_path
 
 
-def _allowlist(tmp_path, yaml_content):
-    p = tmp_path / "allowlist.yml"
-    p.write_text(yaml_content, encoding="utf-8")
-    return str(p)
+def _ownership_policy(entries=None):
+    """Create an ownership policy list from simplified entry dicts."""
+    if entries is None:
+        return []
+    return entries
+
+
+def _structural_exceptions(entries=None):
+    """Create a structural exceptions list from simplified entry dicts."""
+    if entries is None:
+        return []
+    return entries
 
 
 # ── guard_fails_on_direct_expenseDao_update_in_viewmodel ─────────────────────
@@ -43,8 +54,7 @@ def test_fail_on_violation_exits_nonzero_when_violations_exist(tmp_path):
     src.mkdir()
     _write_kt(src, "SomeViewModel.kt",
               "class SomeViewModel { fun save() { expenseDao.insert(expense) } }")
-    approved = load_allowlist(_allowlist(tmp_path, "allowed_writers: []\n"))
-    violations, files_scanned = scan(str(src), approved)
+    violations, files_scanned = scan(str(src), [], [])
     assert files_scanned > 0, "Should have scanned at least one file"
     assert len(violations) > 0, "Expected at least one violation"
 
@@ -56,12 +66,22 @@ def test_allowlisted_class_does_not_trigger_violation(tmp_path):
     src.mkdir()
     _write_kt(src, "TransactionLifecycleCoordinator.kt",
               "class TransactionLifecycleCoordinator { fun save() { expenseDao.insert(e) } }")
-    approved = load_allowlist(_allowlist(tmp_path,
-        "allowed_writers:\n  - class: TransactionLifecycleCoordinator\n    requires_write_barrier: false\n    daos: [expenseDao]\n    reason: canonical\n"
-    ))
-    violations, files_scanned = scan(str(src), approved)
+    policy = [
+        {
+            "path": "TransactionLifecycleCoordinator.kt",
+            "class": "TransactionLifecycleCoordinator",
+            "method": "*",
+            "daos": ["expenseDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "canonical",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
     assert files_scanned > 0
-    assert len(violations) == 0, f"Allowlisted class should not be flagged: {violations}"
+    assert len(violations) == 0, f"Ownership-policy class should not be flagged: {violations}"
 
 
 # ── guard_fails_on_worker_direct_receipt_update ───────────────────────────────
@@ -71,8 +91,7 @@ def test_worker_direct_dao_mutation_fails(tmp_path):
     src.mkdir()
     _write_kt(src, "DataRetentionWorker.kt",
               "class DataRetentionWorker { fun run() { scannedReceiptDao.delete(r) } }")
-    approved = load_allowlist(_allowlist(tmp_path, "allowed_writers: []\n"))
-    violations, files_scanned = scan(str(src), approved)
+    violations, files_scanned = scan(str(src), [], [])
     assert files_scanned > 0
     assert len(violations) > 0
 
@@ -84,8 +103,7 @@ def test_dao_files_themselves_are_skipped(tmp_path):
     src.mkdir()
     _write_kt(src, "ExpenseDao.kt",
               "@Dao interface ExpenseDao { @Insert fun insert(e: Expense): Long }")
-    approved = load_allowlist(_allowlist(tmp_path, "allowed_writers: []\n"))
-    violations, files_scanned = scan(str(src), approved)
+    violations, files_scanned = scan(str(src), [], [])
     assert files_scanned > 0
     assert len(violations) == 0, "DAO interface files must be skipped"
 
@@ -125,41 +143,209 @@ def test_warning_mode_scan_returns_violations_but_does_not_raise(tmp_path):
     src.mkdir()
     _write_kt(src, "BadViewModel.kt",
               "class BadViewModel { fun x() { expenseDao.delete(e) } }")
-    approved = load_allowlist(_allowlist(tmp_path, "allowed_writers: []\n"))
     # scan() must return violations, not raise
-    violations, files_scanned = scan(str(src), approved)
+    violations, files_scanned = scan(str(src), [], [])
     assert files_scanned > 0
     assert isinstance(violations, list)
     assert len(violations) > 0
 
 
-# ── production DB findings match ratchet baseline ────────────────────────────
+# ── Ownership policy: barrier enforcement ────────────────────────────────────
 
-def test_production_db_findings_match_ratchet_baseline():
-    """Use the ratchet to verify no new DB findings over baseline."""
-    import subprocess, sys
-    from pathlib import Path
-    project_root = Path(__file__).parent.parent
-    baseline_path = project_root / "config" / "baselines" / "db_access.json"
-    ratchet_script = project_root / "scripts" / "ci" / "guard_ratchet.py"
-    guard_script = project_root / "scripts" / "verify_db_access_boundaries.py"
-    
-    if not ratchet_script.exists() or not guard_script.exists():
-        return  # skip in environments without the full source tree
-    
-    result = subprocess.run(
-        [sys.executable, str(ratchet_script),
-         "--guard-name", "db_access",
-         "--command", "python " + str(guard_script) + " --fail-on-violation",
-         "--baseline", str(baseline_path),
-         "--fail-on-violation"],
-        capture_output=True, text=True, timeout=30,
-        cwd=str(project_root)
+def test_ownership_policy_with_barrier_required_fails_if_missing(tmp_path):
+    """Policy entry with barrier_required:true must have writeBarrier before mutation."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "BudgetRepository.kt", """
+package com.example
+class BudgetRepository {
+    fun updateBudget() {
+        budgetDao.update(b)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "BudgetRepository.kt",
+            "class": "BudgetRepository",
+            "method": "*",
+            "daos": ["budgetDao"],
+            "operation": "write",
+            "barrier_required": True,
+            "reason": "test",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) > 0, "Should flag MISSING_WRITE_BARRIER"
+    assert any("MISSING_WRITE_BARRIER" in v[3] for v in violations), \
+        f"Expected MISSING_WRITE_BARRIER, got: {violations}"
+
+
+def test_ownership_policy_with_barrier_passes_when_present(tmp_path):
+    """Policy entry with barrier_required:true passes when writeBarrier is present."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "BudgetRepository.kt", """
+package com.example
+class BudgetRepository {
+    fun updateBudget() {
+        writeBarrier.checkWritesAllowed()
+        budgetDao.update(b)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "BudgetRepository.kt",
+            "class": "BudgetRepository",
+            "method": "*",
+            "daos": ["budgetDao"],
+            "operation": "write",
+            "barrier_required": True,
+            "reason": "test",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 0, f"writeBarrier present should pass: {violations}"
+
+
+def test_ownership_policy_without_barrier_required_passes(tmp_path):
+    """Policy entry with barrier_required:false passes without writeBarrier."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "TransactionLifecycleCoordinator.kt", """
+package com.example
+class TransactionLifecycleCoordinator {
+    fun insertExpense() {
+        expenseDao.insert(e)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "TransactionLifecycleCoordinator.kt",
+            "class": "TransactionLifecycleCoordinator",
+            "method": "*",
+            "daos": ["expenseDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "canonical",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 0, f"Coordinator without barrier should pass: {violations}"
+
+
+# ── Ownership policy: method wildcard ────────────────────────────────────────
+
+def test_ownership_policy_method_wildcard_matches_any_method(tmp_path):
+    """method '*' should match any method name."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "CategoryRepository.kt", """
+package com.example
+class CategoryRepository {
+    fun addCategory() {
+        categoryDao.insert(c)
+    }
+    fun removeCategory() {
+        categoryDao.delete(c)
+    }
+    fun updateCategory() {
+        categoryDao.update(c)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "CategoryRepository.kt",
+            "class": "CategoryRepository",
+            "method": "*",
+            "daos": ["categoryDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "canonical",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 0, f"Wildcard method should match all methods: {violations}"
+
+
+# ── Ownership policy: exact method ───────────────────────────────────────────
+
+def test_ownership_policy_exact_method_only_matches_specified(tmp_path):
+    """Exact method name should only match that method."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "SomeRepo.kt", """
+package com.example
+class SomeRepo {
+    fun approvedMethod() {
+        budgetDao.insert(b)
+    }
+    fun unapprovedMethod() {
+        budgetDao.delete(b)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "SomeRepo.kt",
+            "class": "SomeRepo",
+            "method": "approvedMethod",
+            "daos": ["budgetDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "test",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    # approvedMethod should pass, unapprovedMethod should fail
+    assert len(violations) == 1, (
+        f"Expected 1 violation for unapprovedMethod, got {len(violations)}: {violations}"
     )
-    assert result.returncode == 0, f"Ratchet failed (exit {result.returncode}):\n{result.stdout}\n{result.stderr}"
+    assert "UNALLOWLISTED_CLASS" in violations[0][3], \
+        f"Expected UNALLOWLISTED_CLASS, got: {violations[0][3]}"
 
 
 # ── Structural exception tests ──────────────────────────────────────────────
+
+_SAMPLE_STRUCTURAL_EXCEPTIONS = [
+    {
+        "path": "DatabaseMigrations.kt",
+        "class": "DatabaseMigrations",
+        "method_pattern": r"MIGRATION_\d+_\d+",
+        "operation": "execSQL",
+        "reason": "Room migration SQL",
+        "owner": "@test",
+        "linked_issue": "TEST-001",
+    },
+    {
+        "path": "FinancialRescueCoordinator.kt",
+        "class": "FinancialRescueCoordinator",
+        "method_pattern": "performMaintenanceRescue",
+        "operation": "raw_sqlite",
+        "reason": "Exclusive maintenance rescue operation",
+        "owner": "@test",
+        "linked_issue": "TEST-001",
+    },
+]
+
 
 def test_structural_exception_for_migration_sql(tmp_path):
     """MIGRATION_145_146 execSQL should pass as structural exception."""
@@ -174,11 +360,10 @@ object DatabaseMigrations {
     }
 }
 """
-    approved = load_allowlist(_allowlist(tmp_path, "allowed_writers: []\n"))
     src = tmp_path / "src"
     src.mkdir()
     _write_kt(src, "DatabaseMigrations.kt", content)
-    violations, files_scanned = scan(str(src), approved)
+    violations, files_scanned = scan(str(src), [], _SAMPLE_STRUCTURAL_EXCEPTIONS)
     assert files_scanned > 0
     assert len(violations) == 0, (
         f"Migration execSQL should pass as structural exception, got: {violations}"
@@ -196,11 +381,10 @@ object DatabaseMigrations {
     }
 }
 """
-    approved = load_allowlist(_allowlist(tmp_path, "allowed_writers: []\n"))
     src = tmp_path / "src"
     src.mkdir()
     _write_kt(src, "DatabaseMigrations.kt", content)
-    violations, files_scanned = scan(str(src), approved)
+    violations, files_scanned = scan(str(src), [], _SAMPLE_STRUCTURAL_EXCEPTIONS)
     assert files_scanned > 0
     assert len(violations) > 0, (
         "Non-migration SQL outside MIGRATION object should produce a violation"
@@ -218,12 +402,45 @@ class FinancialRescueCoordinator {
     }
 }
 """
-    approved = load_allowlist(_allowlist(tmp_path, "allowed_writers: []\n"))
     src = tmp_path / "src"
     src.mkdir()
     _write_kt(src, "FinancialRescueCoordinator.kt", content)
-    violations, files_scanned = scan(str(src), approved)
+    violations, files_scanned = scan(str(src), [], _SAMPLE_STRUCTURAL_EXCEPTIONS)
     assert files_scanned > 0
     assert len(violations) == 0, (
         f"performMaintenanceRescue execSQL should pass as structural exception, got: {violations}"
+    )
+
+
+# ── Ownership policy: DAO-specific matching ─────────────────────────────────
+
+def test_ownership_policy_dao_match_is_exact(tmp_path):
+    """Mutation on a DAO not in the policy entry's daos list should fail."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "TransactionLifecycleCoordinator.kt", """
+package com.example
+class TransactionLifecycleCoordinator {
+    fun doSomething() {
+        scannedReceiptDao.insert(r)  // not in policy DAOs
+    }
+}
+""")
+    policy = [
+        {
+            "path": "TransactionLifecycleCoordinator.kt",
+            "class": "TransactionLifecycleCoordinator",
+            "method": "*",
+            "daos": ["expenseDao", "transactionEventDao"],  # scannedReceiptDao NOT listed
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "canonical transaction lifecycle writer",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) > 0, (
+        f"DAO not in policy should produce violation, got: {violations}"
     )
