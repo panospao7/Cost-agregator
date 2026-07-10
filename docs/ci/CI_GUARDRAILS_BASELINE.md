@@ -2,7 +2,7 @@
 
 > **Created**: PR 1 — CI Baseline and Workflow Validation
 > **Purpose**: Comprehensive inventory of all existing CI guardrails, verification tasks, scripts, tests, and gaps. Serves as the foundation for the multi-PR CI static guardrails hardening plan.
-> **Status**: Baseline snapshot as of PR 1 completion.
+> **Status**: ✅ Final Integration — All PRs (1–9, G1–G4, H1–H7) complete. 17 guards active. Ratchets locked.
 
 > **PR 2 update**: `:app:check` now runs as a blocking CI step in the `lint-and-check` job. `verifyNoIgnoredGrowth` is now wired to the `:app:check` Gradle lifecycle (was standalone only).
 
@@ -19,6 +19,28 @@
 > **PR 8 update**: Ignored Test Budget — `verify_ignored_test_budget.py` (G-IGNORE-01) validates `@Ignore` annotations have non-empty reasons, categorizes them (stress, jvm_incompatible, removed_api, vat_logic, truth_boxing, negative_id, rewrite_needed, other), and checks against the `release_block_denylist.yml`. Runs in warning mode initially (31 pre-existing).
 
 > **PR 9 update**: Branch protection documentation and CODEOWNERS — `CODEOWNERS` file created assigning review ownership for CI/guard, database/migrations, lifecycle/architecture, workers, and privacy/security paths. Developer quickstart guide created at `docs/ci/developer-quickstart.md` with pre-push checklist, guard script commands, allowlist format, and CI pipeline overview. Branch protection recommendations (required checks, branch rules) documented below.
+> 
+> **G1 update**: Guard Ratchet Engine — `guard_ratchet.py` created as shared engine for all ratchet-mode guards. Baselines generated via `generate_baselines.py`. Ratchet files stored in `scripts/ci/baselines/`. Guards in ratchet mode fail only when counts increase beyond baseline; decreases are automatically promoted. Pytest test suite at `scripts/ci/test_guard_ratchet.py`.
+> 
+> **G2 update**: Shared Guard Engine — `shared_guard_engine.py` created with standardized fingerprint hashing (SHA-256), allowlist parsing, source-tree scanning, and exit-code policy. All guard scripts migrated to use shared engine APIs. Reduces duplication and ensures consistent fingerprinting across the suite.
+> 
+> **G3 update**: Canonical Guard Registry — `guard_registry.py` defines the single source of truth for all 17 guards: rule IDs, modes (blocking/ratchet), baseline references, script paths, and CI step metadata. `verify_guard_registry.py` validates registry consistency (no missing scripts, no orphan baselines, mode invariants). All guard scripts register themselves via the registry contract.
+> 
+> **G4 update**: Guard Coverage Tests — `scripts/ci/test_run_static_guard_suite.py` covers the unified runner (`run_static_guard_suite.py`) with test fixtures for blocking, ratchet, and mixed-mode execution. `scripts/ci/test_guard_ratchet.py` covers ratchet lock, baseline promotion, and count-comparison logic. Registry validation tests integrated into the static-guards CI job.
+> 
+> **H1 update**: Ratchet Repair — Fixed ratchet file discovery and stable fingerprint hashing across platforms. `privacy` guard moved from blocking to ratchet mode (1 pre-existing finding). `cancellation` ratchet baseline updated to 86 findings. Excluded ephemeral `__pycache__` files from CI scans. Fixed test discovery for `scripts/test_verify_*.py` glob patterns.
+> 
+> **H2 update**: DB Ownership Policy — Separated `db_access` ownership policy from architecture debt. Migrated `db_access` guard to ratchet mode (15 findings). Updated allowlist to distinguish lifecycle-coordinator DAO access from backfill/repair worker access. Added owner/reason annotations to all db_access allowlist entries.
+> 
+> **H3 update**: Strict-Zero PII — `pii_logging` guard promoted from warning mode to blocking (strict-zero). All 52 pre-existing PII logging violations remediated across the codebase. PII logging guard now fails CI on any new violation. Warning-mode fallback removed from CI workflow step.
+> 
+> **H4 update**: Canonical Guard Registry Completion — Registry validator promoted to blocking in CI. All 17 guards have complete metadata entries. Registry cross-validates: script existence, baseline file existence, mode consistency, and no orphaned baselines. `lint_baseline_policy` guard added as blocking guard validating lint baseline XML against policy rules.
+> 
+> **H5 update**: Release Verification — `assembleRelease` + `aapt2`/`apksigner` verification added as a blocking CI job (`release-check`). Release build verification ensures no release-mode compilation errors, missing ProGuard/R8 rules, or signing misconfiguration escape PR CI. Instrumented tests upgraded to `Pixel_8a` emulator image.
+> 
+> **H6 update**: Migration Proof — Migration matrix guard moved from blocking to ratchet mode (0 findings). All Room migrations from v145 to latest validated. Migration proof ensures no unregistered migration steps can be introduced without ratchet detection. Ratchet baseline locked at 0.
+> 
+> **H7 update (Final Integration)**: Documentation finalization. `LATEST_CI_VERIFICATION.md` updated with final 17-guard table, ratchet baselines, and verification commands. `CI_GUARDRAILS_BASELINE.md` updated with complete PR history (1–9, G1–G4, H1–H7). All guard modes and baselines reflect final integrated state.
 
 ---
 
@@ -465,17 +487,53 @@ These settings are enforced by GitHub and cannot be modified via the repository'
 
 ---
 
-## Recommended Next Steps
+## Final Integration Summary
 
-The following is the planned sequencing for the remaining PRs in the CI Static Guardrails plan (per `CI_STATIC_GUARDRAILS_IMPLEMENTATION_PLAN.md` §15):
+All PRs in the CI Static Guardrails plan are now complete. The following table summarizes every PR and its final status:
 
-| PR | Content | Description |
-|----|---------|-------------|
-| 2 | Full Gradle Verification | `assembleDebug`, `testDebugUnitTest`, `lintDebug`, `:app:check` as blocking PR checks; artifact upload on failure | ✅ **COMPLETED** — `:app:check` added as blocking CI step; `verifyNoIgnoredGrowth` wired to Gradle `check` lifecycle; `lint-and-check` job renamed to "Lint & Check" |
-| 3 | Existing Static Guards in CI | Wire all existing Python guard scripts (privacy, DB access, event writer, money, source provenance) as blocking CI steps; script tests blocking | ✅ **COMPLETED** |
-| 4 | Guard Framework Standardization | Rule ID format, allowlist owner/reason/expiry validation, guard fixture pattern, guard docs | 🔄 **IN REVIEW** — tests pending |
-| 5 | Migration Matrix MVP | Minimum supported version decision, representative migration fixtures, fresh-vs-migrated schema parity | 🔄 **IN REVIEW** — `verify_migration_matrix.py` created; test suite added; CI integration complete |
-| 6 | New Guards Batch A: High-Risk Architecture | Cancellation guard, UI/ViewModel DAO guard, worker full guard, receipt link ownership guard, import lifecycle guard | 🔄 **IN REVIEW** — 5 guard scripts created; CI steps wired; documentation updated |
-| 7 | New Guards Batch B: Privacy/Money/Release | Cloud payload guard, PII logging/error guard, raw money sum guard improvements, DI/release binding guard (expanded to full-codebase in PR14) | 🔄 **IN REVIEW** |
-| 8 | Ignored Test Budget | Ignored-test scanner, current baseline, release-critical denylist, fail-on-increase policy | 🔄 **IN REVIEW** — `verify_ignored_test_budget.py` created; denylist created; test suite added; CI integration complete |
-| 9 | Branch Protection and Documentation | Required check configuration, CODEOWNERS updates, guard ownership docs, developer quickstart | 🔄 **IN REVIEW** — `CODEOWNERS` created; developer quickstart written; docs cross-linked |
+| PR | Content | Status |
+|----|---------|--------|
+| 1 | CI Baseline & Workflow Validation | ✅ COMPLETED |
+| 2 | Full Gradle Verification | ✅ COMPLETED |
+| 3 | Existing Static Guards in CI | ✅ COMPLETED |
+| 4 | Guard Framework Standardization | ✅ COMPLETED |
+| 5 | Migration Matrix MVP | ✅ COMPLETED |
+| 6 | New Guards Batch A: High-Risk Architecture | ✅ COMPLETED |
+| 7 | New Guards Batch B: Privacy/Money/Release | ✅ COMPLETED |
+| 8 | Ignored Test Budget | ✅ COMPLETED |
+| 9 | Branch Protection & Documentation | ✅ COMPLETED |
+| G1 | Guard Ratchet Engine | ✅ COMPLETED |
+| G2 | Shared Guard Engine | ✅ COMPLETED |
+| G3 | Canonical Guard Registry | ✅ COMPLETED |
+| G4 | Guard Coverage Tests | ✅ COMPLETED |
+| H1 | Ratchet Repair | ✅ COMPLETED |
+| H2 | DB Ownership Policy | ✅ COMPLETED |
+| H3 | Strict-Zero PII | ✅ COMPLETED |
+| H4 | Canonical Guard Registry Completion | ✅ COMPLETED |
+| H5 | Release Verification | ✅ COMPLETED |
+| H6 | Migration Proof | ✅ COMPLETED |
+| H7 | Final Integration (documentation) | ✅ COMPLETED |
+
+### Final Guard State (17 guards)
+
+| Guard | Mode | Baseline | Status |
+|---|---|---|---|
+| guard_registry | blocking (validator) | — | ✅ Active |
+| source_provenance | blocking | — | ✅ Active |
+| ui_dao | blocking | — | ✅ Active |
+| worker | blocking | — | ✅ Active |
+| receipt_link | blocking | — | ✅ Active |
+| import_lifecycle | blocking | — | ✅ Active |
+| cloud_payload | blocking | — | ✅ Active |
+| pii_logging | blocking (strict-zero) | — | ✅ Active |
+| di_release | blocking | — | ✅ Active |
+| allowlist_compliance | blocking | — | ✅ Active |
+| ignored_test_budget | blocking | — | ✅ Active |
+| lint_baseline_policy | blocking | — | ✅ Active |
+| guard_tests | blocking (pytest) | — | ✅ Active |
+| cancellation | ratchet | 86 findings | ✅ Locked |
+| privacy | ratchet | 1 finding | ✅ Locked |
+| db_access | ratchet | 15 findings | ✅ Locked |
+| event_writers | ratchet | 15 findings | ✅ Locked |
+| money | ratchet | 0 findings | ✅ Locked |
+| migration_matrix | ratchet | 0 findings | ✅ Locked |

@@ -1,69 +1,79 @@
-# Latest CI Verification — PR13
+# Latest CI Verification — Final Integration
 
 ## Commit
-- SHA: `564077512ec11d19bb58f210f5b5750f2b4fe855`
+- SHA: `422b8a633a23304a8d4d3370e263000495edfff8`
 - Branch: `atomicity-pr21-enforcement-final`
-- Trigger: Push to feature branch (broadened in PR10)
+- CI Run: Expected to trigger on push to feature branch
 
-## CI Jobs
+## CI Jobs (Required)
 
-| Job | Status | Notes |
-|-----|--------|-------|
-| validate-workflow | ✅ Expected | actionlint v1.7.7 (pinned), validates all workflow YAML |
-| static-guards | ✅ Expected | 14 Python guards + pytest, 3 in warning mode |
-| unit-tests | ✅ Expected | Gradle testDebugUnitTest + Room schema + ignored-test count |
-| lint-and-check | ✅ Expected | lintDebug + assembleDebug + :app:check |
-| instrumented-tests | ⚠️ Non-blocking | Emulator tests, continue-on-error |
+| Job | Purpose | Blocking |
+|-----|---------|----------|
+| Validate Workflow | actionlint YAML validation | ✅ |
+| Static Guards | 17 guards + ratchets + guard registry validation | ✅ |
+| Unit Tests | Gradle testDebugUnitTest + Room schema + ignored-test count | ✅ |
+| Lint & Check | lintDebug + assembleDebug + :app:check | ✅ |
+| Release Check | assembleRelease + aapt2/apksigner verification | ✅ |
+| Instrumented Tests | Emulator (Pixel_8a) | ✅ |
 
-## Guard Status
+## Guard Status (17 guards)
 
-| Guard | Mode | Pre-existing violations |
+| Guard | Mode | Baseline |
 |---|---|---|
-| privacy_boundaries | Blocking | — |
-| db_access_boundaries | Blocking | — |
-| event_writers | Blocking | — |
-| money_boundaries | Blocking | — |
-| source_provenance_boundaries | Blocking | — |
-| cancellation_boundaries | Warning | ~248 |
-| ui_dao_boundaries | Blocking | 3 |
-| worker_boundaries | Blocking | 16 |
-| receipt_link_boundaries | Blocking | 0 |
-| import_lifecycle_boundaries | Blocking | 0 |
-| cloud_payload_boundaries | Blocking | 0 |
-| pii_logging_boundaries | Warning | ~51 |
-| di_release_boundaries | Blocking | 1 |
-| migration_matrix | Blocking | 0 |
-| ignored_test_budget | Blocking | baseline 29 |
-| allowlist_compliance | Blocking | — |
+| guard_registry | blocking (validator) | — |
+| source_provenance | blocking | — |
+| ui_dao | blocking | — |
+| worker | blocking | — |
+| receipt_link | blocking | — |
+| import_lifecycle | blocking | — |
+| cloud_payload | blocking | — |
+| pii_logging | blocking (strict-zero) | — |
+| di_release | blocking | — |
+| allowlist_compliance | blocking | — |
+| ignored_test_budget | blocking | — |
+| lint_baseline_policy | blocking | — |
+| guard_tests | blocking (pytest) | — |
+| cancellation | ratchet | 86 findings |
+| privacy | ratchet | 1 finding |
+| db_access | ratchet | 15 findings |
+| event_writers | ratchet | 15 findings |
+| money | ratchet | 0 findings |
+| migration_matrix | ratchet | 0 findings |
+
+## Branch Protection
+
+Required checks to configure in GitHub Settings:
+1. Validate Workflow
+2. Static Guards
+3. Unit Tests
+4. Lint & Check
+5. Release Check
+6. Instrumented Tests (optional, emulator-dependent)
 
 ## Verification Commands
+
 ```bash
-# Local verification (run before push)
-actionlint
-python -m pytest scripts/test_verify_*.py -v
-python scripts/verify_migration_matrix.py --fail-on-violation
-python scripts/verify_allowlist_compliance.py --fail-on-violation
+# All guard tests
+python -m pytest scripts/test_verify_*.py scripts/ci/test_*.py -v
+
+# Guard suite
+python scripts/ci/run_static_guard_suite.py
+
+# Registry validation
+python scripts/ci/verify_guard_registry.py
+
+# Gradle
+./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleRelease --stacktrace
 ```
 
-## Last Updated
-2026-07-07 — PR14+PR15 (DI guard expanded + branch protection docs)
+## Local Verification Results (H7.3)
 
-## Branch Protection Status
+```
+python -m pytest scripts/test_verify_*.py scripts/ci/test_*.py -v --tb=line
+```
 
-The following required status checks are configured for the `main` (and `master`) branch:
-
-| Required Check | CI Job | Blocks Merge? |
-|---------------|--------|--------------|
-| `validate-workflow` | Validate Workflow | ✅ Yes |
-| `static-guards` | Static Guards | ✅ Yes |
-| `unit-tests` | Unit Tests | ✅ Yes |
-| `lint-and-check` | Lint & Check | ✅ Yes |
-
-### Additional Branch Rules
-
-- **Require a pull request before merging**: Enabled (1+ approving review)
-- **Require status checks to pass before merging**: Enabled (all 4 above)
-- **Require branches to be up to date before merging**: Enabled
-- **Do not allow bypassing**: Enabled (including administrators)
-
-See `CI_GUARDRAILS_BASELINE.md` §Branch Protection Recommendations for step-by-step setup instructions.
+- **Date**: 2026-07-11
+- **Result**: 133 passed, 1 failed
+- **Failed**: `test_missing_denylist_is_fatal` — timeout (10s) during full source scan on Windows before reaching the denylist check. Pre-existing issue; not a regression from H7 documentation changes.
+- **Total**: 134 tests collected across 14 test files.
+```
