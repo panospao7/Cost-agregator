@@ -16,63 +16,72 @@
 
 - rule: G-IMPORT-01
   path: ImportCoordinator
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "Top-level import coordinator that delegates to CsvExpenseImporter or JsonExpenseImporter. Owns format detection and routing."
   owner: "@import-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: CsvExpenseImporter
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "CSV import path. Uses categoryDao.insert for category creation but routes expense creation through TransactionLifecycleCoordinator.createExpense(). Must NOT call expenseDao.insert directly — must use TransactionLifecycleCoordinator. Must propagate fileImportRunId to CreateExpenseRequest for provenance."
   owner: "@import-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: JsonExpenseImporter
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "JSON import path. Same pattern as CsvExpenseImporter — creates categories directly but routes expense creation through coordinator. Must NOT call expenseDao.insert directly — must use TransactionLifecycleCoordinator. Must propagate fileImportRunId to CreateExpenseRequest for provenance."
   owner: "@import-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: DatabaseBackupRepositoryImpl
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "Backup/restore infrastructure. Uses raw SQLite operations for database file swap — does not go through per-row lifecycle coordinators. Full DB replacement is acceptable for restore flows. Only allowed for backup/restore operations — not for individual row imports. Import verification must run post-restore."
   owner: "@backup-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: TransactionLifecycleCoordinator
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "Canonical expense creation path. All importers must ultimately route through this coordinator."
   owner: "@data-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: BankStatementLifecycleProcessor
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "Bank statement import path creates import runs and processes statements via lifecycle coordinator infrastructure."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: SourceLinkWriterImpl
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "Writes importBatchId and importRunId provenance fields during source link creation."
   owner: "@provenance-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: ImportSourceLinkPayloadFactory
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "Factory for creating source link payloads from import runs. Writes importRunId provenance."
   owner: "@provenance-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-IMPORT-01
   path: CreateExpenseSourceLinkMapper
-  symbol: "*"
+  symbol: "direct_dao_insert"
   reason: "Maps CreateExpenseRequest to source link payloads, propagating csvImportBatchId and fileImportRunId."
   owner: "@provenance-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"

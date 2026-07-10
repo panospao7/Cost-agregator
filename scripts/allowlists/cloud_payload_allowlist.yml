@@ -19,8 +19,8 @@
 
 - rule: G-CLOUD-01
   path: CloudPayloadPolicy.kt
-  symbol: "*"
+  symbol: "raw_RequestBody"
   reason: "Central fail-closed policy — canonical cloud payload construction"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"

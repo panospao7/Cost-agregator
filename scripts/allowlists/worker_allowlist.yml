@@ -19,7 +19,7 @@
   symbol: LocationBackfillWorker.broadCatch
   reason: "Pre-existing backfill worker — broad catch with Log diagnostic, CancellationSafe check uses fully-qualified name; worker uses WorkerExecutionGuard"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
@@ -27,7 +27,7 @@
   symbol: MerchantKeyBackfillWorker.broadCatch
   reason: "Pre-existing backfill worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
@@ -35,7 +35,7 @@
   symbol: DataRetentionWorker.daoMutation
   reason: "Pre-existing privacy worker — DAO mutation required for data cleanup (PrivacyAuditDao.insert), privacy fail-closed design"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
@@ -43,7 +43,7 @@
   symbol: ReceiptMatchingWorker.broadCatch
   reason: "Pre-existing receipt matching worker — broad catch for structured diagnostics, worker uses WorkerExecutionGuard"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
@@ -51,7 +51,7 @@
   symbol: BillReminderWorker.broadCatch
   reason: "Pre-existing bill reminder worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
@@ -59,7 +59,7 @@
   symbol: WarrantyExpirationWorker.daoMutation
   reason: "Pre-existing warranty worker — DAO mutation for warranty delivery claim lifecycle (WarrantyReminderDeliveryDao.claim), worker uses WorkerExecutionGuard"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
@@ -67,5 +67,5 @@
   symbol: WarrantyExpirationWorker.broadCatch
   reason: "Pre-existing warranty worker — broad catch for structured diagnostics (catch (e: Exception) at outer scope), worker uses WorkerExecutionGuard"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"

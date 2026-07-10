@@ -84,6 +84,7 @@ def _parse_allowed_writers_entries(data: dict) -> List[dict]:
             "reason": str(item.get("reason", "")),
             "allowed_until": str(item.get("allowed_until", "")) if item.get("allowed_until") else None,
             "owner": str(item.get("owner", "")) if item.get("owner") else None,
+            "linked_issue": str(item.get("linked_issue", "")) if item.get("linked_issue") else None,
             "lineno": idx,  # synthetic index instead of file line number
         }
         entries.append(entry)
@@ -110,6 +111,7 @@ def _parse_release_block_entries(data: dict) -> List[dict]:
             "reason": str(item.get("reason", "")),
             "allowed_until": str(item.get("allowed_until", "")) if item.get("allowed_until") else None,
             "owner": str(item.get("owner", "")) if item.get("owner") else None,
+            "linked_issue": str(item.get("linked_issue", "")) if item.get("linked_issue") else None,
             "lineno": idx,
         }
         entries.append(entry)

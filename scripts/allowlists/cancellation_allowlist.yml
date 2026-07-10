@@ -17,7 +17,7 @@
   symbol: CancellationSafe
   reason: "Purpose-built cancellation safety helper — provides runCatchingCancellable and rethrowIfCancellation"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -25,15 +25,15 @@
   symbol: WorkerExecutionGuard
   reason: "Canonical worker execution guard with built-in CancellationException handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Worker guard utility — safe by design for cancellation boundaries"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -41,7 +41,7 @@
   symbol: WorkerRunLogger
   reason: "Worker diagnostic logging with explicit cancellation/timeout handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -49,7 +49,7 @@
   symbol: WorkerReasonCodes
   reason: "Cancellation-to-reason-code mapper — by definition handles CE"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -57,7 +57,7 @@
   symbol: RetryableWorkerException
   reason: "Exception wrapper that documents CE propagation in its contract"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -65,7 +65,7 @@
   symbol: WorkerSpecScheduler
   reason: "Worker scheduling with explicit CE rethrow in catch blocks"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -73,7 +73,7 @@
   symbol: FileWorkerTerminalDiagnosticSink
   reason: "Terminal diagnostic sink with explicit timeout cancellation handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -81,7 +81,7 @@
   symbol: WorkerLeaseRegistryImpl
   reason: "Explicitly throws CancellationException for drain events — designed for cancellation"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -89,7 +89,7 @@
   symbol: EmailReceiptIngestionService
   reason: "All broad catch blocks include inline CE rethrow via `if (e is CancellationException) throw e`"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -97,7 +97,7 @@
   symbol: DataRetentionWorker
   reason: "Worker with explicit CE rethrow in all catch(Exception) blocks"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -105,7 +105,7 @@
   symbol: GroupTransactionCoordinator
   reason: "Explicitly catches CancellationException in separate catch handlers before broad catch"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -113,7 +113,7 @@
   symbol: RoomDomainTransactionRunner
   reason: "Transactional runner that documents and guarantees CE propagation"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -121,7 +121,7 @@
   symbol: DailyBriefingWorker
   reason: "Daily briefing worker with explicit timeout cancellation handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -129,7 +129,7 @@
   symbol: CloudQueryInterpretationService
   reason: "Cloud query service with explicit CancellationException catch block"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -137,7 +137,7 @@
   symbol: RestoreJournalImporter
   reason: "Restore journal importer with explicit CE rethrow in catch blocks"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -145,7 +145,7 @@
   symbol: OverpassNearbyService
   reason: "Network service with explicit CancellationException catch handler"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -153,7 +153,7 @@
   symbol: NominatimGeocodingService
   reason: "Geocoding service with explicit CancellationException catch handler"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -161,7 +161,7 @@
   symbol: MerchantKeyBackfillWorker
   reason: "Worker with explicit CancellationException catch handlers"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -169,7 +169,7 @@
   symbol: LocationBackfillWorker
   reason: "Worker with explicit CE rethrow in catch blocks"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -177,7 +177,7 @@
   symbol: CompositeGeocodingService
   reason: "Composite geocoding with explicit CancellationException catch handlers and rethrow"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -185,7 +185,7 @@
   symbol: CancellableHttpCall
   reason: "Low-level cancellation helper that constructs CancellationException instances"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -193,7 +193,7 @@
   symbol: BudgetMonitor
   reason: "Budget monitor with explicit CancellationException catch handlers and rethrows"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -201,7 +201,7 @@
   symbol: BudgetForecastingEngine
   reason: "Forecasting engine with documented CE propagation policy"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -209,7 +209,7 @@
   symbol: HybridExpenseClassifier
   reason: "ML classifier with explicit CE rethrow in catch block"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -217,7 +217,7 @@
   symbol: BankApiIntegration
   reason: "Bank API integration with documented CE propagation"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
@@ -225,7 +225,7 @@
   symbol: NotificationIntakeWorker
   reason: "Notification worker with comprehensive CE handling, separate CancellationException catch, and CancellationSafe.rethrowIfCancellation in general catch"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 # ── MIT-035 broad allowlist additions ──────────────────────
@@ -233,214 +233,214 @@
 # 1. Backup/Restore Diagnostics (infrastructure, safe)
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreDiagnosticsSink.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/backup/DataStoreMaintenanceSafeDiagnosticSink.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Backup diagnostics infrastructure — runCatching for diagnostic recording, not business logic"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 # 2. On-Device AI Services (structured error handling)
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceDedupeJudgeService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceNotificationParser.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceQueryInterpretationService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceReceiptItemCategorizationService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceReviewExplanationService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/OnDeviceDashboardBriefingService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "On-device AI service — broad catch for model inference fallback, structured error paths"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 # 3. Cloud AI Services (policy-gated)
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDashboardBriefingService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptAssistService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudCategorizationAssistService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudDedupeJudgeService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReceiptItemCategorizationService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudReviewExplanationService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/ai/provider/CloudWarrantyExtractionService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud AI service — gated by CloudPayloadPolicy, structured error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 # 4. Accounting/Export (safe infrastructure)
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/repository/AccountingExportRepository.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Analytics/export infrastructure — broad catch for aggregation operations"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Analytics/export infrastructure — broad catch for aggregation operations"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 # 5. Privacy/Cloud Policy (fail-closed utilities)
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/privacy/DefaultCloudPayloadPolicy.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Cloud payload policy — runCatching for policy enforcement, fail-closed design"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 # 6. Geocoding services (network error handling)
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/location/NominatimGeocodingService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Geocoding service — broad catch for network error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/location/GooglePlacesGeocodingService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Geocoding service — broad catch for network error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/location/GeoapifyGeocodingService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Geocoding service — broad catch for network error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/data/location/PhotonGeocodingService.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "Geocoding service — broad catch for network error handling"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 # 7. AI Use Cases (structured fallback)
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/SuggestCategoryFallbackUseCase.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "AI use case — structured fallback with safe reporting"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/DedupeJudgeInputBuilder.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "AI use case — structured fallback with safe reporting"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/ValidateBankStatementTransactionsUseCase.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "AI use case — structured fallback with safe reporting"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"
 
 - rule: G-CANCEL-01
   path: app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/CategorizationAssistInputBuilder.kt
-  symbol: "*"
+  symbol: "broadCatch"
   reason: "AI use case — structured fallback with safe reporting"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-035"

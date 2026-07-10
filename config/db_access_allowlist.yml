@@ -20,6 +20,7 @@ allowed_writers:
     requires_write_barrier: false
     reason: "canonical transaction lifecycle writer — guards at entry via withTransaction"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ExpenseWriteStore
     daos:
@@ -27,12 +28,14 @@ allowed_writers:
     requires_write_barrier: false
     reason: "write facade — calls check() inline before every DAO mutation"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ExpenseRepository
     daos:
       - expenseDao
     reason: "approved maintenance/backfill methods — each calls writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
   # ── Notifications ───────────────────────────────────────────────
@@ -45,6 +48,7 @@ allowed_writers:
       - pipelineDiagnosticEventDao
     reason: "canonical notification writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: DataRetentionWorker
     requires_write_barrier: false
@@ -54,6 +58,7 @@ allowed_writers:
       - expenseDao
     reason: "purge owner — must call WorkerExecutionGuard checkpoints"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "migrate to RetentionCoordinator"
 
   # ── Receipts / OCR / Email ──────────────────────────────────────
@@ -68,6 +73,7 @@ allowed_writers:
       - receiptExpenseLinkDao
     reason: "canonical receipt lifecycle writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ReceiptLinkService
     requires_write_barrier: false
@@ -76,6 +82,7 @@ allowed_writers:
       - scannedReceiptDao
     reason: "guarded link/unlink — must use DatabaseWriteBarrier not RestoreMaintenanceMode directly"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "refactor to use writeBarrier (PR 7)"
 
   - class: ReceiptRepository
@@ -84,6 +91,7 @@ allowed_writers:
       - scannedReceiptDao
     reason: "receipt status updates — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "route all writes through ReceiptLifecycleCoordinator (PR 7)"
 
   - class: NotificationProcessingPipeline
@@ -93,6 +101,7 @@ allowed_writers:
       - subscriptionCandidateDao
     reason: "notification processing pipeline — must call writeBarrier at entry (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "add writeBarrier at pipeline entry (PR 7)"
 
   # ── Recurring / Reminders ───────────────────────────────────────
@@ -103,6 +112,7 @@ allowed_writers:
       - recurringLifecycleEventDao
     reason: "canonical recurring rule writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: RecurringLifecycleCoordinator
     daos:
@@ -110,6 +120,7 @@ allowed_writers:
       - recurringLifecycleEventDao
     reason: "canonical recurring occurrence writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: RecurringOccurrenceMaterializer
     requires_write_barrier: false
@@ -118,12 +129,14 @@ allowed_writers:
       - expenseDao
     reason: "occurrence generation — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ReminderDeliveryCoordinator
     daos:
       - recurringReminderDeliveryDao
     reason: "canonical reminder delivery writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ManualRecurringExpenseRepository
     daos:
@@ -131,6 +144,7 @@ allowed_writers:
       - recurringLifecycleEventDao
     reason: "manual recurring expense writes — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "route through RecurringRuleLifecycleCoordinator (PR 7)"
 
   # ── Budget / Forecast / Planned ─────────────────────────────────
@@ -141,18 +155,21 @@ allowed_writers:
       - budgetAdjustmentDao
     reason: "canonical budget writer — notification timestamp updates must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: BudgetForecastingEngine
     daos:
       - budgetForecastDao
     reason: "forecast generation — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: PlannedExpenseRepository
     daos:
       - plannedExpenseDao
     reason: "canonical planned expense writer — must call writeBarrier on all paths"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Backup / Restore ────────────────────────────────────────────
 
@@ -161,6 +178,7 @@ allowed_writers:
     requires_write_barrier: false
     reason: "file-level backup/restore operations under maintenance mode — restore-internal DAO writes use fresh Room"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Workers ─────────────────────────────────────────────────────
   # Workers must NOT write DAOs directly.
@@ -175,6 +193,7 @@ allowed_writers:
       - clearExpenseLocation
     reason: "location backfill — routes through ExpenseRepository guarded methods"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
   - class: MerchantKeyBackfillWorker
@@ -185,6 +204,7 @@ allowed_writers:
       - incrementBackfillAttempts
     reason: "merchant key backfill — routes through ExpenseRepository guarded methods"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
   # ── Bank ────────────────────────────────────────────────────────
@@ -194,6 +214,7 @@ allowed_writers:
       - bankConnectionDao
     reason: "canonical bank connection writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "create BankConnectionLifecycleCoordinator (PR 7)"
 
   - class: BankSyncCoordinator
@@ -202,6 +223,7 @@ allowed_writers:
       - expenseDao
     reason: "canonical bank sync writer — routes through TransactionLifecycleCoordinator for expenses"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "create BankSyncCoordinator (PR 7)"
 
   # ── Export / Import ─────────────────────────────────────────────
@@ -212,6 +234,7 @@ allowed_writers:
       - categoryDao
     reason: "canonical import writer — routes through TransactionLifecycleCoordinator"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Diagnostics / Logging ───────────────────────────────────────
 
@@ -220,6 +243,7 @@ allowed_writers:
       - backgroundJobRunDao
     reason: "worker run logging — write barrier checked by WorkerExecutionGuard before entry"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: BillReminderWorker
     requires_write_barrier: false
@@ -227,6 +251,7 @@ allowed_writers:
       - pipelineDiagnosticEventDao
     reason: "diagnostic insert inside WorkerExecutionGuard.runGuarded — barrier already checked at entry"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: WarrantyTrackerRepository
     daos:
@@ -235,6 +260,7 @@ allowed_writers:
       - receiptEventDao
     reason: "canonical warranty writer — must call writeBarrier (PR 7 sweep)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "add writeBarrier at public method entrypoints"
 
   - class: SubscriptionManagerEngine
@@ -243,6 +269,7 @@ allowed_writers:
       - usageDao
     reason: "subscription price history and usage — writeBarrier already called at validateAndCreate; remaining methods need guard (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "add writeBarrier to recordPriceChange, recordUsage, updateSubscription"
 
   - class: SubscriptionManagementRepository
@@ -252,6 +279,7 @@ allowed_writers:
       - subscriptionUsageDao
     reason: "subscription management — writeBarrier already called on insertUsage, updateSubscription, deleteSubscriptionById"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: InvestmentTracker
     daos:
@@ -260,6 +288,7 @@ allowed_writers:
       - investmentTransactionDao
     reason: "canonical investment writer — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "add writeBarrier at public method entrypoints"
 
   - class: BankStatementLifecycleProcessor
@@ -269,6 +298,7 @@ allowed_writers:
       - scannedReceiptDao
     reason: "bank statement processing — writeBarrier checked at processBankStatement entry (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ReceiptSideEffectDispatcher
     requires_write_barrier: false
@@ -277,6 +307,7 @@ allowed_writers:
       - receiptEventDao
     reason: "receipt side effects — writeBarrier already injected and called on some paths; remaining paths need guard"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "add writeBarrier to all write paths (PR 7)"
 
   - class: SettlementCalculator
@@ -284,6 +315,7 @@ allowed_writers:
       - groupSettlementDao
     reason: "settlement recording — writeBarrier checked at recordSettlement (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: FinancialHealthScoreV2
     requires_write_barrier: false
@@ -291,18 +323,21 @@ allowed_writers:
       - healthScoreHistoryDao
     reason: "health score history — writeBarrier checked at saveToHistory (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: BudgetMonitor
     daos:
       - pipelineDiagnosticEventDao
     reason: "budget monitoring diagnostics — writeBarrier checked before each insert (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: RecurringExpenseRepository
     daos:
       - recurringLifecycleEventDao
     reason: "recurring lifecycle events — writeBarrier checked at writeLifecycleEvent (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: DismissReminderReceiver
     daos:
@@ -310,6 +345,7 @@ allowed_writers:
       - recurringLifecycleEventDao
     reason: "reminder dismiss — writeBarrier checked at onReceive entry (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: SnoozeReminderReceiver
     daos:
@@ -317,12 +353,14 @@ allowed_writers:
       - recurringLifecycleEventDao
     reason: "reminder snooze — writeBarrier checked at onReceive entry (PR 7)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ReviewQueueRepository
     daos:
       - userCorrectionDao
     reason: "user correction recording — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "add writeBarrier to correction write paths (PR 7)"
 
   - class: SharedExpenseDataPortAdapter
@@ -330,6 +368,7 @@ allowed_writers:
       - groupMemberDao
     reason: "group member management — writeBarrier already called at removeMember and addExpense"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: LegacyDataMigrationService
     daos:
@@ -337,6 +376,7 @@ allowed_writers:
     requires_write_barrier: false
     reason: "debug-only legacy data migration"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: CsvExpenseImporter
     requires_write_barrier: false
@@ -344,6 +384,7 @@ allowed_writers:
       - categoryDao
     reason: "CSV import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: JsonExpenseImporter
     requires_write_barrier: false
@@ -351,12 +392,14 @@ allowed_writers:
       - categoryDao
     reason: "JSON import — category lookup/create; routes expenses through TransactionLifecycleCoordinator"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: PipelineDiagnosticEventRepository
     daos:
       - pipelineDiagnosticEventDao
     reason: "pipeline diagnostics — must use MaintenanceSafeDiagnosticSink during blocked modes (PR 9)"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "route through MaintenanceSafeDiagnosticSink (PR 9)"
 
   # ── AI / Assistant ──────────────────────────────────────────────
@@ -368,6 +411,7 @@ allowed_writers:
       - aiChatSessionDao
     reason: "AI artifact persistence — read-heavy; writes must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: AiChatRepositoryImpl
     requires_write_barrier: false
@@ -376,12 +420,14 @@ allowed_writers:
       - aiChatMessageDao
     reason: "AI chat session persistence"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: AnomalyAlertRepositoryImpl
     daos:
       - anomalyAlertDao
     reason: "anomaly alert persistence"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Investments ─────────────────────────────────────────────────
 
@@ -392,12 +438,14 @@ allowed_writers:
       - investmentValueDao
     reason: "canonical investment writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: BusinessExpenseRepository
     daos:
       - mileageTrackingDao
     reason: "business mileage tracking — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Savings ─────────────────────────────────────────────────────
 
@@ -407,6 +455,7 @@ allowed_writers:
       - savingsSweepPlanDao
     reason: "canonical savings writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Subscriptions ───────────────────────────────────────────────
 
@@ -417,6 +466,7 @@ allowed_writers:
       - subscriptionUsageDao
     reason: "canonical subscription writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Warranties ──────────────────────────────────────────────────
 
@@ -426,6 +476,7 @@ allowed_writers:
       - warrantyLifecycleEventDao
     reason: "canonical warranty writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Groups ──────────────────────────────────────────────────────
 
@@ -438,6 +489,7 @@ allowed_writers:
       - groupLifecycleEventDao
     reason: "canonical group lifecycle writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: GroupTransactionCoordinator
     requires_write_barrier: false
@@ -448,6 +500,7 @@ allowed_writers:
       - transactionEventDao
     reason: "atomic group-expense creation within outer transaction"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: GroupsRepositoryImpl
     requires_write_barrier: false
@@ -456,6 +509,7 @@ allowed_writers:
       - groupMemberDao
     reason: "group membership management — must call writeBarrier"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
     allowed_until: "migrate to GroupLifecycleCoordinator (PR 7)"
 
   # ── Categories / Merchants ──────────────────────────────────────
@@ -465,6 +519,7 @@ allowed_writers:
       - categoryDao
     reason: "canonical category writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: MerchantCategoryRepository
     daos:
@@ -473,6 +528,7 @@ allowed_writers:
       - merchantLocationDao
     reason: "canonical merchant writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Spending Challenges ─────────────────────────────────────────
 
@@ -481,6 +537,7 @@ allowed_writers:
       - spendingChallengeDao
     reason: "canonical challenge writer"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   # ── Exchange Rates ──────────────────────────────────────────────
 
@@ -489,6 +546,7 @@ allowed_writers:
       - exchangeRateDao
     reason: "canonical exchange rate writer — network fetch, not user data"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
 debug_only_writers:
   # These classes may write DAOs only in DEBUG builds.
@@ -500,17 +558,20 @@ debug_only_writers:
       - restoreDebugSnapshot
     reason: "debug-only data management"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: BudgetRepository
     debug_only: true
     reason: "debug-only budget snapshot restore"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: DatabaseBackupRepositoryImpl
     methods_only:
       - importDatabase
     reason: "legacy .db import is debug-only in production"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
 migration_only_writers:
   # Room migration classes are exempt from the static guard.

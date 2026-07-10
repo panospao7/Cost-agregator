@@ -9,27 +9,34 @@ release_block_tests:
   - class: TransactionLifecycleCoordinatorTest
     reason: "Critical: transaction lifecycle correctness"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: DatabaseMigrationTest
     reason: "Critical: database migration integrity"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: WorkerExecutionGuardTest
     reason: "Critical: worker guard enforcement"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ExportImportRoundtripTest
     reason: "Critical: backup/restore roundtrip integrity"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: ReceiptMatchingWorkerTest
     reason: "Critical: receipt matching pipeline"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: RecurringExpenseEngineTest
     reason: "Critical: recurring expense engine"
     owner: "@panospao7"
+    linked_issue: "MIT-003"
 
   - class: MoneyTest
     reason: "Critical: money/currency math correctness"
     owner: "@panospao7"
+    linked_issue: "MIT-003"

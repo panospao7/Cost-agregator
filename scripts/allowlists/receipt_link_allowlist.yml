@@ -15,102 +15,116 @@
 
 - rule: G-RCPT-LINK-01
   path: ReceiptLinkService
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Single canonical owner of receipt-expense linking. Writes expenseId via copy+update and atomic claim."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: ReceiptLifecycleCoordinator
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Central lifecycle coordinator for receipt processing. Needs write access for deduplication, save, and maintenance."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: RoomReceiptLifecycleEventWriter
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Event writer implementation that persists receipt lifecycle events. May read receipt state; writes are event-audit-only."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: ReceiptLifecycleEventWriter
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Interface definition — no actual DAO mutations, but included for completeness."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: BankStatementLifecycleProcessor
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Bank statement import path uses ScannedReceiptDao and receipt lifecycle event writer for statement processing."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: ReceiptRepository
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Repository layer for receipt CRUD. Authorized to insert/update receipts. Legacy path predates lifecycle coordinator."
   owner: "@data-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: ReceiptMatchLifecycleService
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Receipt matching service that links receipts to expenses via ReceiptLinkService. May read receipt state."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: ScannedReceiptDao_Impl
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Room-generated DAO implementation. The actual database operations live here."
   owner: "@data-team"
-  expires: "permanent"
+  expires: "2027-01-01"
 
 # Migration/backfill paths
+  linked_issue: "MIT-003"
 - rule: G-RCPT-LINK-01
   path: SourceLinkBackfillWorker
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Provenance backfill worker reads ScannedReceipt state to reconstruct source links."
   owner: "@provenance-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: SourceLinkWriterImpl
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Writes source link metadata referencing receipt IDs."
   owner: "@provenance-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: ReceiptSideEffectPlanner
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Receipt lifecycle side-effect planning. Updates suggestedExpenseId and matchStatus (NOT expenseId) via scannedReceiptDao.update. Uses writeBarrier for all writes."
   owner: "@receipt-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: WarrantyTrackerRepository
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Warranty tracking reads receipt state to associate warranties with expenses."
   owner: "@feature-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: ExportAnonymizer
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Privacy/export sanitization that nulls rawOcrText on scanned_receipts during export. Does NOT touch expenseId or receipt link state. Legitimate privacy operation."
   owner: "@privacy-team"
-  expires: "permanent"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
 
 - rule: G-RCPT-LINK-01
   path: LegacyDataConsistencyChecker
-  symbol: "*"
+  symbol: "direct_dao_mutation"
   reason: "Consistency checker reads receipt state to detect orphaned/mislinked receipts."
   owner: "@data-team"
-  expires: "permanent"
+  expires: "2027-01-01"
 
 # Room migration classes are always allowed for schema changes.
 # They are identified by file names matching *Migration*.kt
+  linked_issue: "MIT-003"

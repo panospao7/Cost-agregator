@@ -4,7 +4,7 @@
 # Every entry MUST have:
 #   - rule: G-DI-01
 #   - path: Kotlin filename (e.g. "DebugExpenseRepository.kt")
-#   - symbol: "*" (wildcard) or specific symbol name
+#   - symbol: specific symbol name (e.g. "debug_type_in_production", "http_namespace")
 #   - reason: why this file is safe despite using debug/mock types
 #   - owner: @github-handle
 #   - expires: YYYY-MM-DD or "permanent"
@@ -14,17 +14,17 @@
 
 - rule: G-DI-01
   path: DebugExpenseRepository.kt
-  symbol: "*"
+  symbol: "debug_type_in_production"
   reason: "Debug-only repository — guarded by BuildConfig.DEBUG at callsite"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
 - rule: G-DI-01
   path: CurrencyRatesRepositoryImpl.kt
-  symbol: "*"
+  symbol: "http_namespace"
   reason: "XML namespace URIs (http://javax.xml.XMLConstants) are not network URLs — standard XML security configuration"
   owner: "@panospao7"
-  expires: "permanent"
+  expires: "2027-01-01"
   linked_issue: "MIT-003"
 
