@@ -111,6 +111,52 @@ def test_expired_entry(tmp_path, monkeypatch):
         f"Expected EXPIRED_ALLOWED_UNTIL violation, got: {violations}"
 
 
+def test_wildcard_symbol_is_violation(tmp_path, monkeypatch):
+    """symbol: '*' should be flagged — WARNING during grace period, FAIL after."""
+    # Freeze today to before the grace period end
+    import datetime
+    monkeypatch.setattr(vac.datetime, 'date',
+                        type('FrozenDate', (datetime.date,),
+                             {'today': staticmethod(lambda: datetime.date(2026, 8, 1)),
+                              'fromisoformat': datetime.date.fromisoformat,
+                              '__sub__': datetime.date.__sub__}))
+
+    yaml_content = """- rule: G-TEST-01
+  path: app/Test.kt
+  symbol: "*"
+  reason: "Test wildcard entry"
+  owner: "@tester"
+  expires: "2027-01-01"
+  linked_issue: "MIT-999"
+"""
+    yaml_file = _write_yaml(tmp_path, yaml_content)
+    project_root = _make_project_root_yaml(tmp_path)
+    violations = vac.check_yaml_allowlist(yaml_file, project_root=project_root)
+    # During grace period, wildcard is a WARNING, not a violation
+    wildcard_violations = [v for v in violations if "WILDCARD_SYMBOL" in v]
+    assert len(wildcard_violations) == 0, \
+        f"Expected no WILDCARD_SYMBOL violations during grace period, got: {wildcard_violations}"
+
+
+def test_permanent_expiry_is_violation(tmp_path, monkeypatch):
+    """expires: 'permanent' should be flagged as warning."""
+    yaml_content = """- rule: G-TEST-01
+  path: app/Test.kt
+  symbol: "TestSymbol"
+  reason: "Test permanent expiry entry"
+  owner: "@tester"
+  expires: "permanent"
+  linked_issue: "MIT-999"
+"""
+    yaml_file = _write_yaml(tmp_path, yaml_content)
+    project_root = _make_project_root_yaml(tmp_path)
+    violations = vac.check_yaml_allowlist(yaml_file, project_root=project_root)
+    # Permanent expiry is always a WARNING (never a hard violation)
+    permanent_violations = [v for v in violations if "PERMANENT_EXPIRY" in v]
+    assert len(permanent_violations) == 0, \
+        f"Expected no PERMANENT_EXPIRY violations (warning only), got: {permanent_violations}"
+
+
 # ── Text Allowlist Tests ───────────────────────────────────────────────────────
 
 def test_valid_text_entry(tmp_path):

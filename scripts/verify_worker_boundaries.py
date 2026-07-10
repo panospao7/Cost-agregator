@@ -30,6 +30,7 @@ import argparse
 import os
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
@@ -99,6 +100,38 @@ CANCELLATION_SAFE_RE = re.compile(
 # Class name extraction
 CLASS_NAME_RE = re.compile(r'class\s+(\w+Worker)\b')
 
+# ── Violation data ──────────────────────────────────────────────────
+
+@dataclass
+class Violation:
+    """Structured violation record used for allowlist-aware filtering."""
+    rule_id: str
+    rel_path: str
+    lineno: int
+    symbol: str
+    reason: str
+    line: str = ""
+
+    def __str__(self) -> str:
+        return f"{self.rule_id} {self.rel_path}:{self.lineno} {self.symbol} — {self.reason}"
+
+    def __contains__(self, item: str) -> bool:
+        """Support ``'substring' in violation`` for test assertions."""
+        return item in str(self)
+
+
+def violation(rel_path: str, lineno: int, symbol: str, reason: str, line: str = "") -> Violation:
+    """Create a structured violation record."""
+    return Violation(
+        rule_id=RULE_ID,
+        rel_path=rel_path,
+        lineno=lineno,
+        symbol=symbol,
+        reason=reason,
+        line=line,
+    )
+
+
 # ── Allowlist ──────────────────────────────────────────────────────
 
 def load_allowlist(path: str) -> List[dict]:
@@ -119,26 +152,33 @@ def load_allowlist(path: str) -> List[dict]:
     return allowlist
 
 
-def is_allowlisted_worker(class_name: str, allowlist: List[dict]) -> bool:
-    """Check if a worker class is allowlisted."""
+def matches_allowlist(violation: Violation, allowlist: List[dict]) -> bool:
+    """Check whether a specific violation is covered by an allowlist entry.
+
+    An allowlist entry matches when rule_id, file path, and symbol all
+    match exactly.  Unlike the previous whole-file skip, this means other
+    violations in the same file are still detected.
+    """
+    norm_path = violation.rel_path.replace("\\", "/")
     for entry in allowlist:
-        if entry.get("rule") != RULE_ID:
+        if entry.get("rule") != violation.rule_id:
             continue
-        if entry.get("worker_class") == class_name:
-            return True
+        entry_path = (entry.get("path") or "").replace("\\", "/")
+        if entry_path != norm_path:
+            continue
+        entry_symbol = entry.get("symbol") or ""
+        if entry_symbol != violation.symbol:
+            continue
+        return True
     return False
 
 
 # ── Violation detection ────────────────────────────────────────────
 
-def violation(rel_path: str, lineno: int, reason: str, line: str = "") -> str:
-    """Format a violation string."""
-    return f"{RULE_ID} {rel_path}:{lineno} {reason}"
 
-
-def scan_file(filepath: str, rel_path: str, allowlist: List[dict]) -> List[str]:
+def scan_file(filepath: str, rel_path: str) -> List[Violation]:
     """Scan a single file for G-WORKER-01 violations."""
-    violations: List[str] = []
+    violations: List[Violation] = []
 
     try:
         with open(filepath, encoding="utf-8") as f:
@@ -157,16 +197,13 @@ def scan_file(filepath: str, rel_path: str, allowlist: List[dict]) -> List[str]:
     class_name_match = CLASS_NAME_RE.search(content)
     class_name = class_name_match.group(1) if class_name_match else "UnknownWorker"
 
-    # Skip allowlisted workers
-    if is_allowlisted_worker(class_name, allowlist):
-        return violations
-
     # ── Check 1: WorkerExecutionGuard usage ────────────────────────
     uses_guard = bool(GUARD_INVOCATION_RE.search(content))
 
     if not uses_guard:
         violations.append(
             violation(rel_path, 1,
+                      f"{class_name}.noguard",
                       f"CoroutineWorker '{class_name}' does not use WorkerExecutionGuard "
                       f"(no runGuarded/runGuardedWithContext call). Route it through the guard "
                       f"or add to worker_allowlist.yml with documented rationale.",
@@ -189,6 +226,7 @@ def scan_file(filepath: str, rel_path: str, allowlist: List[dict]) -> List[str]:
             if DAO_VAR_RE.search(line) and DAO_MUTATION_RE.search(line):
                 violations.append(
                     violation(rel_path, i,
+                              f"{class_name}.daoMutation",
                               f"Worker '{class_name}' directly calls DAO mutator — "
                               "route writes through repository/lifecycle coordinator",
                               stripped[:120])
@@ -209,6 +247,7 @@ def scan_file(filepath: str, rel_path: str, allowlist: List[dict]) -> List[str]:
                     if DO_WORK_RE.search(line):
                         violations.append(
                             violation(rel_path, i,
+                                      f"{class_name}.badReturn",
                                       f"doWork() in '{class_name}' has no Result.success() / "
                                       "Result.failure() / toWorkerResult() return path — "
                                       "all code paths must produce a ListenableWorker.Result",
@@ -226,6 +265,7 @@ def scan_file(filepath: str, rel_path: str, allowlist: List[dict]) -> List[str]:
                 if DO_WORK_RE.search(line):
                     violations.append(
                         violation(rel_path, i,
+                                  f"{class_name}.badReturn",
                                   f"doWork() in guarded worker '{class_name}' does not call "
                                   "toWorkerResult() — use guardResult.toWorkerResult() or "
                                   "result.toWorkerResult() to bridge the guard",
@@ -250,6 +290,7 @@ def scan_file(filepath: str, rel_path: str, allowlist: List[dict]) -> List[str]:
             if not has_cancellation_check and not has_diagnostic:
                 violations.append(
                     violation(rel_path, i,
+                              f"{class_name}.broadCatch",
                               f"Worker '{class_name}' catches broad Exception/Throwable "
                               "without CancellationSafe.check AND without diagnostic recording — "
                               "add CancellationSafe.rethrowIfCancellation(e) + structured diagnostic",
@@ -258,6 +299,7 @@ def scan_file(filepath: str, rel_path: str, allowlist: List[dict]) -> List[str]:
             elif not has_cancellation_check:
                 violations.append(
                     violation(rel_path, i,
+                              f"{class_name}.broadCatch",
                               f"Worker '{class_name}' catches broad Exception/Throwable "
                               "without CancellationSafe check — cancellation must be rethrown",
                               stripped[:120])
@@ -318,7 +360,7 @@ def main():
 
     allowlist = load_allowlist(args.allowlist)
 
-    all_violations: List[str] = []
+    all_violations: List[Violation] = []
     worker_files_scanned = 0
 
     for dirpath, dirnames, filenames in os.walk(source_dir):
@@ -330,21 +372,30 @@ def main():
             rel_path = os.path.relpath(filepath, root)
 
             worker_files_scanned += 1
-            file_violations = scan_file(filepath, rel_path, allowlist)
+            file_violations = scan_file(filepath, rel_path)
             all_violations.extend(file_violations)
+
+    # Filter violations through the allowlist (per-symbol, not whole-file)
+    allowed_count = 0
+    filtered_violations: List[Violation] = []
+    for v in all_violations:
+        if matches_allowlist(v, allowlist):
+            allowed_count += 1
+        else:
+            filtered_violations.append(v)
 
     # Count actual worker files detected
     # We already scan all .kt files but we need to count how many were workers
     actual_workers = sum(
-        1 for v in all_violations if "CoroutineWorker" in v
+        1 for v in all_violations if "CoroutineWorker" in v.reason
     ) if all_violations else 0
 
     print(f"Scanned production source tree for G-WORKER-01 violations.")
 
-    if all_violations:
-        for v in all_violations:
-            print(v)
-        print(f"\nFound {len(all_violations)} violation(s).")
+    if filtered_violations:
+        for v in filtered_violations:
+            print(str(v))
+        print(f"\nFound {len(filtered_violations)} violation(s) ({allowed_count} suppressed by allowlist).")
 
         if args.fail_on_violation:
             print("FAIL: G-WORKER-01 violations (--fail-on-violation set)", file=sys.stderr)

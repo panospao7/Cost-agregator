@@ -2,14 +2,16 @@
 test_verify_di_release_boundaries.py
 Acceptance tests for the DI/Release Binding Guard (G-DI-01).
 
-7 test cases:
+9 test cases:
   1. @Provides returning Mock type — FAILS
   2. @Provides with BuildConfig.DEBUG guard — PASSES
   3. http:// URL in DI module — FAILS
   4. Allowlisted file — PASSES
-  5. http:// URL in production code (non-DI) — FAILS
-  6. Log.d with requestBody — FAILS
-  7. https:// URL — PASSES
+  5. isMinifyEnabled false in release — FAILS
+  6. http:// URL in production code (non-DI) — FAILS
+  7. Log.d with requestBody — FAILS
+  8. https:// URL — PASSES
+  9. Allowlisted gradle file with isMinifyEnabled=false still detects isDebuggable=true
 
 Run with: python -m pytest scripts/test_verify_di_release_boundaries.py -v
 """
@@ -396,4 +398,57 @@ object SecureConfig {
     assert not fatal
     assert violations == [], (
         f"Expected NO violations for https:// URLs, got: {violations}"
+    )
+
+
+# ── Test 8: Allowlisted gradle file still checks other issues ────────────────
+
+def test_allowlisted_gradle_file_still_checks_other_issues(tmp_path, monkeypatch):
+    """Gradle file with allowlisted isMinifyEnabled=false still detects isDebuggable=true."""
+    monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+
+    gradle_file = _write_gradle(
+        tmp_path,
+        "build.gradle.kts",
+        """plugins { id("com.android.application") }
+
+android {
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            isDebuggable = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+}
+""",
+    )
+
+    allowlist_content = f"""\
+- rule: {RULE_ID}
+  path: build.gradle.kts
+  symbol: "isMinifyEnabled = false"
+  reason: "Minification disabled intentionally for this project's release configuration"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+"""
+    allowlist = load_allowlist(
+        _make_allowlist(tmp_path, allowlist_content)
+    )
+    violations, fatal = scan_gradle_file(gradle_file, allowlist)
+
+    assert not fatal
+    # Only isDebuggable = true should be reported; isMinifyEnabled = false is allowlisted
+    assert len(violations) == 1, (
+        f"Expected exactly 1 violation (isDebuggable=true), got {len(violations)}: {violations}"
+    )
+    assert any("isDebuggable" in v for v in violations), (
+        f"Violation should mention isDebuggable, got: {violations}"
+    )
+    assert not any("isMinifyEnabled" in v for v in violations), (
+        f"isMinifyEnabled should be allowlisted and not appear in violations: {violations}"
     )

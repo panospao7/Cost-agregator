@@ -6,6 +6,9 @@ Checks:
   - Every allowlist entry has a reason/justification
   - Every allowlist entry has an owner (where format supports it)
   - No expired temporary entries (allowed_until dates)
+  - No wildcard symbols (symbol: "*") — grace period until 2026-10-01
+  - No permanent expiry (expires: "permanent") — warning only
+  - Every entry has a linked_issue — warning only
   - YAML allowlists have the standard fields
   - Plain-text allowlists have reason comments on each entry
 
@@ -144,6 +147,8 @@ def _parse_flat_yaml_entries(data: List[dict]) -> List[dict]:
             "owner": str(item.get("owner", "")) if item.get("owner") else None,
             "lineno": idx,
             "linked_issue": str(item.get("linked_issue", "")) if item.get("linked_issue") else None,
+            "symbol": str(item.get("symbol", "")) if item.get("symbol") else None,
+            "expires_raw": str(item.get("expires", "")) if item.get("expires") else None,
         }
         entries.append(entry)
 
@@ -246,6 +251,38 @@ def check_yaml_allowlist(path: str, project_root: str = None) -> List[str]:
                     f"entry for '{cls_name}' expired on {expiry_date.isoformat()} — "
                     f"remove allowlist entry or update expiry"
                 )
+
+        # Check for wildcard symbols (grace period until OWNER_GRACE_PERIOD_END)
+        symbol = entry.get("symbol")
+        if symbol == "*":
+            msg = (
+                f"ALLOWLIST-COMPLIANCE {identifier} WILDCARD_SYMBOL: "
+                f"entry for path={cls_name} uses wildcard symbol='*' — "
+                f"replace with exact symbol before grace period expires {OWNER_GRACE_PERIOD_END}"
+            )
+            if is_grace_period:
+                print(f"WARNING: {msg}", file=sys.stderr)
+            else:
+                violations.append(msg)
+
+        # Check expires is not "permanent"
+        expires_raw = entry.get("expires_raw", "")
+        if expires_raw and str(expires_raw).strip().lower() == "permanent":
+            msg = (
+                f"ALLOWLIST-COMPLIANCE {identifier} PERMANENT_EXPIRY: "
+                f"entry for '{cls_name}' uses expires='permanent' — "
+                f"replace with YYYY-MM-DD or linked issue milestone"
+            )
+            print(f"WARNING: {msg}", file=sys.stderr)
+
+        # Check linked_issue is present
+        if not entry.get("linked_issue"):
+            msg = (
+                f"ALLOWLIST-COMPLIANCE {identifier} MISSING_LINKED_ISSUE: "
+                f"entry for '{cls_name}' has no linked_issue — "
+                f"add linked issue reference"
+            )
+            print(f"WARNING: {msg}", file=sys.stderr)
 
     return violations
 

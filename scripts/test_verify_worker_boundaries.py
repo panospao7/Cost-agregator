@@ -27,6 +27,8 @@ with _mock.patch("builtins.__import__", side_effect=__import__):
 
 scan_file = _mod.scan_file
 violation = _mod.violation
+matches_allowlist = _mod.matches_allowlist
+load_allowlist = _mod.load_allowlist
 RULE_ID = _mod.RULE_ID
 
 
@@ -75,22 +77,22 @@ class UnguardedWorker @AssistedInject constructor(
 """.strip())
 
     allowlist_path = _yaml(tmp_path, "# empty allowlist\n")
-    allowlist = _mod.load_allowlist(allowlist_path)
+    allowlist = load_allowlist(allowlist_path)
 
     rel_path = "worker/UnguardedWorker.kt"
     violations = scan_file(
         os.path.join(str(tmp_path), "worker", "UnguardedWorker.kt"),
         rel_path,
-        allowlist
     )
+    filtered = [v for v in violations if not matches_allowlist(v, allowlist)]
 
-    assert len(violations) > 0, (
-        f"Expected violations for unguarded worker, got {len(violations)}"
+    assert len(filtered) > 0, (
+        f"Expected violations for unguarded worker, got {len(filtered)}"
     )
     has_guard_violation = any("WorkerExecutionGuard" in v or "runGuarded" in v
-                               for v in violations)
+                               for v in filtered)
     assert has_guard_violation, (
-        f"Expected violation about missing WorkerExecutionGuard, got: {violations}"
+        f"Expected violation about missing WorkerExecutionGuard, got: {filtered}"
     )
 
 
@@ -137,17 +139,17 @@ class GuardedWorker @AssistedInject constructor(
 """.strip())
 
     allowlist_path = _yaml(tmp_path, "# empty allowlist\n")
-    allowlist = _mod.load_allowlist(allowlist_path)
+    allowlist = load_allowlist(allowlist_path)
 
     rel_path = "worker/GuardedWorker.kt"
     violations = scan_file(
         os.path.join(str(tmp_path), "worker", "GuardedWorker.kt"),
         rel_path,
-        allowlist
     )
+    filtered = [v for v in violations if not matches_allowlist(v, allowlist)]
 
-    assert len(violations) == 0, (
-        f"Expected no violations for guarded worker, got: {violations}"
+    assert len(filtered) == 0, (
+        f"Expected no violations for guarded worker, got: {filtered}"
     )
 
 
@@ -196,22 +198,22 @@ class DaoMutatingWorker @AssistedInject constructor(
 """.strip())
 
     allowlist_path = _yaml(tmp_path, "# empty allowlist\n")
-    allowlist = _mod.load_allowlist(allowlist_path)
+    allowlist = load_allowlist(allowlist_path)
 
     rel_path = "worker/DaoMutatingWorker.kt"
     violations = scan_file(
         os.path.join(str(tmp_path), "worker", "DaoMutatingWorker.kt"),
         rel_path,
-        allowlist
     )
+    filtered = [v for v in violations if not matches_allowlist(v, allowlist)]
 
     # The guard itself is used, but Daos are mutated directly
-    assert len(violations) > 0, (
-        f"Expected violations for worker with direct DAO mutation, got {len(violations)}"
+    assert len(filtered) > 0, (
+        f"Expected violations for worker with direct DAO mutation, got {len(filtered)}"
     )
-    has_dao_violation = any("DAO mutator" in v or "Dao" in v for v in violations)
+    has_dao_violation = any("DAO mutator" in v or "Dao" in v for v in filtered)
     assert has_dao_violation, (
-        f"Expected violation about direct DAO mutation, got: {violations}"
+        f"Expected violation about direct DAO mutation, got: {filtered}"
     )
 
 
@@ -242,23 +244,108 @@ class ExemptWorker @AssistedInject constructor(
 }
 """.strip())
 
+    rel_path = "worker/ExemptWorker.kt"
     allowlist_content = f"""\
 - rule: {RULE_ID}
-  worker_class: ExemptWorker
+  path: {rel_path}
+  symbol: ExemptWorker.noguard
   reason: "Test allowlisted non-DB worker"
   owner: "@tester"
   expires: "permanent"
 """
     allowlist_path = _yaml(tmp_path, allowlist_content)
-    allowlist = _mod.load_allowlist(allowlist_path)
+    allowlist = load_allowlist(allowlist_path)
 
-    rel_path = "worker/ExemptWorker.kt"
     violations = scan_file(
         os.path.join(str(tmp_path), "worker", "ExemptWorker.kt"),
         rel_path,
-        allowlist
+    )
+    filtered = [v for v in violations if not matches_allowlist(v, allowlist)]
+
+    assert len(filtered) == 0, (
+        f"Expected no violations for allowlisted worker, got: {filtered}"
     )
 
-    assert len(violations) == 0, (
-        f"Expected no violations for allowlisted worker, got: {violations}"
+
+# ── Per-symbol allowlist vs whole-file skip ────────────────────────
+
+def test_allowlisted_file_still_checks_other_rules(tmp_path):
+    """An allowlisted file should still be scanned — only matching violations suppressed.
+
+    Creates a worker that triggers TWO different violation categories:
+    1. Missing WorkerExecutionGuard (noguard)
+    2. Broad catch without diagnostics (broadCatch)
+
+    When only the noguard symbol is allowlisted, the broadCatch violation
+    must still be reported — proving we no longer skip the entire file.
+    """
+    src = os.path.join(str(tmp_path), "worker")
+    _write_kt(src, "PartialExemptWorker.kt", """\
+package com.example.worker
+
+import android.content.Context
+import androidx.hilt.work.HiltWorker
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
+
+@HiltWorker
+class PartialExemptWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
+
+    override suspend fun doWork(): Result {
+        try {
+            return Result.success()
+        } catch (e: Exception) {
+            // no cancellation check, no diagnostic logging
+            throw e
+        }
+    }
+}
+""".strip())
+
+    rel_path = "worker/PartialExemptWorker.kt"
+
+    # Allowlist only the missing-guard violation — NOT the broad-catch one.
+    allowlist_content = f"""\
+- rule: {RULE_ID}
+  path: {rel_path}
+  symbol: PartialExemptWorker.noguard
+  reason: "Test partial exemption — only the guard bypass is reviewed"
+  owner: "@tester"
+  expires: "permanent"
+"""
+    allowlist_path = _yaml(tmp_path, allowlist_content)
+    allowlist = load_allowlist(allowlist_path)
+
+    violations = scan_file(
+        os.path.join(str(tmp_path), "worker", "PartialExemptWorker.kt"),
+        rel_path,
+    )
+    filtered = [v for v in violations if not matches_allowlist(v, allowlist)]
+
+    # We still expect ONE violation: the broad catch (broadCatch) that was NOT allowlisted.
+    assert len(filtered) >= 1, (
+        f"Expected at least one un-suppressed violation for partial-exempt worker, "
+        f"got {len(filtered)}: {filtered}"
+    )
+    has_broad_catch_violation = any(
+        ("broadCatch" in str(v)) or ("broad" in v.reason.lower())
+        for v in filtered
+    )
+    assert has_broad_catch_violation, (
+        f"Expected a broad-catch violation to still fire after allowlisting only noguard, "
+        f"got: {filtered}"
+    )
+
+    # And NO noguard violation should survive
+    has_noguard_violation = any(
+        "noguard" in str(v) for v in filtered
+    )
+    assert not has_noguard_violation, (
+        f"Expected noguard violation to be suppressed by allowlist, "
+        f"got: {filtered}"
     )

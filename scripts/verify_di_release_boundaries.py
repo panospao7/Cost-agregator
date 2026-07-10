@@ -96,28 +96,41 @@ def load_allowlist(path: str) -> List[dict]:
     return allowlist
 
 
-def is_allowlisted(filepath: str, allowlist: List[dict]) -> bool:
-    """Check if a file path is in the allowlist.
+def is_allowlisted(filepath: str, allowlist: List[dict], symbol: str = None) -> bool:
+    """Check if a specific violation (file + optional symbol) is in the allowlist.
+
+    When `symbol` is None (default), matches ANY allowlist entry for the file
+    regardless of the entry's symbol (backward-compatible wildcard behavior).
+
+    When `symbol` is provided, the allowlist entry's symbol must be '*' (wildcard)
+    or match `symbol` exactly.
 
     Supports partial path matching: if the allowlist entry's path is a suffix
-    of filepath, or vice versa, it's considered a match. Symbols are ignored
-    (wildcard match) when symbol is '*' or empty.
+    of filepath, or vice versa, it's considered a match.
     """
     norm_filepath = filepath.replace("\\", "/")
     for entry in allowlist:
         if entry.get("rule") != RULE_ID:
             continue
         entry_path = (entry.get("path") or "").replace("\\", "/")
-        symbol = entry.get("symbol", "")
-        # Symbol wildcard or exact match (always match if symbol is '*' or empty)
-        if symbol and symbol != "*":
-            continue
+        entry_symbol = entry.get("symbol", "")
+
         # Path matching: suffix match either direction
-        if (norm_filepath.endswith(entry_path) or entry_path.endswith(norm_filepath)):
+        path_match = (
+            norm_filepath.endswith(entry_path)
+            or entry_path.endswith(norm_filepath)
+            or os.path.basename(norm_filepath) == os.path.basename(entry_path)
+        )
+        if not path_match:
+            continue
+
+        # Symbol matching
+        if symbol is None:
+            # Backward compatible: no symbol filter, match any entry for this file
             return True
-        # Also match by basename
-        if os.path.basename(norm_filepath) == os.path.basename(entry_path):
+        if entry_symbol == "*" or entry_symbol == symbol:
             return True
+
     return False
 
 
@@ -140,10 +153,6 @@ def scan_di_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]
     lines = content.splitlines()
     rel_path = os.path.relpath(filepath, PROJECT_ROOT)
 
-    # Skip allowlisted files entirely
-    if is_allowlisted(rel_path, allowlist):
-        return violations, False
-
     # Must be a Hilt @Module
     if not re.search(r'@Module', content):
         return violations, False
@@ -163,11 +172,12 @@ def scan_di_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]
                 continue
             for pattern, label in SUSPICIOUS_TYPE_PATTERNS:
                 if pattern.search(line):
-                    violations.append(
-                        f"{RULE_ID} {rel_path}:{i} "
-                        f"{label} type referenced in DI module without BuildConfig.DEBUG guard — "
-                        f"may leak debug/development behavior into release builds"
-                    )
+                    if not is_allowlisted(rel_path, allowlist, symbol=label):
+                        violations.append(
+                            f"{RULE_ID} {rel_path}:{i} "
+                            f"{label} type referenced in DI module without BuildConfig.DEBUG guard — "
+                            f"may leak debug/development behavior into release builds"
+                        )
                     break  # one violation per line
 
     # ── Check 2: http:// (non-SSL) URLs ──────────────────────────────────────
@@ -184,11 +194,12 @@ def scan_di_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], bool]
             continue
         match = http_pattern.search(line)
         if match:
-            violations.append(
-                f"{RULE_ID} {rel_path}:{i} "
-                f"http:// (non-SSL) URL in DI module — use https:// in release builds: "
-                f"{match.group()}"
-            )
+            if not is_allowlisted(rel_path, allowlist, symbol="http://"):
+                violations.append(
+                    f"{RULE_ID} {rel_path}:{i} "
+                    f"http:// (non-SSL) URL in DI module — use https:// in release builds: "
+                    f"{match.group()}"
+                )
 
     return violations, False
 
@@ -216,9 +227,6 @@ def scan_full_codebase_http(filepath: str, allowlist: List[dict]) -> Tuple[List[
     lines = content.splitlines()
     rel_path = os.path.relpath(filepath, PROJECT_ROOT)
 
-    if is_allowlisted(rel_path, allowlist):
-        return violations, False
-
     http_pattern = re.compile(r'http://[^\s\'\"\)\],;]+')
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
@@ -232,11 +240,12 @@ def scan_full_codebase_http(filepath: str, allowlist: List[dict]) -> Tuple[List[
             continue
         match = http_pattern.search(line)
         if match:
-            violations.append(
-                f"{RULE_ID} {rel_path}:{i} "
-                f"http:// (non-SSL) URL in production code — use https:// in release builds: "
-                f"{match.group()}"
-            )
+            if not is_allowlisted(rel_path, allowlist, symbol="http://"):
+                violations.append(
+                    f"{RULE_ID} {rel_path}:{i} "
+                    f"http:// (non-SSL) URL in production code — use https:// in release builds: "
+                    f"{match.group()}"
+                )
 
     return violations, False
 
@@ -264,9 +273,6 @@ def scan_suspicious_types_production(filepath: str, allowlist: List[dict]) -> Tu
     lines = content.splitlines()
     rel_path = os.path.relpath(filepath, PROJECT_ROOT)
 
-    if is_allowlisted(rel_path, allowlist):
-        return violations, False
-
     # Skip @Module files — already handled by scan_di_file
     if re.search(r'@Module', content):
         return violations, False
@@ -284,11 +290,12 @@ def scan_suspicious_types_production(filepath: str, allowlist: List[dict]) -> Tu
                 continue
             for pattern, label in SUSPICIOUS_TYPE_PATTERNS:
                 if pattern.search(line):
-                    violations.append(
-                        f"{RULE_ID} {rel_path}:{i} "
-                        f"{label} type referenced in production code without BuildConfig.DEBUG guard — "
-                        f"may leak debug/development behavior into release builds"
-                    )
+                    if not is_allowlisted(rel_path, allowlist, symbol=label):
+                        violations.append(
+                            f"{RULE_ID} {rel_path}:{i} "
+                            f"{label} type referenced in production code without BuildConfig.DEBUG guard — "
+                            f"may leak debug/development behavior into release builds"
+                        )
                     break  # one violation per line
 
     return violations, False
@@ -318,9 +325,6 @@ def scan_log_body_payload(filepath: str, allowlist: List[dict]) -> Tuple[List[st
     lines = content.splitlines()
     rel_path = os.path.relpath(filepath, PROJECT_ROOT)
 
-    if is_allowlisted(rel_path, allowlist):
-        return violations, False
-
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
         if not stripped:
@@ -338,11 +342,12 @@ def scan_log_body_payload(filepath: str, allowlist: List[dict]) -> Tuple[List[st
         for pattern in BODY_PAYLOAD_VAR_PATTERNS:
             match = pattern.search(line)
             if match:
-                violations.append(
-                    f"{RULE_ID} {rel_path}:{i} "
-                    f"Body/payload logging detected — Log statement references "
-                    f"'{match.group()}' which may leak request/response data into production logs"
-                )
+                if not is_allowlisted(rel_path, allowlist, symbol=match.group()):
+                    violations.append(
+                        f"{RULE_ID} {rel_path}:{i} "
+                        f"Body/payload logging detected — Log statement references "
+                        f"'{match.group()}' which may leak request/response data into production logs"
+                    )
                 break  # one violation per line
 
     return violations, False
@@ -357,10 +362,6 @@ def scan_gradle_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], b
     """
     violations: List[str] = []
     rel_path = os.path.relpath(filepath, PROJECT_ROOT)
-
-    # Skip allowlisted files entirely
-    if is_allowlisted(rel_path, allowlist):
-        return violations, False
 
     try:
         with open(filepath, encoding="utf-8") as f:
@@ -399,19 +400,21 @@ def scan_gradle_file(filepath: str, allowlist: List[dict]) -> Tuple[List[str], b
 
             # Inside release block — check for isMinifyEnabled = false
             if re.search(r'isMinifyEnabled\s*=\s*false', stripped):
-                violations.append(
-                    f"{RULE_ID} {rel_path}:{i} "
-                    f"isMinifyEnabled = false in release build type — "
-                    f"debug information may leak into release APK; enable minification"
-                )
+                if not is_allowlisted(rel_path, allowlist, symbol="isMinifyEnabled = false"):
+                    violations.append(
+                        f"{RULE_ID} {rel_path}:{i} "
+                        f"isMinifyEnabled = false in release build type — "
+                        f"debug information may leak into release APK; enable minification"
+                    )
 
             # Also check for debuggable = true in release
             if re.search(r'isDebuggable\s*=\s*true', stripped):
-                violations.append(
-                    f"{RULE_ID} {rel_path}:{i} "
-                    f"isDebuggable = true in release build type — "
-                    f"should be false for production release builds"
-                )
+                if not is_allowlisted(rel_path, allowlist, symbol="isDebuggable = true"):
+                    violations.append(
+                        f"{RULE_ID} {rel_path}:{i} "
+                        f"isDebuggable = true in release build type — "
+                        f"should be false for production release builds"
+                    )
 
     return violations, False
 

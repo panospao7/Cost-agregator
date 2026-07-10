@@ -3,51 +3,69 @@
 #
 # Every entry MUST have:
 #   - rule: G-WORKER-01
-#   - worker_class: the simple class name of the worker
-#   - reason: why this worker is safe without the guard
+#   - path:   relative file path from project root
+#   - symbol: per-violation match key (ClassName.category)
+#   - reason: why this worker/site is safe
 #   - owner: @github-handle
 #   - expires: YYYY-MM-DD or "permanent"
+#
+# MATCHING: a violation is suppressed only when rule, path, AND symbol all
+# match exactly — other violations in the same file are still detected.
 #
 # Keep this list minimal. The guard is the rule; allowlist is the exception.
 #
 - rule: G-WORKER-01
-  worker_class: LocationBackfillWorker
+  path: app/src/main/java/com/yourname/expensetracker/data/location/LocationBackfillWorker.kt
+  symbol: LocationBackfillWorker.broadCatch
+  reason: "Pre-existing backfill worker — broad catch with Log diagnostic, CancellationSafe check uses fully-qualified name; worker uses WorkerExecutionGuard"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-WORKER-01
+  path: app/src/main/java/com/yourname/expensetracker/data/location/MerchantKeyBackfillWorker.kt
+  symbol: MerchantKeyBackfillWorker.broadCatch
   reason: "Pre-existing backfill worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
-  worker_class: MerchantKeyBackfillWorker
-  reason: "Pre-existing backfill worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
+  symbol: DataRetentionWorker.daoMutation
+  reason: "Pre-existing privacy worker — DAO mutation required for data cleanup (PrivacyAuditDao.insert), privacy fail-closed design"
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
-  worker_class: DataRetentionWorker
-  reason: "Pre-existing privacy worker — DAO mutation required for data cleanup, privacy fail-closed design"
-  owner: "@panospao7"
-  expires: "permanent"
-  linked_issue: "MIT-003"
-
-- rule: G-WORKER-01
-  worker_class: ReceiptMatchingWorker
+  path: app/src/main/java/com/yourname/expensetracker/service/receiptmatching/ReceiptMatchingWorker.kt
+  symbol: ReceiptMatchingWorker.broadCatch
   reason: "Pre-existing receipt matching worker — broad catch for structured diagnostics, worker uses WorkerExecutionGuard"
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
-  worker_class: BillReminderWorker
+  path: app/src/main/java/com/yourname/expensetracker/service/reminder/BillReminderWorker.kt
+  symbol: BillReminderWorker.broadCatch
   reason: "Pre-existing bill reminder worker — broad catch pattern reviewed, worker uses WorkerExecutionGuard"
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
 
 - rule: G-WORKER-01
-  worker_class: WarrantyExpirationWorker
-  reason: "Pre-existing warranty worker — DAO mutation required for warranty lifecycle, worker uses WorkerExecutionGuard"
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  symbol: WarrantyExpirationWorker.daoMutation
+  reason: "Pre-existing warranty worker — DAO mutation for warranty delivery claim lifecycle (WarrantyReminderDeliveryDao.claim), worker uses WorkerExecutionGuard"
+  owner: "@panospao7"
+  expires: "permanent"
+  linked_issue: "MIT-003"
+
+- rule: G-WORKER-01
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  symbol: WarrantyExpirationWorker.broadCatch
+  reason: "Pre-existing warranty worker — broad catch for structured diagnostics (catch (e: Exception) at outer scope), worker uses WorkerExecutionGuard"
   owner: "@panospao7"
   expires: "permanent"
   linked_issue: "MIT-003"
