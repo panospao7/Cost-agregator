@@ -67,9 +67,17 @@ FILE_OP_APPROVED = {
     "DatabaseIntegrityScanner",
     "LegacyDataMigrationService",
     "SqliteSnapshotCreator",
-    "DatabaseMigrations",
-    "FinancialRescueCoordinator",
 }
+
+# Structural exceptions for exact operations that are intrinsically required.
+# Format: (file_suffix, class_name, method_pattern, operation_type)
+# These are NOT architectural debt — they are proven structural necessities.
+STRUCTURAL_EXCEPTIONS = [
+    # Exact migration SQL inside named MIGRATION objects
+    ("DatabaseMigrations.kt", "DatabaseMigrations", r"MIGRATION_\d+_\d+", "execSQL"),
+    # Exact rescue operations under exclusive maintenance ownership
+    ("FinancialRescueCoordinator.kt", "FinancialRescueCoordinator", r"performMaintenanceRescue", "raw_sqlite"),
+]
 
 # ── YAML parse ────────────────────────────────────────────────────────────────
 
@@ -85,12 +93,24 @@ def load_allowlist(path: str) -> dict:
     """
     entries = {}
     if not os.path.exists(path):
-        print(f"WARNING: allowlist not found at {path}")
-        return entries
+        print(f"ERROR: allowlist not found at {path}", file=sys.stderr)
+        sys.exit(2)
 
     with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
+    try:
+        entries = _parse_allowlist_lines(lines)
+    except Exception as e:
+        print(f"ERROR: malformed allowlist file at {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    return entries
+
+
+def _parse_allowlist_lines(lines: list) -> dict:
+    """Parse allowlist YAML-like lines into the entries dict."""
+    entries = {}
     current = None
     in_daos = False
     in_methods = False
@@ -202,10 +222,47 @@ def _barrier_before_line(lines: list, fun_start: int, mutation_lineno: int) -> b
     return False
 
 
+def _matches_structural_exception(
+    rel_path: str,
+    class_name: str,
+    current_fun: str | None,
+    lineno: int,
+    line: str,
+    lines: list,
+) -> bool:
+    """Return True if the file operation matches a proven structural exception.
+
+    Checks: file_suffix, class_name, operation_type in line,
+    and method_pattern in either current_fun or nearby enclosing context.
+
+    Special op_type prefixes:
+      - "raw_" matches any file operation (catch-all wildcard for a class/method)
+      - otherwise the op_type string must appear literally in the line
+    """
+    for file_suffix, exc_class, method_pattern, op_type in STRUCTURAL_EXCEPTIONS:
+        if not rel_path.replace("\\", "/").endswith(file_suffix):
+            continue
+        if class_name != exc_class:
+            continue
+        # "raw_" is a wildcard: matches any file op in the approved class/method
+        if not op_type.startswith("raw_"):
+            if op_type not in line:
+                continue
+        # Check method_pattern in current function name
+        if current_fun and re.search(method_pattern, current_fun):
+            return True
+        # Search backwards in lines for the pattern (for val/object declarations)
+        for back in range(max(0, lineno - 15), lineno):
+            if re.search(method_pattern, lines[back]):
+                return True
+    return False
+
+
 # ── Scan ──────────────────────────────────────────────────────────────────────
 
-def scan(source_dir: str, allowlist: dict) -> list:
+def scan(source_dir: str, allowlist: dict) -> tuple[list, int]:
     violations = []
+    files_scanned = 0
 
     for root, dirs, files in os.walk(source_dir):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
@@ -213,6 +270,8 @@ def scan(source_dir: str, allowlist: dict) -> list:
         for filename in files:
             if not filename.endswith(".kt"):
                 continue
+
+            files_scanned += 1
 
             class_name = filename.removesuffix(".kt")
 
@@ -225,23 +284,45 @@ def scan(source_dir: str, allowlist: dict) -> list:
             try:
                 with open(filepath, encoding="utf-8") as f:
                     lines = f.readlines()
-            except OSError:
+            except OSError as e:
+                violations.append((
+                    rel_path, 0, "",
+                    f"ERROR: cannot read {rel_path}: {e}"
+                ))
                 continue
 
             full_text = "".join(lines)
             entry = allowlist.get(class_name)
 
             # ── File-operation guard ──────────────────────────────────────
-            if class_name not in FILE_OP_APPROVED:
-                for lineno, line in enumerate(lines, start=1):
-                    s = line.strip()
-                    if s.startswith("//") or s.startswith("*"):
-                        continue
-                    if FILE_OP_PATTERN.search(line):
-                        violations.append((
-                            rel_path, lineno, line.rstrip(),
-                            "FORBIDDEN_FILE_OP: DB file operation outside approved backup/restore class"
-                        ))
+            file_op_fun = None
+            for lineno, line in enumerate(lines, start=1):
+                s = line.strip()
+                if s.startswith("//") or s.startswith("*"):
+                    continue
+
+                # Track current function name
+                m = FUN_PATTERN.match(line)
+                if m:
+                    file_op_fun = m.group(1)
+
+                if not FILE_OP_PATTERN.search(line):
+                    continue
+
+                # Check structural exceptions first
+                if _matches_structural_exception(
+                    rel_path, class_name, file_op_fun, lineno, line, lines
+                ):
+                    continue
+
+                # Check FILE_OP_APPROVED
+                if class_name in FILE_OP_APPROVED:
+                    continue
+
+                violations.append((
+                    rel_path, lineno, line.rstrip(),
+                    "FORBIDDEN_FILE_OP: DB file operation outside approved backup/restore class"
+                ))
 
             # ── DAO mutation guard ────────────────────────────────────────
             current_fun = None
@@ -333,7 +414,7 @@ def scan(source_dir: str, allowlist: dict) -> list:
                             f"MISSING_WRITE_BARRIER: {class_name}.{current_fun} has DAO mutation but no writeBarrier before it"
                         ))
 
-    return violations
+    return violations, files_scanned
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -344,20 +425,33 @@ def main():
     args = parser.parse_args()
 
     if not os.path.isdir(SOURCE_DIR):
-        print(f"ERROR: source directory not found: {SOURCE_DIR}")
-        sys.exit(1)
+        print(f"ERROR: source directory not found: {SOURCE_DIR}", file=sys.stderr)
+        sys.exit(2)
 
     allowlist = load_allowlist(ALLOWLIST_PATH)
-    violations = scan(SOURCE_DIR, allowlist)
+    violations, files_scanned = scan(SOURCE_DIR, allowlist)
 
-    if not violations:
+    if files_scanned == 0:
+        print("ERROR: no Kotlin source files found to scan in " + SOURCE_DIR, file=sys.stderr)
+        sys.exit(2)
+
+    # Separate infrastructure errors (unreadable files) from real violations
+    read_errors = [v for v in violations if v[1] == 0 and v[3].startswith("ERROR:")]
+    real_violations = [v for v in violations if v not in read_errors]
+
+    if read_errors:
+        for _, _, _, reason in read_errors:
+            print(reason, file=sys.stderr)
+        sys.exit(2)
+
+    if not real_violations:
         print("PASS: DB access boundaries — no unauthorized DAO mutations found.")
         sys.exit(0)
 
     status = "FAIL" if args.fail_on_violation else "WARNING"
-    print(f"{status}: DB access boundaries — {len(violations)} violation(s):\n")
+    print(f"{status}: DB access boundaries — {len(real_violations)} violation(s):\n")
 
-    for rel_path, lineno, line_text, reason in violations:
+    for rel_path, lineno, line_text, reason in real_violations:
         print(f"  [{reason}]")
         print(f"  {rel_path}:{lineno}")
         print(f"    {line_text.strip()}")

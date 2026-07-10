@@ -38,22 +38,6 @@ allowed_writers:
     linked_issue: "MIT-003"
     allowed_until: "migrate to ExpenseWriteStore (PR 11)"
 
-  - class: DefaultExpenseCategoryAssignmentService
-    requires_write_barrier: false
-    daos:
-      - transactionEventDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - class: DebugExpenseAuditWriter
-    requires_write_barrier: false
-    daos:
-      - transactionEventDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
   # ── Notifications ───────────────────────────────────────────────
 
   - class: NotificationRepository
@@ -88,32 +72,6 @@ allowed_writers:
       - pendingReviewDao
       - receiptExpenseLinkDao
     reason: "canonical receipt lifecycle writer"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - class: ReceiptInsertResolver
-    requires_write_barrier: false
-    daos:
-      - scannedReceiptDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - class: ReceiptMatchLifecycleService
-    requires_write_barrier: false
-    daos:
-      - scannedReceiptDao
-      - receiptEventDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - class: ReceiptSideEffectPlanner
-    requires_write_barrier: false
-    daos:
-      - scannedReceiptDao
-      - receiptEventDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
@@ -216,15 +174,6 @@ allowed_writers:
 
   # ── Backup / Restore ────────────────────────────────────────────
 
-  - class: RestoreJournalImporter
-    requires_write_barrier: false
-    daos:
-      - operationRunDao
-      - operationRunEventDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
   - class: DatabaseBackupRepositoryImpl
     daos: []
     requires_write_barrier: false
@@ -278,15 +227,6 @@ allowed_writers:
     linked_issue: "MIT-003"
     allowed_until: "create BankSyncCoordinator (PR 7)"
 
-  - class: BankApiIntegration
-    requires_write_barrier: false
-    daos:
-      - bankConnectionDao
-      - pendingReviewDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
   # ── Export / Import ─────────────────────────────────────────────
 
   - class: ImportCoordinator
@@ -297,39 +237,10 @@ allowed_writers:
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Provenance / Source Links ────────────────────────────────────
-
-  - class: SourceLinkBackfillWorker
-    requires_write_barrier: false
-    daos:
-      - entitySourceLinkDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - class: SourceLinkWriterImpl
-    requires_write_barrier: false
-    daos:
-      - entitySourceLinkDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  # ── Diagnostics / Logging ───────────────────────────────────────
-
   - class: WorkerRunLoggerImpl
     daos:
       - backgroundJobRunDao
     reason: "worker run logging — write barrier checked by WorkerExecutionGuard before entry"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - class: OperationRunRecorder
-    requires_write_barrier: false
-    daos:
-      - operationRunDao
-      - operationRunEventDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
@@ -557,15 +468,6 @@ allowed_writers:
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  - class: SmartBillNegotiationEngine
-    requires_write_barrier: false
-    daos:
-      - negotiationOutcomeDao
-      - subscriptionPriceHistoryDao
-    reason: "Pre-existing pattern — reviewed during CI guardrails hardening"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
   # ── Warranties ──────────────────────────────────────────────────
 
   - class: WarrantyRepository
@@ -643,16 +545,6 @@ allowed_writers:
     daos:
       - exchangeRateDao
     reason: "canonical exchange rate writer — network fetch, not user data"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  # ── Warranty Expiration ──────────────────────────────────────────
-
-  - class: WarrantyExpirationWorker
-    daos:
-      - warrantyReminderDeliveryDao
-    requires_write_barrier: false
-    reason: "Worker requires DAO access for warranty reminder delivery"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
