@@ -168,7 +168,7 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
         candidates: List<DebugTransaction>
     ): String = buildString {
         if (rawOcrText.isBlank()) {
-            Timber.w("buildValidationPrompt: rawOcrText is blank — AI validation will have no OCR context")
+            Timber.w("buildValidationPrompt: OCR text input is blank — AI validation will have no context")
         }
         appendLine("You are a bank statement transaction validator.")
         appendLine("Below is OCR text from a bank statement. Candidate transactions were extracted by a parser.")

@@ -33,8 +33,9 @@ class BillNegotiationViewModel @Inject constructor(
             try {
                 val result = negotiationEngine.analyzeNegotiationOpportunities()
                 _opportunities.value = result
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                e.printStackTrace()
                 _opportunities.value = emptyList()
             } finally {
                 _isLoading.value = false

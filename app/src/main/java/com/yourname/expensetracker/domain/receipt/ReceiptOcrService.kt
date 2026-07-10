@@ -559,7 +559,7 @@ class ReceiptOcrService @Inject constructor(
             throw e
         } catch (e: Exception) {
             Timber.e(e, "PDF processing failed")
-            throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
+            throw IllegalStateException("RECEIPT_PDF_SCAN_FAILED", e)
         } finally {
             // MED-01 FIX: Add logging to catch blocks
             try { renderer?.close() } catch (e: Exception) {
@@ -692,7 +692,7 @@ class ReceiptOcrService @Inject constructor(
             if (decodedBitmap?.isRecycled == false) {
                 decodedBitmap?.recycle()
             }
-            throw IllegalStateException("Failed to load image: ${e.message}", e)
+            throw IllegalStateException("RECEIPT_IMAGE_LOAD_FAILED", e)
         } finally {
             if (tempFile.exists()) tempFile.delete()
         }

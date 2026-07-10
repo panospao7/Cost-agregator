@@ -71,9 +71,17 @@ android {
                 showStackTraces = true
                 exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
-}
-
     }
+
+    lint {
+        // Baseline captures pre-existing MissingTranslation issues only.
+        // TEMPORARY: checkOnly limits lint to MissingTranslation during baseline generation.
+        // After running `./gradlew :app:lintDebug --stacktrace` and verifying
+        // app/lint-baseline.xml was generated, REMOVE the checkOnly line below
+        // to re-enable full lint checks (the baseline will still suppress
+        // the recorded MissingTranslation issues).
+        baseline = file("lint-baseline.xml")}
+}
 }
 
 ksp {

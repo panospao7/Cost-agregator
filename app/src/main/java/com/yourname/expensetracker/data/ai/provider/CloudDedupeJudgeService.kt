@@ -160,8 +160,8 @@ class CloudDedupeJudgeService @Inject constructor(
                         } else {
                             val body = response.body?.string()
                                 ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-        val parsed = parseResponse(body, input)
-            ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
+                            val parsed = parseResponse(body, input)
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
                             AiServiceResult.Success(parsed)
                         }
                     }

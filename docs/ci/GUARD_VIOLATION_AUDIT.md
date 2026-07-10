@@ -231,9 +231,43 @@ Use `MultiCurrencyRepository` to normalize the budget amount before this computa
 | Event Writers | 45 | WARNING | LOW | 1 day |
 | Privacy (G5) | 1 | WARNING | MEDIUM | 1 hour |
 | Money (G-MONEY-15) | 2 | WARNING | MEDIUM | 1–2 hours |
+| Lint Baseline Policy | N/A | **BLOCKING** | **HIGH** | Maintained |
 
 **Total violations: 326**
 **Blocking: 10 (PII Logging)**
+
+---
+
+## Lint Baseline Policy
+
+**Guard:** `scripts/verify_lint_baseline_policy.py`
+**CI status: BLOCKING**
+
+The project uses an Android Lint baseline (`app/lint-baseline.xml`) to suppress
+2219 pre-existing `MissingTranslation` warnings. These are known resource gaps;
+they do NOT block builds and are tracked as pre-existing debt only.
+
+### Policy rules
+
+| Rule | Description |
+|---|---|
+| Only MissingTranslation | The baseline must NOT contain any issue IDs other than `MissingTranslation`. All other lint issues (e.g. `NewApi`, `UnusedResources`, etc.) must be fixed in source, not baselined. |
+| Count guard | The MissingTranslation count must not increase beyond the recorded baseline (`--max-missing-translations 2219`). An increase indicates the baseline was regenerated wholesale rather than surgically updated. |
+| No silent decay | New `MissingTranslation` issues still fail lint — the baseline only suppresses the pre-existing 2219. |
+
+### How to update the baseline
+
+If a legitimate new `MissingTranslation` is introduced (e.g., new languages added):
+
+1. Fix the real lint errors (do NOT baseline `NewApi`, `UnusedResources`, etc.).
+2. Run baseline generation for MissingTranslation only:
+   ```bash
+   # Temporarily set checkOnly.add("MissingTranslation") in app/build.gradle.kts
+   ./gradlew :app:lintDebug --stacktrace
+   # Verify app/lint-baseline.xml contains only MissingTranslation
+   ```
+3. Update the `--max-missing-translations` parameter in the CI guard manifest.
+4. Remove `checkOnly.add("MissingTranslation")` from `app/build.gradle.kts`.
 
 ---
 

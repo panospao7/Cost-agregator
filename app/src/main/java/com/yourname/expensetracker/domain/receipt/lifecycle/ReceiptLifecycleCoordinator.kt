@@ -588,7 +588,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val result = bankStatementLifecycleProcessor.processBankStatement(uri)
         return result.fold(
             onSuccess = { DomainResult.Success(it) },
-            onFailure = { DomainResult.Error(exception = it, message = it.message) }
+            onFailure = { DomainResult.Error(exception = it, message = "BANK_STATEMENT_PROCESSING_FAILED") }
         )
     }
 
@@ -651,7 +651,7 @@ suspend fun saveEmailReceiptTyped(receipt: ScannedReceipt): SaveEmailReceiptResu
         }
     } catch (e: Exception) {
         CancellationSafe.rethrowIfCancellation(e)
-        SaveEmailReceiptResult.Failed(e.message ?: "Unknown error")
+        SaveEmailReceiptResult.Failed("EMAIL_RECEIPT_SAVE_FAILED")
     }
 }
 
@@ -1400,7 +1400,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
     private class DuplicateEmailReceiptException(
         val existingReceiptId: Long,
         val reason: String
-    ) : RuntimeException("Duplicate email receipt: $reason (existingId=$existingReceiptId)")
+    ) : RuntimeException("EMAIL_RECEIPT_DUPLICATE: existingId=$existingReceiptId")
 
     /**
      * P3-BLOCKER-03: Thrown inside the coordinator's insert transaction when

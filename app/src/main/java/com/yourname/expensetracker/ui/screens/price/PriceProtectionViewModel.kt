@@ -43,7 +43,7 @@ class PriceProtectionViewModel @Inject constructor(
         .flatMapLatest { priceTracker.monitorPriceDrops() }
         .onEach { _isLoading.value = false }
         .catch {
-            it.printStackTrace()
+            if (it is kotlinx.coroutines.CancellationException) throw it
             _isLoading.value = false
             emit(emptyList())
         }
@@ -94,8 +94,10 @@ class PriceProtectionViewModel @Inject constructor(
 
                 // Trigger a refresh of the shared price-drop stream.
                 refreshSignals.emit(Unit)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Price protection data load failed — UI handles empty states gracefully
             } finally {
                 _isLoading.value = false
             }
@@ -107,8 +109,9 @@ class PriceProtectionViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 refreshSignals.emit(Unit)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                e.printStackTrace()
                 _isLoading.value = false
             } finally {
                 // set to false in stream onEach/catch to reflect completed refresh signal

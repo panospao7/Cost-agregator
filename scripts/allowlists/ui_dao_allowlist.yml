@@ -10,10 +10,4 @@
 #
 # Add entries sparingly — the default state should be NO UI-layer DAO usage.
 
-- rule: G-UI-DAO-01
-  path: app/src/main/java/com/yourname/expensetracker/ui/screens/bank/BankConnectionsViewModel.kt
-  symbol: "*"
-  reason: "Bank connections ViewModel — pre-existing pattern, requires DAO access for bank integration. Reviewed P2-18."
-  owner: "@panospao7"
-  expires: "permanent"
-  linked_issue: "MIT-003"
+

@@ -80,79 +80,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install test dependencies
+      - name: Install Python dependencies
         run: pip install pytest pyyaml
 
-      - name: Verify privacy boundaries (warning mode — pre-existing violations)
-        run: python3 scripts/verify_privacy_boundaries.py --root . || true
+      - name: Run static guard suite
+        id: guard-suite
+        run: python3 scripts/ci/run_static_guard_suite.py
 
-      - name: Verify DB access boundaries (warning mode — 70 pre-existing violations)
-        run: python3 scripts/verify_db_access_boundaries.py --fail-on-violation || true
-
-      - name: Verify event writer boundaries (warning mode — 45 pre-existing violations)
-        run: python3 scripts/verify_event_writers.py --fail-on-violation || true
-
-      - name: Verify money boundaries (warning mode — pre-existing violations)
-        run: python3 scripts/verify_money_boundaries.py --root . || true
-
-      - name: Verify source provenance boundaries
-        run: python3 scripts/verify_source_provenance_boundaries.py --root .
-
-      # G-CANCEL-01 — runs in warning mode only (no --fail-on-violation).
-      # There are ~248 pre-existing violations that need gradual migration.
-      # Will be promoted to --fail-on-violation once the backlog is cleared.
-      - name: Verify cancellation boundaries (warning mode — 248 pre-existing violations)
-        run: python3 scripts/verify_cancellation_boundaries.py
-
-      - name: Verify UI/ViewModel DAO boundaries
-        run: python3 scripts/verify_ui_dao_boundaries.py --fail-on-violation
-
-      - name: Verify worker boundaries
-        run: python3 scripts/verify_worker_boundaries.py --fail-on-violation
-
-      - name: Verify receipt link boundaries
-        run: python3 scripts/verify_receipt_link_boundaries.py --fail-on-violation
-
-      - name: Verify import lifecycle boundaries
-        run: python3 scripts/verify_import_lifecycle_boundaries.py --fail-on-violation
-
-      - name: Verify cloud payload boundaries
-        run: python3 scripts/verify_cloud_payload_boundaries.py --fail-on-violation
-
-      - name: Verify PII logging boundaries
-        run: python3 scripts/verify_pii_logging_boundaries.py --fail-on-violation
-
-      - name: Verify DI/release boundaries
-        run: python3 scripts/verify_di_release_boundaries.py --fail-on-violation
-
-      - name: Verify allowlist compliance
-        run: python3 scripts/verify_allowlist_compliance.py --fail-on-violation
-
-      - name: Verify migration matrix
-        run: python3 scripts/verify_migration_matrix.py --fail-on-violation
-
-      # G-IGNORE-01 — blocking with budget baseline 29.
-      # Detects @Ignore and @Disabled annotations, validates reasons,
-      # and checks release-block denylist. Exceeding baseline fails CI.
-      - name: Verify ignored test budget (blocking — baseline 29)
-        run: python3 scripts/verify_ignored_test_budget.py --fail-on-violation --baseline 29
-
-      - name: Run guard script tests
-        run: python -m pytest scripts/test_*.py -v
-
-      - name: Print guard summary
+      - name: Upload guard suite outputs
         if: always()
-        run: |
-          echo "Static guard run complete. Check individual step outputs above."
-
-      - name: Upload guard output
-        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: static-guard-output
-          path: |
-            scripts/*.log
-            scripts/output/
+          name: static-guard-results
+          path: build/ci/static-guards/
+          if-no-files-found: error
           retention-days: 7
 
   unit-tests:
