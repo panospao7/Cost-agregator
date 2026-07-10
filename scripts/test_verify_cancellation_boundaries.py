@@ -572,3 +572,30 @@ def test_scan_returns_list():
     )
     assert fatal, "Non-existent file should cause fatal error"
     assert isinstance(violations, list)
+
+
+# ── Test: missing allowlist is fatal (exit code 2) ─────────────────────────
+
+def test_missing_allowlist_is_fatal():
+    """Missing configured allowlist yields exit code 2."""
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "scripts/verify_cancellation_boundaries.py", "--allowlist", "nonexistent_file.yml"],
+        capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 2, f"Expected exit 2, got {result.returncode}"
+
+
+# ── Test: malformed YAML is fatal (exit code 2) ────────────────────────────
+
+def test_malformed_yaml_is_fatal(tmp_path):
+    """Malformed YAML allowlist yields exit code 2."""
+    # Create malformed YAML
+    bad_yaml = tmp_path / "bad.yml"
+    bad_yaml.write_text("{this is not valid yaml: [}")
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "scripts/verify_cancellation_boundaries.py", "--allowlist", str(bad_yaml)],
+        capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 2, f"Expected exit 2 for malformed YAML, got {result.returncode}"

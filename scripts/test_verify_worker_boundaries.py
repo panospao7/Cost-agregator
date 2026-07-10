@@ -349,3 +349,15 @@ class PartialExemptWorker @AssistedInject constructor(
         f"Expected noguard violation to be suppressed by allowlist, "
         f"got: {filtered}"
     )
+
+
+# ── Test: missing allowlist is fatal (exit code 2) ─────────────────────────
+
+def test_missing_allowlist_is_fatal():
+    """Missing configured allowlist yields exit code 2."""
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "scripts/verify_worker_boundaries.py", "--allowlist", "nonexistent_file.yml"],
+        capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 2, f"Expected exit 2, got {result.returncode}"

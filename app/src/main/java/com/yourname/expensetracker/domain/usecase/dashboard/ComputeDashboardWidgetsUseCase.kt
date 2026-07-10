@@ -607,9 +607,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // CURR-587-05: Use normalized deposit aggregate only — no latest-rate fallback
         val monthlyIncome = normalized.depositAggregate?.displayAmount ?: 0.0
         // P5-PR1 (NEW-P5-011): Compute totalRemaining from budget or income minus spent.
+        // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
         // Uses monthly income as proxy when no explicit budget exists.
-        val totalRemaining = if (ctx.totalBudgetAmount > 0) {
-            (ctx.totalBudgetAmount - ctx.monthSpent).coerceAtLeast(0.0)
+        val totalRemaining = if (ctx.totalBudgetAmount > 0) { // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
+            (ctx.totalBudgetAmount - ctx.monthSpent).coerceAtLeast(0.0) // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
         } else if (monthlyIncome > 0) {
             (monthlyIncome - ctx.monthSpent).coerceAtLeast(0.0)
         } else {

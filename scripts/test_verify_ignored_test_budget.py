@@ -200,6 +200,11 @@ def test_fail_on_violation_exit_code(tmp_path, monkeypatch):
         """),
     )
 
+    # Create a mock denylist so main() can load it
+    mock_denylist = tmp_path / "config" / "release_block_denylist.yml"
+    mock_denylist.parent.mkdir(parents=True, exist_ok=True)
+    mock_denylist.write_text("release_block_tests: []\n")
+
     # Simulate CLI args with --fail-on-violation
     monkeypatch.setattr(
         sys,
@@ -236,6 +241,11 @@ def test_warning_mode_exits_zero(tmp_path, monkeypatch):
             }
         """),
     )
+
+    # Create a mock denylist so main() can load it
+    mock_denylist = tmp_path / "config" / "release_block_denylist.yml"
+    mock_denylist.parent.mkdir(parents=True, exist_ok=True)
+    mock_denylist.write_text("release_block_tests: []\n")
 
     # Simulate CLI args WITHOUT --fail-on-violation
     monkeypatch.setattr(
@@ -390,3 +400,15 @@ def test_empty_string_reason_is_detected(tmp_path):
         f"Expected missing_reason for empty string, got {category}"
     assert annotation_type == "Ignore", \
         f"Expected annotation_type=Ignore, got {annotation_type}"
+
+
+# ── Test: missing denylist is fatal (exit code 2) ───────────────────────────
+
+def test_missing_denylist_is_fatal():
+    """Missing release denylist yields exit code 2."""
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "scripts/verify_ignored_test_budget.py", "--denylist", "nonexistent_file.yml", "--fail-on-violation"],
+        capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 2, f"Expected exit 2, got {result.returncode}"
