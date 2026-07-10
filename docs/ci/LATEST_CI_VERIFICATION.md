@@ -3,7 +3,6 @@
 ## Commit
 - SHA: `422b8a633a23304a8d4d3370e263000495edfff8`
 - Branch: `atomicity-pr21-enforcement-final`
-- CI Run: Expected to trigger on push to feature branch
 
 ## CI Jobs (Required)
 

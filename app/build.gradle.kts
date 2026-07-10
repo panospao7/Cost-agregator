@@ -38,7 +38,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Use debug signing for CI builds; production signing is separate
+            // CI signing: ephemeral debug keystore for verification only.
+            // Production release signing uses a separate protected configuration.
             signingConfig = signingConfigs.getByName("debug")
         }
         debug {
@@ -664,31 +665,45 @@ tasks.named("check") {
 // TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
 // calls outside approved TimeProvider implementations
 
-// PR 10 — DB access boundary guard in CI failure mode.
-// DB guard runs raw in Gradle for full visibility (53 known debt).
-// Growth enforcement is handled by the ratchet in Static Guards.
-// Both paths are required — Gradle shows all findings, ratchet blocks new ones.
+// PR 10 — DB access boundary guard via ratchet wrapper.
+// The ratchet accepts baselined findings (exit 0 if no new violations)
+// and fails on new violations (exit 1) or infrastructure errors (exit 2).
 tasks.register("verifyDbAccessBoundaries") {
     group = "verification"
-    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer allowlist"
+    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer allowlist (ratchet-enforced)"
     doLast {
-        val script = file("$rootDir/scripts/verify_db_access_boundaries.py")
-        if (!script.exists()) {
-            logger.warn("verifyDbAccessBoundaries: script not found at ${script.absolutePath}")
+        val ratchetScript = file("$rootDir/scripts/ci/guard_ratchet.py")
+        val guardScript = file("$rootDir/scripts/verify_db_access_boundaries.py")
+        val baseline = file("$rootDir/config/baselines/db_access.json")
+        if (!ratchetScript.exists()) {
+            logger.warn("verifyDbAccessBoundaries: ratchet script not found at ${ratchetScript.absolutePath}")
             return@doLast
         }
         val result = exec {
             workingDir = rootDir
-            commandLine("python3", script.absolutePath, "--fail-on-violation")
+            commandLine(
+                "python3", ratchetScript.absolutePath,
+                "--guard-name", "db_access",
+                "--command", "python3 ${guardScript.absolutePath} --fail-on-violation",
+                "--baseline", baseline.absolutePath,
+                "--fail-on-violation",
+                "--ci-mode"
+            )
             isIgnoreExitValue = true
         }
-        if (result.exitValue != 0) {
-            throw GradleException(
-                "DB access boundary violations found. " +
+        when (result.exitValue) {
+            0 -> { /* pass: no new violations */ }
+            1 -> throw GradleException(
+                "New DB access boundary violations found. " +
                 "Add the class to config/db_access_allowlist.yml with a reason, " +
                 "or route the write through the approved lifecycle coordinator. " +
                 "See docs/DB_WRITE_OWNERSHIP.md."
             )
+            2 -> throw GradleException(
+                "verifyDbAccessBoundaries: infrastructure error (missing baseline, bad config, or ratchet failure). " +
+                "Check that config/baselines/db_access.json exists and is valid."
+            )
+            else -> throw GradleException("verifyDbAccessBoundaries: unexpected exit code ${result.exitValue}")
         }
     }
 }

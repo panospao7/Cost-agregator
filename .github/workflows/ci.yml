@@ -295,3 +295,46 @@ jobs:
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
           retention-days: 7
+
+  migration-proof:
+    needs: validate-workflow
+    name: Migration Proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Run on main/master pushes and manual dispatch only (needs emulator)
+    if: >
+      github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
+      || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        api-level: [34]
+        target: [google_apis]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x gradlew
+      - name: Run migration proof tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          avd-name: ci-migration-${{ matrix.api-level }}
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: |
+            ./gradlew :app:connectedDebugAndroidTest --tests "*DatabaseMigration*" --stacktrace
+      - name: Upload migration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-proof-results
+          path: app/build/reports/androidTests/
+          retention-days: 7

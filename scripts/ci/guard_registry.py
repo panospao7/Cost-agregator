@@ -96,7 +96,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "script": "scripts/verify_pii_logging_boundaries.py",
         "tests": "scripts/test_verify_pii_logging_boundaries.py",
         "mode": "blocking",
-        "baseline": "config/baselines/pii_logging.json",
+        "baseline": None,  # PII is strict-zero, no ratchet needed
         "allowlist": "scripts/allowlists/pii_logging_allowlist.yml",
         "policies": None,
         "description": "PII logging boundary — strict-zero PII in logs, "

@@ -25,7 +25,6 @@ Every guard script MUST fail closed. The following are fatal errors (exit code 2
 - 0: all checks passed, no violations
 - 1: violations found (with --fail-on-violation)
 - 2: infrastructure error (missing allowlist, bad config, cannot continue)
-- 3: findings decreased (used by guard ratchet for baseline updates)
 
 ## Allowlist rules
 

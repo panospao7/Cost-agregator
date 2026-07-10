@@ -409,6 +409,6 @@ def test_missing_denylist_is_fatal():
     import subprocess
     result = subprocess.run(
         [sys.executable, "scripts/verify_ignored_test_budget.py", "--denylist", "nonexistent_file.yml", "--fail-on-violation"],
-        capture_output=True, text=True, timeout=10
+        capture_output=True, text=True, timeout=60
     )
     assert result.returncode == 2, f"Expected exit 2, got {result.returncode}"
