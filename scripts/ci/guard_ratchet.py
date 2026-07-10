@@ -7,9 +7,8 @@ a stored baseline. Reports new, resolved, and unchanged findings.
 
 Exit codes:
   0 -- no new findings (pass, even if old ones remain)
-  1 -- new findings detected (growth blocked)
+  1 -- new or resolved findings detected (policy violation)
   2 -- infrastructure error (guard crash, missing baseline, etc.)
-  3 -- findings decreased (resolved findings, no new ones)
 
 Usage:
   python scripts/ci/guard_ratchet.py \
@@ -402,6 +401,11 @@ def main() -> None:
         "decreased or stayed the same; rejects if count increased).",
     )
     parser.add_argument(
+        "--ci-mode",
+        action="store_true",
+        help="CI mode: disables --update-baseline and enforces stricter policies.",
+    )
+    parser.add_argument(
         "--timeout", type=int, default=300, help="Command timeout in seconds."
     )
     parser.add_argument(
@@ -411,6 +415,11 @@ def main() -> None:
         help="Write a machine-readable summary JSON to this path.",
     )
     args = parser.parse_args()
+
+    # -- CI mode: reject baseline updates ----------------------------------------
+    if args.ci_mode and args.update_baseline:
+        print("ERROR: Baseline updates prohibited in CI mode", file=sys.stderr)
+        sys.exit(2)
 
     project_root = _find_project_root()
     baseline_path = Path(args.baseline)
@@ -426,25 +435,22 @@ def main() -> None:
         print(f"Guard ratchet error: {stderr}", file=sys.stderr)
         sys.exit(2)
 
-    if guard_exit > 1:
-        print(f"Guard command exited with code {guard_exit}", file=sys.stderr)
-        if stdout:
-            print(stdout)
-        if stderr:
-            print(stderr, file=sys.stderr)
+    if guard_exit == 0:
+        # Guard passed — findings should be empty or structured
+        pass
+    elif guard_exit == 1:
+        # Guard found violations — parse findings
+        if not stdout.strip():
+            # Exit 1 with no output = infrastructure error
+            print("Guard exited 1 but produced no parseable findings", file=sys.stderr)
+            sys.exit(2)
+    elif guard_exit == 2:
+        # Guard infrastructure error
+        print(f"Guard exited with infrastructure error (code 2)", file=sys.stderr)
         sys.exit(2)
-
-    # Guard exited non-zero but produced no output → likely crashed or
-    # failed to execute (e.g. script not found, syntax error, etc.).
-    # A legitimate guard that finds violations will always print them.
-    if guard_exit != 0 and not stdout.strip():
-        print(
-            f"Guard '{args.guard_name}' exited with code {guard_exit} "
-            f"and produced no output -- possible infrastructure error",
-            file=sys.stderr,
-        )
-        if stderr:
-            print(stderr, file=sys.stderr)
+    else:
+        # Unknown exit code
+        print(f"Guard exited with unknown code {guard_exit}", file=sys.stderr)
         sys.exit(2)
 
     # Print guard stdout for logging (but strip trailing newlines)
@@ -478,6 +484,7 @@ def main() -> None:
     # -- 6. Summary JSON (optional) ----------------------------------------------
     summary_path = args.output_summary
     if summary_path is not None:
+        summary_exit_code = 1 if new else 0
         write_summary_json(
             summary_path,
             args.guard_name,
@@ -485,7 +492,7 @@ def main() -> None:
             resolved,
             unchanged,
             status,
-            1 if new else (3 if resolved else 0),
+            summary_exit_code,
         )
 
     # -- 7. Update baseline (optional) -------------------------------------------
@@ -504,8 +511,10 @@ def main() -> None:
     if args.fail_on_violation and new:
         sys.exit(1)
 
-    if resolved and not new:
-        sys.exit(3)
+    resolved_count = len(resolved)
+    if resolved_count > 0 and args.fail_on_violation:
+        print(f"Status: FAIL — {resolved_count} resolved entries remain in baseline (must be pruned)")
+        sys.exit(1)
 
     sys.exit(0)
 

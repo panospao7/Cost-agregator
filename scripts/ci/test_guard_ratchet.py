@@ -14,6 +14,8 @@ Tests verify:
   7. --update-baseline on increased count fails.
   8. Output fingerprints are sorted and valid.
   9. Guard with zero violations works (empty baseline).
+ 10. CI mode rejects --update-baseline.
+ 11. Resolved entries cause exit 1 with --fail-on-violation.
 
 Run:
     python -m pytest scripts/ci/test_guard_ratchet.py -v
@@ -231,9 +233,9 @@ def test_resolved_findings_reported(tmp_path: Path) -> None:
     assert "RESOLVED: 1" in result.stdout
     assert "UNCHANGED: 1" in result.stdout
     assert "NEW: 0" in result.stdout
-    # Exit 3 when findings decreased and no new findings
-    assert result.returncode == 3, (
-        f"Expected exit 3, got {result.returncode}\n"
+    # Exit 0 when findings decreased and no new findings (decreased is good = pass)
+    assert result.returncode == 0, (
+        f"Expected exit 0, got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
@@ -260,9 +262,9 @@ def test_update_baseline_on_decreased_succeeds(tmp_path: Path) -> None:
         cwd=tmp_path,
     )
 
-    # Should exit 3 (decreased) on success
-    assert result.returncode in (0, 3), (
-        f"Expected exit 0 or 3, got {result.returncode}\n"
+    # Should exit 0 (decreased = pass) on success
+    assert result.returncode == 0, (
+        f"Expected exit 0, got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
@@ -332,7 +334,7 @@ def test_fingerprints_sorted(tmp_path: Path) -> None:
         cwd=tmp_path,
     )
 
-    assert result.returncode in (0, 3)
+    assert result.returncode == 0
 
     # Extract lines under NEW and RESOLVED (they start with indented fingerprint)
     lines = result.stdout.splitlines()
@@ -416,3 +418,63 @@ def test_infra_error_on_command_not_found(tmp_path: Path) -> None:
         f"Expected exit 2, got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+def test_ci_mode_rejects_update_baseline(tmp_path: Path) -> None:
+    """--ci-mode and --update-baseline together should exit 2."""
+    guard_out = "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10 desc\n"
+    baseline_fps = [
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
+        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20",
+    ]
+
+    guard_py = tmp_path / "mock_guard.py"
+    _write_guard_script(guard_py, guard_out, exit_code=1)
+
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, "test", baseline_fps)
+
+    result = _run_ratchet(
+        "test",
+        f"{sys.executable} {guard_py}",
+        baseline,
+        extra_args=["--update-baseline", "--ci-mode"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "Baseline updates prohibited in CI mode" in result.stderr
+
+
+def test_resolved_entry_exits_one(tmp_path: Path) -> None:
+    """Resolved entries with --fail-on-violation should exit 1 (policy violation)."""
+    guard_out = "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10 desc\n"
+    baseline_fps = [
+        "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10",
+        "G-CANCEL-02 app/src/main/java/com/example/Bar.kt:20",
+    ]
+
+    guard_py = tmp_path / "mock_guard.py"
+    _write_guard_script(guard_py, guard_out, exit_code=1)
+
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, "test", baseline_fps)
+
+    result = _run_ratchet(
+        "test",
+        f"{sys.executable} {guard_py}",
+        baseline,
+        extra_args=["--fail-on-violation"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 1, (
+        f"Expected exit 1, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "FAIL" in result.stdout
+    assert "resolved entries remain in baseline" in result.stdout
+    assert "RESOLVED: 1" in result.stdout

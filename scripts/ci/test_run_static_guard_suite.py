@@ -28,6 +28,15 @@ import tempfile
 from pathlib import Path
 from typing import List
 
+# Import the runner to inspect GUARD_MANIFEST directly
+import importlib.util
+_runner_spec = importlib.util.spec_from_file_location(
+    "run_static_guard_suite",
+    Path(__file__).resolve().parent / "run_static_guard_suite.py",
+)
+_runner = importlib.util.module_from_spec(_runner_spec)
+_runner_spec.loader.exec_module(_runner)
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -534,3 +543,19 @@ class TestOutputDirCreatedAutomatically:
             assert result.returncode == 0
             assert out_dir.exists()
             assert (out_dir / "summary.json").exists()
+
+
+class TestArtifactGuardRejectedFromSourceSuite:
+    """Verify release_artifact is NOT in the default GUARD_MANIFEST.
+
+    The Static Guards job runs from a source checkout and has no APK.
+    The release_artifact verification runs in the release-check CI job
+    after assembleRelease, not here.
+    """
+
+    def test_artifact_guard_not_in_manifest(self):
+        guard_names = [name for name, _, _ in _runner.GUARD_MANIFEST]
+        assert "release_artifact" not in guard_names, (
+            f"release_artifact should not be in GUARD_MANIFEST; "
+            f"found guards: {guard_names}"
+        )

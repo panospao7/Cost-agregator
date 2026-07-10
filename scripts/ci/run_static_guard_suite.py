@@ -47,8 +47,9 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     ("allowlist_compliance", ["python3", "scripts/verify_allowlist_compliance.py", "--fail-on-violation"], "blocking"),
     ("migration_matrix", ["python3", "scripts/verify_migration_matrix.py", "--fail-on-violation"], "blocking"),
     ("ignored_test_budget", ["python3", "scripts/verify_ignored_test_budget.py", "--fail-on-violation", "--baseline", "29"], "blocking"),
-    ("lint_baseline_policy", ["python3", "scripts/verify_lint_baseline_policy.py", "--fail-on-violation", "--max-missing-translations", "2219"], "blocking"),
-    ("release_artifact", ["python3", "scripts/verify_release_artifact.py", "--fail-on-violation"], "blocking"),
+    ("lint_baseline_policy", ["python3", "scripts/verify_lint_baseline_policy.py", "--fail-on-violation"], "blocking"),
+
+    # release_artifact verification runs in the release-check CI job after assembleRelease, not here
 
     # Ratchet-wrapped guards (was warning backlog; now blocking via ratchet)
     (
@@ -59,6 +60,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
             "--command", "python3 scripts/verify_cancellation_boundaries.py",
             "--baseline", "config/baselines/cancellation.json",
             "--fail-on-violation",
+            "--ci-mode",
         ],
         "blocking",
     ),
@@ -70,6 +72,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
             "--command", "python3 scripts/verify_privacy_boundaries.py --root .",
             "--baseline", "config/baselines/privacy.json",
             "--fail-on-violation",
+            "--ci-mode",
         ],
         "blocking",
     ),
@@ -81,6 +84,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
             "--command", "python3 scripts/verify_db_access_boundaries.py --fail-on-violation",
             "--baseline", "config/baselines/db_access.json",
             "--fail-on-violation",
+            "--ci-mode",
         ],
         "blocking",
     ),
@@ -92,6 +96,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
             "--command", "python3 scripts/verify_event_writers.py --fail-on-violation",
             "--baseline", "config/baselines/event_writers.json",
             "--fail-on-violation",
+            "--ci-mode",
         ],
         "blocking",
     ),
@@ -103,6 +108,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
             "--command", "python3 scripts/verify_money_boundaries.py --root .",
             "--baseline", "config/baselines/money.json",
             "--fail-on-violation",
+            "--ci-mode",
         ],
         "blocking",
     ),

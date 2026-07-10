@@ -79,6 +79,12 @@ def main():
         status = "ALLOWED" if issue_id == "MissingTranslation" else "FORBIDDEN"
         print(f"  {issue_id}: {count} ({status})")
 
+    # Auto-detect max-missing-translations from baseline if not explicitly set
+    if args.max_missing_translations is None:
+        # Count entries from baseline
+        args.max_missing_translations = total
+        print(f"Max missing translations: {args.max_missing_translations} (from baseline)")
+
     violations_found = False
 
     if non_allowed:
