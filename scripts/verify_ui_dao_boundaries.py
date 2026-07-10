@@ -83,7 +83,10 @@ LOCAL_DAO_ASSIGN_RE = re.compile(r'\b(?:val|var)\s+(\w+Dao\w*)\s*=\s*\w+\.\w*Dao
 # ── Allowlist ──────────────────────────────────────────────────────
 
 def load_allowlist(path: str) -> List[dict]:
-    """Load allowlist entries from YAML file."""
+    """Load allowlist entries from YAML file.
+
+    Exits with code 2 on infrastructure errors (missing PyYAML, malformed YAML).
+    """
     allowlist: List[dict] = []
     if not os.path.exists(path):
         return allowlist
@@ -94,9 +97,14 @@ def load_allowlist(path: str) -> List[dict]:
         if data and isinstance(data, list):
             allowlist = data
     except ImportError:
-        pass  # PyYAML not installed — allowlist is empty
-    except Exception:
-        pass
+        print("ERROR: PyYAML not installed. pip install pyyaml", file=sys.stderr)
+        sys.exit(2)
+    except yaml.YAMLError as e:
+        print(f"ERROR: Malformed allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:
+        print(f"ERROR: Could not load allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
     return allowlist
 
 
@@ -109,9 +117,8 @@ def is_allowlisted_file(rel_path: str, allowlist: List[dict]) -> bool:
         # Normalize paths for comparison
         norm_rel = rel_path.replace("\\", "/")
         norm_entry = entry_path.replace("\\", "/")
-        if norm_rel.endswith(norm_entry) or norm_entry.endswith(norm_rel):
-            return True
-        if norm_rel == norm_entry:
+        # Only match if the allowlisted path is a suffix of the actual file path
+        if norm_rel.endswith(norm_entry):
             return True
     return False
 
@@ -345,6 +352,11 @@ def main():
 
     if not os.path.isdir(source_dir):
         print(f"ERROR: source directory not found: {source_dir}", file=sys.stderr)
+        sys.exit(2)
+
+    # Fail-closed: missing configured allowlist is fatal
+    if not os.path.exists(args.allowlist):
+        print(f"ERROR: Allowlist not found: {args.allowlist}", file=sys.stderr)
         sys.exit(2)
 
     allowlist = load_allowlist(args.allowlist)

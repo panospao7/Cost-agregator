@@ -334,7 +334,10 @@ def scan_file(
 # ── Allowlist ──────────────────────────────────────────────
 
 def load_allowlist(path: Path) -> List[dict]:
-    """Load allowlist entries from YAML file."""
+    """Load allowlist entries from YAML file.
+
+    Exits with code 2 on infrastructure errors (missing PyYAML, malformed YAML).
+    """
     allowlist: List[dict] = []
     if not path.exists():
         return allowlist
@@ -346,9 +349,14 @@ def load_allowlist(path: Path) -> List[dict]:
         if data and isinstance(data, list):
             allowlist = data
     except ImportError:
-        print("WARNING: PyYAML not installed, allowlist skipped", file=sys.stderr)
+        print("ERROR: PyYAML not installed. pip install pyyaml", file=sys.stderr)
+        sys.exit(2)
+    except yaml.YAMLError as e:
+        print(f"ERROR: Malformed allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
     except Exception as e:
-        print(f"WARNING: Could not load allowlist: {e}", file=sys.stderr)
+        print(f"ERROR: Could not load allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
 
     return allowlist
 
@@ -367,7 +375,8 @@ def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict]) -> bool:
             continue
         # entry_path may be relative (e.g., "app/src/main/java/...")
         # filepath may be absolute or relative
-        if filepath.endswith(entry_path) or entry_path.endswith(filepath):
+        # Only match if the allowlisted path is a suffix of the actual file path
+        if filepath.endswith(entry_path):
             # Also check rule match if present
             entry_rule = entry.get("rule", "")
             if entry_rule and entry_rule != RULE_ID:
@@ -397,6 +406,12 @@ def main() -> None:
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
+
+    # Fail-closed: missing configured allowlist is fatal
+    if args.allowlist and not (root / args.allowlist).exists():
+        print(f"ERROR: Allowlist not found: {args.allowlist}", file=sys.stderr)
+        sys.exit(2)
+
     allowlist = load_allowlist(root / args.allowlist) if args.allowlist else []
 
     all_violations: List[str] = []

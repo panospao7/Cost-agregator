@@ -81,6 +81,8 @@ def load_allowlist(path: str) -> List[dict]:
 
     Each entry is a dict with keys:
         rule, path, symbol, reason, owner, expires, linked_issue
+
+    Exits with code 2 on infrastructure errors (missing PyYAML, malformed YAML).
     """
     allowlist: List[dict] = []
     if not os.path.exists(path):
@@ -92,10 +94,14 @@ def load_allowlist(path: str) -> List[dict]:
         if data and isinstance(data, list):
             allowlist = data
     except ImportError:
-        # PyYAML not available — allowlist is silently empty
-        pass
-    except Exception:
-        pass
+        print("ERROR: PyYAML not installed. pip install pyyaml", file=sys.stderr)
+        sys.exit(2)
+    except yaml.YAMLError as e:
+        print(f"ERROR: Malformed allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:
+        print(f"ERROR: Could not load allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
     return allowlist
 
 
@@ -112,7 +118,8 @@ def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict]) -> bool:
         entry_path = entry.get("path", "")
         if not entry_path:
             continue
-        if filepath.endswith(entry_path) or entry_path.endswith(filepath):
+        # Only match if the allowlisted path is a suffix of the actual file path
+        if filepath.endswith(entry_path):
             entry_symbol = entry.get("symbol", "")
             if not symbol or not entry_symbol or entry_symbol == symbol or entry_symbol == "*":
                 return True
@@ -191,6 +198,11 @@ def main():
 
     if not os.path.isdir(source_dir):
         print(f"ERROR: source directory not found: {source_dir}", file=sys.stderr)
+        sys.exit(2)
+
+    # Fail-closed: missing configured allowlist is fatal
+    if not os.path.exists(args.allowlist):
+        print(f"ERROR: Allowlist not found: {args.allowlist}", file=sys.stderr)
         sys.exit(2)
 
     allowlist = load_allowlist(args.allowlist)

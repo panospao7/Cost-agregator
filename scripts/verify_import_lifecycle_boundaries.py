@@ -93,28 +93,33 @@ def load_allowlist(path: Path) -> Set[str]:
     Load allowlisted class names from YAML file.
     Returns a set of class names (without .kt extension).
     Expects a flat-list format with `path` field containing the class name.
+
+    Exits with code 2 on infrastructure errors.
     """
     approved: Set[str] = set()
     if not path.exists():
-        print(f"WARNING: allowlist not found at {path}", file=sys.stderr)
-        return approved
+        print(f"ERROR: Allowlist not found: {path}", file=sys.stderr)
+        sys.exit(2)
 
     try:
         import yaml
     except ImportError:
-        print("WARNING: PyYAML not installed, cannot parse allowlist", file=sys.stderr)
-        return approved
+        print("ERROR: PyYAML not installed. pip install pyyaml", file=sys.stderr)
+        sys.exit(2)
 
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f"ERROR: Malformed allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
     except Exception as e:
-        print(f"WARNING: Could not parse allowlist: {e}", file=sys.stderr)
-        return approved
+        print(f"ERROR: Could not parse allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
 
     if not data or not isinstance(data, list):
-        print(f"WARNING: Allowlist is not a list: {path}", file=sys.stderr)
-        return approved
+        print(f"ERROR: Allowlist is not a list: {path}", file=sys.stderr)
+        sys.exit(2)
 
     for entry in data:
         if not isinstance(entry, dict):
@@ -315,7 +320,7 @@ def main():
 
     approved_files = load_allowlist(allowlist_path)
     if not approved_files:
-        print(f"WARNING: Allowlist empty or not loaded from {allowlist_path}", file=sys.stderr)
+        print(f"WARNING: Allowlist empty from {allowlist_path}", file=sys.stderr)
 
     all_violations: List[Tuple[str, int, str, str]] = []
 

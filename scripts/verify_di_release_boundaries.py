@@ -78,7 +78,10 @@ LOG_STATEMENT_PATTERN = re.compile(r'Log\.(d|e|w|i|v)\s*\(')
 
 def load_allowlist(path: str) -> List[dict]:
     """Load allowlist entries from YAML file. Returns list of dicts with:
-    rule, path, symbol, reason, owner, expires, linked_issue"""
+    rule, path, symbol, reason, owner, expires, linked_issue
+
+    Exits with code 2 on infrastructure errors (missing PyYAML, malformed YAML).
+    """
     allowlist: List[dict] = []
     p = Path(path)
     if not p.exists():
@@ -90,9 +93,14 @@ def load_allowlist(path: str) -> List[dict]:
         if data and isinstance(data, list):
             allowlist = data
     except ImportError:
-        print("WARNING: PyYAML not installed, allowlist skipped", file=sys.stderr)
+        print("ERROR: PyYAML not installed. pip install pyyaml", file=sys.stderr)
+        sys.exit(2)
+    except yaml.YAMLError as e:
+        print(f"ERROR: Malformed allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
     except Exception as e:
-        print(f"WARNING: Could not load allowlist: {e}", file=sys.stderr)
+        print(f"ERROR: Could not load allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
     return allowlist
 
 
@@ -115,10 +123,9 @@ def is_allowlisted(filepath: str, allowlist: List[dict], symbol: str = None) -> 
         entry_path = (entry.get("path") or "").replace("\\", "/")
         entry_symbol = entry.get("symbol", "")
 
-        # Path matching: suffix match either direction
+        # Path matching: suffix match only (allowlisted path is suffix of filepath)
         path_match = (
             norm_filepath.endswith(entry_path)
-            or entry_path.endswith(norm_filepath)
             or os.path.basename(norm_filepath) == os.path.basename(entry_path)
         )
         if not path_match:
@@ -438,6 +445,11 @@ def main():
 
     if not os.path.isdir(di_dir):
         print(f"ERROR: DI directory not found: {di_dir}", file=sys.stderr)
+        sys.exit(2)
+
+    # Fail-closed: missing configured allowlist is fatal
+    if not os.path.exists(args.allowlist):
+        print(f"ERROR: Allowlist not found: {args.allowlist}", file=sys.stderr)
         sys.exit(2)
 
     allowlist = load_allowlist(args.allowlist)

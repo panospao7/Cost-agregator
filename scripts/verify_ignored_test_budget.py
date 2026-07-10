@@ -136,14 +136,16 @@ def load_release_denylist(path: Path) -> List[dict]:
     """Load YAML denylist of test classes that must NOT be @Ignored.
 
     Returns list of dicts with keys: class, reason
+
+    Exits with code 2 on infrastructure errors.
     """
     denylist: List[dict] = []
     if not path.exists():
         print(
-            f"WARNING: Release denylist not found at {path}",
+            f"ERROR: Release denylist not found at {path}",
             file=sys.stderr,
         )
-        return denylist
+        sys.exit(2)
 
     try:
         import yaml
@@ -156,11 +158,16 @@ def load_release_denylist(path: Path) -> List[dict]:
                 denylist = entries
     except ImportError:
         print(
-            "WARNING: PyYAML not installed, denylist skipped",
+            "ERROR: PyYAML not installed. pip install pyyaml",
             file=sys.stderr,
         )
+        sys.exit(2)
+    except yaml.YAMLError as e:
+        print(f"ERROR: Malformed denylist: {e}", file=sys.stderr)
+        sys.exit(2)
     except Exception as e:
-        print(f"WARNING: Could not load denylist: {e}", file=sys.stderr)
+        print(f"ERROR: Could not load denylist: {e}", file=sys.stderr)
+        sys.exit(2)
 
     return denylist
 

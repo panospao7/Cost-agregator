@@ -66,7 +66,10 @@ def scan_file(filepath: Path) -> Tuple[List[str], bool]:
 # ── Allowlist ──────────────────────────────────────────────
 def load_allowlist(path: Path) -> List[dict]:
     """Load allowlist entries from YAML file. Returns list of dicts with:
-    rule, path, symbol, reason, owner, expires, linked_issue"""
+    rule, path, symbol, reason, owner, expires, linked_issue
+
+    Exits with code 2 on infrastructure errors (missing PyYAML, malformed YAML).
+    """
     allowlist = []
     if not path.exists():
         return allowlist
@@ -78,9 +81,14 @@ def load_allowlist(path: Path) -> List[dict]:
         if data and isinstance(data, list):
             allowlist = data
     except ImportError:
-        print("WARNING: PyYAML not installed, allowlist skipped", file=sys.stderr)
+        print("ERROR: PyYAML not installed. pip install pyyaml", file=sys.stderr)
+        sys.exit(2)
+    except yaml.YAMLError as e:
+        print(f"ERROR: Malformed allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
     except Exception as e:
-        print(f"WARNING: Could not load allowlist: {e}", file=sys.stderr)
+        print(f"ERROR: Could not load allowlist: {e}", file=sys.stderr)
+        sys.exit(2)
 
     return allowlist
 
@@ -90,8 +98,9 @@ def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict]) -> bool:
     """
     for entry in allowlist:
         entry_path = entry.get("path", "")
-        # Allow partial path matching: unrooted relative paths match suffixes
-        if filepath.endswith(entry_path) or entry_path.endswith(filepath):
+        # Only match if the allowlisted path is a suffix of the actual file path
+        # This prevents substring matching like "er/File.kt" matching "Worker/File.kt"
+        if filepath.endswith(entry_path):
             if not symbol or entry.get("symbol", "") == symbol:
                 return True
     return False
@@ -107,6 +116,12 @@ def main():
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
+
+    # Fail-closed: missing configured allowlist is fatal
+    if args.allowlist and not (root / args.allowlist).exists():
+        print(f"ERROR: Allowlist not found: {args.allowlist}", file=sys.stderr)
+        sys.exit(2)
+
     allowlist = load_allowlist(root / args.allowlist) if args.allowlist else []
 
     all_violations = []
