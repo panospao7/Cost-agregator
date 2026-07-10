@@ -7,8 +7,8 @@ Checks:
   2. No missing migration in the supported range
   3. Known intentional gaps are documented and excluded from failure
 
-The migration baseline (v145) is read from DatabaseMigrations.kt.
-The latest version is read from AppDatabase.kt.
+Authoritative source: DatabaseSchemaPolicy.kt (CURRENT_VERSION + MIGRATION_BASELINE).
+Fallback: AppDatabase.kt (APP_DATABASE_SCHEMA_VERSION) and DatabaseMigrations.kt comment.
 Registered migrations are parsed from DatabaseMigrations.kt.
 Schema JSON files under app/schemas/ are used to verify version coverage.
 
@@ -78,6 +78,54 @@ def parse_baseline_version(migrations_path: Path) -> Tuple[Optional[int], Option
                 return int(match.group(1)), i
 
     return None, None
+
+
+def parse_policy_versions(policy_path: Path) -> Tuple[Optional[int], Optional[int]]:
+    """Extract CURRENT_VERSION and MIGRATION_BASELINE from DatabaseSchemaPolicy.kt.
+
+    This is the authoritative source — preferred over AppDatabase.kt and
+    the baseline comment in DatabaseMigrations.kt.
+
+    Returns (latest_version, baseline_version).
+    """
+    try:
+        content = policy_path.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"ERROR reading {policy_path}: {e}", file=sys.stderr)
+        return None, None
+
+    latest_match = re.search(r"CURRENT_VERSION\s*=\s*\S+\.APP_DATABASE_SCHEMA_VERSION", content)
+    baseline_match = re.search(r"MIGRATION_BASELINE\s*=\s*(\d+)", content)
+
+    if not latest_match or not baseline_match:
+        return None, None
+
+    # Parse the actual integer values — CURRENT_VERSION is a constant delegate,
+    # so we resolve it by also reading AppDatabase.kt if available.
+    # But for simplicity, we parse the APP_DATABASE_SCHEMA_VERSION from the same file
+    # by following the chain: CURRENT_VERSION → AppDatabase.APP_DATABASE_SCHEMA_VERSION
+    baseline = int(baseline_match.group(1))
+
+    # CURRENT_VERSION delegates to AppDatabase.APP_DATABASE_SCHEMA_VERSION.
+    # Try to resolve from the policy file's parent directory.
+    app_db_path = policy_path.parent / "AppDatabase.kt"
+    latest = None
+    if app_db_path.exists():
+        latest = parse_latest_version(app_db_path)
+    else:
+        # Fallback: search the project
+        root = policy_path
+        while root.parent != root:
+            root = root.parent
+            candidate = root / "app" / "src"
+            if candidate.exists():
+                break
+        for path in root.rglob("AppDatabase.kt"):
+            if path.is_file() and "src" in path.parts:
+                latest = parse_latest_version(path)
+                break
+
+    return latest, baseline
 
 
 def parse_registered_migrations(migrations_path: Path) -> Tuple[
@@ -195,26 +243,45 @@ def main():
               file=sys.stderr)
         sys.exit(2)
 
+    policy_path = find_kotlin_source(root, "DatabaseSchemaPolicy.kt")
+
     # ── Parse versions ───────────────────────────────────────────────
-    latest_version = parse_latest_version(app_db_path)
+    # Prefer DatabaseSchemaPolicy.kt as the authoritative source.
+    # Fall back to AppDatabase.kt + DatabaseMigrations.kt comment if missing.
+    latest_version: Optional[int] = None
+    baseline_version: Optional[int] = None
+    baseline_line: Optional[int] = None
+    policy_source = False
+
+    if policy_path is not None:
+        policy_latest, policy_baseline = parse_policy_versions(policy_path)
+        if policy_latest is not None and policy_baseline is not None:
+            latest_version = policy_latest
+            baseline_version = policy_baseline
+            policy_source = True
+
+    if latest_version is None:
+        latest_version = parse_latest_version(app_db_path)
     if latest_version is None:
         print(
-            f"FATAL ({RULE_ID}): Could not parse APP_DATABASE_SCHEMA_VERSION "
-            f"from {app_db_path}",
+            f"FATAL ({RULE_ID}): Could not parse CURRENT_VERSION "
+            f"from any source",
             file=sys.stderr
         )
         sys.exit(2)
 
-    baseline_version, baseline_line = parse_baseline_version(mig_path)
+    if baseline_version is None:
+        baseline_version, baseline_line = parse_baseline_version(mig_path)
     if baseline_version is None:
         # Fallback: use the lowest startVersion among registered migrations
         registered, _, _ = parse_registered_migrations(mig_path)
         if registered:
             baseline_version = min(s for s, e in registered)
             print(
-                f"WARNING ({RULE_ID}): No baseline comment found in "
-                f"{mig_path.relative_to(root)}. Using lowest registered "
-                f"migration start version v{baseline_version} as baseline.",
+                f"WARNING ({RULE_ID}): No baseline found in "
+                f"DatabaseSchemaPolicy.kt or DatabaseMigrations.kt. "
+                f"Using lowest registered migration start version "
+                f"v{baseline_version} as baseline.",
                 file=sys.stderr,
             )
         else:
@@ -238,6 +305,11 @@ def main():
     # ── Build human-readable path references ─────────────────────────
     mig_rel = str(mig_path.relative_to(root)) if mig_path.is_relative_to(root) else str(mig_path)
     app_db_rel = str(app_db_path.relative_to(root)) if app_db_path.is_relative_to(root) else str(app_db_path)
+    policy_rel = (
+        str(policy_path.relative_to(root))
+        if policy_path is not None and policy_path.is_relative_to(root)
+        else (str(policy_path) if policy_path is not None else None)
+    )
 
     # ── Compute expected migrations ──────────────────────────────────
     missing = compute_missing_migrations(baseline_version, latest_version, registered)
@@ -257,7 +329,12 @@ def main():
     print(f"{RULE_ID} -- Migration Matrix Verification")
     print(f"  Project root:   {root}")
     print(f"  Latest version: v{latest_version}  ({app_db_rel})")
-    print(f"  Baseline:       v{baseline_version}  ({mig_rel}:{baseline_line})")
+    if policy_source and policy_rel is not None:
+        print(f"  Baseline:       v{baseline_version}  ({policy_rel} — authoritative)")
+    elif baseline_line is not None:
+        print(f"  Baseline:       v{baseline_version}  ({mig_rel}:{baseline_line})")
+    else:
+        print(f"  Baseline:       v{baseline_version}  (inferred from registered migrations)")
     print(f"  Registered:     {len(registered)} migrations")
     print(f"  Schema JSONs:   {len(schema_versions)} versions "
            f"(v{min(schema_versions) if schema_versions else 'N/A'} -- "
